@@ -1,0 +1,6 @@
+# 统一行尾：文本文件入库 LF（全局规范要求），二进制按 git 判定
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.jar binary

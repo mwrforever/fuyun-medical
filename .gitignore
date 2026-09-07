@@ -1,0 +1,15 @@
+# 忽略构建产物与本地环境文件（构建期细化）
+target/
+node_modules/
+dist/
+build/
+out/
+*.log
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+.env
+.env.*
+!.env.example
