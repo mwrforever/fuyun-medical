@@ -116,10 +116,15 @@
 
   <build>
     <plugins>
-      <!-- repackage 产出可执行 fat jar（不继承 starter-parent 必须显式绑定，Dockerfile 的 mvn package 依赖此产物） -->
+      <!-- repackage 产出可执行 fat jar（不继承 starter-parent 必须显式绑定，Dockerfile 的 mvn package 依赖此产物）。
+           classifier=exec：fat jar 落 -exec.jar 后缀，主构件保持薄 jar——repackage 默认在位替换会让 failsafe
+           集成测试的 classpath 拿到 BOOT-INF 布局 fat jar，应用类对普通类加载器不可见导致 @SpringBootTest 装配失败 -->
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <classifier>exec</classifier>
+        </configuration>
         <executions>
           <execution>
             <goals>
