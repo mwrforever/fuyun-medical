@@ -35,7 +35,7 @@
 
 | PR | 批次 | 状态 | 备注（专员 / 测试 / 审核结论） |
 | --- | --- | --- | --- |
-| PR-1 | B1.1 后端骨架：父 POM/插件管理、common/app、20 域占位 | pending | — |
-| PR-1 | B1.2 冒烟 IT + Dockerfile COPY 重写 | pending | — |
-| PR-1 | B1.3 deploy/ 全量 + .env.example + ci.yml 移除排除项 | pending | — |
+| PR-1 | B1.1 后端骨架：父 POM/插件管理、common/app、20 域占位 | complete | 462 文件 3 提交；mvn test 10/10 绿+spotless 绿；审核 SPEC/QUALITY 双 PASS（3 Minor 非阻断） |
+| PR-1 | B1.2 冒烟 IT + Dockerfile COPY 重写 | complete | SmokeStackIT 3 断言 + verify 全绿 + 镜像构建成功；审核双 PASS（classifier=exec 与构造器 @Autowired 经实证必需） |
+| PR-1 | B1.3 deploy/ 全量 + .env.example + ci.yml 移除排除项 | in_progress | — |
 | PR-1 | B1.4 web monorepo + 三 app + shared/ui + 冒烟单测 | pending | — |
