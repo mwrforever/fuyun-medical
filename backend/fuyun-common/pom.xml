@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.fuyun</groupId>
+    <artifactId>fuyun-backend</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <!-- 公共模块：异常基座 / 全局异常渲染 / traceId 上下文 / 审计支撑，禁止依赖任何业务模块（backend 宪法 B.1） -->
+  <artifactId>fuyun-common</artifactId>
+
+  <dependencies>
+    <!-- 仅引入 web 最小集：提供 ProblemDetail / OncePerRequestFilter / @RestControllerAdvice 基类 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!-- Lombok（BOM 托管版本）：@Getter/@Slf4j 注解的编译期依赖，provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>

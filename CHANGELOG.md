@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · PR-1 B1.1：后端工程骨架落盘（父 POM / fuyun-common / fuyun-app / 20 业务域空模块）
+
+- 按 PLAN-P0-01 §1-PR-1 与 BRIEF-PR1-01 §2 落地 backend 骨架：父 POM（spring-boot-dependencies:3.5.16 BOM import、插件管理、22 模块聚合）、fuyun-common（错误码契约 / 业务异常基座 / ProblemDetail 全局渲染 / traceId 过滤器 / 操作人上下文 + 四测试类）、fuyun-app（装配入口 / 全环境与 dev-test-prod yml / TraceProperties @Validated 示范）、20 个业务域空模块（pom + 目录占位，无空实现类）。本次不修订宪法正文。
+- 表外版本按 BRIEF-PR1-01 §9 默认方案锁定并将在 PR 描述申报（PR 合入后回补宪法 C.2 版本表）：maven-compiler-plugin 3.14.1、maven-surefire-plugin 3.5.6、maven-failsafe-plugin 3.5.6（取 spring-boot-dependencies:3.5.16 pluginManagement 原值，已核对 Maven Central）、lombok-mapstruct-binding 0.2.0（MapStruct 官方标准搭配值）。
+- 行为代码（fuyun-common）按 TDD 先写失败测试再实现，测试与实现同提交；纯结构文件（pom / 目录占位 / yml）以构建命令验证。
+
 ## 2026-09-09 · P0 交付启动：dev 分支与门禁就绪 + SDD 台账建立
 
 - 新增 `dev` 集成分支（自 main@a10369e），经 gh api 配置分支保护与 main 逐字段一致（五 required checks + strict + enforce_admins + 禁 force push / 删除）；此后 P0 五 PR 依序合入 dev（用户 2026-09-09 裁决），dev→main 合并另行裁决。
