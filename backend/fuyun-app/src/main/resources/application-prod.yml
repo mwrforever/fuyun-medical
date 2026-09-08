@@ -1,0 +1,19 @@
+# prod 环境差异：敏感项一律无默认值——缺失环境变量即启动 fail-fast（backend 宪法 A.2-5 安全红线）
+spring:
+  datasource:
+    url: ${FUYUN_DATASOURCE_URL}
+    username: ${FUYUN_DATASOURCE_USERNAME}
+    password: ${FUYUN_DATASOURCE_PASSWORD}
+    hikari:
+      leak-detection-threshold: 300000  # prod 300s 泄漏探测，降低误报开销（backend 宪法 A.4.2-6，禁 0）
+  data:
+    redis:
+      host: ${FUYUN_REDIS_HOST}
+      port: ${FUYUN_REDIS_PORT}
+      password: ${FUYUN_REDIS_PASSWORD}
+  rabbitmq:
+    host: ${FUYUN_RABBITMQ_HOST}
+    port: ${FUYUN_RABBITMQ_PORT}
+    username: ${FUYUN_RABBITMQ_USERNAME}
+    password: ${FUYUN_RABBITMQ_PASSWORD}
+# health.show-details 不覆写：继承公共配置的 never（prod 安全默认）

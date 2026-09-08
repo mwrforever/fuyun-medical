@@ -1,0 +1,88 @@
+# 全环境公共配置：只放公共项与安全默认值，dev/test/prod 差异见 application-{profile}.yml（backend 宪法 A.2-1）
+spring:
+  application:
+    name: fuyun-backend
+  mvc:
+    problemdetails:
+      enabled: true            # 失败响应一律 RFC 9457 ProblemDetail（backend 宪法 A.3-2）
+  lifecycle:
+    timeout-per-shutdown-phase: 30s   # 优雅停机宽限期与 compose stop_grace_period 对齐（backend 宪法 A.5-15）
+  datasource:
+    hikari:
+      minimum-idle: 10         # 固定大小池（minimumIdle=maximumPoolSize），起步值压测校准（backend 宪法 A.4.2-6）
+      maximum-pool-size: 10
+  flyway:
+    out-of-order: false        # 从零建库，禁乱序迁移（backend 宪法 A.4.1-3）
+    baseline-on-migrate: false
+    default-schema: public     # 公共 schema（PG 默认 public）承载 flyway_schema_history（backend 宪法 A.4.1-4）
+    schemas:                   # 全量声明，Flyway 自动创建缺失 schema
+      - public
+      - system
+      - patient
+      - outpatient
+      - inpatient
+      - nursing
+      - pharmacy
+      - lab
+      - imaging
+      - emr
+      - surgery
+      - icu
+      - transfusion
+      - billing
+      - iot
+      - asset
+      - ward
+      - peis
+      - internet
+      - ops
+      - integration
+    locations:                 # 显式枚举 20 模块迁移目录，禁通配符（backend 宪法 A.4.1-4）
+      - classpath:db/migration/system
+      - classpath:db/migration/patient
+      - classpath:db/migration/outpatient
+      - classpath:db/migration/inpatient
+      - classpath:db/migration/nursing
+      - classpath:db/migration/pharmacy
+      - classpath:db/migration/lab
+      - classpath:db/migration/imaging
+      - classpath:db/migration/emr
+      - classpath:db/migration/surgery
+      - classpath:db/migration/icu
+      - classpath:db/migration/transfusion
+      - classpath:db/migration/billing
+      - classpath:db/migration/iot
+      - classpath:db/migration/asset
+      - classpath:db/migration/ward
+      - classpath:db/migration/peis
+      - classpath:db/migration/internet
+      - classpath:db/migration/ops
+      - classpath:db/migration/integration
+  rabbitmq:                    # 生产端 confirm/returns 与消费端 AUTO 语义定稿姿态（backend 宪法 A.5-4/A.5-5）
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        default-requeue-rejected: false
+server:
+  shutdown: graceful           # 优雅停机（backend 宪法 A.5-15）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true          # liveness/readiness 探针显式开启（backend 宪法 A.5-15）
+      show-details: never      # prod 安全默认，dev/test profile 覆盖
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-}]"   # traceId 经 MDC 关联日志：仅覆写 level 段，其余沿用 Boot 默认 pattern
+fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪法 A.2-4）
+  trace:
+    response-header-enabled: true  # 响应头回写 X-Trace-Id，前端排障锚点
+    mdc-key: traceId

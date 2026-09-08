@@ -1,0 +1,22 @@
+# test 环境差异：连接细节由 Testcontainers @ServiceConnection 覆盖，本地默认值仅作兜底（backend 宪法 A.2-5）
+spring:
+  datasource:
+    url: ${FUYUN_DATASOURCE_URL:jdbc:postgresql://localhost:5432/fuyun_medical?reWriteBatchedInserts=true}
+    username: ${FUYUN_DATASOURCE_USERNAME:fuyun}
+    password: ${FUYUN_DATASOURCE_PASSWORD:}
+    hikari:
+      leak-detection-threshold: 60000   # dev/test 60s 连接泄漏探测（backend 宪法 A.4.2-6，禁 0）
+  data:
+    redis:
+      host: ${FUYUN_REDIS_HOST:localhost}
+      port: ${FUYUN_REDIS_PORT:6379}
+      password: ${FUYUN_REDIS_PASSWORD:}
+  rabbitmq:
+    host: ${FUYUN_RABBITMQ_HOST:localhost}
+    port: ${FUYUN_RABBITMQ_PORT:5672}
+    username: ${FUYUN_RABBITMQ_USERNAME:fuyun}
+    password: ${FUYUN_RABBITMQ_PASSWORD:}
+management:
+  endpoint:
+    health:
+      show-details: always      # test 排障便利：健康明细全暴露

@@ -14,6 +14,27 @@
   <!-- 模块清单：common → 20 业务域（对齐总 Spec M01-M20）→ app（装配入口）；实际构建顺序由 Maven 依赖分析决定 -->
   <modules>
     <module>fuyun-common</module>
+    <module>fuyun-system</module>
+    <module>fuyun-patient</module>
+    <module>fuyun-outpatient</module>
+    <module>fuyun-inpatient</module>
+    <module>fuyun-nursing</module>
+    <module>fuyun-pharmacy</module>
+    <module>fuyun-lab</module>
+    <module>fuyun-imaging</module>
+    <module>fuyun-emr</module>
+    <module>fuyun-surgery</module>
+    <module>fuyun-icu</module>
+    <module>fuyun-transfusion</module>
+    <module>fuyun-billing</module>
+    <module>fuyun-iot</module>
+    <module>fuyun-asset</module>
+    <module>fuyun-ward</module>
+    <module>fuyun-peis</module>
+    <module>fuyun-internet</module>
+    <module>fuyun-ops</module>
+    <module>fuyun-integration</module>
+    <module>fuyun-app</module>
   </modules>
 
   <properties>
