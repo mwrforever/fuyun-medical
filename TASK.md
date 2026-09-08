@@ -38,3 +38,4 @@
 | 编号 | 事项 | 说明 |
 | --- | --- | --- |
 | W-3 | P0 工程骨架落盘 | **实施计划见 `docs/plans/2026-09-08-P0实施计划.md`（PLAN-P0-01，PR-1 即本工单，新会话以该计划为执行输入）**：Maven 多模块骨架 + `deploy/` 全量编排 + web monorepo 脚手架，按计划 PR-1 交付物清单与验收标准执行；落地时对齐三项：Dockerfile COPY glob 拍平修正、web 产物路径以宪法 `web/apps/<app>/dist` 为准、移除 ci.yml 骨架期排除项 |
+| W-4 | Flyway 迁移号段归属与版本唯一的 CI 自动校验 | 宪法 A.4.1-2 要求 CI 校验号段归属；PR-2 起号段登记生效（integration=V1–V99、患者 V100–V199、医嘱 V200–V299、系统建议 V300–V399、物联建议 V400–V499，V500 起先登记先占，载体 = 各 PR 简报 + CHANGELOG），校验脚本随 CI 完整化补建（BRIEF-PR2-01 §8-3 建议项） |

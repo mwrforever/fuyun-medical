@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · PR-2 B2.1：事件信封 + Long→String 序列化 + 队列声明构件 + event_registry（CF-1 冻结载体落盘）
+
+- 按 BRIEF-PR2-01 §2（B2.1 批次）落地：fuyun-common 新增 `com.fuyun.common.messaging` 包（EventEnvelope 七字段信封 record = CF-1 冻结形态 + EventEnvelopeCodec 时钟注入工厂 / 线格式编解码与消费侧合规校验）与 `com.fuyun.common.config.JacksonLongToStringConfig`（Long/long → String 全局定制唯一注册点，backend 宪法 A.3-8）；fuyun-integration 落地消息治理构件（api/ 三件契约 MessagingGovernance/ConsumerQueueSpec/DelayQueueSpec + QueueGovernorImpl + IEventRegistryService 登记服务 + EventRegistry 实体与 mapper + MessagingConstants/MessagingProperties/MessagingGovernanceConfig）与 Flyway V1/V2 迁移（公共审计触发器函数 fuyun_set_updated_at + integration.event_registry 表）；fuyun-app 装配（MessagingConfig @Import 两配置类、MybatisPlusConfig @MapperScan + 三大插件）与 application.yml / application-test.yml 追加键（消费端有界重试 + fuyun.messaging.idempotency-redis-ttl，test 快速重试覆盖）。
+- Flyway 号段登记（BRIEF-PR2-01 §2.5）：integration 治理域占用 V1–V99（本批用 V1–V2）；V100–V199 患者域、V200–V299 医嘱域为宪法例举既定；V300–V399 系统域、V400–V499 物联域为建议分段（PR-3/PR-4 拟用）；V500 起按实装先后递增分配、先登记先占（载体 = 各 PR 简报 + 本文件）。号段归属 CI 自动校验（宪法 A.4.1-2）本批不补建，登记 TASK.md 待办。
+- 实现口径定案三处（简报未明确处，PR 描述同步申报）：① EventEnvelopeCodec Bean 的装配落点简报未指明（§2.2 仅称"Bean"），随 MessagingGovernanceConfig @Import 一并装配——发布/消费共用，且 B2.2 死信监听依赖其 Bean 化；② fuyun-app pom 新增 fuyun-integration 模块依赖——§2.10 要求 MessagingConfig @Import(MessagingGovernanceConfig) 需编译期可见，与 §1.2 "fuyun-app pom 零新增"表述冲突，以装配要求为准（模块内部依赖，版本随 ${project.version}，非表外三方依赖）；③ MessagingConstants 补 QUEUE_TYPE_QUORUM / BINDING_KEY_ALL 两常量承载 quorum 队列类型值与死信全量绑定键，防魔法值散落（A.2-6）。
+- TDD：新增 5 测试类（EventEnvelopeTest / EventEnvelopeCodecTest / JacksonLongToStringConfigTest / QueueGovernorImplTest / EventRegistryServiceImplTest）先 RED 后 GREEN，测试与实现同提交；验证 = `mvn -B -ntp test` 全绿 + `mvn -B -ntp spotless:check` 绿 + V1/V2 迁移 Flyway 重放留证（B2.1 不跑 failsafe，SmokeStackIT 随 B2.3 verify 回归）。
+
 ## 2026-09-09 · PR #4 审查修复（Finding 1/2）：全局异常渲染装配缺失 + prod springdoc 兜底
 
 - Finding 1（Critical，独立审查发现，本次核实成立）：`GlobalExceptionHandler` 从未注册为 Bean——`@SpringBootApplication` 默认仅扫 `com.fuyun.app.*`，`com.fuyun.common.web` 包在扫描范围外，common 无 AutoConfiguration.imports / spring.factories，TraceIdConfig 也未引入它，@RestControllerAdvice 装配缺失导致 ProblemDetail + errorCode/traceId 统一契约运行时未生效（装配级死代码）。修复：fuyun-app 的 `TraceIdConfig` 增加 `@Import(GlobalExceptionHandler.class)`（装配归 app，宪法 B.1；不放宽 scanBasePackages），并新增 @WebMvcTest 切片注册测试——探针 controller 抛业务异常，断言响应为 RFC 9457 ProblemDetail 且状态码/errorCode/traceId/响应头回写齐全；TDD 先 RED（无 @Import）后 GREEN。
