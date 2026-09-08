@@ -1,0 +1,10 @@
+# 格式门禁排除清单：与 .gitignore 的产物/生成物口径一致，构建后本地跑 pnpm format:check 不误报
+dist/
+coverage/
+# unplugin 按需引入构建期生成物（不入库，web 简报 §5.6）
+auto-imports.d.ts
+components.d.ts
+# lockfile 内容经哈希校验（--frozen-lockfile），格式化无意义
+pnpm-lock.yaml
+# 维护型文档（宪法 AGENTS.md 等）为手工维护，排除格式门禁避免重排 churn；格式门禁只管代码
+*.md

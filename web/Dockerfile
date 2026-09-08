@@ -14,7 +14,8 @@ RUN pnpm install --frozen-lockfile && pnpm build
 # ===== 运行层：nginx 1.30.4 承载三应用静态产物（与 dev compose 镜像版本严格一致） =====
 FROM nginx:1.30.4
 # 三应用产物分目录承载，挂载约定 /usr/share/nginx/html/{workstation,bigscreen,portal}
+# 产物仅在构建层容器内生成（构建上下文 .dockerignore 已排除 **/dist/），必须经 --from=build 取自构建层
 # 站点配置归 deploy/（fuyun.conf 以 bind mount 提供），此处不放任何 nginx 配置文件
-COPY apps/workstation/dist /usr/share/nginx/html/workstation
-COPY apps/bigscreen/dist /usr/share/nginx/html/bigscreen
-COPY apps/portal/dist /usr/share/nginx/html/portal
+COPY --from=build /workspace/apps/workstation/dist /usr/share/nginx/html/workstation
+COPY --from=build /workspace/apps/bigscreen/dist /usr/share/nginx/html/bigscreen
+COPY --from=build /workspace/apps/portal/dist /usr/share/nginx/html/portal

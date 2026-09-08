@@ -1,0 +1,26 @@
+# prod 环境差异：敏感项一律无默认值——缺失环境变量即启动 fail-fast（backend 宪法 A.2-5 安全红线）
+spring:
+  datasource:
+    url: ${FUYUN_DATASOURCE_URL}
+    username: ${FUYUN_DATASOURCE_USERNAME}
+    password: ${FUYUN_DATASOURCE_PASSWORD}
+    hikari:
+      leak-detection-threshold: 300000  # prod 300s 泄漏探测，降低误报开销（backend 宪法 A.4.2-6，禁 0）
+  data:
+    redis:
+      host: ${FUYUN_REDIS_HOST}
+      port: ${FUYUN_REDIS_PORT}
+      password: ${FUYUN_REDIS_PASSWORD}
+  rabbitmq:
+    host: ${FUYUN_RABBITMQ_HOST}
+    port: ${FUYUN_RABBITMQ_PORT}
+    username: ${FUYUN_RABBITMQ_USERNAME}
+    password: ${FUYUN_RABBITMQ_PASSWORD}
+# health.show-details 不覆写：继承公共配置的 never（prod 安全默认）
+# springdoc 安全默认兜底（宪法 A.3-7：Swagger UI 仅 dev/test 暴露）。P0 尚未引入 springdoc，
+# 两键当前为无害冗余；首个 REST 端点引入 springdoc（锁 2.8.17）时此配置自动生效，防 prod 误开 API 文档
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

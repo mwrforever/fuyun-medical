@@ -39,15 +39,9 @@ jobs:
             backend:
               - 'backend/**'
               - '!backend/**/*.md'
-              # 骨架期排除：P0 工程骨架（父 POM）落地后移除，使 Dockerfile 变更恢复触发构建
-              - '!backend/Dockerfile'
-              - '!backend/.dockerignore'
             frontend:
               - 'web/**'
               - '!web/**/*.md'
-              # 骨架期排除：P0 工程骨架（package.json）落地后移除
-              - '!web/Dockerfile'
-              - '!web/.dockerignore'
             # 构建文件存在性守卫：骨架期 pom.xml/package.json 尚未落盘，即使发生误判也不运行构建门禁
             pom:
               - 'backend/**/pom.xml'
@@ -115,32 +109,24 @@ jobs:
         run: pnpm build
       - name: 依赖漏洞审计（high 及以上退出非零即阻断）
         working-directory: web
-        run: pnpm audit
+        # 显式携带阈值参数：pnpm 内建命令优先于 package.json 同名 script，裸 pnpm audit 会按任意级别阻断，
+        # 与 web 宪法 C.5-5 约定的 high 及以上阻断不符（终审 M-1）
+        run: pnpm audit --audit-level high
 
   # ===== 镜像：PR 只验证可构建性；push main 登录 GHCR 推送（sha 不可变 tag + 分支-latest 可读 tag） =====
+  # 禁用 strategy.matrix：matrix 展开后 check run 名带维度后缀（PR #4 真跑实测 images (backend, …)），与分支保护 required
+  # check 聚合名 images 失配——跳过态与真跑态都必须产出名为 images 的 check（方案 B 五 checks 模型硬约束），故用同 job 双构建步骤
   images:
     name: images
     runs-on: ubuntu-latest
     timeout-minutes: 25
     needs: [changes, backend, frontend]
     # always() 使路径过滤跳过（result 为 skipped）不连带本 job 被跳过；"谁变更构建谁"：
-    # 至少一侧 verify 真实成功且至少一侧路径有变更才起 matrix，单镜像是否构建由下方 step 级条件精确控制
+    # 至少一侧 verify 真实成功且至少一侧路径有变更才运行本 job，单镜像是否构建由下方 step 级条件精确控制
     if: always() && (needs.backend.result == 'success' || needs.frontend.result == 'success') && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
     permissions:
       contents: read
       packages: write
-    strategy:
-      # 一镜像失败即停后续，省时（matrix 默认行为，显式声明表意）
-      fail-fast: true
-      matrix:
-        include:
-          - name: backend
-            context: backend
-            dockerfile: backend/Dockerfile
-          - name: web
-            context: web
-            dockerfile: web/Dockerfile
-          # TODO(iot-simulator): 第三条 matrix 待 TASK.md D-3（实现语言与位置）裁决后追加
     steps:
       - uses: actions/checkout@v7
       # Docker tag 仅允许 [a-zA-Z0-9._-]，分支名中其余字符（如 /）统一替换为 -
@@ -156,22 +142,37 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # 仅构建有变更且对应 verify 成功的镜像：纯前端 PR 不再因 backend 被跳过而失去 web 镜像验证
-      - name: 构建镜像
-        if: >-
-          (matrix.name == 'backend' && needs.changes.outputs.backend == 'true' && needs.backend.result == 'success') ||
-          (matrix.name == 'web' && needs.changes.outputs.frontend == 'true' && needs.frontend.result == 'success')
+      # buildx 缺省 docker driver 不支持 gha 缓存导出（cache-to: type=gha 会报错），须先创建 docker-container driver builder
+      - name: 安装 buildx
+        uses: docker/setup-buildx-action@v3
+      # backend 镜像：仅 backend 有变更且 backend verify 真实成功才构建；两步顺序执行，一步失败 job 即败、后续步骤跳过（等价原 fail-fast）
+      # TODO(iot-simulator): 第三镜像待 TASK.md D-3（实现语言与位置）裁决后在此追加同构构建步骤，禁改回 matrix（required check 名对齐）
+      - name: 构建镜像（backend）
+        if: needs.changes.outputs.backend == 'true' && needs.backend.result == 'success'
         uses: docker/build-push-action@v7
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
+          context: backend
+          file: backend/Dockerfile
           push: ${{ github.event_name == 'push' }}
           tags: |
-            ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}
-            ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ steps.branch.outputs.name }}-latest
+            ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/backend:${{ steps.branch.outputs.name }}-latest
           # GHA 内建缓存后端，scope 按镜像名隔离防互相踩缓存
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+      # web 镜像：仅 frontend 有变更且 frontend verify 真实成功才构建；纯前端 PR 不再因 backend 被跳过而失去 web 镜像验证
+      - name: 构建镜像（web）
+        if: needs.changes.outputs.frontend == 'true' && needs.frontend.result == 'success'
+        uses: docker/build-push-action@v7
+        with:
+          context: web
+          file: web/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/${{ github.repository }}/web:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/web:${{ steps.branch.outputs.name }}-latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
 
   # ===== 提交规范：conventional commits（push 查最近一条，PR 查 base..head 区间） =====
   commitlint:

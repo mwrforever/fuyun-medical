@@ -35,7 +35,8 @@
 
 | PR | 批次 | 状态 | 备注（专员 / 测试 / 审核结论） |
 | --- | --- | --- | --- |
-| PR-1 | B1.1 后端骨架：父 POM/插件管理、common/app、20 域占位 | pending | — |
-| PR-1 | B1.2 冒烟 IT + Dockerfile COPY 重写 | pending | — |
-| PR-1 | B1.3 deploy/ 全量 + .env.example + ci.yml 移除排除项 | pending | — |
-| PR-1 | B1.4 web monorepo + 三 app + shared/ui + 冒烟单测 | pending | — |
+| PR-1 | B1.1 后端骨架：父 POM/插件管理、common/app、20 域占位 | complete | 462 文件 3 提交；mvn test 10/10 绿+spotless 绿；审核 SPEC/QUALITY 双 PASS（3 Minor 非阻断） |
+| PR-1 | B1.2 冒烟 IT + Dockerfile COPY 重写 | complete | SmokeStackIT 3 断言 + verify 全绿 + 镜像构建成功；审核双 PASS（classifier=exec 与构造器 @Autowired 经实证必需） |
+| PR-1 | B1.3 deploy/ 全量 + .env.example + ci.yml 移除排除项 | complete | 五服务两次起停全 healthy+nginx -t 过；审核双 PASS（4 项申报偏差全部成立） |
+| PR-1 | B1.4 web monorepo + 三 app + shared/ui + 冒烟单测 | complete | 六门禁全绿+3 单测；审核双 PASS（1 Important 已修复 eabd153）；docker build 待 images job |
+| PR-1 | PR-1 收尾：compose 七服务全 healthy + 起停二次 + 全分支终审 | complete | 六服务两轮起停全 healthy（nginx 探针缺陷已修）；终审 FAIL→修复 C-1（reword 4 提交树一致）/I-1（vite base）/M-1/M-2 后达 PASS 条件；D-6（enum 保留字）已登记 TASK.md |

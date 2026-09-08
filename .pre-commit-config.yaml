@@ -5,6 +5,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-yaml
+        exclude: web/pnpm-lock.yaml  # pnpm lockfile 为多文档 YAML（--- 分隔），check-yaml 单文档断言必然误报
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: mixed-line-ending
