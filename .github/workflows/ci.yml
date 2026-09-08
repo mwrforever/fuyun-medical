@@ -37,9 +37,15 @@ jobs:
             backend:
               - 'backend/**'
               - '!backend/**/*.md'
+              # 骨架期排除：P0 工程骨架（父 POM）落地后移除，使 Dockerfile 变更恢复触发构建
+              - '!backend/Dockerfile'
+              - '!backend/.dockerignore'
             frontend:
               - 'web/**'
               - '!web/**/*.md'
+              # 骨架期排除：P0 工程骨架（package.json）落地后移除
+              - '!web/Dockerfile'
+              - '!web/.dockerignore'
 
   # ===== 后端全量门禁：Spotless 格式 + surefire 单测 + Testcontainers 集成测试 + JaCoCo 覆盖率门禁 =====
   backend:
