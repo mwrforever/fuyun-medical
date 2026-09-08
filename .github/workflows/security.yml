@@ -1,0 +1,33 @@
+# 后端依赖漏洞周审（方案 B 的后端依赖审计门禁）：OWASP dependency-check 独立定时 job，不进 PR 关键路径
+# 不进 PR 的原因：NVD 限流（匿名 5 请求/30 秒）与首跑需全量下载漏洞库耗时长，放 PR 会拖垮关键路径并产生不稳定红叉（细则 §1.7）
+name: security
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # 每周一 03:00 UTC（北京时间周一 11:00）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-check:
+    name: owasp-dependency-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: backend/**/pom.xml
+      # NVD_API_KEY 需在仓库 Secrets 配置（申请入口：https://nvd.nist.gov/developers/request-an-api-key ）
+      # 未配置该 secret 时以匿名模式限流运行，扫描会显著变慢——属预期情况，不影响流程语法
+      # failBuildOnCVSS=9：CVSS 9 分（HIGH 及以上）即构建失败，起步阈值，随运行收敛再调低（细则 §1.7）
+      - name: OWASP dependency-check 依赖漏洞审计
+        working-directory: backend
+        run: mvn -B -ntp org.owasp:dependency-check-maven:13.0.0:check -DnvdApiKey=${{ secrets.NVD_API_KEY }} -DfailBuildOnCVSS=9
+
+# TODO(security-phase2): 方案 C 二期在此扩展 CodeQL / Trivy / dependency-review（TASK.md D-5）

@@ -1,0 +1,33 @@
+# 文件级卫生 + workflow 语法校验；重型校验（mvn/pnpm）为 local 钩子、pre-push 阶段执行
+# 与 CI hygiene job 同配置同源（pre-commit run --all-files）：根 AGENTS.md §7、backend 与 web 宪法 C.5/C.6
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: ["--fix=lf"]           # 强制 LF（与 .gitattributes 双保险，编码红线之一）
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]       # 大文件误提交防护（全局规范禁止提交 >1MB 文件）
+      - id: check-merge-conflict
+      - id: check-case-conflict      # Windows 大小写冲突防护（本项目开发机为 Windows）
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint               # 校验 .github/workflows/*.yml 语法（CI 不单设 job，随本钩子兜底）
+  - repo: local
+    hooks:
+      - id: check-utf8-no-bom
+        name: 校验 UTF-8 无 BOM / 乱码 / CRLF（全局编码硬约束，脚本 scripts/check-encoding.py）
+        entry: python scripts/check-encoding.py
+        language: python
+        files: \.(java|xml|md|yml|yaml|ts|vue|json|sql|properties|conf)$
+      - id: backend-spotless-check
+        name: 后端格式校验（与 CI 同源命令）
+        entry: bash -c 'cd backend && mvn -B -q spotless:check'
+        language: system
+        files: \.java$
+        pass_filenames: false
+        stages: [pre-push]           # 重型校验放 pre-push，避免拖慢每次提交的本地体验

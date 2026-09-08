@@ -1,0 +1,11 @@
+# 构建上下文瘦身：防上下文膨胀、本地产物与文档误打入镜像（镜像内零密钥红线见技术栈报告 §6.5）
+target/
+**/target/
+.git/
+node_modules/
+**/node_modules/
+docs/
+*.iml
+.idea/
+.vscode/
+**/*.md

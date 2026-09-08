@@ -1,0 +1,197 @@
+# CI 主链（方案 B「严格门禁」）：changes 路径过滤 → backend / frontend / images / commitlint / hygiene 六 job
+# 门禁语义与 job 依赖图：根 AGENTS.md §7、docs/agmds-research/2026-09-08-构建测试与CI落地细则调研.md §3
+# 注意：各 job name（backend / verify 等）与 main 分支保护 required status checks 精确对齐，禁止改名
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 同一 PR 连推自动取消旧跑省 runner；main 上不取消（避免推送竞态丢构建）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# GITHUB_TOKEN 最小授权：其余写权限仅 images job 追加 packages: write（推 GHCR 所需）
+permissions:
+  contents: read
+
+jobs:
+  # ===== 路径过滤：骨架期仅文档（**/*.md）变更不触发构建，P0 代码落地后自然生效 =====
+  # 不用 workflow 级 paths 过滤：被路径过滤整体跳过的 workflow 其 required check 停留 Pending 阻塞合并；
+  # job 级条件跳过会上报 Success，满足 required check 语义（细则 §3.3）
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v3.0.2
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '!backend/**/*.md'
+            frontend:
+              - 'web/**'
+              - '!web/**/*.md'
+
+  # ===== 后端全量门禁：Spotless 格式 + surefire 单测 + Testcontainers 集成测试 + JaCoCo 覆盖率门禁 =====
+  backend:
+    name: backend / verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: backend/**/pom.xml
+      # 一条 verify 串联全部后端门禁（与本地交付前命令同源），任一环节失败即阻断合入
+      - name: 后端全量门禁（格式/单测/集成测试/覆盖率）
+        working-directory: backend
+        run: mvn -B -ntp verify
+
+  # ===== 前端全量门禁：ESLint 硬门禁 + Prettier + vue-tsc + Vitest + 三应用构建 + 高危依赖审计 =====
+  frontend:
+    name: frontend / verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      # 顺序不可颠倒：setup-node 的 pnpm 缓存要求 pnpm 已安装；版本经 web/package.json 的 packageManager 字段锁定
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      # frozen-lockfile 保证 CI 依赖与 pnpm-lock.yaml 严格一致，杜绝安装漂移
+      - name: 安装依赖
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: ESLint 校验（--max-warnings=0 硬门禁）
+        working-directory: web
+        run: pnpm lint
+      - name: Prettier 格式只读校验
+        working-directory: web
+        run: pnpm format:check
+      - name: vue-tsc 类型检查
+        working-directory: web
+        run: pnpm type-check
+      - name: Vitest 全量单测
+        working-directory: web
+        run: pnpm test
+      - name: 三应用构建
+        working-directory: web
+        run: pnpm build
+      - name: 依赖漏洞审计（high 及以上退出非零即阻断）
+        working-directory: web
+        run: pnpm audit
+
+  # ===== 镜像：PR 只验证可构建性；push main 登录 GHCR 推送（sha 不可变 tag + 分支-latest 可读 tag） =====
+  images:
+    name: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [changes, backend, frontend]
+    # always() 使路径过滤跳过（result 为 skipped）不连带本 job 被跳过；"谁变更构建谁"：
+    # 至少一侧 verify 真实成功且至少一侧路径有变更才起 matrix，单镜像是否构建由下方 step 级条件精确控制
+    if: always() && (needs.backend.result == 'success' || needs.frontend.result == 'success') && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # 一镜像失败即停后续，省时（matrix 默认行为，显式声明表意）
+      fail-fast: true
+      matrix:
+        include:
+          - name: backend
+            context: backend
+            dockerfile: backend/Dockerfile
+          - name: web
+            context: web
+            dockerfile: web/Dockerfile
+          # TODO(iot-simulator): 第三条 matrix 待 TASK.md D-3（实现语言与位置）裁决后追加
+    steps:
+      - uses: actions/checkout@v7
+      # Docker tag 仅允许 [a-zA-Z0-9._-]，分支名中其余字符（如 /）统一替换为 -
+      - name: 规范化分支名（作为分支-latest 类 tag 后缀）
+        id: branch
+        run: |
+          BRANCH="$(printf '%s' "${GITHUB_REF_NAME}" | sed 's/[^a-zA-Z0-9._-]/-/g')"
+          echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
+      - name: 登录 GHCR（仅 push main 时）
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 仅构建有变更且对应 verify 成功的镜像：纯前端 PR 不再因 backend 被跳过而失去 web 镜像验证
+      - name: 构建镜像
+        if: >-
+          (matrix.name == 'backend' && needs.changes.outputs.backend == 'true' && needs.backend.result == 'success') ||
+          (matrix.name == 'web' && needs.changes.outputs.frontend == 'true' && needs.frontend.result == 'success')
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ steps.branch.outputs.name }}-latest
+          # GHA 内建缓存后端，scope 按镜像名隔离防互相踩缓存
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+  # ===== 提交规范：conventional commits（push 查最近一条，PR 查 base..head 区间） =====
+  commitlint:
+    name: commitlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      # 全局安装方案：不在仓库根产生 package.json / node_modules / package-lock.json 残留
+      - name: 全局安装 commitlint（版本锁定）
+        run: npm install -g @commitlint/cli@21.2.2 @commitlint/config-conventional@21.2.2
+      - name: 校验提交信息（push 事件：最近一条）
+        if: github.event_name == 'push'
+        run: commitlint --last --verbose
+      - name: 校验提交信息（PR 事件：base..head 区间）
+        if: github.event_name == 'pull_request'
+        run: commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  # ===== 文件卫生兜底：与本地 pre-commit 钩子同配置同源（.pre-commit-config.yaml），含 actionlint workflow 语法校验 =====
+  hygiene:
+    name: hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: 安装 pre-commit（版本与本地锁定一致）
+        run: pip install pre-commit==4.6.2
+      # --all-files 不依赖提交者是否安装本地钩子，实现 CI 兜底
+      - name: 全量文件卫生校验
+        run: pre-commit run --all-files

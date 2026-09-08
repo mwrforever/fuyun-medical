@@ -10,6 +10,9 @@ out/
 *.iml
 .DS_Store
 Thumbs.db
+# 真实环境变量不入库（技术栈报告 §6.5 密钥红线）：仓库只提交 .env.example 模板
 .env
 .env.*
 !.env.example
+# vite 环境本地覆盖文件（.env.local / .env.*.local）同样不入库
+*.local

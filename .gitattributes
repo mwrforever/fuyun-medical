@@ -1,6 +1,18 @@
-# 统一行尾：文本文件入库 LF（全局规范要求），二进制按 git 判定
+# 统一行尾基线：文本文件入库与检出均 LF（根 AGENTS.md §7 编码红线；与 pre-commit 钩子 + CI hygiene 三层强制）
 * text=auto eol=lf
+# Windows 批处理脚本例外：cmd 解释器要求 CRLF，是 LF 基线下的唯一行尾例外
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# 二进制类型显式标记（binary 宏 = -text -diff -merge：禁止行尾转换，防镜像/附件被 Git 破坏）
 *.png binary
 *.jpg binary
+*.jpeg binary
+*.gif binary
 *.ico binary
 *.jar binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
