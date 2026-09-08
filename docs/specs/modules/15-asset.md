@@ -86,14 +86,14 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删；金额 NUMERIC(18,2) 单位元。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删；金额 BIGINT 分值制（单位分）。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
 | asset_supplier 供应商登记 | supplier_code、supplier_name、credit_code(统一社会信用代码)、联系人/电话、保修合同引用、状态 | 设备采购维度轻量登记；不做全院供应商主数据域 |
-| purchase_request 采购申请 | request_no、apply_dept、asset_class(设备类别)、name/规格建议、quantity、budget_amount(NUMERIC(18,2))、plan_flag(计划内/计划外)、demonstration_ref(可研/论证文件引用，50 万及以上必填)、committee_opinion(委员会意见引用)、procurement_mode(集中采购/公开招标/其他[报批依据])、contract_no、supplier_ref、deal_amount(NUMERIC(18,2))、status(见状态机) | 覆盖申请→论证→审批→采购结果登记（《办法》第三章计划与采购；1 万/5 万计划阈值与 50 万论证阈值走系统参数可配置） |
+| purchase_request 采购申请 | request_no、apply_dept、asset_class(设备类别)、name/规格建议、quantity、budget_amount(BIGINT，分)、plan_flag(计划内/计划外)、demonstration_ref(可研/论证文件引用，50 万及以上必填)、committee_opinion(委员会意见引用)、procurement_mode(集中采购/公开招标/其他[报批依据])、contract_no、supplier_ref、deal_amount(BIGINT，分)、status(见状态机) | 覆盖申请→论证→审批→采购结果登记（《办法》第三章计划与采购；1 万/5 万计划阈值与 50 万论证阈值走系统参数可配置） |
 | acceptance_record 验收单 | acceptance_no、request_ref、arrived_at、installed_at、acceptance_date、conclusion(合格/不合格[索赔])、signers(装备管理部门/使用部门/供货方三方签字引用)、claim_deadline(索赔期限)、report_ref(验收报告附件)、status | 三方验收+索赔期提醒（《办法》第二十四、二十五条） |
-| asset 资产台账 | asset_code(一物一码，全院唯一)、asset_name、asset_class(设备分类，模块专业字典：对齐全国卫生系统医疗器械仪器设备分类与代码)、brand/model、serial_no、origin(国产/进口)、registration_no(医疗器械注册证号)、config_permit_no(大型医用设备配置许可证号，可空)、udi_di(UDI-DI，可空)、risk_class(风险等级：生命支持/急救/植入/辐射/灭菌/大型/普通——对应《办法》第三十四条监控分类)、meter_attr(计量属性：强检/非强检强校准/免检)、supplier_ref、origin_type(采购/捐赠/调拨)、purchase_date、original_value(NUMERIC(18,2))、depreciation_method/dep_years/monthly_dep(NUMERIC(18,2))（折旧参数，供效益分析与财务对账）、using_dept、location、keeper(责任人)、iot_device_ref(M14 设备标识，可空)、metrology_flag(待检停用标记)、label_printed(标签打印状态)、status(见状态机) | 资产权威主数据；一物一码发号+二维码标签；资产侧对 M14 的唯一引用列 |
+| asset 资产台账 | asset_code(一物一码，全院唯一)、asset_name、asset_class(设备分类，模块专业字典：对齐全国卫生系统医疗器械仪器设备分类与代码)、brand/model、serial_no、origin(国产/进口)、registration_no(医疗器械注册证号)、config_permit_no(大型医用设备配置许可证号，可空)、udi_di(UDI-DI，可空)、risk_class(风险等级：生命支持/急救/植入/辐射/灭菌/大型/普通——对应《办法》第三十四条监控分类)、meter_attr(计量属性：强检/非强检强校准/免检)、supplier_ref、origin_type(采购/捐赠/调拨)、purchase_date、original_value(BIGINT，分)、depreciation_method/dep_years/monthly_dep(BIGINT，分)（折旧参数，供效益分析与财务对账）、using_dept、location、keeper(责任人)、iot_device_ref(M14 设备标识，可空)、metrology_flag(待检停用标记)、label_printed(标签打印状态)、status(见状态机) | 资产权威主数据；一物一码发号+二维码标签；资产侧对 M14 的唯一引用列 |
 | asset_transfer 领用转移借用单 | transfer_no、asset_id、transfer_type(领用/退库/院内转移/调拨/借用/归还)、from_dept/to_dept、from_keeper/to_keeper、reason、borrow_due_at(借用应还时间)、confirm_out/confirm_in(双方确认记录)、status(见状态机) | 领用/转移/借用/归还统一单据模型，双确认闭环；调拨对应《办法》处置方式之一 |
 | asset_inventory 盘点单 + asset_inventory_line 明细 | inventory_no、scope(全院/科室/类别)、planned_count/scanned_count/surplus_count/loss_count、line: asset_id、scan_result(正常/盘盈/盘亏/位置不符)、scan_by/scan_at、status(进行中/已关闭) | 扫码盘点；重复扫码幂等；盘盈补建档、盘亏走差异处理审批 |
 | asset_lifecycle_log 全生命周期流水 | asset_id、action_type(建档/验收/领用/转移/借用/归还/维修/保养/检定/停用/启用/调剂/盘点差异/报废申请/报废处置等)、action_at、operator、biz_ref(关联单据号)、digest(摘要) | 只增表；设备履历完整审计链，报废鉴定取证依据 |
@@ -102,11 +102,11 @@
 | metrology_record 检定记录 | record_no、plan_ref、asset_id、metrology_org(检定机构)、result(合格/不合格)、certificate_no(证书/通知书编号)、certificate_ref(证书附件引用)、valid_from/valid_to(有效期)、executor、recorded_at | 检定证书/结果通知书登记（调研依据 2/3）；不合格自动置资产待检停用并生成整改计划 |
 | pm_rule 保养规则 + inspection_template 巡检模板 | pm_rule: rule_code、scope_type/scope_ref、period_type(时间周期/使用量周期)、period_value、template_ref、responsible_post、enabled；template: template_code、template_name、asset_class、items(巡检项集：项目/方法/合格标准[JSONB]) | PM 规则与巡检模板分离，模板按设备类别复用；生命支持/急救类默认高频周期（参数可配，调研依据 4） |
 | pm_plan 保养计划 / pm_record 保养记录 | plan 同 metrology_plan 结构；record: record_no、plan_ref、asset_id、executed_at、executor、item_results(逐项结果：合格/异常/不适用+数值)、abnormal_digest(异常摘要)、repair_ref(异常转报修单引用)、duration_min | 执行逐项打卡；异常发现一键转报修（repair_order.source=PM 巡检） |
-| repair_order 维修工单 | order_no、asset_id、source(扫码报修/工作台报修/PM 巡检转单/IoT 状态提示人工确认)、reporter、fault_desc、fault_class(故障分类，模块字典)、urgency(普通/紧急/急救类高优先)、acceptor/repairer、repair_mode(自修/外修)、external_info(送修日期/返回日期/维修商/保修标识)、downtime_from(故障停用时间，受理核定)、downtime_to(验收通过时刻)、downtime_segments(分段累计，验收退回产生多段)、parts_used(配件记录：名称/数量/费用)、labor_cost/external_cost/parts_cost/total_cost(NUMERIC(18,2))、cause/measure(故障原因/处理措施，结构化)、acceptance(验收人/结论/时间)、status(见状态机) | 方案 3.3 全套；费用挂单归集；保修期内设备报修自动提示保修合同状态 |
+| repair_order 维修工单 | order_no、asset_id、source(扫码报修/工作台报修/PM 巡检转单/IoT 状态提示人工确认)、reporter、fault_desc、fault_class(故障分类，模块字典)、urgency(普通/紧急/急救类高优先)、acceptor/repairer、repair_mode(自修/外修)、external_info(送修日期/返回日期/维修商/保修标识)、downtime_from(故障停用时间，受理核定)、downtime_to(验收通过时刻)、downtime_segments(分段累计，验收退回产生多段)、parts_used(配件记录：名称/数量/费用)、labor_cost/external_cost/parts_cost/total_cost(BIGINT，分)、cause/measure(故障原因/处理措施，结构化)、acceptance(验收人/结论/时间)、status(见状态机) | 方案 3.3 全套；费用挂单归集；保修期内设备报修自动提示保修合同状态 |
 | usage_log 设备使用登记 | log_id、asset_id、using_dept、log_type(开机/使用/归还)、logged_at、operator、eligibility_result(校验结果：通过/拦截原因) | 非 IoT 设备人工口径数据源 + 强检拦截点（方案 3.2） |
 | device_usage_stat 利用率日统计（缓存） | asset_id、stat_date、source(IOT/IOT+MANUAL/MANUAL)、powered_days_flag(当日开机标记)、usage_minutes(使用时长)、expected_minutes(额定机时)、upstream_ref(M14 统计批次引用) | M14 `GET /quality/device-usage` 日终拉取缓存 + usage_log 聚合合并；M14 不可用时人工口径降级标记 |
 | asset_charge_mapping 设备收费项目关联 | asset_id、charge_item_ref(M13 收费项目标识)、attribution_type(单机专属/科室分摊)、share_rule(分摊规则：按机台均摊/按工作量权重)、effective_from/to、maintained_by | 收入归集映射权威（方案 3.4）；设备科与物价员协同维护，M13 不感知 |
-| device_benefit_stat 效益分析日表 | stat_date、dim_type(单机/科室/全院)、dim_ref、revenue(NUMERIC(18,2)，M13 快照)、workload(工作量)、powered_rate(开机率)、usage_rate(使用率)、fault_downtime_min(故障停机)、plan_downtime_min(计划停机)、dep_amount(折旧)、repair_cost、pm_metrology_cost、net_amount、source_versions(各数据源取数版本/批次引用)、rebuild_at | 装配宽表，T+1 日终批产、可重算（覆盖并保留版本）；月/年为日表聚合视图 |
+| device_benefit_stat 效益分析日表 | stat_date、dim_type(单机/科室/全院)、dim_ref、revenue(BIGINT 分值制，M13 快照)、workload(工作量)、powered_rate(开机率)、usage_rate(使用率)、fault_downtime_min(故障停机)、plan_downtime_min(计划停机)、dep_amount(折旧)、repair_cost、pm_metrology_cost、net_amount、source_versions(各数据源取数版本/批次引用)、rebuild_at | 装配宽表，T+1 日终批产、可重算（覆盖并保留版本）；月/年为日表聚合视图 |
 | adverse_event_md 医疗器械不良事件 | event_no、asset_id(器械引用，可关联未建档器械的 UDI/批号)、udi_pi(生产标识记录)、happen_at、aware_at(发现/获知时间)、event_desc、harm_level(死亡/严重伤害/可能严重伤害或死亡/其他)、patient_ref(patient_id，可空——造成患者伤害时)、device_action(停用/封存/移交持有人/继续使用)、group_flag(是否群体事件)、deadline_at(法定上报截止时刻，按 harm_level 计算)、report_status(见状态机)、report_receipt_ref(国家系统上报凭证引用)、investigation(调查/自查记录)、follow_ups | 可疑即报；《办法》时限硬监控（方案见 FU-M15-06）；患者字段对齐 M02 脱敏规则 |
 | asset_document 档案文档 | asset_id、doc_class(申购资料/技术资料/使用维修资料/验收报告/采购合同/注册证/计量证书/合格标识照片/处置批复)、file_ref(对象存储引用)、version、uploaded_by/at | 《办法》第三十二条三类资料+扩展类目；5 万元以上资产档案完整性强校验；保管至报废后转归档 |
 
@@ -162,7 +162,7 @@
 
 **MQ 事件（`fy.topic` 发布，信封 eventId/occurredAt/producer 遵循 README/M20 约定，先登记 event_registry）**：
 - 发布：`asset.asset.created`（建档，载荷含 asset_id/asset_code/iot_device_ref/使用科室——M14 引用建立依据）、`asset.asset.changed`（关键信息/状态/位置/责任人变更——M16/M10/M07/M08 缓存刷新）、`asset.asset.scrapped`（报废终态——M14 停用设备、M16 解除引用依据）、`asset.repair.created`（报修工单创建——M16 冷链设备关联、M14 可用性参考）、`asset.repair.closed`（维修闭环，载荷含停机起止/费用/故障分类——效益装配与 M19）、`asset.metrology.overdue`（强检逾期——可用性拦截依据，M14/M07/M08 订阅展示合规标识）、`asset.pm.overdue`（保养逾期——质控提醒）、`asset.adverse-event.reported`（不良事件上报完成——M19 统计与医务通知）
-- 订阅（队列命名 `q.asset.<事件名>`，一律手动确认 + `integration.received_event` 幂等）：`system.dict.published` / `system.org.changed` / `system.user.changed` / `system.param.changed`（M01 主数据：字典/组织/人员/参数缓存刷新）；`iot.device.status-changed`（M14：设备长期离线/异常置"疑似故障"提示于设备科工作台，人工确认后转报修——不自动建单，防误报）；`ward.cold-chain.alert-archived`（M16：冷链告警处置归档作为设备可靠性记录参考与 PM 规则调优输入，事件名以 M16 Spec 登记为准）；`patient.merged`（不良事件患者引用经 EMPI 归一刷新；成对订阅 `patient.split`——拆分逆映射恢复，M02 成对语义）。**明确不订阅 `billing.*`**：效益收入取数走 M13 只读 API 日终拉取（方案 3.4 结论）。
+- 订阅（队列命名 `q.asset.<事件名>`，一律 @RabbitListener + 容器 AUTO 确认 + `integration.received_event` 幂等）：`system.dict.published` / `system.org.changed` / `system.user.changed` / `system.param.changed`（M01 主数据：字典/组织/人员/参数缓存刷新）；`iot.device.status-changed`（M14：设备长期离线/异常置"疑似故障"提示于设备科工作台，人工确认后转报修——不自动建单，防误报）；`ward.cold-chain.alert-archived`（M16：冷链告警处置归档作为设备可靠性记录参考与 PM 规则调优输入，事件名以 M16 Spec 登记为准）；`patient.merged`（不良事件患者引用经 EMPI 归一刷新；成对订阅 `patient.split`——拆分逆映射恢复，M02 成对语义）。**明确不订阅 `billing.*`**：效益收入取数走 M13 只读 API 日终拉取（方案 3.4 结论）。
 
 **延迟队列（`fy.delay`，队列名 `delay.<业务>`）**：`delay.metrology-remind`（检定分级提醒与逾期升级）、`delay.pm-remind`（保养提醒）、`delay.repair-reminder`（待验收超时催办）、`delay.transfer-overdue`（借用超期）、`delay.adverse-event-deadline`（上报时限监控）、`delay.claim-deadline`（验收索赔期提醒）。
 
@@ -203,7 +203,7 @@
 - [x] 符合跨模块约定：schema=asset；事件命名 `<模块>.<实体>.<动作>` 且信封含 eventId/occurredAt/producer；消费幂等统一落 integration.received_event；交换机只用 fy.topic/fy.dlx/fy.delay 三件套，延迟队列按 `delay.<业务>` 命名；患者关联引用 patient_id（不良事件可空引用）；无跨模块读表（收入/利用率/工作量/使用事实均经 API）
 - [x] 依赖方向正确：依赖 M01/M02/M07/M08/M10/M13/M14/M16/M20 对外接口；被依赖清单与 M14（"M15（设备利用率与效益分析）"被依赖声明）、M16（"冷链/定位设备的资产号引用"）、M10（"M15（手术设备使用事实输出）"）、M07/M08（资产引用与统计 API 供 M15）的 Spec 声明互相对齐；无反向依赖
 - [x] 方案推导 4 个关键点均有备选对比与依据，含任务要求的三个必选点（资产与 IoT 设备双实体关系、计量/保养周期调度、维修工单与停机统计），每个结论附调研来源
-- [x] 无代码级实现（无类名/方法体/SQL DDL 全文；表设计为"表-关键字段-约束"粒度；JSONB/NUMERIC(18,2) 为 README 规定的字段规格说明）
+- [x] 无代码级实现（无类名/方法体/SQL DDL 全文；表设计为"表-关键字段-约束"粒度；JSONB/BIGINT 分值制为 README 规定的字段规格说明）
 - [x] 歧义消除：双实体互引的权威方向与同步机制、互引列可空语义、停机起止核定与分段累计口径、故障停机与计划停机双记、收入归集映射（单机专属/科室分摊）、双口径利用率标注、强检逾期三层拦截、时限计算规则（按伤害程度）均已显式定义
 - [x] 术语与总 Spec 一致（医学装备/一物一码/计量检定/强检/预防性维护/巡检/报修工单/停机损失/效益分析/开机率/不良事件/报废处置）
 

@@ -89,7 +89,7 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段、TIMESTAMPTZ 服务器时间、逻辑删、金额 NUMERIC(18,2)、状态字段 VARCHAR 常量 + 迁移日志。单据号为本模块签发的结构化业务号（前缀 + 日期 + 流水）。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段、TIMESTAMPTZ 服务器时间、逻辑删、金额 BIGINT（分值制）、状态字段 VARCHAR 常量 + 迁移日志。单据号为本模块签发的结构化业务号（前缀 + 日期 + 流水）。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
@@ -97,7 +97,7 @@
 | consult_message 会话消息 | consult_id、sender_role（PATIENT/DOCTOR/SYSTEM）、sender_ref、message_type（TEXT/IMAGE/VIDEO_INVITE/VIDEO_SEGMENT/SIGNAL 信令/PRESCRIPTION_REF 处方引用/SYSTEM）、content、附件引用、media_duration、occurred_at（服务器时间）、revoked_flag（撤回标记，原内容保留）、read_at | 只增表；图文对话与音视频信令留痕载体（≥3 年）；撤回仅置标记不删除 |
 | recheck_record 复诊资格校验记录 | patient_id、dept_id、diagnosis_ref（申请诊断，M01 字典 code）、basis_type（本院就诊史/外院资料）、basis_ref（本院 visit/处方引用或上传资料件引用）、precheck_result（系统预检：通过/不通过+命中依据：就诊史/处方存量校验明细）、rx_stock_check（3 个月内处方存量校验结果快照）、doctor_id（判定医师）、doctor_judgment（人工判定结论+理由，法定终审留痕）、judged_at、status | 复诊合规链的核心留痕；判定结论是会话建立的前置条件 |
 | online_prescription_ref 处方流转单 | flow_no、rx_no（M06 处方引用，不复制明细）、patient_id、visit_id、flow_target（HOSPITAL 院内取药/HOSPITAL_EXPRESS 院内邮寄/PHARMACY 定点药店自取/PLATFORM 流转平台配送到家）、target_org（药店/平台引用）、flow_channel（M20 通道引用）、prescription_digest（处方摘要与 CA 签名验签标记，用于外发完整性）、receipt_ref（目标方受理回执）、paid_flag（放行缴费标记：院内场景）、fail_reason、status | 流转域单据；外配场景院内药费作废规则见方案 3.3 |
-| delivery_order 配送单 | delivery_no、flow_no（流转单引用）、rx_no、patient_id、consignee_name/consignee_phone（加密存储，展示脱敏）、address（加密）、courier_org（第三方配送商）、courier_no（运单号）、freight（运费 NUMERIC(18,2)）、shipped_at/signed_at、fail_reason、status | 院内邮寄与平台到家场景承运跟踪；运费经 M13 收取 |
+| delivery_order 配送单 | delivery_no、flow_no（流转单引用）、rx_no、patient_id、consignee_name/consignee_phone（加密存储，展示脱敏）、address（加密）、courier_org（第三方配送商）、courier_no（运单号）、freight（运费 BIGINT，分）、shipped_at/signed_at、fail_reason、status | 院内邮寄与平台到家场景承运跟踪；运费经 M13 收取 |
 | online_payment_ref 线上支付引用 | pay_ref_no、patient_id、visit_id、biz_type（REG_FEE 挂号费/CONSULT_FEE 诊查费/DRUG_FEE 药费/ORDER_FEE 检查检验费）、biz_ref（处方号/申请单号/预约单号）、settle_no（M13 结算单引用）、pay_channel（INSURANCE_ONLINE 医保线上支付/SELF_PAY 自费聚合支付）、amount、pay_deadline、status | 零资金逻辑引用表；终态以 M13 回执为权威 |
 | regulatory_report_log 监管上报日志 | report_no、report_type（按细则第二十五条数据集：机构资质/人员资质/诊疗科目病种/电子病历/电子处方/用药情况/满意度评价/患者投诉/不良事件）、report_period、dataset_version、biz_ref（会话/流转单等业务单据引用集）、push_task_ref（M20 上报任务引用）、receipt_digest（回执摘要）、result、status | 业务级留痕（数据集↔业务单据↔回执），与 M20 push_task（传输级）两级分工，对齐 M13 insurance_call_log 先例 |
 | online_duty_record 医生接诊值班 | doctor_id、dept_id、duty_date、session（时段）、capacity（接诊上限）、used_count、online_status（上线/暂停/离线）、declared_scope（申报执业范围，执业注册备案留痕，细则第十六条） | 快速图文模式的接诊容量与在线状态权威；预约式容量由 M03 互联网号别号源池承载 |
@@ -199,7 +199,7 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节）
 - [x] 覆盖 FU-M18-01~06 全部条目，无遗漏、无私增（投诉反馈/满意度评价/公示页为 FU-M18-01"患者端服务"与监管细则合规要求的细化；复诊资格校验为 FU-M18-02"复诊续方合规控制"的落地实体，非新功能点）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（online_consultation/online_prescription_ref/delivery_order/online_payment_ref/recheck_record/regulatory_report_log 六个状态机均有对应接口、流程与测试项；consult_message/online_duty_record 有操作路径与测试场景）
-- [x] 符合跨模块约定：schema=internet；主键 BIGINT 雪花；金额 NUMERIC(18,2) 且本模块零资金动作（收付在 M13）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等、队列 `q.internet.<事件>`、延迟队列 `delay.<业务>`；REST 路径 `/api/v1/internet/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；patient_id+visit_id 关联约定落实（visit 引用 M03，不自建）
+- [x] 符合跨模块约定：schema=internet；主键 BIGINT 雪花；金额 BIGINT（分值制） 且本模块零资金动作（收付在 M13）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等、队列 `q.internet.<事件>`、延迟队列 `delay.<业务>`；REST 路径 `/api/v1/internet/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；patient_id+visit_id 关联约定落实（visit 引用 M03，不自建）
 - [x] 依赖方向正确：依赖 M01/M02/M03/M06/M07/M08/M09/M13/M20 的对外接口与事件；无反向依赖（M19 取数为被动声明；外部对端一律经 M20）；无跨模块读表（处方/病历/费用/就诊史均经 API 与事件）
 - [x] 方案推导 5 个关键点均有备选对比与依据，含任务要求的三个必选点（3.1 线上就诊与院内 visit 关系及 M03 契约、3.2 复诊合规控制链、3.3 处方流转架构），3.4 覆盖视频媒体服务边界、3.5 覆盖线上医保结算路径，每个结论附调研来源
 - [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；WebRTC/SFU/CA/HIS 为技术名词，非代码实现）

@@ -112,7 +112,7 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、金额 NUMERIC(18,2)、状态字段 VARCHAR 常量+迁移日志。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、金额 BIGINT（分值制）、状态字段 VARCHAR 常量+迁移日志。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |

@@ -71,19 +71,19 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、状态字段 VARCHAR 常量+迁移日志；金额类度量 NUMERIC(18,2) 单位元，指标值 NUMERIC(18,4)（比率类精度）。本模块无患者级表（红线 5）。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、状态字段 VARCHAR 常量+迁移日志；金额类度量 BIGINT 分值制（单位分），指标值 NUMERIC(18,4)（比率类精度）。本模块无患者级表（红线 5）。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
 | indicator_definition 指标定义 | indicator_code（唯一）、indicator_name、indicator_type(ATOMIC 原子/DERIVED 派生)、calc_caliber（计算口径：分子/分母/筛选条件/精度与舍入规则的结构化描述）、dimension_set（可用维度：时间/科室/病区/院区/险别…）、period_type(日/月/季/年)、data_sources（源模块×统计 API/事件引用清单）、standard_refs（对标条目引用：国考指标号/评级条目/上报表项/核心制度监测条目）、caliber_version、release_flag（对外发布口径标记）、owner_module（责任模块）、owner_role（口径责任岗位）、status(DRAFT/PUBLISHED/DISCONTINUED) | 指标口径唯一权威（红线 3）；原子/派生两层+多口径显式建档（方案 3.2） |
 | indicator_alert_rule 指标预警规则 | rule_id、indicator_ref、scope(全院/科室集)、compare_op、threshold_value、direction(高于/低于预警)、level(提醒/警告)、notify_target、enabled | 快照就绪后评估；命中发布 `ops.indicator.alerted` 并经 M01 通知 |
-| ops_daily_fact 日事实宽表 | stat_date、dept_id/ward_id/campus(维度列)、原子度量列集（门诊人次/急诊人次/入院人次/出院人次/占用床日/开放床日/手术台次/各项收入分子分母[NUMERIC(18,2)]/药品·耗材收入分子等）、batch_no | 装配中间层：源模块统计 API 取数落表，指标从原子度量派生，避免逐指标重复取数；(stat_date, 维度, batch_no) 覆盖式重算幂等 |
+| ops_daily_fact 日事实宽表 | stat_date、dept_id/ward_id/campus(维度列)、原子度量列集（门诊人次/急诊人次/入院人次/出院人次/占用床日/开放床日/手术台次/各项收入分子分母[BIGINT，分]/药品·耗材收入分子等）、batch_no | 装配中间层：源模块统计 API 取数落表，指标从原子度量派生，避免逐指标重复取数；(stat_date, 维度, batch_no) 覆盖式重算幂等 |
 | indicator_snapshot 指标快照 | snapshot_id、indicator_ref、caliber_version、stat_period(周期起止)、dimension_value(维度组合)、value(NUMERIC(18,4))、numerator_value/denominator_value(分子分母值，审计可溯)、source_versions(各数据源取数批次引用)、version_no、status(见第 6 节)、computed_at、frozen_at | 指标结果的唯一对外读数；被上报任务引用即 FROZEN；月/季/年快照由日快照聚合+源模块周期 API 合成 |
 | report_template 报表模板 | template_code、template_name、template_type(固定报表/上报表式)、行列定义(指标 code×维度×汇总规则)、筛选参数、输出格式(表格/图表/Excel/PDF)、版式引用(M01 打印模板)、status | 综合报表与上报表式统一定义面；上报表式按卫健统/NICS 表样配置，版本化发布 |
 | report_instance 报表实例 | instance_no、template_ref、stat_period、params_digest(筛选参数快照)、指标快照引用集、file_ref(导出文件对象存储引用)、generated_by/at | 生成/导出留痕；同参数重复生成幂等 |
 | dashboard_config 驾驶舱配置 | dashboard_code、view_type(OPERATION 运营/QUALITY 质量/EQUIPMENT 设备)、audience_roles、component_list(组件×指标引用×图表类型×数据源[快照/角标]×刷新策略)、layout(布局定义)、bind_terminal(web-bigscreen 大屏/web-workstation 管理端)、status | 三视图独立配置；组件必须引用已发布指标（红线 3） |
 | report_task 上报任务 | task_no、report_type(卫生统计月报/卫生统计年报/NCIS 医疗质量抽样调查/其他监管平台预留)、report_period、dataset_code、template_ref(上报表式)、payload_snapshot_ref(上报数据集快照)、check_result(三级勾稽校验结果明细)、push_task_refs(关联 M20 传输任务集，1:N)、receipt_ref(回执/退回通知原文引用)、return_reason、submitted_by/at、resubmit_version、status(见第 6 节) | 上报业务主体；传输尝试经 M20 push_task 承载，本表管业务生命周期与版本 |
-| performance_stat 绩效统计 | stat_period(月)、dim_type(科室/医疗组/医生)、dim_ref、workload_set(门诊人次/出院人次/手术台次/医嘱执行量/护理工作量/检验检查工作量等)、revenue_contribution(NUMERIC(18,2)，M13 取数快照)、quality_ref(质量指标引用集，参考列)、export_format_ref(绩效系统数据集格式)、export_ref、version_no、status | 只输出统计口径数据集，不做绩效分配核算（外部绩效系统职责） |
+| performance_stat 绩效统计 | stat_period(月)、dim_type(科室/医疗组/医生)、dim_ref、workload_set(门诊人次/出院人次/手术台次/医嘱执行量/护理工作量/检验检查工作量等)、revenue_contribution(BIGINT 分值制，M13 取数快照)、quality_ref(质量指标引用集，参考列)、export_format_ref(绩效系统数据集格式)、export_ref、version_no、status | 只输出统计口径数据集，不做绩效分配核算（外部绩效系统职责） |
 | source_pull_log 数据源拉取日志 | source_module、api_ref、biz_date、batch_no、result(成功/部分失败/失败)、record_count、fail_detail、pulled_at | 装配可解释性：任一快照的取数批次可回溯；源失败降级出表并标记缺口（对齐 M15 同款策略） |
 
 关系要点：indicator_definition 1:N indicator_snapshot / indicator_alert_rule；ops_daily_fact（装配批次）→ indicator_snapshot 派生引用；report_template 1:N report_instance / report_task；report_task 1:N push_task（M20）；dashboard_config N:M indicator_definition（组件引用）；performance_stat 以 (stat_period, dim_type, dim_ref) 唯一。
@@ -180,7 +180,7 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节）
 - [x] 覆盖 FU-M19-01~05 全部条目，无遗漏、无私增（综合报表/管理驾驶舱/医疗质量指标/统计上报/绩效统计逐项细化；指标字典与装配链为五条目的公共底座细化，非新增 FU 条目；优先级沿用总 Spec P2）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（report_task/indicator_snapshot/report_template/dashboard_config/performance_stat 五个状态机均有对应接口、流程与测试项；ops_daily_fact/source_pull_log/alert_rule 有装配与查询接口及测试场景）
-- [x] 符合跨模块约定：schema=ops；主键 BIGINT 雪花；金额 NUMERIC(18,2)、指标值 NUMERIC(18,4) 为字段规格说明；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等、队列 `q.ops.<事件>`；REST 路径 `/api/v1/ops/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；无患者级数据（patient_id/visit_id 不落本模块，明细钻取调源模块）；无跨模块读表
+- [x] 符合跨模块约定：schema=ops；主键 BIGINT 雪花；金额 BIGINT 分值制、指标值 NUMERIC(18,4) 为字段规格说明；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等、队列 `q.ops.<事件>`；REST 路径 `/api/v1/ops/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；无患者级数据（patient_id/visit_id 不落本模块，明细钻取调源模块）；无跨模块读表
 - [x] 依赖方向正确：仅依赖 M01/M03/M04/M05/M07/M08/M09/M10/M13/M15/M20 对外接口与事件（M08/M10 为 M-21 裁决补登的统计 API 取数依赖，正文 FU-M19-05/§5 时序 3 原已引用；M16/M17/M18 为 P6 启用接口位，见偏差 5）；对全模块零写接口、无反向依赖；被依赖面（web-bigscreen/web-workstation 前端、外部绩效系统经导出）不构成模块级反向依赖
 - [x] 方案推导 4 个关键点均有备选对比与依据，含任务要求的三个必选点（3.1 指标数据架构、3.2 指标口径管理、3.3 上报数据链），另含 3.4 大屏刷新架构；每个结论附调研来源或上游已定稿 Spec 先例（M15 T+1、M05 双端点、M13 接口位）
 - [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；ODS/宽表/原子·派生指标为数仓概念非代码）

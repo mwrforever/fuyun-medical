@@ -98,7 +98,7 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、金额 NUMERIC(18,2)、状态字段 VARCHAR 常量 + 迁移日志。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、金额 BIGINT（分值制）、状态字段 VARCHAR 常量 + 迁移日志。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
@@ -239,7 +239,7 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节）
 - [x] 覆盖 FU-M06-01~10 全部条目，无遗漏、无私增（FU-M06-01/04 按 P0* 随门诊先行定位细化；自动发药机/摆药机对接、冷链批次冻结、M18 处方流转均以"预留接口位"表述不提前实现；处方点评、处方黑名单、静默运行期等均为 FU-M06-07/08 条目"规则引擎/审方工作台/合理用药监测"的业务细化，非新功能点）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（prescription/review_task/dispense/transfer_order/stocktake/毒麻差异调查单/antibio_approval/adr_report 八个状态机均有对应接口、流程与测试项；drug/drug_batch/stock_ledger/narcotic_register 有查询与操作接口及对账测试场景）
-- [x] 符合跨模块约定：schema=pharmacy；主键 BIGINT 雪花；金额 NUMERIC(18,2) 且本模块无资金动作（计费/退费在 M13）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等；REST 路径 `/api/v1/pharmacy/`；字典只存 M01 code 引用（药品国家医保编码对照为药品业务主数据，权威在本模块，已与 M13 Spec 相互印证）；状态字段 VARCHAR 常量 + 迁移日志；patient_id/visit_id 关联约定落实
+- [x] 符合跨模块约定：schema=pharmacy；主键 BIGINT 雪花；金额 BIGINT（分值制） 且本模块无资金动作（计费/退费在 M13）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等；REST 路径 `/api/v1/pharmacy/`；字典只存 M01 code 引用（药品国家医保编码对照为药品业务主数据，权威在本模块，已与 M13 Spec 相互印证）；状态字段 VARCHAR 常量 + 迁移日志；patient_id/visit_id 关联约定落实
 - [x] 依赖方向正确：依赖 M01/M02/M03/M04/M13/M20 的对外接口与事件；无反向依赖（M05/M09/M19/M10 对本模块为 API 拉取或事件订阅的被动声明）；无跨模块读表（执业授权调 API、过敏史经 API+事件缓存、医嘱经引用表、价格经 item_code 引用）
 - [x] 方案推导 5 个关键点均有备选对比与依据，含任务要求的四个必选点（3.1 处方主数据归属与门诊/住院统一模型含调用时序、3.2 审方引擎架构、3.3 毒麻精放闭环、3.4 库存账物模型），3.5 覆盖计费衔接与退药退费时序，每个结论附调研来源
 - [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；PASS/DDD/AUD/CHPS 为行业术语与产品名，非代码实现）

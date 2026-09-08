@@ -90,17 +90,17 @@
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
 | charge_item 收费项目 | item_code、item_name、item_class(药品/西药/中药/诊疗/耗材/床位/护理/其他)、unit(计价单位)、exec_dept_id(执行科室)、price_flag(可单独收费/仅组合内)、combo_flag(组合项目)、清单费用大类、状态 | 物价项目库权威源；药品/耗材收费项的业务属性引用 M06 主数据，仅存 item_code 级关联，不复制药品字典 |
-| charge_item_price 价格版本 | charge_item_id、price(NUMERIC(18,2))、version、effective_from/effective_to、price_source(物价批文/协议价)、批文号 | 同一项目多版本，区间不重叠约束；调价草稿→定时生效，发事件广播 |
+| charge_item_price 价格版本 | charge_item_id、price(BIGINT，分)、version、effective_from/effective_to、price_source(物价批文/协议价)、批文号 | 同一项目多版本，区间不重叠约束；调价草稿→定时生效，发事件广播 |
 | charge_item_component 组合构成 | combo_item_id、component_item_id、默认数量 | 组合项目划价时展开为成员明细，逐成员计价与对照医保 |
 | insurance_mapping 医保对照 | charge_item_id、map_type(诊疗项目/药品/耗材)、nhsa_code(国家 22 项编码)、目录版本、先自付比例、限价、医保支付属性(甲/乙/丙/自费)、对照状态、校验回执 | 贯标核心表；未对照或对照失效项目不允许参与医保结算（仅可自费并显式提示） |
 | pricing_rule 计价规则 | rule_code、trigger_type(order_confirmed 医嘱审核/prescription_effective 处方生效/executed 执行回签/registered 登记/scanned 扫码/duration 时长分解/manual 手工)、charge_item 集合、频次分解规则、计费唯一键构成、启停 | 计价引擎的配置面；规则变更全量审计；体检来源"仅回写执行占用、不生成费用行"以规则配置表达——trigger_type=executed 的规则排除 charge_source=体检类目（否决运行时豁免分支） |
-| fee_record 费用明细 | fee_no、patient_id、visit_id、visit_type(门诊/住院/体检——体检为 P6 预留取值)、charge_item_id、item_name_snapshot、unit_price_snapshot(单价快照 NUMERIC(18,2))、quantity、amount、清单费用大类、charge_source(医嘱联动/执行联动/日切分解/手工/体检——体检为 P6 预留取值)、source_ref(来源单据引用：医嘱/执行单/申请单/操作者/peis_checkin_no)、insurance_mapping_snapshot(对照编码/目录版本/先自付比例/限价快照)、settlement_id、执行占用标记(已发药/已执行/已上机)、status、charged_at | 全模块核心表；金额=服务端按快照计算；计费唯一键唯一约束防重；原明细只读，退费以关联负向记录表达 |
-| refund_fee_link 退费费用关联 | refund_id、fee_id、refund_quantity、refund_amount(NUMERIC(18,2)) | 退费申请与费用明细多对多，支持部分退 |
+| fee_record 费用明细 | fee_no、patient_id、visit_id、visit_type(门诊/住院/体检——体检为 P6 预留取值)、charge_item_id、item_name_snapshot、unit_price_snapshot(单价快照 BIGINT，分)、quantity、amount、清单费用大类、charge_source(医嘱联动/执行联动/日切分解/手工/体检——体检为 P6 预留取值)、source_ref(来源单据引用：医嘱/执行单/申请单/操作者/peis_checkin_no)、insurance_mapping_snapshot(对照编码/目录版本/先自付比例/限价快照)、settlement_id、执行占用标记(已发药/已执行/已上机)、status、charged_at | 全模块核心表；金额=服务端按快照计算；计费唯一键唯一约束防重；原明细只读，退费以关联负向记录表达 |
+| refund_fee_link 退费费用关联 | refund_id、fee_id、refund_quantity、refund_amount(BIGINT，分) | 退费申请与费用明细多对多，支持部分退 |
 | refund_request 退费申请 | refund_no、settlement_id、patient_id、visit_id、reason、refund_type(当日更正/跨日退费/已结算退费)、amount、审批链引用、payment_refund_ref(原路退回流水)、status | 审批分级按规则引擎取系统参数阈值 |
-| arrears_approval 出院挂账审批 | approval_no、patient_id、visit_id(住院)、arrears_amount(挂账金额 NUMERIC(18,2))、reason、applicant(病区/主管医师)、approver、approved_at、status(DRAFT/PENDING_APPROVAL/APPROVED/REJECTED) | 出院未结清挂账的审批载体（M04 工作站发起申请）；审批通过发布 `billing.arrears.approved`，驱动 M04 出院放行校验 BLOCKED→READY |
-| deposit_account 预交金账户 | patient_id、visit_id(住院)、balance(NUMERIC(18,2))、warning_threshold、status | 一人一住院账户；门诊预交金按国家政策取消，不设门诊账户 |
+| arrears_approval 出院挂账审批 | approval_no、patient_id、visit_id(住院)、arrears_amount(挂账金额 BIGINT，分)、reason、applicant(病区/主管医师)、approver、approved_at、status(DRAFT/PENDING_APPROVAL/APPROVED/REJECTED) | 出院未结清挂账的审批载体（M04 工作站发起申请）；审批通过发布 `billing.arrears.approved`，驱动 M04 出院放行校验 BLOCKED→READY |
+| deposit_account 预交金账户 | patient_id、visit_id(住院)、balance(BIGINT，分)、warning_threshold、status | 一人一住院账户；门诊预交金按国家政策取消，不设门诊账户 |
 | deposit_txn 预交金流水 | account_id、txn_type(缴入/退回/结算抵扣)、amount、payment_method、渠道流水号、操作者、occurred_at | 只增流水，余额由流水聚合维护 |
-| settlement 结算单 | settle_no、patient_id、visit_id、settle_type(门诊/住院/出院结算/体检——体检为 P6 预留取值)、payer_type(自费/市医保/省医保/异地医保/商业保险预留)、fee_period(费用起止)、total_amount、医保拆分(统筹支付/个账支付/自付/自费/先自付，均 NUMERIC(18,2))、payment_details(支付方式×金额×渠道流水)、医保侧标识(中心结算流水号/回执原文引用)、目录版本、清单引用、status | 金额拆分全部服务端按医保预结算回执落库，本地不自行计算基金拆分 |
+| settlement 结算单 | settle_no、patient_id、visit_id、settle_type(门诊/住院/出院结算/体检——体检为 P6 预留取值)、payer_type(自费/市医保/省医保/异地医保/商业保险预留)、fee_period(费用起止)、total_amount、医保拆分(统筹支付/个账支付/自付/自费/先自付，均 BIGINT，分)、payment_details(支付方式×金额×渠道流水)、医保侧标识(中心结算流水号/回执原文引用)、目录版本、清单引用、status | 金额拆分全部服务端按医保预结算回执落库，本地不自行计算基金拆分 |
 | invoice 票据 | settlement_id、ticket_type(财政电子票据/数电票)、ticket_no、开票渠道引用、pdf/ofs 文件引用、red_flip_ref(红冲票据引用)、status | 财政电子票据为主（非营利机构医疗收入）、数电票用于应税场景；与结算单一一对应 |
 | daily_statement 日结 | statement_no、operator_id(收费员/病区)、period_start/end、金额汇总(按支付渠道/费别/医保类型)、缴款状态、HRP 传输状态、status | 收费员日结可跨天不跨月（调研依据 13）；月结为 period_type=MONTH 的同构记录 |
 | insurance_call_log 医保业务调用日志 | txn_code(基线版交易码)、settlement_id/visit_id 关联、request_digest/response_digest(脱敏)、中心流水号、result_code、duration_ms、悬挂标记、补偿任务状态、trace_id | 业务级留痕：悬挂确认、冲正、补结算待办的驱动数据；通道级留痕在 M20 interface_call_log，不重复建设 |
@@ -208,10 +208,10 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节）
 - [x] 覆盖 FU-M13-01~08 全部条目，无遗漏、无私增；优先级沿用总 Spec（05 的"P0 起步、P5 完整"对齐总 Spec 路线图分期，非优先级变更）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（fee_record/settlement/deposit_account/invoice/refund_request/arrears_approval/insurance_call_log 七个状态机均有对应 API、流程与测试项；control_rule、daily_statement 有查询/操作接口与测试场景）
-- [x] 符合跨模块约定：schema=billing；金额 NUMERIC(18,2) 且服务端计算（D5）；事件命名 `<模块>.<实体>.<动作>` 且信封合规；患者关联 patient_id/visit_id；字典经 M01 引用不建副本；无跨模块读表（执行状态经 API 查询）
+- [x] 符合跨模块约定：schema=billing；金额 BIGINT 分值制且服务端计算（D5）；事件命名 `<模块>.<实体>.<动作>` 且信封合规；患者关联 patient_id/visit_id；字典经 M01 引用不建副本；无跨模块读表（执行状态经 API 查询）
 - [x] 依赖方向正确：依赖 M01/M02/M03/M04/M06/M07/M08/M09/M10/M20 的对外接口与事件；无反向依赖；被依赖清单明确
 - [x] 方案推导 4 个关键点均有备选对比与依据，含任务要求的三个必选点（计价触发模式、医保接口架构、退费审批流），每个结论附调研来源
-- [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；NUMERIC(18,2) 为 README 规定的字段规格说明）
+- [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；BIGINT 分值制为 README 规定的字段规格说明）
 - [x] 歧义消除：计费来源四分类（另登记"体检"P6 预留取值）、免审/审批分级规则、已结算红冲路径、M20 通道日志与本模块业务日志分工、门诊不设预交金账户等均已显式定义
 - [x] 术语与总 Spec 一致（划价/计费/预交金/一日清单/结算清单/红冲/基线版接口）
 

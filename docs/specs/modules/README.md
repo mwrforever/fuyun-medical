@@ -27,7 +27,7 @@
 ## 3. 跨模块统一约定（冲突预防基线）
 
 - **数据库**：单 PostgreSQL 16 实例，每模块独立 schema（`system`/`patient`/`iot`/…），schema 名 = Maven 模块名；跨模块禁止直接读表，只能经 API/事件。
-- **金额**：一律 `NUMERIC(18,2)`，单位元；服务端计算。
+- **金额**：一律 `BIGINT` 分值制（单位分；分↔元换算集中在应用层 MoneyUtil，JSON 序列化字符串承载）；服务端计算。
 - **主键**：业务表用 `BIGINT` 雪花 ID（分布式预留）；关联表用复合唯一约束表达业务键。
 - **审计字段**：所有业务表统一 `created_by/created_at/updated_by/updated_at/deleted(逻辑删)`。
 - **时间**：`TIMESTAMPTZ`，一律服务器时间（禁止前端传入业务时间）。

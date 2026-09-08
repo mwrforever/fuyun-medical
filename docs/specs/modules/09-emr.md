@@ -98,7 +98,7 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、状态字段 VARCHAR 常量+迁移日志。本模块不自有业务金额字段：首页费用段为引用性存储（M13 费用汇总值快照），计算权威在 M13，快照字段规格遵循全局 NUMERIC(18,2) 约定。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、状态字段 VARCHAR 常量+迁移日志。本模块不自有业务金额字段：首页费用段为引用性存储（M13 费用汇总值快照），计算权威在 M13，快照字段规格遵循全局 BIGINT（分值制） 约定。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
@@ -242,7 +242,7 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节）
 - [x] 覆盖 FU-M09-01~09 全部条目，无遗漏、无私增（传染病报告卡为总 Spec 第 7 章注释明确归入 FU-M09-09 的既有口径、手术记录文书为 FU-M09-01"入院/病程/手术/知情同意"既有表述的落地；FU-M09-07/09 按 P2 定位细化，AI 辅助编码/智能审核仅留扩展位不提前实现）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（emr_document/qc_defect/medical_record_homepage/archive_record/record_borrow/emr_doc_template 六个状态机均有对应接口、流程与测试项；emr_element_data/emr_doc_trace/emr_sign_record/emr_print_log/qc_rule/record_copy/icd_mapping/patient_panorama_index/drg_group_result 均有操作或查询路径与测试场景）
-- [x] 符合跨模块约定：schema=emr；主键 BIGINT 雪花；无自有业务金额字段（首页费用段为 M13 汇总值引用性快照，字段规格 NUMERIC(18,2)，计算权威在 M13）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等、队列 `q.emr.<事件>`、延迟队列 `delay.<业务>`；REST 路径 `/api/v1/emr/`；国标字典只存 M01 code 引用（icd_mapping 为映射表非字典副本）；状态字段 VARCHAR 常量+迁移日志；患者关联 patient_id+visit_id；无跨模块读表
+- [x] 符合跨模块约定：schema=emr；主键 BIGINT 雪花；无自有业务金额字段（首页费用段为 M13 汇总值引用性快照，字段规格 BIGINT（分值制），计算权威在 M13）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等、队列 `q.emr.<事件>`、延迟队列 `delay.<业务>`；REST 路径 `/api/v1/emr/`；国标字典只存 M01 code 引用（icd_mapping 为映射表非字典副本）；状态字段 VARCHAR 常量+迁移日志；患者关联 patient_id+visit_id；无跨模块读表
 - [x] 依赖方向正确：依赖 M01/M02/M03/M04/M05/M06/M07/M08/M10/M11/M12/M13/M14/M20 的对外接口与事件；无反向依赖；被依赖清单（M03 诊疗段/M04 编辑嵌入/M10 手术记录文书书写嵌入/M12 知情同意书校验/M13 首页契约/M19 取数/M18 预留/M20 共享文档）与各上游 Spec 声明互相对齐
 - [x] 方案推导 5 个关键点均有备选对比与依据，含任务要求的四个必选点（3.1 病历文档模型与 WS/T 500 映射策略、3.2 修改留痕与锁定矩阵、3.3 质控引擎两层×双阶段、3.4 病案首页装配与编码员工作流，另含任务要求的 3.5 患者全景聚合选型），每个结论附调研来源
 - [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；WS/T 500/WS 445/CDA 为标准名，元素/数据域为建模概念非代码）
@@ -261,7 +261,7 @@
 - M-14（R4-05）：§7 补订阅 `imaging.report.corrected`（检查报告更正刷新，与 lab.report.corrected 对称）。
 - R3-10：文档头上游依赖补 M11；§7 补订阅 `icu.nursing-record.finalized`、`icu.score.completed`（重症记录/评分归档引用，事件名已与 M11 Spec 登记核对一致）。
 - R6-12：§7 补订阅 `surgery.anesthesia-record.finalized`（麻醉记录单归档引用，事件名与 M10 Spec 登记一致）、`peis.report.published`/`peis.report.corrected`（体检报告入全景/病历，事件名与 M17 Spec 登记一致）。
-- R4-16：§4 金额自述修正——首页费用段为引用性存储（M13 费用汇总值快照），计算权威在 M13，字段规格遵循 NUMERIC(18,2)；§11 自审同步。
+- R4-16：§4 金额自述修正——首页费用段为引用性存储（M13 费用汇总值快照），计算权威在 M13，字段规格遵循 BIGINT（分值制）；§11 自审同步。
 - R4-15：文档头下游被依赖补 M10（手术记录文书书写嵌入）、M12（知情同意书校验）；§11 被依赖清单同步。
 - M-25：订阅补 `patient.split`（与 patient.merged 成对登记）。
 - M-25（收尾补登）：订阅 `patient.frozen` 处成对补订 `patient.unfrozen`（冻结解除、解除拦截）。

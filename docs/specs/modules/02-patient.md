@@ -98,8 +98,8 @@
 | privacy_access_log 敏感查阅留痕 | operator_id、patient_id、access_type(明文查阅/档案导出/全景调阅)、purpose、fields、occurred_at、trace_id | 只增表；与 M01 审计互补（M01 记"谁动了系统"，本表记"看了谁的什么"） |
 | patient_tag 标签定义 | tag_code、tag_name、tag_type(系统自动/人工)、circle_rule(圈选条件)、status(ACTIVE/DISABLED)、valid_days | 圈选条件限定本模块维度（人口属性/健康档案/既有标签）；诊疗行为维度为 P2 预留适配位（经数据服务接口，见第 8 节） |
 | patient_tag_rel 患者标签关联 | patient_id、tag_code、assigned_source(圈选/人工)、assigned_at、expire_at | (patient_id, tag_code) 唯一；过期自动失效 |
-| card_account 一卡通账户（可选启用） | patient_id(唯一)、balance(NUMERIC(18,2)，元)、status(ACTIVE/FROZEN/CLOSED)、opened_at/closed_at | 默认关闭（系统参数启用）；资金收退付动作在 M13，本表仅为余额台账 |
-| card_txn 一卡通流水 | account_id、txn_type(RECHARGE 充值/PAY 消费/REFUND 退款/REVERSE 冲正)、amount(NUMERIC(18,2))、balance_after、biz_ref(M13 收费单据引用)、occurred_at | 只增表；与 M13 对账依据；记账与资金动作分离（M13 发起、本模块记账） |
+| card_account 一卡通账户（可选启用） | patient_id(唯一)、balance(BIGINT，分)、status(ACTIVE/FROZEN/CLOSED)、opened_at/closed_at | 默认关闭（系统参数启用）；资金收退付动作在 M13，本表仅为余额台账 |
+| card_txn 一卡通流水 | account_id、txn_type(RECHARGE 充值/PAY 消费/REFUND 退款/REVERSE 冲正)、amount(BIGINT，分)、balance_after、biz_ref(M13 收费单据引用)、occurred_at | 只增表；与 M13 对账依据；记账与资金动作分离（M13 发起、本模块记账） |
 
 关系要点：patient 1:N patient_identifier / privacy_auth / patient_tag_rel / card_txn，1:1 health_summary / card_account；patient N:N patient（经 possible_duplicate、merge_record 表达）；健康档案明细挂 patient。
 
@@ -124,7 +124,7 @@
 | FU-M02-01 患者建档（P0） | 统一建档 API 供窗口（身份证读卡器即刷即录）、自助机、公众号/小程序（实人绑卡组件人脸核验）、住院登记（M04 调用）多渠道调用；介质核验统一走适配器层（方案 3.5）：身份证读卡直读、电子健康卡对接注册系统核验、医保电子凭证经 M13 医保通道提取身份；无证件患者走"授权建档"（权限控制+未实名标记+后续补实名转正式）；急诊无名氏/新生儿建临时档案（新生儿可关联母亲档案），取得身份信息后转正式并保留关联留痕；建档必填项与实名制要求对齐（姓名/性别/出生日期/证件/联系方式）；建档即触发实时重复检测（FU-M02-03） |
 | FU-M02-02 患者主索引 EMPI（P0） | 匹配引擎按方案 3.1 分层执行；解析服务为全院唯一入口（标识值→patient_id+状态），两级缓存（进程内+Redis，事件失效）；发号器按雪花位预分配独立发号；"标识→档案"归一结果同时供 M20 对外服务（FHIR Patient 门面映射源、区域上报患者主数据源）；匹配规则（字段权重、阈值、强标识清单）系统参数化可调 |
 | FU-M02-03 重复识别与合并拆分（P0） | 双渠道发现：建档实时检测 + 周期性批量增量扫描（新档/变更档与存量比对，延迟任务调度）；疑似重复工作台（并排双档对照、命中字段高亮、评分与规则解释）；合并前置检查（在途就诊经 SPI 扩展点查询，任一方存在则阻断）；合并执行按方案 3.3 指针映射，双人角色（经办+审批）可配置；拆分：从 REVERSED 链路恢复从档 NORMAL、标识按快照回挂、广播 `patient.split`，全过程留痕；合并/拆分仅限指定权限角色 |
-| FU-M02-04 就诊卡管理（P0） | 就诊卡全生命周期：发卡（卡库存管理：入库/领用/退回）、绑定档案、挂失（校验本人有效证件，解析立即失效）、补卡（新卡发号、旧卡信息与账户余额按快照转移至新标识，旧卡 REPLACED）、解绑/注销；一卡通余额为可选项（系统参数默认关闭，启用时金额 NUMERIC(18,2) 元）：充值/消费/退款动作由 M13 收费通道执行，本模块仅记账户台账与流水并支持与 M13 按日对账；卡介质自助机发卡与窗口发卡共用同一 API |
+| FU-M02-04 就诊卡管理（P0） | 就诊卡全生命周期：发卡（卡库存管理：入库/领用/退回）、绑定档案、挂失（校验本人有效证件，解析立即失效）、补卡（新卡发号、旧卡信息与账户余额按快照转移至新标识，旧卡 REPLACED）、解绑/注销；一卡通余额为可选项（系统参数默认关闭，启用时金额以 BIGINT 存分）：充值/消费/退款动作由 M13 收费通道执行，本模块仅记账户台账与流水并支持与 M13 按日对账；卡介质自助机发卡与窗口发卡共用同一 API |
 | FU-M02-05 患者健康档案视图（P0） | 基础健康档案项：过敏史、慢病史、手术史、免疫接种史、既往史、家族史、血型（对齐区域平台"基本健康信息"与基本公卫规范口径，调研依据 9）；数据来源：临床医生站经本模块 API 维护（就诊中强制提示完善过敏史）、历史数据导入工具；纠错留痕（旧值置已纠错不删除）；变更广播 `patient.health-summary.updated`（M06 处方审核、M05 护理执行、M03/M04 开单场景订阅做过敏与禁忌提示）；诊疗明细（检验/检查/用药记录）不在本模块聚合，由 M09 患者全景经各模块数据组装 |
 | FU-M02-06 患者授权与隐私管理（P0） | 授权侧：建档强制采集知情同意（纸质凭证登记或电子签署引用 M01 CA），敏感信息二次利用（如科研/外送）须单独同意留痕（privacy_auth）；展示侧：脱敏规则集中配置（姓名保留姓氏、证件号/手机号中间打码、地址保留省市），按角色豁免（挂号收费等业务必需场景可见必要字段）；明文查阅走独立 API：校验功能权限+诊疗关系，写 privacy_access_log；日志与事件载荷禁带完整敏感明文；导出必审批并留痕 |
 | FU-M02-07 患者标签管理（P2） | 标签定义（系统自动/人工两类）与人工打标、批量导入；人群圈选：基于本模块维度（人口属性/健康档案/标签组合）条件圈选，输出患者集合；诊疗行为维度（就诊频次/诊断/费用）为 P2 预留适配位，经数据服务接口实现（依赖 M19 数据服务，接口位不提前实现）；圈选结果供 M01 通知中心批量触达（随访/义诊通知）与 M19 分析导出；系统标签随事件自动维护（如慢病标签经健康档案变更触发） |
@@ -184,7 +184,7 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节）
 - [x] 覆盖 FU-M02-01~07 全部条目，无遗漏、无私增（FU-M02-07 按 P2 定位细化，诊疗维度圈选仅留适配位不提前实现；临时/急诊建档为 FU-M02-01 多介质场景的细化，非新功能点）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（patient/possible_duplicate/merge_record/patient_identifier/card_account/privacy_auth 六个状态机均有对应接口、流程与测试项；health_item 纠错、card_txn 对账均有测试场景）
-- [x] 符合跨模块约定：schema=patient；主键 BIGINT 雪花；金额 NUMERIC(18,2) 元且服务端台账；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等；REST 路径 `/api/v1/patient/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；patient_id+visit_id 患者关联约定已落实并给出 visit_id 结构规范
+- [x] 符合跨模块约定：schema=patient；主键 BIGINT 雪花；金额以 BIGINT 存分且服务端台账；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等；REST 路径 `/api/v1/patient/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；patient_id+visit_id 患者关联约定已落实并给出 visit_id 结构规范
 - [x] 依赖方向正确：仅依赖 M01/M20 对外接口；对业务模块仅在"在途就诊查询"处采用 SPI 扩展点（依赖倒置，红线 4 已显式声明）；无跨模块读表
 - [x] 方案推导 5 个关键点均有备选对比与依据，含任务要求的三个必选点（3.1 匹配策略、3.3 合并数据处理、3.2 patient_id 生成），每个结论附调研来源
 - [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度；读卡器/健康卡开放平台为设备与平台名，非代码实现）

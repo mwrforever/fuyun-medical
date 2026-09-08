@@ -80,12 +80,12 @@
 
 ## 4. 领域模型
 
-表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、金额 NUMERIC(18,2)（本模块唯一金额字段为套餐定价参考价，权威在 M13，见红线 3）。
+表设计统一遵循 README 第 3 节约定：雪花 BIGINT 主键、统一审计字段（created_by/created_at/updated_by/updated_at/deleted）、TIMESTAMPTZ 服务器时间、逻辑删、金额 BIGINT（分值制）（本模块唯一金额字段为套餐定价参考价，权威在 M13，见红线 3）。
 
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
 | peis_item 体检项目字典 | item_code、item_name、dept_id(执行科室，引用 M01 组织)、item_type(LAB 检验/EXAM 检查/GENERAL 一般检查/QUESTION 问卷)、charge_item_ref(M13 收费项目 code)、lab_panel_ref(M07 检验组合 code)、exam_item_ref(M08 检查项目 code)、result_form(NUMERIC 数值/TEXT 文本/CHOICE 定性选择)、default_unit、default_ref_range(默认参考范围，按性别年龄可覆盖)、sex_applicability、status | 三向映射约束见方案 3.4；登记时快照到登记明细，字典后续变更不影响已登记单 |
-| peis_package 体检套餐 | package_code、package_name、package_type(PERSONAL 个人/GROUP 团检/ENTRY 入职/OCCUPATIONAL 职业健康)、sex_applicability、age_min/age_max、ref_price(NUMERIC(18,2)，参考价，实际计价以 M13 收费项目价格展开为准)、version、status(ACTIVE/DISABLED) | 套餐改版升 version，已登记单引用旧版本快照不受影响；性别年龄适配为登记校验规则（如妇科项目仅限女性） |
+| peis_package 体检套餐 | package_code、package_name、package_type(PERSONAL 个人/GROUP 团检/ENTRY 入职/OCCUPATIONAL 职业健康)、sex_applicability、age_min/age_max、ref_price(BIGINT 分值制，参考价，实际计价以 M13 收费项目价格展开为准)、version、status(ACTIVE/DISABLED) | 套餐改版升 version，已登记单引用旧版本快照不受影响；性别年龄适配为登记校验规则（如妇科项目仅限女性） |
 | peis_package_item 套餐明细 | package_id+version、item_id、is_default(默认含/可选加项候选)、sex_override(项目级性别覆盖)、sort_no | (package_id, version, item_id) 唯一；可选项目在登记时勾选 |
 | peis_group_exam 团检批次 | group_no(`G+yyyyMMdd+5位流水`)、org_name、org_license(统一社会信用代码)、contact_name/mobile、discount_agreement(协议折扣描述文本，折扣计算在 M13)、expected_count、start_date/end_date、status(PLANNED/OPEN/CLOSED/SETTLED) | 一个单位一个批次；批次下按分组（职级/性别）分配不同套餐 |
 | peis_group_roster 团检名单 | group_no、roster_name、roster_id_no(加密存)、roster_mobile、patient_id(导入时经 M02 解析/建档回填)、group_division(批次内分组)、assigned_package_id、roster_status(PENDING/REGISTERED/CHECKED_IN/REPORTED/EXPIRED) | (group_no, roster_id_no_hash) 唯一；批量导入异步处理并回执；未匹配到既有档案时批量触发 M02 建档 |
@@ -197,7 +197,7 @@
 - [x] 无 TBD/TODO/占位符，13 项内容完整（文档头 + 12 节；第 8 节职业健康上报为规范格式标注的未来扩展预留，非占位符）
 - [x] 覆盖 FU-M17-01~04 全部条目，无遗漏、无私增（设备结果自动回传/建议知识库/单位报告/重要异常随访均为总 Spec 对应 FU 说明的细化，非新功能点）
 - [x] 内部一致：领域模型 ↔ 状态机 ↔ API ↔ 测试一一对应（peis_checkin/checkin_item/department_result/summary/report/followup/group_exam 状态机均有对应接口、流程与测试项；三向映射约束、费清放行、加退项分支均有测试场景）
-- [x] 符合跨模块约定：schema=peis；主键 BIGINT 雪花；唯一金额字段（套餐定价参考价）NUMERIC(18,2)，符合红线 3"不落任何费用与结算数据（套餐定价参考价除外，计价权威在 M13）"口径（R5-11）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等；REST 路径 `/api/v1/peis/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；患者关联一律 patient_id（visit_id 约定的边界处理见方案 3.1 与偏差 1）
+- [x] 符合跨模块约定：schema=peis；主键 BIGINT 雪花；唯一金额字段（套餐定价参考价）BIGINT 分值制，符合红线 3"不落任何费用与结算数据（套餐定价参考价除外，计价权威在 M13）"口径（R5-11）；事件命名 `<模块>.<实体>.<动作>`、信封 eventId/occurredAt/producer、消费走 integration.received_event 幂等；REST 路径 `/api/v1/peis/`；字典只存 M01 code 引用；状态字段 VARCHAR 常量+迁移日志；患者关联一律 patient_id（visit_id 约定的边界处理见方案 3.1 与偏差 1）
 - [x] 依赖方向正确：仅依赖 M01/M02/M07/M08/M13/M14/M20 的对外接口与事件契约（M07/M08 为 M17→医技单向依赖，医技不依赖本模块）；无反向依赖、无跨模块读表
 - [x] 方案推导 4 个关键点均有备选对比与依据（3.1 身份模型、3.2 执行落点、3.3 报告生成、3.4 三目录映射），每个结论附调研来源
 - [x] 无代码级实现（无类名/方法体/SQL DDL；表设计为"表-关键字段-约束"粒度）

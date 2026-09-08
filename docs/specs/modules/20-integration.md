@@ -32,7 +32,7 @@
 5. Mirth Connect 是 Java 实现的开源 HL7 接口网关（行业事实标准），核心抽象为"通道 = 单一源连接器 + 多目标连接器"的消息管道，支持转换（HL7→XML 等）、过滤与脚本；生产部署需外置元数据库、日志清理与安全加固；被 NextGen 收购后开源许可持续收紧，社区已出现"不再开源"的迁移服务。（来源：https://github.com/nextgenhealthcare/connect 、https://blog.csdn.net/gitblog_00708/article/details/148575973 、https://www.cnblogs.com/runqinshiye/p/10791939.html 、https://www.meditecs.com/mirth-connect-migration/ ）
 6. HAPI 是 Java 生态的成熟开源 HL7 v2 解析库（解析/编辑/校验/传输），可作为自研通道的解析底座；HL7 v2 至今仍是医院间与设备对接的主力交换标准。（来源：https://hapifhir.github.io/hapi-hl7v2/ 、https://www.linkedin.com/pulse/hl7-v2-isnt-dead-why-hospitals-still-run-1989-standards-2025-tkbxc ）
 7. IHE-PCD 设备报文：监护设备体征/波形用 ORU^R01（PCD-01），报警用 ORU^R40（PCD-04，"需要及时人工干预的可报警观察"），报文经 MLLP/AMQP 传输，术语对齐 Rosetta/MDC；"医疗设备到 HL7"模式即设备读数变换为 ORU^R01 后经 MLLP 发往目标系统。（来源：https://pmc.ncbi.nlm.nih.gov/articles/PMC11955343/ 、https://hl7-definition.caristix.com/v2/HL7v2.8/TriggerEvents/ORU_R40 、https://www.ibm.com/docs/zh/SSMKHH_9.0.0/com.ibm.healthcare.pattern.devices.doc/pattern/design.htm ）
-8. RabbitMQ 消费可靠性最佳实践：消费端必须幂等（以唯一业务键/消息 ID 去重），手动确认，失败有限重试后进死信队列人工/补偿处理；网络抖动决定 MQ 只能保证至少一次，Exactly-Once 靠业务幂等实现。（来源：https://support.huaweicloud.com/bestpractice-rabbitmq/bp-0015.html 、https://help.aliyun.com/zh/apsaramq-for-rabbitmq/user-guide/retry-policies-and-dead-letter-queues 、https://interview.javaguide.cn/high-performance/message-queue-interview-questions.html ）
+8. RabbitMQ 消费可靠性最佳实践：消费端必须幂等（以唯一业务键/消息 ID 去重），业务成功才确认（本项目以 Spring AMQP AUTO 确认承载该语义），失败有限重试后进死信队列人工/补偿处理；网络抖动决定 MQ 只能保证至少一次，Exactly-Once 靠业务幂等实现。（来源：https://support.huaweicloud.com/bestpractice-rabbitmq/bp-0015.html 、https://help.aliyun.com/zh/apsaramq-for-rabbitmq/user-guide/retry-policies-and-dead-letter-queues 、https://interview.javaguide.cn/high-performance/message-queue-interview-questions.html ）
 9. 互联互通测评：四级甲等要求医院信息集成平台接入至少 31 个系统、数据资源标准化；基于 FHIR 的互联互通研究显示已通过四甲的平台大多以 CDA/数据集改造完成，FHIR 为演进方向。（来源：https://www.hit180.com/54311.html 、https://www.chima.org.cn/Html/News/Articles/4536.html 、https://www.cnblogs.com/Javame/p/17633003.html ）
 10. 区域平台上报：国家要求区域全民健康信息平台与医院信息平台使用统一数据接口实现共享交换，医院侧按数据集标准向区域平台上报。（来源：https://www.ndcpa.gov.cn/jbkzzx/c100030/common/content/content_1658745812574605312.html 、https://www.nhc.gov.cn/wjw/c100175/202010/14895c341c2b42e492638067c4d09415.shtml ）
 
@@ -48,18 +48,18 @@
 
 **结论**：自研轻量通道。**演进路径**：当通道数超过 50 条、或出现复杂多步编排/大量异构协议适配需求时，独立部署 Mirth Connect 作为旁路引擎，其通道以 interface_channel 注册纳入本模块统一监控、死信与幂等治理——业务系统只认通道配置，不感知底层引擎切换。
 
-### 3.2 事件总线幂等与可靠投递：依赖 MQ 自身 vs 消费幂等 + 手动确认 + 死信 vs 事务消息
+### 3.2 事件总线幂等与可靠投递：依赖 MQ 自身 vs 消费幂等 + 容器自动确认（AUTO）+ 死信 vs 事务消息
 
 | 方案 | 说明 | 评估 |
 | --- | --- | --- |
 | 依赖 MQ 自身可靠性 | 至少一次投递 + 自动确认 | 至少一次语义下网络抖动/重连必然重复投递；自动确认在消费失败时直接丢消息，医疗闭环不可接受（调研依据 8） |
 | 事务消息/分布式事务 | 发送侧与业务库强一致 | RabbitMQ 无原生事务消息；本系统为模块化单体，发送侧用"本地消息表（outbox）+ 发布确认 + 定时补偿"即可达到等价效果，复杂度不匹配 |
-| **消费幂等 + 手动确认 + 死信（选定）** | 以事件信封中的 eventId 为幂等键，`integration.received_event` 表统一去重；业务成功才手动确认；失败有限重试后转死信交换机落 `dead_letter` 表，管理界面重推/关闭 | 与华为云/阿里云最佳实践同款组合；幂等表以唯一约束兜底并发重复；死信可视化管理对齐"异常消息必须规范处理"的运维实践（调研依据 4、8） |
+| **消费幂等 + 容器自动确认 + 死信（选定；2026-09-08 裁决由手动确认改为 Spring AMQP AUTO，语义等价"业务成功才确认"）** | 以事件信封中的 eventId 为幂等键，`integration.received_event` 表统一去重；监听方法正常返回才确认（AUTO）；失败有限重试后转死信交换机落 `dead_letter` 表，管理界面重推/关闭 | 与华为云/阿里云最佳实践同款组合；幂等表以唯一约束兜底并发重复；死信可视化管理对齐"异常消息必须规范处理"的运维实践（调研依据 4、8） |
 
 **设计要点**：
 - **事件信封**（全系统强制）：`eventId`（UUID，全局唯一）、`eventType`（`<模块>.<实体>.<动作>`）、`occurredAt`（服务器时间）、`producer`（生产模块）、`payloadVersion`（载荷结构版本）、`traceId`（全链路追踪号）、`payload`（业务载荷）。
 - **发送侧可靠**：事件先写本模块 outbox（与业务同事务），异步投递到 `fy.topic` 并开启发布确认；确认超时/NACK 由 outbox 定时补偿重发；消费侧幂等保证补偿重发不产生重复业务。
-- **消费侧流程**：① 校验信封必填字段，不合规直接转死信（附原因），不进业务；② 以 `eventId + 消费者模块` 登记幂等表（唯一约束防并发重复投递）——已存在且状态为已处理则直接确认跳过；③ 执行业务（业务内部再以业务键二次防重，如单据号唯一约束）；④ 成功则幂等表置已处理并手动确认；⑤ 失败记录原因并本地重试（默认 3 次指数退避），仍失败则拒绝投递进 `fy.dlx`。
+- **消费侧流程**：① 校验信封必填字段，不合规直接转死信（附原因），不进业务；② 以 `eventId + 消费者模块` 登记幂等表（唯一约束防并发重复投递）——已存在且状态为已处理则直接确认跳过；③ 执行业务（业务内部再以业务键二次防重，如单据号唯一约束）；④ 成功则幂等表置已处理（AUTO 模式下监听方法正常返回即由容器确认）；⑤ 失败记录原因并本地重试（默认 3 次指数退避），仍失败则拒绝投递进 `fy.dlx`。
 - **死信处理流程**：死信消费者将消息落 `dead_letter` 表并发布 `integration.dead-letter.created` 事件通知运维；管理界面提供诊断、重放（保留原 eventId 重新入队，靠幂等机制防重复）、关闭（必须填写原因，如脏数据放弃）；重放成功联动置已重放，重放失败回到待处理并累加重放次数。
 
 ### 3.3 主数据分发模式：集中实时查询 vs 广播 + 本地缓存 vs 集中缓存服务
@@ -150,7 +150,7 @@
 
 **治理约定（全系统约束，本模块为执行审查方）**：
 - 交换机全集固定：`fy.topic`（领域事件 Topic）、`fy.dlx`（死信）、`fy.delay`（TTL+DLX 延迟，队列 `delay.<业务>`）；私建交换机禁止。
-- 队列命名 `q.<消费者模块>.<事件>`（如 `q.integration.dead-letter` 为本模块死信统一队列）；消费一律手动确认 + 幂等（received_event）。
+- 队列命名 `q.<消费者模块>.<事件>`（如 `q.integration.dead-letter` 为本模块死信统一队列）；消费一律 @RabbitListener 注解驱动 + 容器 AUTO 确认 + 幂等（received_event）。
 - 新增/变更事件类型须先在 event_registry 登记（生产者、载荷说明、订阅方），由统一审查对照各模块 Spec 声明；零订阅的广播类事件（全院广播/模块内闭环）须在登记时标注 broadcast 语义。
 - 本模块无 WebSocket 主题（监控台经 REST 轮询，秒级刷新满足运维场景）。
 
