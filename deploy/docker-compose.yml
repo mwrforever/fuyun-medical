@@ -141,8 +141,8 @@ services:
       backend:
         condition: service_healthy              # backend 就绪后再起入口，避免代理 502 窗口
     healthcheck:
-      # 官方 nginx 镜像无 curl/wget，用 bash 内建 /dev/tcp 发 GET /healthz 并校验 200 OK（依赖 fuyun.conf 内置 /healthz）
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1:80 && echo -e \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\"'"]
+      # 用 bash 内建 /dev/tcp 网络重定向（/host/port 斜杠语法，冒号会被当字面路径）发 GET /healthz 并校验 200 OK（依赖 fuyun.conf 内置 /healthz）
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/80 && echo -e \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\"'"]
       interval: 10s
       timeout: 5s
       retries: 3

@@ -19,6 +19,7 @@
 - ci.yml changes job 移除四处骨架期排除行（`!backend/Dockerfile`、`!backend/.dockerignore`、`!web/Dockerfile`、`!web/.dockerignore`）及对应两条注释，Dockerfile/.dockerignore 变更恢复镜像构建触发；pom/webpkg 存在性守卫保留（paths-filter 误判兜底，见 2026-09-08 CI 首跑修正条目）；job name 一律未动（分支保护 required checks 精确对齐）。
 - 实现口径修正三处（简报/定稿示意片段笔误或环境差异，随本批落地）：① compose 内部挂载点相对路径以 compose 文件所在 deploy/ 目录为基准，简报表中 `../postgres/initdb`、`../rabbitmq/`、`../nginx/` 修正为 `./postgres/initdb`、`./rabbitmq/`、`./nginx/`（`../` 写法会解析到仓库根导致挂载落空；`../web/apps/<app>/dist` 不变，W-3 裁决路径）；② .env.example 注释一律独立成行、不用行内 `#`——compose `env_file:` 注入容器环境沿用 docker env-file 格式，无行内注释语义，行内 `#` 会混入变量值；③ postgres healthcheck 的 `$POSTGRES_USER/$POSTGRES_DB` 写作 `$$` 转义——compose 会先对 yml 全文做变量插值，未转义时探针取 .env 插值而非容器内环境，`$$` 使容器内 shell 从 `environment:` 块展开，语义一致但不再依赖插值时序。
 - rabbitmq:4.3.5-management 镜像实证（本机 `rabbitmqctl list_users` 验证）：`RABBITMQ_DEFAULT_USER/PASS` 环境变量在该 tag 上仍由服务端生效（入口脚本不再转换但种子用户正常创建），简报的凭据注入方案可用，无需改用配置文件承载口令（口令入库即红线）。
+- 审核修复（修复循环第 1 轮，PR-1 收尾全栈验证发现）：nginx healthcheck 探针 `/dev/tcp/127.0.0.1:80` 为无效 bash 网络重定向语法——`/dev/tcp` 须为 `/host/port` 斜杠形态，冒号形态被 shell 当字面路径（实测报 `No such file or directory`），探针必然失败使 nginx 恒 unhealthy，违反「七服务全 healthy」验收。根因：定稿报告 §6.6 片段（FJ-02）本身即此写法，属规格带病照抄。方案：保持 bash `/dev/tcp` 形态仅修正为 `/dev/tcp/127.0.0.1/80`（精准修改，不换探针方案；已在 nginx:1.30.4 容器内实测修正后探针对 fuyun.conf 的 /healthz 返回 200，并经 compose 全栈验证 nginx 转 healthy）。备查记录：nginx:1.30.4 镜像实测含 /usr/bin/curl（8.14.1），定稿 FJ-02「官方镜像无 curl/wget」前提已过时，后续升级镜像时可评估改用 curl 探针简化写法，本批不换。
 
 ## 2026-09-09 · PR-1 B1.2：冒烟集成测试 + backend/Dockerfile COPY 策略重写
 
