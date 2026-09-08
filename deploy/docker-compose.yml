@@ -1,0 +1,173 @@
+# ============================================================================
+# fuyun-medical dev 全栈编排（nginx:80 为唯一入口；backend 不发布宿主端口，可 --scale 多实例）
+# 设计来源：docs/language/2026-09-07-技术栈选型.md §6；批次规格：.superpowers/sdd/briefs/PR-1-task-brief.md §4.1
+# 用法：先 cp .env.example .env 并填写凭据，再 docker compose --env-file .env up -d
+# 红线：镜像 tag 全锁定禁 latest；一切凭据经 ${VAR} 插值注入禁止明文密钥；不写已废弃的 version 字段
+# ============================================================================
+
+services:
+  # 拓扑根：PostgreSQL 16 + TimescaleDB 同容器承载业务库与遥测超表（单库多 schema 按 Maven 模块隔离，定稿报告 §5）
+  postgres:
+    image: timescale/timescaledb:2.29.2-pg16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}   # 凭据一律来自 .env，禁止硬编码
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"           # dev 暴露宿主供 GUI 工具连接，端口可经 .env 覆盖
+    volumes:
+      # 数据必须落 named volume（Windows bind mount 性能差且权限语义不一致，定稿报告 §6.4）
+      - pg_data:/var/lib/postgresql/data
+      # initdb 脚本只建 TimescaleDB 扩展；业务 DDL 全部归 Flyway 版本化迁移（backend A.4.1-5），compose 不承载
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # $$ 转义使探针在容器内由 shell 从上方 environment 展开（compose 会先对 yml 插值，未转义会取 .env 值，语义等价但依赖插值时序）
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks: [fy-net]
+
+  # 会话/字典缓存/号源床位并发锁/大屏实时快照（总 Spec §4.4）；开启 requirepass，口令经 .env 注入
+  redis:
+    image: redis:8.10.1
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}          # 健康检查用 redis-cli 免 -a 参数（避免 ps 进程列表泄露明文）
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data                        # RDB/AOF 持久化
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fy-net]
+
+  # 领域事件总线（总 Spec D1）；default_queue_type=quorum 经 rabbitmq.conf 只读挂载（backend A.5-4）
+  rabbitmq:
+    image: rabbitmq:4.3.5-management
+    environment:
+      # 首启种子用户（实测 4.3.5 tag 服务端支持该环境变量）；卷持久化后用户留存，重启不重播
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"    # 管理台仅 dev/test 暴露，prod 不使用本编排
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq         # quorum 队列元数据与消息持久化
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s                         # 首启初始化慢，放宽启动等待窗口（定稿报告 §6.3）
+    networks: [fy-net]
+
+  # 对象存储仅 dev/test（社区版最终发布已停维，内网隔离；生产为华为云 OBS，S3 SDK 不感知差异，定稿报告 §10.4）
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ["server", "/data", "--address", ":9000"]   # 社区版已移除 Web 控制台，不传 --console-address
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]     # 官方推荐就绪探针
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fy-net]
+
+  # 模块化单体后端：无状态不发布宿主端口（--scale 前提），联调直连 8080 时经 debug profile override 临时暴露
+  backend:
+    image: fuyun/backend:${BACKEND_TAG:-dev}    # 本地/CI 多阶段构建产物，运行时基底 eclipse-temurin:17-jre（已装 curl 供探针使用）
+    env_file: .env                              # IoTDA 等低频变量整组带入，高频连接变量在下方显式覆写
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # 服务名经 fy-net DNS 解析；连接凭据与四基础设施同源（.env），杜绝双份口令漂移
+      FUYUN_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      FUYUN_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      FUYUN_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      FUYUN_REDIS_HOST: redis
+      FUYUN_REDIS_PASSWORD: ${REDIS_PASSWORD}
+      FUYUN_RABBITMQ_HOST: rabbitmq
+      FUYUN_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      FUYUN_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      FUYUN_MINIO_ENDPOINT: http://minio:9000
+      FUYUN_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      FUYUN_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      FUYUN_IOTDA_AMQP_ENDPOINT: ${IOTDA_AMQP_ENDPOINT}   # 华为云 IoTDA AMQP 接入地址（出站，非容器网络；PR-4 前无消费方）
+      FUYUN_IOTDA_AMQP_ACCESS_KEY: ${IOTDA_AMQP_ACCESS_KEY}
+      FUYUN_IOTDA_AMQP_ACCESS_SECRET: ${IOTDA_AMQP_ACCESS_SECRET}
+    depends_on:
+      # 全部 service_healthy，禁止裸 service_started（定稿报告 §6.3）：healthy 即依赖可用，backend 启动期 Flyway 迁移不再撞未就绪中间件
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      # 基底无 wget，用 Dockerfile 安装的 curl；grep 精确匹配 status 字段为 UP（FJ-09 收紧）
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 120s                        # 含 Flyway 首跑迁移窗口
+    stop_grace_period: 40s                      # 与 application.yml timeout-per-shutdown-phase: 30s 对齐（backend A.5-15 优雅停机）
+    networks: [fy-net]
+
+  # 唯一公网入口：三前端静态资源 + /api 反代 + /ws 升级；前端产物 bind mount（pnpm build 后热替换即生效）
+  nginx:
+    image: nginx:1.30.4
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      # 产物路径 web/apps/<app>/dist 为 W-3 裁决口径（与 pnpm build 默认 dist 一致，禁改名）；产物目录 B1.4 才落盘，缺失时 compose 自动建空目录
+      - ../web/apps/workstation/dist:/usr/share/nginx/html/workstation:ro
+      - ../web/apps/portal/dist:/usr/share/nginx/html/portal:ro
+      - ../web/apps/bigscreen/dist:/usr/share/nginx/html/bigscreen:ro
+      - ./nginx/fuyun.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy              # backend 就绪后再起入口，避免代理 502 窗口
+    healthcheck:
+      # 官方 nginx 镜像无 curl/wget，用 bash 内建 /dev/tcp 发 GET /healthz 并校验 200 OK（依赖 fuyun.conf 内置 /healthz）
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1:80 && echo -e \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3 && cat <&3 | grep -q \"200 OK\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks: [fy-net]
+
+  # P0 模拟设备端（IoTDA→AMQP→库→WebSocket 链路验证），仅 --profile sim 启动，日常开发不加载
+  iot-simulator:
+    image: fuyun/iot-simulator:${SIMULATOR_TAG:-dev}   # PR-4 落地模拟设备后可用；镜像缺失时仅 sim profile 报错，不影响默认启动集
+    profiles: ["sim"]
+    env_file: .env                              # 一机一密凭证整组注入（FU-M14-01 凭证红线）
+    environment:
+      IOTDA_MQTT_HOST: ${IOTDA_MQTT_HOST}
+      IOTDA_DEVICE_ID: ${IOTDA_DEVICE_ID}
+      IOTDA_DEVICE_SECRET: ${IOTDA_DEVICE_SECRET}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [fy-net]
+
+networks:
+  fy-net:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  rabbitmq_data:
+  minio_data:

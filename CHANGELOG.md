@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · PR-1 B1.3：deploy/ 全量编排落盘 + ci.yml 骨架期排除项移除
+
+- 按 BRIEF-PR1-01 §4 落地 deploy/ 五件套：`docker-compose.yml`（postgres/redis/rabbitmq/minio/backend/nginx 七服务 + iot-simulator `profiles:["sim"]`；镜像 tag 全锁定禁 latest；healthcheck 参数照定稿报告 §6.3（统一 interval 10s/timeout 5s/retries 5，rabbitmq start_period 90s、backend 120s、nginx retries 3）；depends_on 全部 `service_healthy` 禁裸 service_started；backend 不发布宿主端口并追加 `stop_grace_period: 40s` 对齐 yml `timeout-per-shutdown-phase: 30s`（backend A.5-15））；`.env.example`（23 键全清单：PG 4 + Redis 2 + RabbitMQ 4 + MinIO 3 + IoTDA 6 + 应用 4，值只留占位与中文注释）；`postgres/initdb/01-init.sql`（仅 `CREATE EXTENSION IF NOT EXISTS timescaledb`，业务库由 POSTGRES_DB 环境变量承担，业务 DDL 全归 Flyway）；`rabbitmq/rabbitmq.conf`（`default_queue_type = quorum`，总 Spec D1）；`nginx/fuyun.conf`（三前端静态路由 + `/api` 反代保留前缀 + `/ws` WebSocket 升级 + `/healthz` 静态 200）。
+- ci.yml changes job 移除四处骨架期排除行（`!backend/Dockerfile`、`!backend/.dockerignore`、`!web/Dockerfile`、`!web/.dockerignore`）及对应两条注释，Dockerfile/.dockerignore 变更恢复镜像构建触发；pom/webpkg 存在性守卫保留（paths-filter 误判兜底，见 2026-09-08 CI 首跑修正条目）；job name 一律未动（分支保护 required checks 精确对齐）。
+- 实现口径修正三处（简报/定稿示意片段笔误或环境差异，随本批落地）：① compose 内部挂载点相对路径以 compose 文件所在 deploy/ 目录为基准，简报表中 `../postgres/initdb`、`../rabbitmq/`、`../nginx/` 修正为 `./postgres/initdb`、`./rabbitmq/`、`./nginx/`（`../` 写法会解析到仓库根导致挂载落空；`../web/apps/<app>/dist` 不变，W-3 裁决路径）；② .env.example 注释一律独立成行、不用行内 `#`——compose `env_file:` 注入容器环境沿用 docker env-file 格式，无行内注释语义，行内 `#` 会混入变量值；③ postgres healthcheck 的 `$POSTGRES_USER/$POSTGRES_DB` 写作 `$$` 转义——compose 会先对 yml 全文做变量插值，未转义时探针取 .env 插值而非容器内环境，`$$` 使容器内 shell 从 `environment:` 块展开，语义一致但不再依赖插值时序。
+- rabbitmq:4.3.5-management 镜像实证（本机 `rabbitmqctl list_users` 验证）：`RABBITMQ_DEFAULT_USER/PASS` 环境变量在该 tag 上仍由服务端生效（入口脚本不再转换但种子用户正常创建），简报的凭据注入方案可用，无需改用配置文件承载口令（口令入库即红线）。
+
 ## 2026-09-09 · PR-1 B1.2：冒烟集成测试 + backend/Dockerfile COPY 策略重写
 
 - 按 BRIEF-PR1-01 §3 落地 B1.2：① fuyun-app 新增 `SmokeStackIT`（fuyun-app 下唯一 `*IT`）——Testcontainers 拉起与 compose 同 tag 的三容器（timescale/timescaledb:2.29.2-pg16、redis:8.10.1、rabbitmq:4.3.5-management，backend 宪法 C.5-4），@ServiceConnection 注入连接，test profile 启动 fuyun-app 完整上下文，依次验证 Flyway 首跑建表（flyway_schema_history 落 public schema）、Redis 读写一回合（TTL 生效）、RabbitMQ 队列声明与一帧收发（CF-1 最小验证）；RabbitMQ 容器经 test 资源挂载 `default_queue_type=quorum` 与 B1.3 compose 的 rabbitmq.conf 同语义。② backend/Dockerfile 构建层 POM 拷贝由 glob 拍平（`COPY pom.xml fuyun-*/pom.xml ./`）改为逐模块 COPY 保持目录结构，其余七条镜像规范不动（backend 宪法 C.5-6）。③ .dockerignore 已含 target/ 排除，无需改动。本次不修订宪法正文，不新增生产代码。
