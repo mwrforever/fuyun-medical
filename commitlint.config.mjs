@@ -6,4 +6,10 @@
  */
 export default {
   extends: ['@commitlint/config-conventional'],
+  rules: {
+    // 中文项目适配（2026-09-08 裁决，见 CHANGELOG）：subject-case 对中文提交信息误报——
+    // 以大写字母/数字开头的中文 subject（如 "P0 实施计划…"）会被判为 pascal-case/upper-case，
+    // 该规则设计语境为英文、对 CJK 文本无实际意义，关闭；其余 conventional 规则全量保留
+    'subject-case': [0],
+  },
 }

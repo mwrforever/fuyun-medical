@@ -36,5 +36,4 @@
 
 | 编号 | 事项 | 说明 |
 | --- | --- | --- |
-| W-3 | P0 工程骨架落盘 | `deploy/docker-compose.yml` + `.env.example` + nginx/postgres/rabbitmq 初始化配置（内容按 docs/language 技术栈报告 §6 设计），根命令总览随之生效。**落地时须对齐两处已知差异**：① `backend/Dockerfile` 的 `COPY pom.xml fuyun-*/pom.xml ./` 为骨架写法，Docker COPY 对 glob 源会拍平目录结构（多模块 pom 互相覆盖），实际构建前须改为保结构写法（如逐模块 COPY 或分阶段拷贝）；② web 产物路径以宪法 `web/apps/<app>/dist` 为准（web/Dockerfile 已按此写），技术栈报告 §6.6 compose 挂载示例的根级 `web/<app>/dist` 为旧表述，compose 落盘时按宪法路径对齐；③ 移除 `.github/workflows/ci.yml` 路径过滤中的骨架期排除项（backend/web 的 Dockerfile 与 .dockerignore），使镜像构建恢复触发 |
-| W-6 | 配置 NVD_API_KEY Secret | NVD 免费申请（https://nvd.nist.gov/developers/request-an-api-key ）后执行 `gh secret set NVD_API_KEY`；未配置前 security.yml 周审以匿名限流运行（显著变慢但可用） |
+| W-3 | P0 工程骨架落盘 | **实施计划见 `docs/plans/2026-09-08-P0实施计划.md`（PLAN-P0-01，PR-1 即本工单，新会话以该计划为执行输入）**：Maven 多模块骨架 + `deploy/` 全量编排 + web monorepo 脚手架，按计划 PR-1 交付物清单与验收标准执行；落地时对齐三项：Dockerfile COPY glob 拍平修正、web 产物路径以宪法 `web/apps/<app>/dist` 为准、移除 ci.yml 骨架期排除项 |

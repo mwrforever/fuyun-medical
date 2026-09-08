@@ -40,6 +40,7 @@ fuyun-medical/
 └── docs/
     ├── specs/                  # 总 Spec 与 20 模块功能设计 / 业务契约（宪法只引用不承载）
     ├── language/               # 技术栈选型定稿（版本唯一权威来源）
+    ├── plans/                  # 阶段实施计划（P0~P6 执行编排、PR 序列与验收标准）
     └── agmds-research/         # 宪法调研报告（条款依据，5 份，2026-09-08）
 ```
 
@@ -81,6 +82,6 @@ docker compose -f deploy/docker-compose.yml --profile sim up -d            # 含
 ## 8. 去哪里深入
 
 - 各子项目开发 → §5 索引（写代码前必读其宪法）；
-- 功能设计与业务数据契约 → `docs/specs/`（总 Spec + 模块 Spec）；
+- 功能设计与业务数据契约 → `docs/specs/`（总 Spec + 模块 Spec）；阶段实施计划 → `docs/plans/`；
 - 技术版本依据 → `docs/language/2026-09-07-技术栈选型.md`；条款调研依据 → `docs/agmds-research/`；
 - 登记 → `TASK.md`；变更 → `CHANGELOG.md`；CI 机制与门禁语义 → `.github/workflows/` 与各子宪法 C.5。
