@@ -92,7 +92,8 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
       # 服务名经 fy-net DNS 解析；连接凭据与四基础设施同源（.env），杜绝双份口令漂移
-      FUYUN_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      # 必须自带 reWriteBatchedInserts=true（backend A.4.2-6）：env 变量存在会覆盖 application-dev.yml 内含该参数的默认值，缺失则批量写优化静默失效
+      FUYUN_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?reWriteBatchedInserts=true
       FUYUN_DATASOURCE_USERNAME: ${POSTGRES_USER}
       FUYUN_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       FUYUN_REDIS_HOST: redis
