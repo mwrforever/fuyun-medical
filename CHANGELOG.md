@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · P0 交付启动：dev 分支与门禁就绪 + SDD 台账建立
+
+- 新增 `dev` 集成分支（自 main@a10369e），经 gh api 配置分支保护与 main 逐字段一致（五 required checks + strict + enforce_admins + 禁 force push / 删除）；此后 P0 五 PR 依序合入 dev（用户 2026-09-09 裁决），dev→main 合并另行裁决。
+- 新增 `.superpowers/sdd/ledger.md`：P0 交付 loop（`docs/prompt/2026-09-09-loop-P0工程骨架.md`）的状态续传台账——阶段门禁状态、冲突扫描记录、批次明细，随各门禁推进更新。
+- 冲突扫描结论：仅定稿 §6.6 nginx bind mount 片段路径与 web 宪法 C.3 存在表述分歧，按 TASK.md W-3 既有裁决（产物路径 = `web/apps/<app>/dist`）执行，无需新裁决；版本口径 / CI checks 名称 / 决策点（D-2/D-3）四方核对一致。
+
 ## 2026-09-09 · P0 交付执行设计落盘 + 定位层地图补 docs/prompt
 
 - 新增 `docs/prompt/2026-09-09-loop-P0工程骨架.md`：以 PLAN-P0-01 为唯一 spec 的交付 loop 执行设计（P0→P6 七阶段门禁、17 个审批批次、TDD+SDD subagent 派遣制、批内修复/PR 审核/终验三级循环、PR 依序合入 dev 流程），供执行会话作为唯一执行依据；定位层仓库地图 §3 同步登记 `docs/prompt/`。
