@@ -7,6 +7,8 @@ import Components from 'unplugin-vue-components/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // 部署 base 与 nginx fuyun.conf 子路径挂载一一对应（dev 模式应用即服务于该子路径，属预期）
+  base: '/workstation/',
   plugins: [
     vue(),
     // Element Plus 按需引入（web B.3-6）：模板组件自动按需注册 + 组合式 API 自动导入，样式由解析器联动引入

@@ -2,7 +2,8 @@
 import { createRouter, createWebHistory } from 'vue-router';
 
 export const router = createRouter({
-  history: createWebHistory(),
+  // 基期与 vite base 同源（BASE_URL=/portal/），保证子路径部署下路由正确匹配
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',

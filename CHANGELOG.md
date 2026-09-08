@@ -12,6 +12,7 @@
 - 简报字段外最小补充三处（均随本批落地并在 PR 描述申报）：根 package.json 补 `"type": "module"`（消除 Vite 原生配置加载器对根 vitest.config.ts 的「ESM 语法按 CommonJS 加载」警告，与三应用清单一致）；三应用 package.json 补 `@types/node`（表外申报项，tsconfig.node.json `types:["node"]` 消费方在各 app，根不声明）；根 `web/tsconfig.json`（include 仅根 vitest.config.ts——根级配置文件不归属任何 app 的 tsconfig 项目，无归属项目时 ESLint 类型感知规则报「file not found by the project service」，补根项目后 lint 全绿）。
 - 门禁配套修正两处（本批验证暴露，证据驱动）：① `.pre-commit-config.yaml` 的 `check-yaml` 钩子增加 `exclude: web/pnpm-lock.yaml`——pnpm lockfile 为多文档 YAML（`---` 分隔），check-yaml 单文档断言必然误报，不排除则 lockfile 无法入库（简报 §5.6 硬性要求入库）；② 三应用 `tsconfig.node.json` 补 `target: ES2022` + `lib: ["ES2023"]` + `skipLibCheck: true`——简报手写 spec 未列 target（默认 ES5）导致 node_modules 声明文件私有字段报 TS18028，且 unplugin/vitest 的 d.ts 引用可选框架类型需 skipLibCheck 抑制（与 create-vue 生态标准配置一致）；app 项目 tsconfig 验证无需该补丁。
 - 审核修复（修复循环第 1 轮）：`PageResult<T>.page` 注释由「从 1 起」修正为 0 基契约语义——backend A.3-6 明文「请求 page（0 基，必须显式告知前端）」，响应回显请求值；仅改注释不动类型结构（`page: number` 不变）。
+- 终审修复（缺陷 I-1，修复循环第 1 轮）：三应用 vite.config.ts 补 `base`（workstation/portal/bigscreen 分别为 `/workstation/`、`/portal/`、`/bigscreen/`，与 nginx fuyun.conf 子路径 alias 一一对应），三应用 router 改 `createWebHistory(import.meta.env.BASE_URL)`。根因：简报 §5.3 vite.config 规格未列 base（规格缺口）——默认 base `/` 使构建产物资源引用为绝对路径 `/assets/*`，在 nginx 子路径挂载下 JS/CSS 全部 404（三前端白屏）；router 硬编码 `createWebHistory()` 同样无法感知子路径。方案：base 与路由以 `import.meta.env.BASE_URL` 同源联动（web A.2-5 产物路径与部署挂载耦合的延伸约束）；dev 模式应用即服务于该子路径属预期。
 
 ## 2026-09-09 · PR-1 B1.3：deploy/ 全量编排落盘 + ci.yml 骨架期排除项移除
 

@@ -5,6 +5,8 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // 部署 base 与 nginx fuyun.conf 子路径挂载一一对应（dev 模式应用即服务于该子路径，属预期）
+  base: '/bigscreen/',
   plugins: [vue()],
   resolve: {
     // 路径别名与 tsconfig.app.json paths 同步（web A.2-5）
