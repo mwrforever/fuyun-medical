@@ -9,8 +9,9 @@
 - 表外版本按 BRIEF-PR1-01 §9 默认方案锁定并在 PR 描述申报（合入后回补宪法 C.2 版本表与定稿表）：`@vitejs/plugin-vue 6.0.8`（官方 peer 声明支持 vite ^8.0.0，registry 已核实）、`dayjs 1.11.23`（element-plus 2.14.5 依赖范围 ^1.11.20 内，安装后 `pnpm why dayjs` 复核，T-R4-4 结论供回填）、`@types/node 24.13.3`（tsconfig.node.json `types:["node"]` 简报显式要求，需类型包落盘；24.x 线对齐 Node 24 运行时）。
 - 实现口径裁决一处：`PageResult<T>.total` 按 web 宪法 A.3-6 / backend A.3-8（Jackson 全局 Long→String）以 `string` 承载，简报 §5.4 行内 `total: number` 为笔误，以宪法为准（本条即冲突报告）。
 - 卫生配套补 `.prettierignore`（dist/、auto-imports.d.ts、components.d.ts、coverage/、pnpm-lock.yaml、`*.md` 不进格式门禁）：unplugin 生成物与构建产物不入库且内容非人工维护，进入 prettier --check 会让本地构建后格式门禁永红；pnpm-lock.yaml 内容经哈希校验格式化无意义；`*.md`（web/AGENTS.md 宪法）为手工维护文档，排除以避免每次全量 format 的重排 churn（实测 prettier 会重排宪法表格缩进）；根 `.gitignore` 追加 `auto-imports.d.ts`、`components.d.ts` 两行（简报 §5.6），与 vite.config dts 输出路径一致避免 git status 永脏。
-- 简报字段外最小补充两处（均随本批落地并在 PR 描述申报）：根 package.json 补 `"type": "module"`（消除 Vite 原生配置加载器对根 vitest.config.ts 的「ESM 语法按 CommonJS 加载」警告，与三应用清单一致）；三应用 package.json 补 `@types/node`（表外申报项，tsconfig.node.json `types:["node"]` 消费方在各 app，根不声明）。
+- 简报字段外最小补充三处（均随本批落地并在 PR 描述申报）：根 package.json 补 `"type": "module"`（消除 Vite 原生配置加载器对根 vitest.config.ts 的「ESM 语法按 CommonJS 加载」警告，与三应用清单一致）；三应用 package.json 补 `@types/node`（表外申报项，tsconfig.node.json `types:["node"]` 消费方在各 app，根不声明）；根 `web/tsconfig.json`（include 仅根 vitest.config.ts——根级配置文件不归属任何 app 的 tsconfig 项目，无归属项目时 ESLint 类型感知规则报「file not found by the project service」，补根项目后 lint 全绿）。
 - 门禁配套修正两处（本批验证暴露，证据驱动）：① `.pre-commit-config.yaml` 的 `check-yaml` 钩子增加 `exclude: web/pnpm-lock.yaml`——pnpm lockfile 为多文档 YAML（`---` 分隔），check-yaml 单文档断言必然误报，不排除则 lockfile 无法入库（简报 §5.6 硬性要求入库）；② 三应用 `tsconfig.node.json` 补 `target: ES2022` + `lib: ["ES2023"]` + `skipLibCheck: true`——简报手写 spec 未列 target（默认 ES5）导致 node_modules 声明文件私有字段报 TS18028，且 unplugin/vitest 的 d.ts 引用可选框架类型需 skipLibCheck 抑制（与 create-vue 生态标准配置一致）；app 项目 tsconfig 验证无需该补丁。
+- 审核修复（修复循环第 1 轮）：`PageResult<T>.page` 注释由「从 1 起」修正为 0 基契约语义——backend A.3-6 明文「请求 page（0 基，必须显式告知前端）」，响应回显请求值；仅改注释不动类型结构（`page: number` 不变）。
 
 ## 2026-09-09 · PR-1 B1.3：deploy/ 全量编排落盘 + ci.yml 骨架期排除项移除
 

@@ -11,7 +11,7 @@
 export interface PageResult<T> {
   /** 当前页数据列表 */
   content: T[];
-  /** 页码（从 1 起） */
+  /** 页码（0 基，与后端 A.3-6 分页契约一致：请求 0 基、响应回显请求值） */
   page: number;
   /** 每页条数 */
   size: number;
