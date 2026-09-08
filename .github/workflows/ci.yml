@@ -152,6 +152,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # buildx 缺省 docker driver 不支持 gha 缓存导出（cache-to: type=gha 会报错），须先创建 docker-container driver builder
+      - name: 安装 buildx
+        uses: docker/setup-buildx-action@v3
       # 仅构建有变更且对应 verify 成功的镜像：纯前端 PR 不再因 backend 被跳过而失去 web 镜像验证
       - name: 构建镜像
         if: >-
