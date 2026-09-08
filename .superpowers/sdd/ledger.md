@@ -7,8 +7,8 @@
 | 阶段 | 内容 | 状态 | 证据 / 说明 |
 | --- | --- | --- | --- |
 | P0 | dev 分支与门禁准备 | complete | dev 自 origin/main(a10369e) 建立；gh api 证实 dev 保护 = main 五 checks（strict=true、enforce_admins=true、禁 force push/删除），见下「门禁证据」 |
-| P1 | PR-1 工程骨架（B1.1~B1.4） | pending | — |
-| P2 | PR-2 M20 治理构件（B2.1~B2.3） | pending | 前置：PR-1 合入 dev |
+| P1 | PR-1 工程骨架（B1.1~B1.4） | complete | PR #4 合入 dev（ed5e34e）；五 checks 绿（backend verify/frontend verify/images 双镜像/commitlint/hygiene）；/code-review 2 findings 均核实修复；CI 缺陷修复 2 项（buildx 安装、images 去 matrix 化保住必需检查名） |
+| P2 | PR-2 M20 治理构件（B2.1~B2.3） | in_progress | 前置：PR-1 已合入 ✓；无决策点 |
 | P3 | PR-3 M01 系统与权限（B3.1~B3.4） | pending | 前置：PR-2 合入 dev；开工前 D-2 令牌方案 ask_question（默认轻量 HMAC+Redis 会话） |
 | P4 | PR-4 M14 IoT 通路（B4.1~B4.4） | pending | 前置：PR-3 合入 dev；开工前 D-3 simulator ask_question（默认 Java+backend/iot-simulator）；T-R3-2 实测锁定 |
 | P5 | PR-5 收口（B5.1~B5.2） | pending | 前置：PR-4 合入 dev |
