@@ -17,3 +17,10 @@ spring:
     username: ${FUYUN_RABBITMQ_USERNAME}
     password: ${FUYUN_RABBITMQ_PASSWORD}
 # health.show-details 不覆写：继承公共配置的 never（prod 安全默认）
+# springdoc 安全默认兜底（宪法 A.3-7：Swagger UI 仅 dev/test 暴露）。P0 尚未引入 springdoc，
+# 两键当前为无害冗余；首个 REST 端点引入 springdoc（锁 2.8.17）时此配置自动生效，防 prod 误开 API 文档
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
