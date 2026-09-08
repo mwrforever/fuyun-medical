@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · PR #4 审查修复（Finding 1/2）：全局异常渲染装配缺失 + prod springdoc 兜底
+
+- Finding 1（Critical，独立审查发现，本次核实成立）：`GlobalExceptionHandler` 从未注册为 Bean——`@SpringBootApplication` 默认仅扫 `com.fuyun.app.*`，`com.fuyun.common.web` 包在扫描范围外，common 无 AutoConfiguration.imports / spring.factories，TraceIdConfig 也未引入它，@RestControllerAdvice 装配缺失导致 ProblemDetail + errorCode/traceId 统一契约运行时未生效（装配级死代码）。修复：fuyun-app 的 `TraceIdConfig` 增加 `@Import(GlobalExceptionHandler.class)`（装配归 app，宪法 B.1；不放宽 scanBasePackages），并新增 @WebMvcTest 切片注册测试——探针 controller 抛业务异常，断言响应为 RFC 9457 ProblemDetail 且状态码/errorCode/traceId/响应头回写齐全；TDD 先 RED（无 @Import）后 GREEN。
+- Finding 2（Minor，采纳）：`application-prod.yml` 预置 `springdoc.api-docs.enabled=false` 与 `springdoc.swagger-ui.enabled=false`（宪法 A.3-7 Swagger UI 仅 dev/test）。P0 未引入 springdoc，两键当前为无害冗余安全开关；首个 REST 端点引入 springdoc（锁 2.8.17）时自动兜底，防 prod 误开 API 文档。与「无消费方不写键」的口径区别：此为安全默认值声明而非业务配置，注释已说明动机。
+- 本次不修订宪法正文；验证：新增测试 RED→GREEN 过程留证 + `mvn verify` 全绿 + `spotless:check` 绿。
+
 ## 2026-09-09 · PR-1 B1.4：web pnpm monorepo 三应用脚手架落盘 + web/Dockerfile 运行层取产物修正
 
 - 按 BRIEF-PR1-01 §5 落地 web monorepo：根配置五件（`package.json` 七脚本 + packageManager 锁定 pnpm@12.3.4、`pnpm-workspace.yaml`（apps/*/packages/* + catalog 共享工具链版本表，与 web 宪法 C.2 一致）、`eslint.config.mjs`（withVueTs 组合：flat/essential → recommendedTypeChecked → eslint-config-prettier 置尾，--max-warnings=0 门禁）、`.prettierrc`（printWidth 100 / singleQuote / trailingComma all / endOfLine lf）、`vitest.config.ts`（projects 聚合三应用））；三应用脚手架（workstation / portal / bigscreen：package.json、index.html、vite.config（/api 无 rewrite + /ws ws:true、resolve.alias `@` 与 tsconfig paths 同步）、solution tsconfig 三件（strict 手写不引 @vue/tsconfig）、.env.example、vite-env.d.ts（ImportMetaEnv）、B.1 目录基线 .gitkeep 占位、懒加载首页路由 + 极简 HomeView + 各一个真实断言冒烟单测）；`packages/shared`（纯 TS 分页契约 `PageResult<T>`，禁依赖 vue/element-plus）与 `packages/ui`（`export {}` 中文占位说明 + vue peerDep，本批不引 element-plus）；`pnpm-lock.yaml` 入库。workstation 依赖差异：element-plus 2.14.5 + unplugin-vue-components 32.1.0 + unplugin-auto-import 21.1.0 + dayjs 显式声明（web B.3-6）。
