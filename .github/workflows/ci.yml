@@ -39,15 +39,9 @@ jobs:
             backend:
               - 'backend/**'
               - '!backend/**/*.md'
-              # 骨架期排除：P0 工程骨架（父 POM）落地后移除，使 Dockerfile 变更恢复触发构建
-              - '!backend/Dockerfile'
-              - '!backend/.dockerignore'
             frontend:
               - 'web/**'
               - '!web/**/*.md'
-              # 骨架期排除：P0 工程骨架（package.json）落地后移除
-              - '!web/Dockerfile'
-              - '!web/.dockerignore'
             # 构建文件存在性守卫：骨架期 pom.xml/package.json 尚未落盘，即使发生误判也不运行构建门禁
             pom:
               - 'backend/**/pom.xml'
