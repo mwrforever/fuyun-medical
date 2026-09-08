@@ -109,7 +109,9 @@ jobs:
         run: pnpm build
       - name: 依赖漏洞审计（high 及以上退出非零即阻断）
         working-directory: web
-        run: pnpm audit
+        # 显式携带阈值参数：pnpm 内建命令优先于 package.json 同名 script，裸 pnpm audit 会按任意级别阻断，
+        # 与 web 宪法 C.5-5 约定的 high 及以上阻断不符（终审 M-1）
+        run: pnpm audit --audit-level high
 
   # ===== 镜像：PR 只验证可构建性；push main 登录 GHCR 推送（sha 不可变 tag + 分支-latest 可读 tag） =====
   images:
