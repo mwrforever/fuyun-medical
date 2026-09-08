@@ -16,3 +16,6 @@ Thumbs.db
 !.env.example
 # vite 环境本地覆盖文件（.env.local / .env.*.local）同样不入库
 *.local
+# unplugin 按需引入构建期生成物（web 简报 §5.6：不入库；首个真实使用按需 API 的 PR 再评估改为入库）
+auto-imports.d.ts
+components.d.ts

@@ -1,0 +1,30 @@
+# workspace 根声明（web 宪法 C.3）：三应用 + 共享包；catalog 承载共享工具链版本常量（web C.4）
+# 业务独立依赖不进 catalog：element-plus 系仅 workstation package.json 内锁定；echarts/@stomp 待 PR-5 再引
+packages:
+  - 'apps/*'
+  - 'packages/*'
+catalog:
+  # 框架与语言（web 宪法 C.2 版本表）
+  vue: 3.5.42
+  typescript: 5.9.3
+  vite: 8.2.2
+  vue-tsc: 3.3.10
+  pinia: 4.0.3
+  vue-router: 5.3.1
+  axios: 1.20.0
+  # lint / 格式（ESLint 10 flat config 全家桶，格式归 Prettier）
+  eslint: 10.10.0
+  eslint-plugin-vue: 10.10.0
+  typescript-eslint: 8.69.0
+  '@vue/eslint-config-typescript': 14.9.0
+  eslint-config-prettier: 10.1.8
+  prettier: 3.9.6
+  # 单测（Vitest 4 锁定，禁升 Vitest 5）
+  vitest: 4.1.11
+  '@vitest/coverage-v8': 4.1.11
+  '@vue/test-utils': 2.5.0
+  jsdom: 30.0.1
+  # 表外申报（BRIEF-PR1-01 §9-3）：Vite 8 构建 Vitest 编译 SFC 必需配套，官方 peer 支持 vite ^8.0.0
+  '@vitejs/plugin-vue': 6.0.8
+  # 表外申报（简报 §5.3 tsconfig.node.json types:["node"] 的必需类型包）：24.x 线对齐 Node 24 运行时
+  '@types/node': 24.13.3
