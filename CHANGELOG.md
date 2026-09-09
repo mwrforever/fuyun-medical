@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · 宪法 v1.3 → v1.4 修订（D-6）：枚举包目录 `enum/` 更名 `enums/` + system 域迁移号段占用登记
+
+- 修订来源：TASK.md D-6 待决策项（P0 PR-1 审核发现）——`enum` 是 Java 保留字，`package com.fuyun.{domain}.enum` 无法编译，首个枚举类落地（PR-3）前必须裁决。用户未响应裁决询问，按推荐项默认裁决执行（2026-09-09）：枚举包目录定名 `enums/`；若后续改判（如 `enumeration/`），改动面 = 目录名 + 包名 + 宪法正文，一次替换可回收。
+- 修订范围（backend/AGENTS.md 三处正文 + 20 个模块目录更名，原子修宪）：① A.2-7「定义于 enum/ 包」改为「定义于 enums/ 包」；② B.1 模块内包职责表 `constants/ enum/` 行改为 `constants/ enums/`；③ C.3 目录树 `config/ properties/ constants/ enum/ exception/` 行同步改为 `enums/`。全部 20 个业务模块 `src/main/java/com/fuyun/{domain}/enum/.gitkeep` 占位目录以 git mv 语义更名 `enums/.gitkeep`（含 fuyun-integration——该模块 enum/ 仍为占位，实际类型处理器落 handler/，不受影响）。
+- 号段占用登记（TASK.md W-4 载体要求，BRIEF-PR3-01 §2.1）：system 域（M01）占用 **V300–V399**，本批（PR-3 B3.1）使用 V300–V303——V300 RBAC 五核心表 + 两关联表、V301 字典三表、V302 审计日志表（只增）、V303 RBAC 种子（ADMIN 角色 + P0 权限点 + admin 账号）。依据：M01 非公共治理域，其表仅落 system schema，无「先于全部业务迁移」的硬需求；Flyway 多目录按版本全局排序，system 的 V300 天然晚于 integration 的 V1 公共触发器函数，依赖安全（号段归属 CI 自动校验仍按 W-4 待办补建）。
+- 影响范围：backend/AGENTS.md 三处、20 模块 `enum/` 目录名；宪法版本 v1.3 → v1.4。
+
 ## 2026-09-09 · 宪法 v1.2 → v1.3 回补：handler/ 包目录与 jacoco constants 排除
 
 - 修订来源：PR-2（M20 治理构件）执行期 B2.2 / B2.3 批次的审核申报与核验结论——两项偏差经批次审核确认合法并定案，本次将正文回补到位，消除「CHANGELOG 已记、正文滞后」状态（B2.2 / B2.3 条目内为表外申报记录，本节为正文定稿登记）。
