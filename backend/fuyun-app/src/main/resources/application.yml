@@ -95,3 +95,7 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
     mdc-key: traceId
   messaging:
     idempotency-redis-ttl: 24h     # 幂等 Redis 前置键 TTL（DB 唯一索引为最终兜底，TTL 只覆盖常态重复投递窗口）
+  security:
+    # D-2 令牌 HMAC 密钥：仅经 FUYUN_SECURITY_TOKEN_HMAC_SECRET 环境变量注入，任何 profile 均不放默认密钥——
+    # 空占位表示"未设 env 即启动 fail-fast 报缺失"，属预期安全姿态（BRIEF-PR3-01 §3.1；TTL 默认值见 SecurityProperties @DefaultValue）
+    token-hmac-secret: ${FUYUN_SECURITY_TOKEN_HMAC_SECRET:}

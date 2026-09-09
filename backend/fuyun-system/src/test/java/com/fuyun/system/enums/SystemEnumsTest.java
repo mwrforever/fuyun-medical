@@ -43,7 +43,8 @@ class SystemEnumsTest {
         for (Object constant : fixture.type().getEnumConstants()) {
             String code = (String) getter.invoke(constant);
             // 存储值与常量名一致（本项目枚举 code 全部取常量名字面量，便于 SQL 种子与日志对照）
-            assertThat(code).as("%s.%s 存储值应与常量名一致", fixture.type().getSimpleName(), constant)
+            assertThat(code)
+                    .as("%s.%s 存储值应与常量名一致", fixture.type().getSimpleName(), constant)
                     .isEqualTo(((Enum<?>) constant).name());
             // code → 枚举往返无损
             assertThat(fixture.fromCode().apply(code))
@@ -54,7 +55,9 @@ class SystemEnumsTest {
                     .as("%s.code 字段应标注 @EnumValue（MP DB 列映射）", fixture.type().getSimpleName())
                     .isTrue();
             assertThat(getter.isAnnotationPresent(JsonValue.class))
-                    .as("%s.getCode 应标注 @JsonValue（JSON 输出 code）", fixture.type().getSimpleName())
+                    .as(
+                            "%s.getCode 应标注 @JsonValue（JSON 输出 code）",
+                            fixture.type().getSimpleName())
                     .isTrue();
         }
     }
@@ -100,8 +103,7 @@ class SystemEnumsTest {
      * @param type     枚举类型，非空
      * @param fromCode 枚举静态 fromCode 方法引用，非空
      */
-    private record Fixture(
-            String name, Class<? extends Enum<?>> type, Function<String, ? extends Enum<?>> fromCode) {
+    private record Fixture(String name, Class<? extends Enum<?>> type, Function<String, ? extends Enum<?>> fromCode) {
 
         @Override
         public String toString() {
