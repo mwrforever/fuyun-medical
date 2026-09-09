@@ -2,11 +2,15 @@ package com.fuyun.system.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
@@ -19,7 +23,6 @@ import com.fuyun.system.record.TokenPair;
 import com.fuyun.system.service.impl.TokenServiceImpl;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -258,6 +261,39 @@ class TokenServiceImplTest {
     }
 
     @Test
+    @DisplayName("签名有效但载荷非 JSON 拒绝：伪造合法签名+畸形载荷不得绕过校验（SYS-1003）")
+    void garbagePayloadWithValidSignatureIsRejected() {
+        // 测试侧 HMAC 签名"非 JSON 载荷"：签名比对可通过，载荷解析必须失败拒绝（防探测面收敛）
+        String crafted = craftTokenWithTestHmac("not-a-json-payload".getBytes(StandardCharsets.UTF_8));
+
+        assertThatThrownBy(() -> tokenService.verify(crafted, SecurityConstants.TOKEN_TYPE_ACCESS))
+                .isInstanceOfSatisfying(BizException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(SystemErrorCode.TOKEN_MISSING_OR_INVALID);
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        // 载荷解析失败发生在会话读取之前：Redis 不得被触达
+        verify(valueOps, never()).get(anyString());
+    }
+
+    @Test
+    @DisplayName("会话 JSON 损坏拒绝：合法令牌+损坏会话值按 SYS-1003 处置且失败路径不续期")
+    void corruptedSessionValueIsRejected() throws Exception {
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
+        TokenPair pair = tokenService.issue(user);
+        String sid = (String) readClaimsJson(pair.accessToken()).get(SecurityConstants.CLAIM_SID);
+        // 真实令牌 + Redis 会话值损坏（存储层脏数据/被外力篡改的兜底防线）
+        when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid)).thenReturn("{\"corrupted\":");
+
+        assertThatThrownBy(() -> tokenService.verify(pair.accessToken(), SecurityConstants.TOKEN_TYPE_ACCESS))
+                .isInstanceOfSatisfying(BizException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(SystemErrorCode.TOKEN_MISSING_OR_INVALID);
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                });
+        // 校验失败即拒绝：滑动续期不得执行（只有校验全通过才续满）
+        verify(redisTemplate, never()).expire(anyString(), any(Duration.class));
+    }
+
+    @Test
     @DisplayName("登出删除会话键：access 与 refresh 同 sid 同时失效的删除入口")
     void evictDeletesSessionKey() {
         tokenService.evict("some-session-id");
@@ -272,18 +308,24 @@ class TokenServiceImplTest {
         return new ObjectMapper().readValue(payload, Map.class);
     }
 
-    /** 测试侧独立 HMAC 签名助手：按简报线格式自行拼装令牌，用于构造过期等实现内不便直接产出的场景 */
-    private String craftTokenWithTestHmac(TokenClaims claims) {
+    /** 测试侧独立 HMAC 签名助手（字节层核心）：按简报线格式自行拼装令牌，构造实现内不便直接产出的场景 */
+    private String craftTokenWithTestHmac(byte[] payload) {
         try {
-            byte[] payload = new ObjectMapper().writeValueAsBytes(claims);
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(TEST_SECRET.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] signature = mac.doFinal(payload);
-            // 独立实现的双重价值：同 HMAC 结果反证 MessageDigest.isEqual 常量时间比较路径正确
-            assertThat(MessageDigest.isEqual(signature, mac.doFinal(payload))).isTrue();
             Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
             return encoder.encodeToString(payload) + "." + encoder.encodeToString(signature);
-        } catch (GeneralSecurityException | com.fasterxml.jackson.core.JsonProcessingException e) {
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("测试令牌拼装失败", e);
+        }
+    }
+
+    /** claims 载荷便捷重载：序列化后经字节层助手签名（与实现线格式同构，独立实现可交叉验证） */
+    private String craftTokenWithTestHmac(TokenClaims claims) {
+        try {
+            return craftTokenWithTestHmac(new ObjectMapper().writeValueAsBytes(claims));
+        } catch (JsonProcessingException e) {
             throw new IllegalStateException("测试令牌拼装失败", e);
         }
     }
