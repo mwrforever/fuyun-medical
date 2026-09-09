@@ -8,6 +8,10 @@
     "noEmit": true,
     "jsx": "preserve",
     "types": ["vite/client"],
+    // 跳过第三方 .d.ts 内部自检（Vue 官方脚手架标准配置）：element-plus 传递依赖
+    // @vueuse/core 引用未入标准 lib 的 WebBluetooth 类型、dropdown 声明与生成组件
+    // 类型存在库内兼容性问题；本项目源码类型检查不受影响，不放宽自身门禁
+    "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
