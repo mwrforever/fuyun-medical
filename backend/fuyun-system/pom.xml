@@ -8,13 +8,39 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M01 系统与权限管理）：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M01 系统与权限管理）：RBAC 数据访问与 D-2 令牌/会话构件落本模块（BRIEF-PR3-01 §3.1，
+       版本全部 BOM/父 POM 托管零声明，PR 描述申报理由）；登录端点与字典域依赖（amqp/crypto/mapstruct）随 B3.2 增补 -->
   <artifactId>fuyun-system</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- RBAC 实体/mapper 数据访问：spring-boot3 后缀 starter（禁再引入 mybatis-spring 系，宪法 A.4.3-12） -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <!-- D-2 令牌会话 Redis 承载：StringRedisTemplate（backend 宪法 A.5-1，String 序列化禁 JDK 序列化） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <!-- 配置属性启动期校验（SecurityProperties @Validated + JSR-303，backend 宪法 A.2-2） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- Lombok（BOM 托管版本）：实体 @Getter/@Setter 编译期依赖，provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
     </dependency>
     <!-- 测试：CF-2 载荷线格式冻结断言（SystemMasterDataPayloadTest），BOM 托管版本 -->
     <dependency>
