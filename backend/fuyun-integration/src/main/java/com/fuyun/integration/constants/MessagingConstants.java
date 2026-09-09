@@ -45,6 +45,9 @@ public final class MessagingConstants {
     /** 绑定键通配：死信交换机全量路由（仅死信统一队列使用） */
     public static final String BINDING_KEY_ALL = "#";
 
+    /** 幂等 Redis 前置键前缀（A.5-1 冒号分层），完整键 = 本前缀 + 消费者模块 + ":" + eventId */
+    public static final String IDEMPOTENCY_KEY_PREFIX = "fy:integration:idempotency:";
+
     /** event_registry 状态：生效 */
     public static final String REGISTRY_STATUS_ACTIVE = "ACTIVE";
 

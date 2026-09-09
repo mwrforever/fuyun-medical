@@ -215,6 +215,9 @@
               <exclude>com/fuyun/**/properties/**</exclude>
               <exclude>com/fuyun/**/dto/**</exclude>
               <exclude>com/fuyun/**/entity/**</exclude>
+              <!-- 常量类仅私有构造器 + 字面量，无私有逻辑，与 config/properties 同语义排除
+                   （宪法 C.5-2 排除清单扩展项，BRIEF-PR2-01 §8-7，PR 描述申报） -->
+              <exclude>com/fuyun/**/constants/**</exclude>
               <exclude>**/FuyunApplication.class</exclude>
               <exclude>**/*ConverterImpl.class</exclude>
             </excludes>
@@ -230,11 +233,14 @@
                   </limit>
                 </limits>
               </rule>
-              <!-- 规则二：核心包 PACKAGE 级 LINE ≥ 1.00 占位（billing/system 随模块实装生效；
-                   包不存在时规则匹配零包平凡通过，第一个类出现即门禁立即生效，禁止改用注释开关） -->
+              <!-- 规则二：核心包 PACKAGE 级 LINE ≥ 1.00（integration 治理域 B2.2 起首个真实生效：
+                   MessageIdempotencyServiceImpl/EventRegistryServiceImpl/QueueGovernorImpl 三类全覆盖；
+                   billing/system 随模块实装生效；包不存在时规则匹配零包平凡通过，
+                   第一个类出现即门禁立即生效，禁止改用注释开关） -->
               <rule>
                 <element>PACKAGE</element>
                 <includes>
+                  <include>com.fuyun.integration.service.impl</include>
                   <include>com.fuyun.billing.service.impl</include>
                   <include>com.fuyun.system.service.impl</include>
                 </includes>
