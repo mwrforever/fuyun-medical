@@ -23,6 +23,7 @@ export async function login(payload: LoginRequest): Promise<LoginResponse> {
  * @param refreshToken 刷新令牌原文（typ=refresh），非空；来源：登录响应留存的会话存储
  * @return 登录响应（新 accessToken + 原 refreshToken + 用户身份）；无效刷新 401 SYS-1005
  */
+// TODO(auto-refresh): 401 自动换发拦截器，计划于 P1 引入
 export async function refresh(refreshToken: string): Promise<LoginResponse> {
   const resp = await http.post<LoginResponse>('/v1/system/auth/refresh', { refreshToken });
   return resp.data;
