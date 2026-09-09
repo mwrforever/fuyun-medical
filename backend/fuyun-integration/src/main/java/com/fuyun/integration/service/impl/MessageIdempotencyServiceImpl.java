@@ -30,6 +30,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  * 台账（(event_id, consumer_module) 唯一索引查询），已有已处理行才跳过；无行说明上次处理
  * 中断于业务执行前（前置键残留），warn 后放行重新处理，保持 at-least-once。
  *
+ * <p>P1 前置约束：回查仅按 (event_id, consumer_module) 判定，未过滤 status——P0 台账唯一
+ * 写入值为 PROCESSED，语义等价"已处理"；received_event 启用 FAILED 消费失败登记（P1）时，
+ * 必须同步给回查增加 status=PROCESSED 过滤条件，否则 FAILED 行会被误判为已处理而跳过重投。
+ *
  * <p>无状态单例（多实例部署前提）；recordProcessed 为单条原子 INSERT，无需方法级事务
  * （A.4.2-7 事务边界以最小开销承载，单语句自原子）。落 service/impl 包 =
  * JaCoCo 核心包 PACKAGE LINE 1.00 覆盖对象（DoD 第 2 条）。

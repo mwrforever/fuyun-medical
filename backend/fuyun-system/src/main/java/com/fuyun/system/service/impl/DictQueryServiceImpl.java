@@ -16,6 +16,7 @@ import com.fuyun.system.vo.DictVersionVO;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 字典契约型读服务实现（版本+条目聚合读，GET /dicts/{type} 执行点）。
@@ -56,6 +57,7 @@ public class DictQueryServiceImpl implements IDictQueryService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public DictVersionVO readPublished(String typeCode, Integer version) {
         // 类型存在性校验（SYS-1011/404）；select 精确投影
         DictTypeEntity type = dictTypeMapper.selectOne(Wrappers.<DictTypeEntity>lambdaQuery()
