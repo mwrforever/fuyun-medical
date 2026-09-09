@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · 宪法 v1.2 → v1.3 回补：handler/ 包目录与 jacoco constants 排除
+
+- 修订来源：PR-2（M20 治理构件）执行期 B2.2 / B2.3 批次的审核申报与核验结论——两项偏差经批次审核确认合法并定案，本次将正文回补到位，消除「CHANGELOG 已记、正文滞后」状态（B2.2 / B2.3 条目内为表外申报记录，本节为正文定稿登记）。
+- 修订一（B.1 模块内包职责表新增 `handler/` 行，C.3 目录树同步）：fuyun-integration 落地 `com.fuyun.integration.handler.UuidTypeHandler`（BaseTypeHandler\<UUID\>，pgjdbc 原生 setObject/getObject 绑定），经 `mybatis-plus.type-handlers-package` 全局注册。职责边界：「MyBatis TypeHandler（类型处理器）：java 类型↔JDBC 列值转换（如 UUID、JSON 列）；经 mybatis-plus.type-handlers-package 全局注册，禁止散落注解指定」。理由：MyBatis 无内置 UUID TypeHandler，B2.2「UnknownTypeHandler→setObject 原生写入」推定被 B2.3 端到端 IT 复验证伪后的修复产物（见下两条申报记录）；归位数据层配套，与 mapper/entity 同层不出数据层，后续模块 uuid 列零成本复用，目录形态需入宪法避免各模块私设散落。
+- 修订二（C.5-2 覆盖率排除清单追加 `constants/**`）：排除清单由「排除 config/dto/entity/Application/生成代码」扩为「排除 config/dto/entity/constants/Application/生成代码」。理由：常量类仅私有构造器 + `public final static` 字面量（A.2-6），无可执行业务分支，与 config/properties 同语义不可测；父 POM jacoco excludes 已随 B2.2 落地 `com/fuyun/**/constants/**`，本次正文对齐。
+- 影响范围：仅 backend/AGENTS.md 三处（B.1 表、C.3 树、C.5-2）；不触及 D-6/D-7 等待决策项；宪法版本 v1.2 → v1.3。
+
 ## 2026-09-09 · PR-2 B2.3：首批事件名 + CF-7 遥测模型登记 + 消息治理端到端 IT
 
 - 按 BRIEF-PR2-01 §4（B2.3 批次）落地：fuyun-system api/ 新增 CF-2 五个主数据事件占位载荷 record（system.dict.published / system.org.changed / system.user.changed / system.param.changed / system.practice.changed，事件名全部为 M01 Spec §7 明示，事件对象落发布方 api 包为 B.3-1 红线，均标注"占位 schema：正式字段随 PR-3 M01 实装冻结"）；fuyun-common 新增 `com.fuyun.common.messaging.StandardTelemetryMessage`（CF-7 标准遥测消息模型七字段 record：deviceId/metricCode/value/unit/occurredAt/quality/source，对齐 M14 FU-M14-05"四路同构"，P0 只登记不消费——不建 SPI 接口与任何 iot 消费代码，SPI 与消费链路归 PR-4）；Flyway V5 种子迁移七行（id 1=CF-1 信封约定行 integration.convention.event-envelope、id 2-6=五个 system.* 事件、id 7=CF-7 行 iot.telemetry.message，status 全 ACTIVE，CF-1/CF-7 登记行形态为简报 §4.3/§8-2 推导定案待终验核对）。

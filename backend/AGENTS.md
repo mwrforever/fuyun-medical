@@ -140,6 +140,7 @@
 | `record/` | 特殊处理的实体对象：record 类型的多值返回、临时聚合、查询投影等杂项对象（不隶属上述各层时归此） |
 | `service/`（`impl/`） | 业务逻辑 + 事务边界；接口 I 前缀 + 实现 Impl 后缀；CRUD 型 `extends IService/ServiceImpl`（A.4.3-20） |
 | `mapper/` `entity/` | 数据层：mapper 接口、`@TableName` 实体；复杂 SQL XML 落 `resources/mapper/`（A.4.3-15）；均不出数据层 |
+| `handler/` | MyBatis TypeHandler（类型处理器）：java 类型↔JDBC 列值转换（如 UUID、JSON 列）；经 mybatis-plus.type-handlers-package 全局注册，禁止散落注解指定 |
 | `convert/` | MapStruct 转换器（XxxConverter）+ MoneyUtil 金额分↔元集中换算（A.4.2-8）；金额 / 状态关键字段映射手写 + 单测 |
 | `cache/` | 领域缓存服务 `{Domain}CacheService`（如 UserCacheService）：复杂缓存设计（热 key / 批量失效 / Lua 原子操作）；简单场景走 Spring Cache 注解（A.5-16） |
 | `gateway/` | 外部系统适配（IoTDA / HL7 / DICOM / 医保 / 短信，B.4） |
@@ -231,6 +232,7 @@ backend/
 │       │   ├── service/       # 业务接口（I 前缀）+ impl/（事务边界）
 │       │   ├── mapper/        # MyBatis-Plus mapper 接口
 │       │   ├── entity/        # @TableName 实体（不出数据层）
+│       │   ├── handler/       # MyBatis TypeHandler（类型处理器，type-handlers-package 全局注册）
 │       │   ├── convert/       # MapStruct 转换器 + MoneyUtil 金额换算
 │       │   ├── cache/         # 领域缓存 {Domain}CacheService
 │       │   ├── gateway/       # 外部系统适配（B.4）
@@ -273,7 +275,7 @@ mvn -B -ntp versions:display-dependency-updates versions:display-plugin-updates
 ### C.5 CI 生产落地方案（方案 B 严格门禁 · backend 侧）
 
 1. **触发与门禁**：`.github/workflows/ci.yml` 中 backend job（`name: backend / verify`）在 `backend/**` 或 CI 配置变更时触发；步骤：checkout → setup-java@v6（Temurin 17，`cache: maven`）→ `mvn -B -ntp verify`；timeout 40 分钟；失败即阻断合入，main 分支保护 required checks 强制。
-2. **覆盖率硬门槛**（Jacoco 门禁模式 a——每模块 check）：jacoco-maven-plugin **不在 Boot BOM 托管范围**，父 POM pluginManagement 显式锁定 0.8.15；prepare-agent + report（verify）+ check（verify）三 execution；规则 = BUNDLE LINE ≥ 0.80（非核心）+ 核心包 PACKAGE 级 rule（资金/交易/支付/状态机/认证权限/第三方回调，LINE ≥ 1.00，逐包声明）；排除 config/dto/entity/Application/生成代码；聚合报告仅作只读总览（report-aggregate），不作为门禁口径（官方 issue #902）。
+2. **覆盖率硬门槛**（Jacoco 门禁模式 a——每模块 check）：jacoco-maven-plugin **不在 Boot BOM 托管范围**，父 POM pluginManagement 显式锁定 0.8.15；prepare-agent + report（verify）+ check（verify）三 execution；规则 = BUNDLE LINE ≥ 0.80（非核心）+ 核心包 PACKAGE 级 rule（资金/交易/支付/状态机/认证权限/第三方回调，LINE ≥ 1.00，逐包声明）；排除 config/dto/entity/constants/Application/生成代码；聚合报告仅作只读总览（report-aggregate），不作为门禁口径（官方 issue #902）。
 3. **格式硬门禁**：spotless-maven-plugin 3.4.0（锁定值）+ palantir-java-format（Java 17 红线筛选：google-java-format ≥1.22 需 JDK 21 被排除；Checkstyle 如引入须锁 12.x）+ importOrder + removeUnusedImports + endWithNewline；`spotless:check` 默认绑 verify，CI 零额外配置；配置全部在父 POM pluginManagement，子模块继承。
 4. **集成测试**：Testcontainers 1.21.4，容器 tag 与 deploy compose 严格一致（timescale/timescaledb:2.29.2-pg16、redis:8.10.1、rabbitmq:4.3.5-management）；static @Container 类级共享；不启用 reuse（实验特性，破坏隔离）；GHA ubuntu-latest 预装 Docker 零配置；中间件镜像不缓存。
 5. **依赖审计**：OWASP dependency-check-maven 13.0.0 在 `security.yml` 每周 schedule + 手动触发（不进 PR 关键路径：NVD 限流）；GitHub Secret `NVD_API_KEY` env 注入；`failBuildOnCVSS=9` 起步；失败按 TASK 登记流程处置。
