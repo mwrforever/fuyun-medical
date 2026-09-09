@@ -2,6 +2,17 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-10 · PR-3 B3.3：审计切面 + practice/check 骨架 + 登录链路与字典广播端到端 IT
+
+- 审计切面（BRIEF-PR3-01 §3.3）：api/AuditLog 注解（actionType，落 api 包为对外契约底座）+ internal/AuditLogAspect（@Around @annotation 环绕）——proceed 成功记 SUCCESS、任意异常记 FAIL 后原样 rethrow；fail_reason 经 SensitiveMasker 脱敏并 500 字符截断（V302 列宽防线），detail 请求参数摘要对口令/令牌入参显式打码（record 整对象 toString 会带出敏感明文，禁用）并 1000 字符截断；落库 try-catch 全吞仅 error 告警绝不阻断业务（M01 红线）；P0 同步写（controller 层、业务事务外、try-catch 告警），异步批量 P1（简报 §9-5）。注解落点：AuthController login/logout（LOGIN）、DictTypeController/DictVersionController 四写端点（WRITE）；practice/check 与字典读为查询 P0 不审计。
+- 实现口径定案两处（简报未明确处，PR 描述同步申报）：① 免认证登录端点无 OperatorContextHolder 上下文，审计操作人回退取入参 LoginRequest 登录名作审计主体（AuthFlowIT 步骤 7 operator_id=admin 的语义来源），无上下文且无登录名入参兜底 system（与 created_by 系统操作口径一致）；② traceId 取 MDC（TraceIdFilter 前置必可用）、resource/client_ip 取 RequestContextHolder 当前请求（非 HTTP 线程兜底 unknown）。
+- 审计配套：IAuditLogService/AuditLogServiceImpl（只增表唯一写入口，mapper.insert 单语句自原子不开方法级事务）+ AuditLogEntity/AuditLogMapper（无 @TableLogic、零 UPDATE/DELETE 路径）+ record/AuditLogEntry 参数 record（A.7-1）。
+- fuyun-common utils/SensitiveMasker 通用脱敏工具（公共工具属 B.1 common 职责，禁业务散落正则）：maskPhone（11 位前 3 后 4，可嵌文本）、maskIdCard（18 位含 X 校验位/15 位老号前 6 后 4）、maskName（姓留名打星，单字/空白原样）、truncate（列宽截断统一收口）；组合使用约定"先证后机"（证号含长数字段，先掩证号再掩手机号防误插星）；9 例单测覆盖。
+- practice/check 骨架：POST /api/v1/system/practice/check（M01 §7 路径原样，受 401 认证拦截，V303 权限点已登记）+ PracticeCheckRequest（JSR-303）+ PracticeCheckResponse（employeeId 字符串化出参）+ IPracticeService/PracticeServiceImpl（P0 骨架 passed=false 固定语义，javadoc 声明 P1 practice_grant 表 + EFFECTIVE 校验 + 30 天到期通知替换内部实现，响应契约不变）。
+- 端到端 IT（fuyun-app，容器三件套与既有 IT 同款 + 测试资产假密钥）：AuthFlowIT 七步（错误口令防枚举 401 SYS-1001、admin 种子登录双令牌与 user.userId JSON 字符串、无令牌 401 SYS-1003 且 body.traceId 与响应头 X-Trace-Id 一致、携带令牌 practice/check 200 骨架响应、refresh 换发可用 + 登出后旧令牌 401、连续 5 次错密码第 6 次 SYS-1002 含解锁时间、JdbcTemplate 审计断言——LOGIN SUCCESS 行 operator_id=admin/trace_id=注入锚点/result=SUCCESS，FAIL 行 fail_reason/detail 不含口令明文）；DictBroadcastIT 六步 + B3.2 审核 M-4 负路径补断言（V5 登记行 ACTIVE、服务代理 publish 事务提交 AFTER_COMMIT 广播经真实 DictPublishedListener 消费落 PROCESSED 台账、event_registry 订阅自动登记含 system、已发布版本重发布 409 SYS-1013 事务回滚广播不出（以锚点事件证明台账终局恰 2 行）、同 eventId 手工重投 D-7 回查跳过行数仍为 1、业务读口径——无 version 返回当前 PUBLISHED、指定 version=1 返回 DEPRECATED）。
+- 表外依赖申报：fuyun-system pom 增 spring-boot-starter-aop（BOM 托管）——@Aspect/@Around 编译期依赖 aspectjweaver；运行期自动代理由 fuyun-app 既有同款 starter（PR #4 起）装配，版本零声明。
+- TDD 与验证：AuthFlowIT/DictBroadcastIT 先行 RED 留证（practice/check 404、审计表无行）→ 实现 GREEN；新增单测 5 类 21 例（SensitiveMaskerTest 9、AuditLogAspectTest 8、AuditLogServiceImplTest 1、PracticeServiceImplTest 2、PracticeControllerTest 1）先行 RED（编译失败留证）；全量 `mvn -B -ntp verify` 绿：单测 198（common 36 + integration 32 + system 129 + app 1）+ IT 21（SmokeStack 3 + MessagingGovernance 5 + AuthFlow 7 + DictBroadcast 6）全过；JaCoCo 双核心包 com.fuyun.system.service.impl / com.fuyun.integration.service.impl PACKAGE LINE 1.00 保持、各模块 BUNDLE ≥0.80（common 0.93/integration 0.98/system 0.999）；spotless:check 绿。
+
 ## 2026-09-09 · PR-3 B3.2：登录端点 + 401 拦截接线 + 字典管理与 dict.published 广播 + D-7 幂等回查改造
 
 - D-7 改造（跨模块申报项，接口签名不变仅语义增强）：MessageIdempotencyServiceImpl.tryAcquire 在 Redis NX 抢占失败时回查 received_event 台账（(event_id, consumer_module) 唯一索引查询）——已有 PROCESSED 行才返回 false 跳过，无行则 warn 放行重新处理（前置键残留/上次处理中断场景），消除 TTL 窗口内重投被 NX 误判丢弃的消息丢失面；fuyun-common MessageIdempotencyService 接口 javadoc 同步契约；对应单测补 NX 失败回查命中跳过/回查未命中放行两分支，Redis 故障降级路径回归保留。
