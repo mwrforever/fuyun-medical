@@ -67,6 +67,11 @@ spring:
       simple:
         acknowledge-mode: auto
         default-requeue-rejected: false
+        retry:                     # 消费失败有界重试默认 3 次退避（backend 宪法 A.5-5）；耗尽后经队列死信参数进 fy.dlx
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1000ms
+          multiplier: 2.0
 server:
   shutdown: graceful           # 优雅停机（backend 宪法 A.5-15）
 management:
@@ -86,3 +91,5 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
   trace:
     response-header-enabled: true  # 响应头回写 X-Trace-Id，前端排障锚点
     mdc-key: traceId
+  messaging:
+    idempotency-redis-ttl: 24h     # 幂等 Redis 前置键 TTL（DB 唯一索引为最终兜底，TTL 只覆盖常态重复投递窗口）

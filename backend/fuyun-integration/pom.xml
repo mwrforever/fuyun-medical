@@ -8,13 +8,49 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M20 集成平台与数据服务）：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M20 集成平台与数据服务）：消息治理构件承载模块，治理实现与台账表落本模块（BRIEF-PR2-01 §1）；
+       接口与契约（事件信封/幂等接口）沉 fuyun-common，各业务模块零编译期依赖本模块 -->
   <artifactId>fuyun-integration</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- RabbitMQ 领域事件总线治理：交换机/队列声明构件与死信统一队列（backend 宪法 A.5-4/A.5-5） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <!-- 消费幂等 Redis 前置去重（backend 宪法 A.5-6），StringRedisTemplate 承载 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <!-- event_registry 台账数据访问：spring-boot3 后缀 starter（禁再引入 mybatis-spring 系，宪法 A.4.3-12） -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <!-- 配置属性启动期校验（@Validated + JSR-303 约束，backend 宪法 A.2-2） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- Lombok（BOM 托管版本）：@Getter/@Setter/@Slf4j 编译期依赖，provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

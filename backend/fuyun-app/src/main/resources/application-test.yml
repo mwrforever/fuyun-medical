@@ -16,6 +16,11 @@ spring:
     port: ${FUYUN_RABBITMQ_PORT:5672}
     username: ${FUYUN_RABBITMQ_USERNAME:fuyun}
     password: ${FUYUN_RABBITMQ_PASSWORD:}
+    listener:
+      simple:
+        retry:                     # IT 死信链路快速收敛：重试 3 次亚秒级完成（application.yml 3 次退避姿态不变）
+          initial-interval: 100ms
+          multiplier: 1.0
 management:
   endpoint:
     health:

@@ -81,6 +81,13 @@
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M20 集成平台：消息治理构件与 event_registry 台账（装配经 MessagingConfig @Import 引入，
+         @Import 需编译期可见性，BRIEF-PR2-01 §2.10 装配要求的必要依赖，PR 描述申报） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
