@@ -16,5 +16,11 @@
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- 测试：CF-2 载荷线格式冻结断言（SystemMasterDataPayloadTest），BOM 托管版本 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 </project>

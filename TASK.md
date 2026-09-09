@@ -11,6 +11,7 @@
 | D-4 | OWASP 周审失败处置流程 | R5 §5-4：fail 后开 issue 还是仅通知，属流程决策 | security.yml |
 | D-5 | 方案 C 二期演进（CodeQL / Trivy / dependency-review / Renovate/Dependabot / SonarQube） | R1 §3.3/§4：用户已定方案 B 上线基线、C 为二期；SonarQube 若引入需 CI 双 JDK（17 构建 + 21 扫描）；Renovate vs Dependabot 二选一（倾向 Renovate 的 monorepo 分组能力） | security.yml 扩展、仓库设置 |
 | D-6 | 宪法 `enum/` 包目录命名与 Java 保留字冲突 | P0 PR-1 审核发现（2026-09-09）：backend 宪法 B.1/C.3 规定枚举包目录为 `enum/`，但 `enum` 是 Java 保留字，`package com.fuyun.{domain}.enum` 无法编译——目前仅 .gitkeep 占位无碍，首个枚举类落地（PR-2/PR-3）前必须裁决（如改 `enums/`、`enumeration/` 或 `constant/`+枚举混放，需修宪：先记 CHANGELOG） | backend 全部 20 模块目录结构、PR-2/PR-3 枚举类落位 |
+| D-7 | 幂等前置去重 NX 误判丢消息窗口的补救策略 | P0 PR-2 B2.2 审核发现（2026-09-09）：标准消费范式 NX 失败即判重复并确认（简报冻结语义），若消费实例在 NX 成功后、recordProcessed 前崩溃，残留键存活至 TTL（默认 24h）期间重投会被永久跳过且不留死信——唯一索引救不了（insert 未执行）。补救候选：NX-false 回查 received_event 表 / 缩短 TTL / 维持现状接受 at-most-once 窗口。需在首个真实业务消费者（PR-3 字典广播）落地前裁决 | M20 幂等构件消费范式、PR-3 起全部 @RabbitListener 消费者 |
 
 ## 待调研项（检索不可得 / 需实测，回填后删除）
 
@@ -38,3 +39,4 @@
 | 编号 | 事项 | 说明 |
 | --- | --- | --- |
 | W-3 | P0 工程骨架落盘 | **实施计划见 `docs/plans/2026-09-08-P0实施计划.md`（PLAN-P0-01，PR-1 即本工单，新会话以该计划为执行输入）**：Maven 多模块骨架 + `deploy/` 全量编排 + web monorepo 脚手架，按计划 PR-1 交付物清单与验收标准执行；落地时对齐三项：Dockerfile COPY glob 拍平修正、web 产物路径以宪法 `web/apps/<app>/dist` 为准、移除 ci.yml 骨架期排除项 |
+| W-4 | Flyway 迁移号段归属与版本唯一的 CI 自动校验 | 宪法 A.4.1-2 要求 CI 校验号段归属；PR-2 起号段登记生效（integration=V1–V99、患者 V100–V199、医嘱 V200–V299、系统建议 V300–V399、物联建议 V400–V499，V500 起先登记先占，载体 = 各 PR 简报 + CHANGELOG），校验脚本随 CI 完整化补建（BRIEF-PR2-01 §8-3 建议项） |
