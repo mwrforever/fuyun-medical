@@ -88,6 +88,14 @@
       <artifactId>fuyun-integration</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M01 系统与权限管理：CF-2 主数据事件契约（发布方 api 包，backend 宪法 B.3-1/B.2-2）；
+         B2.3 端到端 IT 以真实载荷发布 system.dict.published，装配模块聚合业务模块属 B.1 既有职责，
+         PR-3 M01 实装后由装配刚需承接（BRIEF-PR2-01 §1.2 表外依赖，PR 描述申报） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
