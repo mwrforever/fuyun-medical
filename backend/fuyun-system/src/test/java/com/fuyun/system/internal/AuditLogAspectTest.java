@@ -123,6 +123,25 @@ class AuditLogAspectTest {
     }
 
     @Test
+    @DisplayName("Authorization 头入参：detail 中 Bearer 令牌打码不落原文（logout 端点防回归，审核 C-1）")
+    void bearerHeaderArgIsMaskedInDetail() {
+        proxy.logout("Bearer it-only-raw-access-token-value");
+
+        verify(auditLogService).append(entryCaptor.capture());
+        AuditLogEntry entry = entryCaptor.getValue();
+        assertThat(entry.detail()).doesNotContain("it-only-raw-access-token-value");
+    }
+
+    @Test
+    @DisplayName("普通字符串入参不受 Bearer 打码误伤：非令牌语义的 String 原样进 detail")
+    void plainStringArgIsKeptIntactInDetail() {
+        proxy.write("hello");
+
+        verify(auditLogService).append(entryCaptor.capture());
+        assertThat(entryCaptor.getValue().detail()).contains("hello");
+    }
+
+    @Test
     @DisplayName("业务异常：记 FAIL 行（fail_reason=异常消息）后原样 rethrow；无参无上下文操作人回退 system")
     void bizExceptionRecordsFailEntryAndRethrows() {
         BizException expected =
@@ -207,6 +226,12 @@ class AuditLogAspectTest {
         @AuditLog(actionType = AuditActionType.LOGIN)
         public String refresh(RefreshRequest request) {
             return "token";
+        }
+
+        /** 注解落点形态与 AuthController.logout 一致：唯一入参为 Authorization 头原文 */
+        @AuditLog(actionType = AuditActionType.LOGIN)
+        public String logout(String authorization) {
+            return "ok";
         }
 
         @AuditLog(actionType = AuditActionType.WRITE)

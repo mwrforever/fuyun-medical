@@ -74,7 +74,7 @@ class AuthFlowIT {
             .withCopyFileToContainer(
                     MountableFile.forClasspathResource("it/rabbitmq.conf"), "/etc/rabbitmq/conf.d/20-fuyun-auth.conf");
 
-    /** 测试资产假密钥（64 字符，仅具 IT 意义，与任何真实凭证无关；真实密钥只经环境变量注入） */
+    /** 测试资产假密钥（57 字符，仅具 IT 意义，与任何真实凭证无关；真实密钥只经环境变量注入） */
     private static final String TEST_HMAC_SECRET = "it-only-fake-hmac-secret-0123456789abcdef0123456789abcdef";
 
     /**
@@ -106,6 +106,9 @@ class AuthFlowIT {
     static final AtomicReference<String> ACCESS_TOKEN = new AtomicReference<>();
 
     static final AtomicReference<String> REFRESH_TOKEN = new AtomicReference<>();
+
+    /** step5 登出所用令牌持有器：审计落库脱敏断言的对照明文（C-1 防回归，不得落入 audit_log.detail） */
+    static final AtomicReference<String> LOGOUT_TOKEN = new AtomicReference<>();
 
     /** HTTP 客户端：真实穿过 Filter→Interceptor→Controller 全链 */
     private final TestRestTemplate restTemplate;
@@ -229,7 +232,8 @@ class AuthFlowIT {
                 String.class);
         assertThat(withNewToken.getStatusCode().value()).isEqualTo(200);
 
-        // 登出：删会话键，access 与 refresh 同 sid 同时失效
+        // 登出：删会话键，access 与 refresh 同 sid 同时失效（登记对照明文供步骤7 审计脱敏断言）
+        LOGOUT_TOKEN.set(newAccessToken);
         ResponseEntity<String> logout = restTemplate.exchange(
                 "/api/v1/system/auth/logout",
                 HttpMethod.POST,
@@ -297,6 +301,15 @@ class AuthFlowIT {
             assertThat((String) row.get("fail_reason")).doesNotContain(WRONG_PASSWORD);
             assertThat((String) row.get("detail")).doesNotContain(WRONG_PASSWORD);
         });
+
+        // logout 审计行（C-1 防回归）：Authorization 头原文经打码，令牌原文禁入审计 detail
+        List<String> logoutDetails = jdbcTemplate.queryForList(
+                "SELECT detail FROM system.audit_log WHERE action_type = 'LOGIN' AND resource = ?",
+                String.class,
+                "/api/v1/system/auth/logout");
+        assertThat(logoutDetails).as("logout 必须留下审计行").isNotEmpty();
+        assertThat(logoutDetails)
+                .allSatisfy(detail -> assertThat(detail).isNotBlank().doesNotContain(LOGOUT_TOKEN.get()));
     }
 
     /**

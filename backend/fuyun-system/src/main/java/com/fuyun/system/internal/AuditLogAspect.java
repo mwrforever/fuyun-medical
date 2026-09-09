@@ -33,9 +33,12 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * resource/client_ip 取 RequestContextHolder 当前请求（非 HTTP 线程兜底 unknown）。
  *
  * <p>脱敏红线：fail_reason/detail 统一经 SensitiveMasker 处理，密码/令牌入参在摘要组装期显式
- * 打码，禁明文入审计（§8-5）。P0 同步写（controller 层、事务外、try-catch 告警），异步批量 P1
- * （简报 §9-5）；切面落 internal/（模块内横切设施非对外契约，backend 宪法 B.1），Bean 注册点为
- * SystemWebConfig @Import（AOP 自动代理由 fuyun-app spring-boot-starter-aop 装配生效）。
+ * 打码——含 String 形态的 Authorization 头原文（{@code Bearer <令牌>}，logout 端点入参），禁明文
+ * 入审计（§8-5，审核 C-1）。全部 VARCHAR 列（operator/resource/trace_id/client_ip）组装期
+ * truncate 收口列宽防线，防超长注入致整行写入失败被吞、审计静默丢失（B3.3 审核 Minor-2）。
+ * P0 同步写（controller 层、事务外、try-catch 告警），异步批量 P1（简报 §9-5）；切面落
+ * internal/（模块内横切设施非对外契约，backend 宪法 B.1），Bean 注册点为 SystemWebConfig
+ * @Import（AOP 自动代理由 fuyun-app spring-boot-starter-aop 装配生效）。
  */
 @Slf4j
 @Aspect
@@ -47,13 +50,25 @@ public class AuditLogAspect {
     /** detail 列宽防线：参数摘要截断到 1000 字符（V302 VARCHAR(1000)） */
     private static final int DETAIL_MAX_LENGTH = 1000;
 
+    /** operator_id 列宽防线：操作人标识截断到 64 字符（V302 VARCHAR(64)，超长致整行写入失败须收口） */
+    private static final int OPERATOR_MAX_LENGTH = 64;
+
+    /** resource 列宽防线：请求 URI 截断到 256 字符（V302 VARCHAR(256)） */
+    private static final int RESOURCE_MAX_LENGTH = 256;
+
+    /** trace_id 列宽防线：追踪 ID 截断到 64 字符（V302 VARCHAR(64)，防超长 X-Trace-Id 注入） */
+    private static final int TRACE_ID_MAX_LENGTH = 64;
+
+    /** client_ip 列宽防线：客户端 IP 截断到 64 字符（V302 VARCHAR(64)） */
+    private static final int CLIENT_IP_MAX_LENGTH = 64;
+
     /** 请求上下文缺失（非 HTTP 线程）时 resource/client_ip 的兜底取值 */
     private static final String UNKNOWN_CONTEXT_VALUE = "unknown";
 
     /** 无操作人上下文且无登录名入参时的操作人兜底取值（与 created_by 系统操作口径一致） */
     private static final String SYSTEM_OPERATOR = "system";
 
-    /** 敏感字段打码占位：登录口令与刷新令牌在参数摘要中的固定替代值 */
+    /** 敏感字段打码占位：登录口令/刷新令牌/Authorization 头原文在参数摘要中的固定替代值 */
     private static final String MASKED_SENSITIVE_VALUE = "***";
 
     private final IAuditLogService auditLogService;
@@ -89,22 +104,24 @@ public class AuditLogAspect {
     }
 
     /**
-     * 组装并写入审计留痕：字段组装 + 落库，任何异常全吞仅 error 告警（审计不阻断业务红线）。
+     * 组装并写入审计留痕：全部 VARCHAR 列在组装期经 SensitiveMasker.truncate 收口列宽防线
+     * （防超长注入——如伪造超长 X-Trace-Id——导致整行写入失败被吞、审计静默丢失），落库任何
+     * 异常全吞仅 error 告警（审计不阻断业务红线）。
      *
-     * @param auditLog  审计注解，非空
-     * @param result    审计结果（SUCCESS/FAIL），非空
+     * @param auditLog   审计注解，非空
+     * @param result     审计结果（SUCCESS/FAIL），非空
      * @param failReason 失败原因原文，可空（成功行为 null）；落库前经脱敏与截断
-     * @param args      目标方法入参，可空；摘要组装时敏感字段显式打码
+     * @param args       目标方法入参，可空；摘要组装时敏感字段显式打码
      */
     private void record(AuditLog auditLog, AuditResult result, String failReason, Object[] args) {
         try {
             auditLogService.append(new AuditLogEntry(
-                    resolveOperator(args),
+                    SensitiveMasker.truncate(resolveOperator(args), OPERATOR_MAX_LENGTH),
                     auditLog.actionType(),
-                    currentResource(),
+                    SensitiveMasker.truncate(currentResource(), RESOURCE_MAX_LENGTH),
                     null,
-                    currentClientIp(),
-                    MDC.get(SecurityConstants.TRACE_ID_MDC_KEY),
+                    SensitiveMasker.truncate(currentClientIp(), CLIENT_IP_MAX_LENGTH),
+                    SensitiveMasker.truncate(MDC.get(SecurityConstants.TRACE_ID_MDC_KEY), TRACE_ID_MAX_LENGTH),
                     result,
                     sanitizeReason(failReason),
                     buildDetail(args),
@@ -189,10 +206,12 @@ public class AuditLogAspect {
     }
 
     /**
-     * 组装请求参数摘要（审计 detail）：登录口令/刷新令牌显式打码，其余参数值直出后截断到列宽防线。
+     * 组装请求参数摘要（审计 detail）：登录口令/刷新令牌/Authorization 头原文显式打码，其余参数值
+     * 直出后截断到列宽防线。
      *
      * <p>禁整对象 toString 直出：LoginRequest/RefreshRequest 为敏感载体，record 默认 toString
-     * 会带出明文密码/令牌，必须按类型显式选择输出字段（脱敏红线 §8-5）。
+     * 会带出明文密码/令牌；String 入参若携带 Bearer 方案前缀（如 logout 端点的 Authorization 头
+     * {@code Bearer <令牌>}）等同凭证载体，一律打码（脱敏红线 §8-5，审核 C-1）。
      *
      * @param args 目标方法入参，可空；空参返回 null（detail 列可空）
      * @return 参数摘要（脱敏后），可空
@@ -215,6 +234,9 @@ public class AuditLogAspect {
             } else if (arg instanceof RefreshRequest) {
                 // 令牌原文禁入审计（令牌即凭证）
                 detail.append("refreshToken=").append(MASKED_SENSITIVE_VALUE);
+            } else if (arg instanceof String text && text.startsWith(SecurityConstants.BEARER_PREFIX)) {
+                // Authorization 头原文（"Bearer <令牌>"）即凭证载体：保留方案名供语义辨识，令牌值打码
+                detail.append(SecurityConstants.BEARER_PREFIX).append(MASKED_SENSITIVE_VALUE);
             } else {
                 detail.append(arg);
             }

@@ -88,7 +88,7 @@ class DictBroadcastIT {
             .withCopyFileToContainer(
                     MountableFile.forClasspathResource("it/rabbitmq.conf"), "/etc/rabbitmq/conf.d/20-fuyun-dict.conf");
 
-    /** 测试资产假密钥（64 字符，仅具 IT 意义，与任何真实凭证无关；真实密钥只经环境变量注入） */
+    /** 测试资产假密钥（57 字符，仅具 IT 意义，与任何真实凭证无关；真实密钥只经环境变量注入） */
     private static final String TEST_HMAC_SECRET = "it-only-fake-hmac-secret-0123456789abcdef0123456789abcdef";
 
     /**

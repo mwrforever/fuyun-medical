@@ -4,7 +4,6 @@ import com.fuyun.system.dto.PracticeCheckRequest;
 import com.fuyun.system.service.IPracticeService;
 import com.fuyun.system.vo.PracticeCheckResponse;
 import jakarta.validation.Valid;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,7 +17,6 @@ import org.springframework.web.bind.annotation.RestController;
  * （敏感查询留痕 P1，简报 §3.3 注解落点口径）。职责边界：仅 @Valid 校验 + 调用 service +
  * 编排响应，禁业务逻辑与事务（宪法 B.1/A.1-8）。
  */
-@Slf4j
 @RestController
 @RequestMapping("/api/v1/system/practice")
 public class PracticeController {
