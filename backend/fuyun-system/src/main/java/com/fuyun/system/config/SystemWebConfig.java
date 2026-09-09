@@ -5,6 +5,7 @@ import com.fuyun.system.controller.AuthController;
 import com.fuyun.system.controller.DictController;
 import com.fuyun.system.controller.DictTypeController;
 import com.fuyun.system.controller.DictVersionController;
+import com.fuyun.system.controller.PracticeController;
 import com.fuyun.system.convert.AuthConverter;
 import com.fuyun.system.convert.DictConverter;
 import com.fuyun.system.internal.AuditLogAspect;
@@ -17,6 +18,7 @@ import com.fuyun.system.service.impl.DictItemServiceImpl;
 import com.fuyun.system.service.impl.DictQueryServiceImpl;
 import com.fuyun.system.service.impl.DictTypeServiceImpl;
 import com.fuyun.system.service.impl.DictVersionServiceImpl;
+import com.fuyun.system.service.impl.PracticeServiceImpl;
 import com.fuyun.system.service.impl.RoleServiceImpl;
 import com.fuyun.system.service.impl.TokenServiceImpl;
 import com.fuyun.system.service.impl.UserServiceImpl;
@@ -59,7 +61,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     DictVersionController.class,
     DictController.class,
     AuditLogServiceImpl.class,
-    AuditLogAspect.class
+    AuditLogAspect.class,
+    PracticeServiceImpl.class,
+    PracticeController.class
 })
 public class SystemWebConfig implements WebMvcConfigurer {
 
