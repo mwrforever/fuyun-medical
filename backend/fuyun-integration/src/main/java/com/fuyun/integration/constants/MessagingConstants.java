@@ -45,6 +45,9 @@ public final class MessagingConstants {
     /** 绑定键通配：死信交换机全量路由（仅死信统一队列使用） */
     public static final String BINDING_KEY_ALL = "#";
 
+    /** 消息头：x-death 死信轨迹（RabbitMQ 服务端注入，死信溯源数据源） */
+    public static final String HEADER_X_DEATH = "x-death";
+
     /** 幂等 Redis 前置键前缀（A.5-1 冒号分层），完整键 = 本前缀 + 消费者模块 + ":" + eventId */
     public static final String IDEMPOTENCY_KEY_PREFIX = "fy:integration:idempotency:";
 

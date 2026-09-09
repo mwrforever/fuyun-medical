@@ -3,6 +3,7 @@ package com.fuyun.integration.config;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.constants.MessagingConstants;
+import com.fuyun.integration.internal.DeadLetterListener;
 import com.fuyun.integration.properties.MessagingProperties;
 import com.fuyun.integration.service.impl.EventRegistryServiceImpl;
 import com.fuyun.integration.service.impl.MessageIdempotencyServiceImpl;
@@ -29,7 +30,8 @@ import org.springframework.context.annotation.Import;
  * <p>EventEnvelopeCodec 为全系统发布/消费共用的信封编解码器，B2.2 死信监听依赖其 Bean 化，
  * 故随本配置一并 @Import 装配（简报 §2.7 import 清单的必要补充，PR 描述申报）。
  *
- * <p>B2.2 追加装配：MessageIdempotencyServiceImpl（消费幂等两层语义实现）。
+ * <p>B2.2 追加装配（简报 §2.7 预告）：MessageIdempotencyServiceImpl（消费幂等两层语义实现）
+ * 与 DeadLetterListener（死信统一队列落库告警监听器）。
  *
  * <p>发布确认回调说明：application.yml 已定 publisher-confirm-type: correlated 姿态（PR-1 落地）；
  * 确认回调（nack/不可路由 error 日志与补偿）随首个真实发布构件落地（PR-3 发布侧 / P1 outbox），
@@ -41,7 +43,8 @@ import org.springframework.context.annotation.Import;
     QueueGovernorImpl.class,
     EventRegistryServiceImpl.class,
     EventEnvelopeCodec.class,
-    MessageIdempotencyServiceImpl.class
+    MessageIdempotencyServiceImpl.class,
+    DeadLetterListener.class
 })
 public class MessagingGovernanceConfig {
 
