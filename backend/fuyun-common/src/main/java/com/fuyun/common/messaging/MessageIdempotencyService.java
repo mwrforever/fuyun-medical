@@ -9,6 +9,11 @@ package com.fuyun.common.messaging;
  * 放行）+ received_event 表 (event_id, consumer_module) 唯一索引最终兜底（正确性保证层，
  * 并发重复投递吞为已处理）。
  *
+ * <p>D-7 裁决（消除 TTL 窗口误判丢消息）：NX 抢占失败不必然是重复投递——上次处理可能中断于
+ * 业务执行前，前置键残留而台账无行。因此 NX 失败时必须回查 received_event 台账：
+ * 已有已处理行才判定重复（返回 false 跳过）；无行则视为前置键残留，放行重新处理
+ * （返回 true），保持 at-least-once 语义不被加速层削弱。
+ *
  * <p>标准消费范式（消费方一律按此编写；PR-3 出现第二个真实消费者时再提炼模板基类，
  * 本契约不做抽象）：
  * <pre>{@code
@@ -32,9 +37,14 @@ public interface MessageIdempotencyService {
      * <p>Redis 故障时降级放行（warn 日志 + 返回 true，不抛出）——Redis 故障不得放大为消费
      * 不可用，此时由唯一索引兜底最终幂等。
      *
+     * <p>D-7 回查语义（NX 失败分支）：抢占失败时回查 received_event 台账（
+     * {@code (event_id, consumer_module)} 唯一索引查询）——已有已处理行 → 返回 false
+     * （确认已处理，消费方跳过即 AUTO 确认）；无行 → 前置键残留/上次处理中断，warn 后
+     * 返回 true 放行重新处理（防 TTL 窗口内重投被误判丢弃）。
+     *
      * @param eventId        事件信封 eventId（UUID 字符串），非空；来源：消费消息解析出的信封
      * @param consumerModule 消费者模块域标识（如 it），非空；幂等键第二要素（同事件可被多模块消费）
-     * @return true=首次投递可执行业务；false=重复投递，消费方直接返回跳过（即 AUTO 确认）
+     * @return true=首次投递可执行业务；false=确认重复投递，消费方直接返回跳过（即 AUTO 确认）
      */
     boolean tryAcquire(String eventId, String consumerModule);
 
