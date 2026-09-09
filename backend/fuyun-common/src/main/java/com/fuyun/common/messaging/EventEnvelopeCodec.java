@@ -6,7 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
-import org.springframework.stereotype.Component;
 
 /**
  * 事件信封编解码器：全系统事件发布/消费的唯一线格式出入口（CF-1 契约执行点）。
@@ -20,9 +19,11 @@ import org.springframework.stereotype.Component;
  * （Long→String 定制经 JacksonLongToStringConfig 生效），消息侧与 REST 侧序列化行为一致。
  *
  * <p>traceId 取值约定：HTTP 线程内发布由调用方传入 {@code MDC.get("traceId")}；MQ 线程无
- * 日志上下文传 null。工场对 producer/eventType/payload 做创建期 fail-fast，不产出先天不合规信封。
+ * 日志上下文传 null。工厂对 producer/eventType/payload 做创建期 fail-fast，不产出先天不合规信封。
+ *
+ * <p>装配说明：common 包不在 @SpringBootApplication 扫描范围，本类无 stereotype 注解，
+ * Bean 注册点为 fuyun-integration MessagingGovernanceConfig 的 @Import（宪法 B.1 装配归消费方配置）。
  */
-@Component
 public class EventEnvelopeCodec {
 
     /** 信封载荷契约版本：当前唯一合法取值，随 CF-1 冻结 */

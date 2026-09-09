@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -52,7 +53,14 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                         ? MessagingConstants.SUBSCRIBER_BROADCAST
                         : (spec.subscriberModules() == null ? "" : spec.subscriberModules()));
         entity.setStatus(MessagingConstants.REGISTRY_STATUS_ACTIVE);
-        this.save(entity);
+        // 并发首登记兜底：check-then-insert 竞态下后到者命中 uk_event_registry_event_type，
+        // 与前置查询幂等语义对齐（warn 跳过不覆盖），唯一索引为最终保证（backend 宪法 A.5-6 同型语义）
+        try {
+            this.save(entity);
+        } catch (DuplicateKeyException e) {
+            log.warn("事件类型 {} 并发登记命中唯一索引，先行者已登记，幂等跳过，不覆盖既有契约", spec.eventType());
+            return;
+        }
         log.info(
                 "事件登记完成：event_type={}，producer={}，broadcast={}，subscriber_modules={}",
                 spec.eventType(),

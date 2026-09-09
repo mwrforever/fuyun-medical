@@ -1,6 +1,7 @@
 package com.fuyun.integration.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -26,6 +27,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -92,6 +94,21 @@ class EventRegistryServiceImplTest {
                 new EventRegistrationSpec("system.dict.published", "system", "另一份载荷描述（应被忽略）", "other-module", false));
 
         verify(eventRegistryMapper, never()).insert(any(EventRegistry.class));
+    }
+
+    @Test
+    @DisplayName("register 并发冲突：insert 命中唯一索引抛 DuplicateKeyException 时按幂等语义跳过不抛出")
+    void registerTreatsUniqueIndexConflictAsIdempotentSkip() {
+        when(eventRegistryMapper.selectOne(any())).thenReturn(null);
+        // 并发首登记场景：check-then-insert 竞态下后到者命中 uk_event_registry_event_type
+        when(eventRegistryMapper.insert(any(EventRegistry.class)))
+                .thenThrow(new DuplicateKeyException(
+                        "duplicate key value violates unique constraint \"uk_event_registry_event_type\""));
+
+        assertThatCode(() -> service.register(
+                        new EventRegistrationSpec("system.dict.published", "system", "并发侧登记请求", "it", false)))
+                .doesNotThrowAnyException();
+        verify(eventRegistryMapper).insert(any(EventRegistry.class));
     }
 
     @Test
