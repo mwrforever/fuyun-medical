@@ -2,7 +2,7 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
-## 2026-09-09 · PR-3 B3.4：workstation 登录页 + 主布局 + Axios 单例（前端接入认证链路）
+## 2026-09-10 · PR-3 B3.4：workstation 登录页 + 主布局 + Axios 单例（前端接入认证链路）
 
 - Axios 单例（src/api/http.ts，web A.3-1 唯一出网口）：baseURL = VITE_API_BASE_URL ?? '/api'、timeout 15s 模块级导出；请求拦截器注入 `Authorization: Bearer {token}`（useAuthStore 延迟到回调运行时调用，web B.3-1 组件外口径）+ 每请求唯一 `X-Trace-Id`（crypto.randomUUID，后端 TraceIdFilter 复用为 MDC 锚点并回写响应头）；响应拦截器统一错误出口——非 2xx 提取 ProblemDetail.detail 经 ElMessage 统一提示（缺省回退「请求失败」）、401 触发注册的未授权回调；`setUnauthorizedHandler` 回调解耦（http.ts 禁反向 import router，防循环依赖），拦截器内不落业务逻辑（A.3-2）。
 - 认证 api 与后备类型：src/api/auth.ts 三类型化函数（login/refresh/logout，路径 /api/v1/system/auth/* 与后端 B3.2 契约对齐）+ src/types/auth.ts 手写后备类型 LoginRequest/LoginResponse/UserVO（web A.3-3 后备条款，文件头标注 openapi-typescript 生成物就位后由 packages/shared api.d.ts 承接并删除本文件；userId/orgId 按 Long→String 规则一律 string 承载，orgId 可 null）。

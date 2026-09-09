@@ -14,13 +14,13 @@ vi.mock('@/api/auth', () => ({
   refresh: vi.fn(),
 }));
 
-/** 构造登录成功响应（字段与后端 LoginResponse 契约一致，userId 为字符串化 Long） */
+/** 构造登录成功响应（字段与后端契约一致：userId/expiresIn 为后端 Long 经 Long→String 的字符串输出） */
 function loginResponse(): LoginResponse {
   return {
     accessToken: 'access-token-1',
     refreshToken: 'refresh-token-1',
     tokenType: 'Bearer',
-    expiresIn: 7200,
+    expiresIn: '7200',
     user: {
       userId: '1932000000000000001',
       loginName: 'admin',

@@ -37,8 +37,8 @@ export interface LoginResponse {
   refreshToken: string;
   /** 令牌方案名，恒为 "Bearer"（RFC 6750） */
   tokenType: string;
-  /** access 令牌有效期（秒），非负 */
-  expiresIn: number;
+  /** access 令牌有效期（秒）；后端为原生 long，经全局 Long→String 以 JSON 字符串输出，前端字符串承载 */
+  expiresIn: string;
   /** 登录用户身份，非空 */
   user: UserVO;
 }

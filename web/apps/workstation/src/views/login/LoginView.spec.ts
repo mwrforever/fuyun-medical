@@ -17,13 +17,13 @@ vi.mock('@/api/auth', () => ({
   refresh: vi.fn(),
 }));
 
-/** 构造登录成功响应（契约字段：userId 为字符串化 Long） */
+/** 构造登录成功响应（契约字段：userId/expiresIn 为后端 Long 经全局 Long→String 的字符串输出） */
 function loginResponse(): LoginResponse {
   return {
     accessToken: 'access-token-1',
     refreshToken: 'refresh-token-1',
     tokenType: 'Bearer',
-    expiresIn: 7200,
+    expiresIn: '7200',
     user: {
       userId: '1932000000000000001',
       loginName: 'admin',
@@ -74,14 +74,18 @@ describe('登录页', () => {
     await inputs[0]?.setValue('admin');
     await inputs[1]?.setValue('Fuyun@2026');
     await wrapper.find('button').trigger('click');
-    // 登录成功后的跳转含懒加载布局组件的动态导入（耗时跨宏任务）：轮询等待导航真正完成
-    await vi.waitFor(() => {
-      expect(vi.mocked(loginApiMock)).toHaveBeenCalledWith({
-        loginName: 'admin',
-        password: 'Fuyun@2026',
-      });
-      expect(router.currentRoute.value.path).toBe('/');
-    });
+    // 登录成功后的跳转含懒加载布局组件的动态导入（耗时跨宏任务）：轮询等待导航真正完成，
+    // 显式 3s 超时（MainLayout 懒加载实测约 0.5s），防慢 CI flaky
+    await vi.waitFor(
+      () => {
+        expect(vi.mocked(loginApiMock)).toHaveBeenCalledWith({
+          loginName: 'admin',
+          password: 'Fuyun@2026',
+        });
+        expect(router.currentRoute.value.path).toBe('/');
+      },
+      { timeout: 3000 },
+    );
     wrapper.unmount();
   });
 });

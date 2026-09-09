@@ -49,9 +49,10 @@ async function handleSubmit(): Promise<void> {
   submitting.value = true;
   try {
     await authStore.login({ ...form });
-    // 回跳地址仅接受站内根相对路径，防 open redirect
+    // 回跳地址仅接受站内根相对路径（排除协议相对路径 // 与外站绝对地址），纵深防御 open redirect
     const raw = route.query['redirect'];
-    const redirect = typeof raw === 'string' && raw.startsWith('/') ? raw : '/';
+    const redirect =
+      typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
     await router.push(redirect);
   } catch {
     // 登录失败（凭据错误/锁定/停用）提示已由响应拦截器统一弹出，此处仅终止跳转
