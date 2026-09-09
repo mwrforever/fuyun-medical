@@ -72,6 +72,8 @@ spring:
           max-attempts: 3
           initial-interval: 1000ms
           multiplier: 2.0
+mybatis-plus:                  # MP 全局扩展（backend 宪法 A.4.3）
+  type-handlers-package: com.fuyun.integration.handler  # PG uuid 列 TypeHandler 全局注册（insert 参数与 wrapper 条件两侧生效）
 server:
   shutdown: graceful           # 优雅停机（backend 宪法 A.5-15）
 management:

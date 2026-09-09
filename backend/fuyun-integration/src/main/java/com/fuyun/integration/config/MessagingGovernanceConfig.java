@@ -13,7 +13,11 @@ import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.core.TopicExchange;
+import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.amqp.support.converter.SimpleMessageConverter;
+import org.springframework.boot.autoconfigure.amqp.SimpleRabbitListenerContainerFactoryConfigurer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,6 +36,14 @@ import org.springframework.context.annotation.Import;
  *
  * <p>B2.2 追加装配（简报 §2.7 预告）：MessageIdempotencyServiceImpl（消费幂等两层语义实现）
  * 与 DeadLetterListener（死信统一队列落库告警监听器）。
+ *
+ * <p>B2.3 追加项目标准消费容器工厂（覆盖 Boot 默认同名工厂，简报未明确处，PR 描述申报）：
+ * 消费侧 payload 承接统一为原文兜底转换器——Spring AMQP 3.2 的监听链路对任何方法签名都先经
+ * 转换器提取 payload（无 raw 旁路），Jackson2JsonMessageConverter 对未受信类头/毒丸报文直接抛
+ * 转换异常，且无法为 String 参数还原 JSON 原文（readValue(json, String.class) 对对象节点抛
+ * MismatchedInputException，均经端到端 IT 与本机实证）。故消费方一律 raw Message 参数
+ * （容器经 providedArgs 注入原始帧）+ UTF-8 解码 + codec 解析（CF-1：__TypeId__ 不作消费依据），
+ * 业务毒丸经有界重试耗尽正常转死信、死信监听不因二次转换失败回环。
  *
  * <p>发布确认回调说明：application.yml 已定 publisher-confirm-type: correlated 姿态（PR-1 落地）；
  * 确认回调（nack/不可路由 error 日志与补偿）随首个真实发布构件落地（PR-3 发布侧 / P1 outbox），
@@ -82,5 +94,28 @@ public class MessagingGovernanceConfig {
     @Bean
     public Jackson2JsonMessageConverter jackson2JsonMessageConverter(ObjectMapper objectMapper) {
         return new Jackson2JsonMessageConverter(objectMapper);
+    }
+
+    /**
+     * 项目标准消费容器工厂（覆盖 Boot 默认同名工厂，Boot 原工厂按同名条件让位）：
+     * payload 承接换为 {@link SimpleMessageConverter}（任意报文兜底返回 byte[]，永不抛转换异常），
+     * 使消费方 raw Message 参数必达原始帧；其余容器姿态（AUTO 确认、有界重试、
+     * defaultRequeueRejected=false、并发等）沿用 Boot 配置器按 yml 装配，姿态不放宽。
+     *
+     * <p>安全边界说明：SimpleMessageConverter 仅在 contentType 为
+     * application/x-java-serialized-object 时才做 Java 反序列化，本系统消息 contentType 恒为
+     * application/json（发布侧 Jackson 转换器写入），不受反序列化攻击面影响。
+     *
+     * @param configurer        Boot 监听容器工厂配置器，非空；来源：RabbitAnnotationDrivenConfiguration
+     * @param connectionFactory RabbitMQ 连接工厂，非空；来源：Boot 自动装配
+     * @return 全项目 @RabbitListener 消费者的默认容器工厂
+     */
+    @Bean
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(
+            SimpleRabbitListenerContainerFactoryConfigurer configurer, ConnectionFactory connectionFactory) {
+        SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
+        configurer.configure(factory, connectionFactory);
+        factory.setMessageConverter(new SimpleMessageConverter());
+        return factory;
     }
 }
