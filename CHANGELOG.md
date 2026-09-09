@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-09 · PR-2 B2.2：received_event 幂等构件 + dead_letter 死信落库告警
+
+- 按 BRIEF-PR2-01 §3（B2.2 批次）落地：fuyun-common 新增 `com.fuyun.common.messaging.MessageIdempotencyService` 契约接口（tryAcquire/recordProcessed/release 三方法 + 标准消费范式 javadoc，接口沉 common 为 M-3 裁决载体）与 `ReceivedEventRecord` 参数 record；fuyun-integration 落地 `MessageIdempotencyServiceImpl`（Redis SET NX PX 前置去重，键 `fy:integration:idempotency:<module>:<eventId>`、TTL 取 fuyun.messaging.idempotency-redis-ttl、Redis 故障降级放行由唯一索引兜底 + `DuplicateKeyException` 吞为已处理、其他 DB 异常原样上抛 + release 失败释放前置键）与 `internal/DeadLetterListener`（@RabbitListener 监听 q.integration.dead-letter + 容器 AUTO，raw Message 承接毒丸不做 JSON 转换，x-death 轨迹解析 + SHA-256 摘要 + 信封合规校验（不合规两列置空并标注留痕），落库失败 error 告警不抛防毒丸无限循环）；`ReceivedEvent`/`DeadLetter` 实体与 mapper + Flyway V3/V4 迁移（received_event 表：event_id+consumer_module 唯一索引；dead_letter 表：payload 落「原文全文+SHA-256 摘要」两列，简报 §8-6 定案口径）。
+- 装配与门禁配套：MessagingGovernanceConfig @Import 追加幂等实现与死信监听两类（简报 §2.7 预告的 B2.2 追加）；MessagingConstants 增 `IDEMPOTENCY_KEY_PREFIX`/`HEADER_X_DEATH`（A.2-6 Redis 键前缀与消息头词表）；父 POM jacoco 规则二 includes 追加 `com.fuyun.integration.service.impl`（核心包 PACKAGE LINE 1.00 首个真实生效包，DoD 第 2 条）+ excludes 追加 `com/fuyun/**/constants/**`（宪法 C.5-2 排除清单扩展项，PR 描述申报，§8-7）。
+- 实现口径定案两处（简报未明确处，PR 描述同步申报）：① received_event.event_id 列为 PG UUID 类型，实体字段取 `java.util.UUID`——MyBatis 无内置 UUID TypeHandler，经 UnknownTypeHandler→ObjectTypeHandler→`ps.setObject` 走 pgjdbc 原生 UUID 支持（insert 路径成立，B2.3 端到端 IT 复验真实插入）；② 死信监听器落库失败 catch 范围取 `RuntimeException` 兜底（比简报"DB 故障"更宽），覆盖一切运行时异常防毒丸回环，error 日志即为 M20 §10 告警通道。
+- TDD：新增 2 测试类 11 用例（幂等 7 场景 + 死信 4 场景）先 RED（测试先行编译失败留证）后 GREEN，测试与实现同提交；验证 = `mvn -B -ntp test` 全绿 + `mvn -B -ntp spotless:check` 绿 + V1→V4 迁移对全新 timescale 容器库 Flyway 重放留证（同 B2.1 方式）。
+
 ## 2026-09-09 · PR-2 B2.1：事件信封 + Long→String 序列化 + 队列声明构件 + event_registry（CF-1 冻结载体落盘）
 
 - 按 BRIEF-PR2-01 §2（B2.1 批次）落地：fuyun-common 新增 `com.fuyun.common.messaging` 包（EventEnvelope 七字段信封 record = CF-1 冻结形态 + EventEnvelopeCodec 时钟注入工厂 / 线格式编解码与消费侧合规校验）与 `com.fuyun.common.config.JacksonLongToStringConfig`（Long/long → String 全局定制唯一注册点，backend 宪法 A.3-8）；fuyun-integration 落地消息治理构件（api/ 三件契约 MessagingGovernance/ConsumerQueueSpec/DelayQueueSpec + QueueGovernorImpl + IEventRegistryService 登记服务 + EventRegistry 实体与 mapper + MessagingConstants/MessagingProperties/MessagingGovernanceConfig）与 Flyway V1/V2 迁移（公共审计触发器函数 fuyun_set_updated_at + integration.event_registry 表）；fuyun-app 装配（MessagingConfig @Import 两配置类、MybatisPlusConfig @MapperScan + 三大插件）与 application.yml / application-test.yml 追加键（消费端有界重试 + fuyun.messaging.idempotency-redis-ttl，test 快速重试覆盖）。
