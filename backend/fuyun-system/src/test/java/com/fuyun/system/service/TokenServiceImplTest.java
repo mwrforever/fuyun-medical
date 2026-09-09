@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,6 +17,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.properties.SecurityProperties;
+import com.fuyun.system.record.RefreshedAccess;
 import com.fuyun.system.record.SessionData;
 import com.fuyun.system.record.SessionUser;
 import com.fuyun.system.record.TokenClaims;
@@ -299,6 +301,76 @@ class TokenServiceImplTest {
         tokenService.evict("some-session-id");
 
         verify(redisTemplate).delete(SecurityConstants.SESSION_KEY_PREFIX + "some-session-id");
+    }
+
+    @Test
+    @DisplayName("刷新换发成功：refresh 令牌换发同 sid 新 access，可按 access 类型校验且会话续期")
+    void refreshAccessTokenMintsSameSidAccessToken() throws Exception {
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
+        TokenPair pair = tokenService.issue(user);
+        String sid = (String) readClaimsJson(pair.refreshToken()).get(SecurityConstants.CLAIM_SID);
+        when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid))
+                .thenReturn(new ObjectMapper()
+                        .writeValueAsString(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"))));
+
+        RefreshedAccess refreshed = tokenService.refreshAccessToken(pair.refreshToken());
+
+        // 新 access 与原 refresh 同 sid、typ=access、exp=当前时刻+access TTL
+        Map<String, Object> accessClaims = readClaimsJson(refreshed.accessToken());
+        assertThat(accessClaims.get(SecurityConstants.CLAIM_SID)).isEqualTo(sid);
+        assertThat(accessClaims.get(SecurityConstants.CLAIM_TYP)).isEqualTo(SecurityConstants.TOKEN_TYPE_ACCESS);
+        assertThat(((Number) accessClaims.get(SecurityConstants.CLAIM_EXP)).longValue())
+                .isEqualTo(NOW.plus(ACCESS_TTL).toEpochMilli());
+        // 会话状态还原（角色摘要不进令牌体，由会话承载）
+        assertThat(refreshed.session().userId()).isEqualTo(123L);
+        assertThat(refreshed.session().roles()).containsExactly("ADMIN");
+        // 新 access 可按 access 类型通过完整校验链（含会话存在性）
+        assertThat(tokenService
+                        .verify(refreshed.accessToken(), SecurityConstants.TOKEN_TYPE_ACCESS)
+                        .userId())
+                .isEqualTo(123L);
+    }
+
+    @Test
+    @DisplayName("刷新失败统一 SYS-1005：typ 不符/签名篡改均按刷新令牌无效拒绝（防错误细分探测）")
+    void refreshAccessTokenRejectsInvalidRefreshTokenWithUnifiedCode() {
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
+        TokenPair pair = tokenService.issue(user);
+        // access 令牌按 refresh 用途提交：typ 不符属刷新失败
+        String wrongTypeRaw = pair.accessToken();
+        // 签名篡改样本（尾端仍为合法 base64url 字符，触发签名比对失败而非格式错误）
+        String tampered = pair.refreshToken().substring(0, pair.refreshToken().length() - 2) + "xx";
+
+        for (String raw : new String[] {wrongTypeRaw, tampered}) {
+            assertThatThrownBy(() -> tokenService.refreshAccessToken(raw))
+                    .as("非法刷新令牌 [%s...] 应统一按 SYS-1005 拒绝", raw.substring(0, 10))
+                    .isInstanceOfSatisfying(BizException.class, ex -> {
+                        assertThat(ex.getErrorCode()).isEqualTo(SystemErrorCode.REFRESH_TOKEN_INVALID);
+                        assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.UNAUTHORIZED);
+                    });
+        }
+    }
+
+    @Test
+    @DisplayName("登出校验 typ=access 后删键：合法 access 登出删除会话；refresh 令牌登出被拒绝且不删键")
+    void logoutRequiresAccessTokenAndDeletesSession() throws Exception {
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
+        TokenPair pair = tokenService.issue(user);
+        String sid = (String) readClaimsJson(pair.accessToken()).get(SecurityConstants.CLAIM_SID);
+        when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid))
+                .thenReturn(new ObjectMapper()
+                        .writeValueAsString(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"))));
+
+        // 合法 access 登出：删除同 sid 会话键（refresh 同失效）
+        tokenService.logout(pair.accessToken());
+        verify(redisTemplate).delete(SecurityConstants.SESSION_KEY_PREFIX + sid);
+
+        // refresh 令牌登出：typ 强校验拒绝（§8-11 刷新/登出须校验 typ），不得触发删除
+        reset(redisTemplate);
+        assertThatThrownBy(() -> tokenService.logout(pair.refreshToken()))
+                .isInstanceOfSatisfying(BizException.class, ex -> assertThat(ex.getErrorCode())
+                        .isEqualTo(SystemErrorCode.TOKEN_MISSING_OR_INVALID));
+        verify(redisTemplate, never()).delete(anyString());
     }
 
     /** 读取令牌 payload 段 JSON（base64url 解码 + Map 承载，断言线格式字段全集） */

@@ -17,6 +17,8 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.RabbitMQContainer;
@@ -57,6 +59,20 @@ class SmokeStackIT {
     static final RabbitMQContainer RABBITMQ = new RabbitMQContainer(DockerImageName.parse("rabbitmq:4.3.5-management"))
             .withCopyFileToContainer(
                     MountableFile.forClasspathResource("it/rabbitmq.conf"), "/etc/rabbitmq/conf.d/20-fuyun-smoke.conf");
+
+    /** 测试资产假密钥（64 字符，仅具 IT 意义，与任何真实凭证无关；真实密钥只经环境变量注入） */
+    private static final String TEST_HMAC_SECRET = "it-only-fake-hmac-secret-0123456789abcdef0123456789abcdef";
+
+    /**
+     * 注入测试用 HMAC 密钥：B3.2 认证链路装配后上下文含 SecurityProperties（fuyun.security.*），
+     * 密钥缺失即启动 fail-fast；既有 IT 以假密钥维持基础设施冒烟语义（BRIEF-PR3-01 §5 同款姿态）。
+     *
+     * @param registry 动态属性注册器，非空；来源：Spring TestContext 框架
+     */
+    @DynamicPropertySource
+    static void registerSecurityProperties(DynamicPropertyRegistry registry) {
+        registry.add("fuyun.security.token-hmac-secret", () -> TEST_HMAC_SECRET);
+    }
 
     /** 依赖经测试构造器注入（@Autowired 显式声明可注入构造器，规避字段注入，backend 宪法 A.1-7） */
     private final JdbcTemplate jdbcTemplate;
