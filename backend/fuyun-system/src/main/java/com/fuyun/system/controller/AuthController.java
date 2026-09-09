@@ -1,8 +1,10 @@
 package com.fuyun.system.controller;
 
+import com.fuyun.system.api.AuditLog;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.dto.LoginRequest;
 import com.fuyun.system.dto.RefreshRequest;
+import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.service.IAuthService;
 import com.fuyun.system.vo.LoginResponse;
 import jakarta.validation.Valid;
@@ -38,10 +40,14 @@ public class AuthController {
     /**
      * 登录：用户名 + 口令换双令牌。
      *
+     * <p>审计落点（LOGIN）：成功记 SUCCESS 行、失败记 FAIL 行（含防枚举失败与锁定拒绝），
+     * 落库与脱敏语义归 AuditLogAspect；免认证端点无操作人上下文，审计主体回退取入参登录名。
+     *
      * @param request 登录请求，非空；loginName/password 由 JSR-303 校验非空
      * @return 登录响应（双令牌 + 用户身份，userId/orgId 以 JSON 字符串输出）
      */
     @PostMapping("/login")
+    @AuditLog(actionType = AuditActionType.LOGIN)
     public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         return authService.login(request);
     }
@@ -60,10 +66,13 @@ public class AuthController {
     /**
      * 登出：删除当前令牌会话，双令牌同时失效。
      *
+     * <p>审计落点（LOGIN）：会话类安全动作留痕，操作人取认证拦截器注入的上下文。
+     *
      * @param authorization Authorization 请求头，非空（拦截器已保证 Bearer 方案合法）
      * @return 204 无响应体
      */
     @PostMapping("/logout")
+    @AuditLog(actionType = AuditActionType.LOGIN)
     public ResponseEntity<Void> logout(@RequestHeader(SecurityConstants.AUTH_HEADER) String authorization) {
         // 剥离 Bearer 方案前缀取令牌原文（拦截器已校验前缀存在，此处安全）
         authService.logout(authorization

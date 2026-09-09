@@ -1,6 +1,8 @@
 package com.fuyun.system.controller;
 
+import com.fuyun.system.api.AuditLog;
 import com.fuyun.system.dto.DictTypeCreateRequest;
+import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.service.IDictTypeService;
 import com.fuyun.system.service.IDictVersionService;
 import com.fuyun.system.vo.DictTypeVO;
@@ -47,6 +49,7 @@ public class DictTypeController {
      * @return 类型出参（含雪花 ID，JSON 字符串输出）
      */
     @PostMapping
+    @AuditLog(actionType = AuditActionType.WRITE)
     public DictTypeVO createType(@Valid @RequestBody DictTypeCreateRequest request) {
         return dictTypeService.createType(request);
     }
@@ -60,6 +63,7 @@ public class DictTypeController {
      * @return 版本出参（条目为空清单）
      */
     @PostMapping("/{typeCode}/versions")
+    @AuditLog(actionType = AuditActionType.WRITE)
     public DictVersionVO createVersion(@PathVariable("typeCode") String typeCode) {
         return dictVersionService.createVersion(typeCode);
     }

@@ -7,9 +7,11 @@ import com.fuyun.system.controller.DictTypeController;
 import com.fuyun.system.controller.DictVersionController;
 import com.fuyun.system.convert.AuthConverter;
 import com.fuyun.system.convert.DictConverter;
+import com.fuyun.system.internal.AuditLogAspect;
 import com.fuyun.system.internal.AuthTokenInterceptor;
 import com.fuyun.system.properties.SecurityProperties;
 import com.fuyun.system.service.ITokenService;
+import com.fuyun.system.service.impl.AuditLogServiceImpl;
 import com.fuyun.system.service.impl.AuthServiceImpl;
 import com.fuyun.system.service.impl.DictItemServiceImpl;
 import com.fuyun.system.service.impl.DictQueryServiceImpl;
@@ -55,7 +57,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     DictQueryServiceImpl.class,
     DictTypeController.class,
     DictVersionController.class,
-    DictController.class
+    DictController.class,
+    AuditLogServiceImpl.class,
+    AuditLogAspect.class
 })
 public class SystemWebConfig implements WebMvcConfigurer {
 

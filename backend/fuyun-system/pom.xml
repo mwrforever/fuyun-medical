@@ -48,6 +48,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <!-- 审计切面（B3.3）：@Aspect/@Around 编译期注解与 AspectJ 切点表达式依赖 aspectjweaver
+         （BOM 托管 starter，运行期自动代理由 fuyun-app 同款 starter 装配，A.1-15 注解优先） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-aop</artifactId>
+    </dependency>
     <!-- 登录口令 bcrypt 校验（宪法 A.4.2-10 点名 BOM 托管单 jar，非 spring-security 全家桶） -->
     <dependency>
       <groupId>org.springframework.security</groupId>

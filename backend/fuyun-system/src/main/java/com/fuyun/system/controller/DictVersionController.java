@@ -1,6 +1,8 @@
 package com.fuyun.system.controller;
 
+import com.fuyun.system.api.AuditLog;
 import com.fuyun.system.dto.DictItemCreateRequest;
+import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.service.IDictItemService;
 import com.fuyun.system.service.IDictVersionService;
 import com.fuyun.system.vo.DictItemVO;
@@ -47,6 +49,7 @@ public class DictVersionController {
      * @return 条目出参
      */
     @PostMapping("/{versionId}/items")
+    @AuditLog(actionType = AuditActionType.WRITE)
     public DictItemVO addItem(
             @PathVariable("versionId") Long versionId, @Valid @RequestBody DictItemCreateRequest request) {
         return dictItemService.addItem(versionId, request);
@@ -59,6 +62,7 @@ public class DictVersionController {
      * @param versionId 字典版本 ID（路径参数），非空
      */
     @PostMapping("/{versionId}/publish")
+    @AuditLog(actionType = AuditActionType.WRITE)
     public void publish(@PathVariable("versionId") Long versionId) {
         dictVersionService.publish(versionId);
     }
