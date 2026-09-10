@@ -7,7 +7,7 @@
 | 编号 | 事项 | 背景 / 调研建议 | 影响范围 |
 | --- | --- | --- | --- |
 | D-2 | Spring Modulith 引入与否 | R2 §7.2：ArchUnit 1.5.0 已定为边界守护第一步；Modulith 1.4.13（Boot 3.5 世代）为增量框架候选，提供事件发布注册表等能力；引入属增量框架决策，须总 Spec 修订裁决，若引入必须锁 1.4.x | backend Part B.3 可靠事件投递实现成本 |
-| D-3 | iot-simulator 实现语言与代码位置 | R5 §5-3：未定稿；若 Java 建议放 `backend/iot-simulator/`（Maven 子模块），若 Node 建议顶层目录；影响 images job 的第三条 matrix | CI images job、deploy compose |
+| D-3 | iot-simulator 实现语言与代码位置 | **已按默认裁决执行（2026-09-10，用户未响应 ask_question，取计划默认项，可推翻）**：Java + Maven 子模块 `backend/iot-simulator`，复用父 POM 工具链与 Dockerfile 策略，images job 第三构建步骤同构追加；若用户改判 Node 顶层目录，改动面=simulator 模块位置+独立 Dockerfile+CI 构建步骤+compose 镜像名 | CI images job、deploy compose、PR-4 B4.4 |
 | D-4 | OWASP 周审失败处置流程 | R5 §5-4：fail 后开 issue 还是仅通知，属流程决策 | security.yml |
 | D-5 | 方案 C 二期演进（CodeQL / Trivy / dependency-review / Renovate/Dependabot / SonarQube） | R1 §3.3/§4：用户已定方案 B 上线基线、C 为二期；SonarQube 若引入需 CI 双 JDK（17 构建 + 21 扫描）；Renovate vs Dependabot 二选一（倾向 Renovate 的 monorepo 分组能力） | security.yml 扩展、仓库设置 |
 | D-6 | 宪法 `enum/` 包目录命名与 Java 保留字冲突 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：枚举包目录改 `enums/`——B.1/C.3 正文随 PR-3 修宪提交更新，已建的 `enum/.gitkeep` 目录同步改名；若用户改判 enumeration/ 或其他，改动面=目录名+包名+宪法正文，一次替换可回收 | backend 全部 20 模块目录结构、PR-3 枚举类落位 |
