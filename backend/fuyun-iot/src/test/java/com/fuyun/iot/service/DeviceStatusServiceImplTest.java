@@ -42,6 +42,9 @@ class DeviceStatusServiceImplTest {
 
     private static final Instant OCCURRED_AT = Instant.parse("2026-09-10T05:30:00Z");
 
+    /** 测试病区 ID：档案种子病区，apply 返回值（事件补全 wardId）断言值 */
+    private static final long WARD_ID = 1001L;
+
     @Mock
     private IotDeviceMapper deviceMapper;
 
@@ -63,27 +66,27 @@ class DeviceStatusServiceImplTest {
     }
 
     @Test
-    @DisplayName("设备存在且状态为 ONLINE：更新 status 并分派写 last_online_at（不写 last_offline_at）")
+    @DisplayName("设备存在且状态为 ONLINE：更新 status 并分派写 last_online_at（不写 last_offline_at），返回档案 wardId")
     void applyOnlineStatusDispatchesLastOnlineAtOnly() {
         when(deviceMapper.selectOne(any())).thenReturn(existingDevice(DeviceStatus.OFFLINE));
         when(deviceMapper.update(isNull(), any())).thenReturn(1);
 
-        boolean applied = service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.ONLINE, OCCURRED_AT, null));
+        Long appliedWardId = service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.ONLINE, OCCURRED_AT, null));
 
-        assertThat(applied).isTrue();
+        assertThat(appliedWardId).as("有效设备返回档案 wardId（消费侧事件补全依据）").isEqualTo(WARD_ID);
         String sqlSet = capturedSqlSet();
         assertThat(sqlSet).contains("status").contains("last_online_at").doesNotContain("last_offline_at");
     }
 
     @Test
-    @DisplayName("设备存在且状态为 OFFLINE：更新 status 并分派写 last_offline_at（不写 last_online_at）")
+    @DisplayName("设备存在且状态为 OFFLINE：更新 status 并分派写 last_offline_at（不写 last_online_at），返回档案 wardId")
     void applyOfflineStatusDispatchesLastOfflineAtOnly() {
         when(deviceMapper.selectOne(any())).thenReturn(existingDevice(DeviceStatus.ONLINE));
         when(deviceMapper.update(isNull(), any())).thenReturn(1);
 
-        boolean applied = service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.OFFLINE, OCCURRED_AT, null));
+        Long appliedWardId = service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.OFFLINE, OCCURRED_AT, null));
 
-        assertThat(applied).isTrue();
+        assertThat(appliedWardId).as("有效设备返回档案 wardId（消费侧事件补全依据）").isEqualTo(WARD_ID);
         String sqlSet = capturedSqlSet();
         assertThat(sqlSet).contains("status").contains("last_offline_at").doesNotContain("last_online_at");
     }
@@ -94,35 +97,36 @@ class DeviceStatusServiceImplTest {
         when(deviceMapper.selectOne(any())).thenReturn(existingDevice(DeviceStatus.ONLINE));
         when(deviceMapper.update(isNull(), any())).thenReturn(1);
 
-        boolean applied = service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.ABNORMAL, OCCURRED_AT, null));
+        Long appliedWardId = service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.ABNORMAL, OCCURRED_AT, null));
 
-        assertThat(applied).isTrue();
+        assertThat(appliedWardId).isEqualTo(WARD_ID);
         String sqlSet = capturedSqlSet();
         assertThat(sqlSet).contains("status").doesNotContain("last_online_at").doesNotContain("last_offline_at");
     }
 
     @Test
-    @DisplayName("设备档案不存在：info 跳过不更新并返回 false（调用方不发状态事件）")
+    @DisplayName("设备档案不存在：info 跳过不更新并返回 null（调用方不发状态事件）")
     void applySkipsUnknownDeviceWithoutUpdate() {
         when(deviceMapper.selectOne(any())).thenReturn(null);
 
-        boolean applied = service.apply(new DeviceStatusEvent("ghost-device", DeviceStatus.ONLINE, OCCURRED_AT, null));
+        Long appliedWardId =
+                service.apply(new DeviceStatusEvent("ghost-device", DeviceStatus.ONLINE, OCCURRED_AT, null));
 
-        assertThat(applied).isFalse();
+        assertThat(appliedWardId).as("无效设备返回 null（消费侧不发布事件）").isNull();
         verify(deviceMapper).selectOne(any());
         verifyNoMoreInteractions(deviceMapper);
     }
 
     @Test
-    @DisplayName("条件更新未命中（并发竞态影响行数 0）：返回 false 不发布事件")
-    void applyReturnsFalseWhenConditionalUpdateMisses() {
+    @DisplayName("条件更新未命中（并发竞态影响行数 0）：返回 null 不发布事件")
+    void applyReturnsNullWhenConditionalUpdateMisses() {
         when(deviceMapper.selectOne(any())).thenReturn(existingDevice(DeviceStatus.ONLINE));
         when(deviceMapper.update(isNull(), any())).thenReturn(0);
 
         assertThatCode(() -> {
-                    boolean applied =
+                    Long appliedWardId =
                             service.apply(new DeviceStatusEvent(DEVICE_ID, DeviceStatus.ONLINE, OCCURRED_AT, null));
-                    assertThat(applied).isFalse();
+                    assertThat(appliedWardId).isNull();
                 })
                 .doesNotThrowAnyException();
     }
@@ -133,11 +137,12 @@ class DeviceStatusServiceImplTest {
         return updateCaptor.getValue().getSqlSet();
     }
 
-    /** 构造档案存在性查询命中行（device_id + 旧 status 两列投影） */
+    /** 构造档案存在性查询命中行（device_id + 旧 status + ward_id 三列投影） */
     private static IotDeviceEntity existingDevice(DeviceStatus currentStatus) {
         IotDeviceEntity device = new IotDeviceEntity();
         device.setDeviceId(DEVICE_ID);
         device.setStatus(currentStatus);
+        device.setWardId(WARD_ID);
         return device;
     }
 }

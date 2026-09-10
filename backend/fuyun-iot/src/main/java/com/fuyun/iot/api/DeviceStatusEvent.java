@@ -18,7 +18,8 @@ import java.time.Instant;
  *                   解析期已校验）
  * @param occurredAt 状态发生时刻（UTC 语义），非空；来源：状态帧 occurredAt 字段（ISO-8601
  *                   解析定型）
- * @param wardId     病区 ID，可空（P0 状态帧契约不含 wardId，解析产物恒 null；载荷字段为
- *                   P1 推送路由与订阅方预留）；来源：设备档案或状态帧扩展字段
+ * @param wardId     病区 ID，可空（P0 状态帧契约不含 wardId，解析产物恒 null；消费侧以设备
+ *                   档案 ward_id 补全后发布，未编病区设备不发布事件）；来源：设备档案
+ *                   iot_device.ward_id（消费侧回填）或状态帧扩展字段
  */
 public record DeviceStatusEvent(String deviceId, DeviceStatus status, Instant occurredAt, Long wardId) {}

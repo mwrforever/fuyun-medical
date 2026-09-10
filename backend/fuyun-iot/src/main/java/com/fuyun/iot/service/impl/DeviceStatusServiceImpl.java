@@ -18,11 +18,12 @@ import lombok.extern.slf4j.Slf4j;
  * <p>更新形态：存在性查询 + lambdaUpdate 精确投影（禁整实体 UPDATE，仅写 status 与按状态分派的
  * 时间字段——ONLINE→last_online_at、OFFLINE→last_offline_at，INACTIVE/ABNORMAL/DISABLED 不更新
  * 时间字段，14-iot §5 时间字段分派语义）。设备不存在（档案未种子/未注册）info 日志跳过返回
- * false——P0 无设备注册 API，档案由数据种子提供，静默跳过而非报错是状态机的容错口径。
+ * null——P0 无设备注册 API，档案由数据种子提供，静默跳过而非报错是状态机的容错口径。
  *
- * <p>不发事件：本类只落库；事件发布由调用方（消费者）在返回 true 后经 IotEventPublisher 执行
- * （事务外调用 + Confirm/Returns 回调，宪法 A.4.2-7"事务内禁消息发送"）。
- * 装配归 IotConfig @Import；JaCoCo 核心包（com.fuyun.iot.service.impl）LINE=1.00 成员。
+ * <p>不发事件：本类只落库；事件发布由调用方（消费者）在本方法返回档案 wardId（非 null）后，
+ * 以该 wardId 补全事件载荷再经 IotEventPublisher 执行（事务外调用 + Confirm/Returns 回调，
+ * 宪法 A.4.2-7"事务内禁消息发送"）。装配归 IotConfig @Import；JaCoCo 核心包
+ * （com.fuyun.iot.service.impl）LINE=1.00 成员。
  */
 @Slf4j
 public class DeviceStatusServiceImpl implements IDeviceStatusService {
@@ -40,15 +41,16 @@ public class DeviceStatusServiceImpl implements IDeviceStatusService {
     }
 
     @Override
-    public boolean apply(DeviceStatusEvent event) {
-        // 存在性查询（精确投影 device_id/status：status 供状态变更日志的旧值观测）
+    public Long apply(DeviceStatusEvent event) {
+        // 存在性查询（精确投影 device_id/status/ward_id：status 供状态变更日志的旧值观测，
+        // ward_id 供消费侧补全状态事件推送路由——同一数据行一次取回，不二次触库）
         IotDeviceEntity device = deviceMapper.selectOne(Wrappers.<IotDeviceEntity>lambdaQuery()
                 .eq(IotDeviceEntity::getDeviceId, event.deviceId())
-                .select(IotDeviceEntity::getDeviceId, IotDeviceEntity::getStatus));
+                .select(IotDeviceEntity::getDeviceId, IotDeviceEntity::getStatus, IotDeviceEntity::getWardId));
         if (device == null) {
             // P0 档案由数据种子提供：未注册设备的状态帧跳过不报错（14-iot §5 发布点容错口径）
             log.info("设备状态帧跳过（设备档案不存在）：deviceId={}，status={}", event.deviceId(), event.status());
-            return false;
+            return null;
         }
         // lambdaUpdate 精确投影：仅 status + 按状态分派的时间字段（禁整实体 UPDATE，宪法 A.4.3-14）
         LambdaUpdateWrapper<IotDeviceEntity> update = Wrappers.<IotDeviceEntity>lambdaUpdate()
@@ -64,15 +66,17 @@ public class DeviceStatusServiceImpl implements IDeviceStatusService {
         if (updated == 0) {
             // 条件更新未命中：并发删除/逻辑删竞态（P0 无删除端点，属极端场景），告警并按无效设备处置
             log.warn("设备状态更新未命中（并发竞态或档案刚被删除）：deviceId={}，status={}", event.deviceId(), event.status());
-            return false;
+            return null;
         }
         log.info(
-                "设备状态变更完成：deviceId={}，{}→{}，occurredAt={}",
+                "设备状态变更完成：deviceId={}，{}→{}，wardId={}，occurredAt={}",
                 event.deviceId(),
                 device.getStatus(),
                 event.status(),
+                device.getWardId(),
                 event.occurredAt());
-        return true;
+        // 返回档案病区 ID 供消费侧补全状态事件（未编病区设备为 null，消费侧按无效语义不发布）
+        return device.getWardId();
     }
 
     /**

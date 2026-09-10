@@ -106,7 +106,8 @@ class IotFanoutListenerTest {
         assertThat(record.producer()).isEqualTo(IotMessagingConstants.MODULE);
         assertThat(record.occurredAt()).isEqualTo(OCCURRED_AT);
         assertThat(record.consumerModule()).isEqualTo(IotMessagingConstants.MODULE);
-        // P0 状态帧契约不含 wardId（载荷恒 null）：推送委托照常发生，跳过决策在推送服务内（info 降级）
+        // 载荷 wardId 可空（契约允许：解析产物恒 null，档案补全由发布侧完成）：推送委托照常发生，
+        // 跳过决策在推送服务内（info 降级）
         verify(pushService).pushDeviceStatus(STATUS_EVENT);
     }
 

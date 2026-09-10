@@ -51,7 +51,8 @@ public interface ITelemetryPushService {
      * 设备状态变更事件的状态帧推送（自事件消费后执行，载荷与事件契约同构四字段）。
      *
      * @param event 设备状态变更事件，非空；来源：IotFanoutListener 自事件消费解析产物（载荷
-     *              wardId 可空——为空时 info 跳过推送，P0 状态帧契约不含 wardId 属预期场景）
+     *              wardId 由 AMQP 消费者以设备档案补全，可空——为空时 info 跳过推送，属防御
+     *              口径：未编病区设备在发布侧已省略事件）
      */
     void pushDeviceStatus(DeviceStatusEvent event);
 

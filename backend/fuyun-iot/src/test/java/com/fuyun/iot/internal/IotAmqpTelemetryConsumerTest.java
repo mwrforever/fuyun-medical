@@ -51,11 +51,12 @@ import org.mockito.invocation.InvocationOnMock;
  * <p>业务意图：以 Mockito 伪造 ConnectionFactory/JMS 上下文覆盖消费链六类契约——①正常批：遥测帧
  * 入攒批、落库成功后仅批末消息 acknowledge（JMS CLIENT_ACKNOWLEDGE 会话级统一确认本批）；②毒丸
  * 隔离：解析失败帧落 iot_consume_error_log（stage=PARSE）后确认抛弃，不阻塞队列；③状态帧即时
- * 处理：apply=true 触发状态事件回调（B4.3 发布器接线点）并即时确认，apply=false 仅确认不发布；
- * ④断链重建：连接异常后销毁旧连接、以<b>新时间戳凭证</b>重建（IoTDA 拒绝超 5 分钟旧时间戳，
- * failover 透明重连不刷新时间戳）；⑤退避节奏：初始延迟起步指数退避至上限封顶（测试用毫秒级
- * 参数验证节奏公式，record 型假 sleeper 避免真实睡眠）；⑥stop 排空：先停拉取，在途帧经攒批器
- * 停机排空后统一确认。测试凭证均为无意义假值（测试资产，与任何真实 IOTDA 凭证无关）。
+ * 处理：apply 返回档案 wardId 时构造含 wardId 的事件触发状态事件回调（B4.3 发布器接线点）并
+ * 即时确认，返回 null 仅确认不发布；④断链重建：连接异常后销毁旧连接、以<b>新时间戳凭证</b>重建
+ * （IoTDA 拒绝超 5 分钟旧时间戳，failover 透明重连不刷新时间戳）；⑤退避节奏：初始延迟起步指数
+ * 退避至上限封顶（测试用毫秒级参数验证节奏公式，record 型假 sleeper 避免真实睡眠）；⑥stop 排空：
+ * 先停拉取，在途帧经攒批器停机排空后统一确认。测试凭证均为无意义假值（测试资产，与任何真实
+ * IOTDA 凭证无关）。
  */
 class IotAmqpTelemetryConsumerTest {
 
@@ -184,13 +185,14 @@ class IotAmqpTelemetryConsumerTest {
     }
 
     @Test
-    @DisplayName("状态帧即时处理：设备有效时触发状态事件回调（IotEventPublisher 接线点）并即时确认")
+    @DisplayName("状态帧即时处理：apply 返回档案 wardId 时构造含 wardId 的事件触发回调（发布器接线点）并即时确认")
     void appliesStatusFrameAndFiresEventSinkWhenDeviceValid() throws Exception {
         Message statusFrame = bytesMessage(
                 "{\"deviceId\":\"it-dev-001\",\"status\":\"OFFLINE\",\"occurredAt\":\"2026-09-10T00:00:00Z\"}");
         stubContextCreation();
         when(jmsConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
-        when(deviceStatusService.apply(any(DeviceStatusEvent.class))).thenReturn(true);
+        // P0 状态帧契约不含 wardId（解析产物恒 null）：档案 wardId 由 apply 返回值补全（审核 F-2）
+        when(deviceStatusService.apply(any(DeviceStatusEvent.class))).thenReturn(1001L);
 
         consumer.start();
 
@@ -198,19 +200,25 @@ class IotAmqpTelemetryConsumerTest {
         verify(deviceStatusService, timeout(AWAIT_MILLIS)).apply(eventCaptor.capture());
         assertThat(eventCaptor.getValue().deviceId()).isEqualTo("it-dev-001");
         assertThat(eventCaptor.getValue().status()).isEqualTo(DeviceStatus.OFFLINE);
+        assertThat(eventCaptor.getValue().wardId())
+                .as("apply 入参为解析产物，wardId 恒 null")
+                .isNull();
         assertThat(statusEventsPublished).as("有效设备的状态事件必须触发回调（构造期接线发布器）").hasSize(1);
+        assertThat(statusEventsPublished.get(0).wardId())
+                .as("发布事件必须携带档案 wardId（/topic/iot/device-status/{wardId} 路由数据源）")
+                .isEqualTo(1001L);
         verify(statusFrame, timeout(AWAIT_MILLIS)).acknowledge();
         verifyNoInteractions(ingestService);
     }
 
     @Test
-    @DisplayName("状态帧无效设备：apply=false 时仅确认不触发事件回调（档案未种子的容错口径）")
+    @DisplayName("状态帧无效设备：apply 返回 null 时仅确认不触发事件回调（档案未种子的容错口径）")
     void skipsEventSinkWhenStatusAppliesToUnknownDevice() throws Exception {
         Message statusFrame = bytesMessage(
                 "{\"deviceId\":\"ghost-dev\",\"status\":\"ONLINE\",\"occurredAt\":\"2026-09-10T00:00:00Z\"}");
         stubContextCreation();
         when(jmsConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
-        when(deviceStatusService.apply(any(DeviceStatusEvent.class))).thenReturn(false);
+        when(deviceStatusService.apply(any(DeviceStatusEvent.class))).thenReturn(null);
 
         consumer.start();
 

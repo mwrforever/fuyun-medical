@@ -61,8 +61,8 @@ public class IotEventPublisher {
      * <p>执行流程：codec 生成合规信封（payload = 事件契约 record，wardId 可空）→ convertAndSend
      * 至 fy.topic（routing key=eventType）→ info 留痕。
      *
-     * @param event 设备状态变更事件，非空；来源：AMQP 状态帧解析产物（IDeviceStatusService.apply
-     *              返回 true 后由消费者状态事件回调触发）
+     * @param event 设备状态变更事件，非空；来源：AMQP 消费者状态帧处理（IDeviceStatusService.apply
+     *              返回档案 wardId 后，消费者以之补全事件 wardId 构造触发）
      */
     public void publishDeviceStatus(DeviceStatusEvent event) {
         EventEnvelope envelope = codec.create(

@@ -139,7 +139,8 @@ public final class TelemetryFrameParser {
     }
 
     /**
-     * 解析状态帧为设备状态变更事件（P0 占位载荷：wardId 状态帧契约不含，恒 null）。
+     * 解析状态帧为设备状态变更事件（P0 占位载荷：wardId 状态帧契约不含，恒 null——由消费者
+     * 以设备档案 ward_id 补全后才发布事件）。
      *
      * @param root 帧根节点（已判别为状态形态），非空
      * @return 设备状态变更事件，非空

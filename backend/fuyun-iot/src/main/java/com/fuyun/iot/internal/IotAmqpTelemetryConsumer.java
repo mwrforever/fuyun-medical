@@ -55,10 +55,11 @@ import org.springframework.context.SmartLifecycle;
  *
  * <p><b>消费处理流程（四路同构）</b>：receive → 载体解码（字节/文本）→ TelemetryFrameParser 解析 →
  * 遥测帧入 {@link TelemetryBatchAssembler} 有界队列（满则阻塞等待背压）；状态帧即时交
- * {@link IDeviceStatusService}，返回 true 时经状态事件回调（构造期注入
- * {@link IotEventPublisher}#publishDeviceStatus，ObjectProvider 可选解析）发布
- * iot.device.status-changed 至 fy.topic；解析失败帧落 iot_consume_error_log（stage=PARSE）后
- * 确认抛弃（毒丸隔离，不阻塞队列）。
+ * {@link IDeviceStatusService}，返回档案 wardId（非 null）时以之补全事件载荷（P0 状态帧契约
+ * 不含 wardId，档案行同数据源回填，恢复 /topic/iot/device-status/{wardId} 生产数据源）再经
+ * 状态事件回调（构造期注入 {@link IotEventPublisher}#publishDeviceStatus，ObjectProvider 可选
+ * 解析）发布 iot.device.status-changed 至 fy.topic；解析失败帧落 iot_consume_error_log
+ * （stage=PARSE）后确认抛弃（毒丸隔离，不阻塞队列）。
  *
  * <p><b>连接数预算（宪法 A.5-9）</b>：连接数 = 实例数 × 每实例连接数（=配置队列数），上限
  * ≤32（IoTDA 单凭证上限）；P0 单实例 × ≤4 队列 = ≤4 连接，扩容上界 8 实例 × 4 队列 = 32。
@@ -91,7 +92,7 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     /** 消费错误日志服务：毒丸帧留痕写入口（stage=PARSE，落库失败内部自吞） */
     private final IConsumeErrorLogService errorLogService;
 
-    /** 设备状态服务：状态帧即时处理执行点，返回值决定是否触发状态事件回调 */
+    /** 设备状态服务：状态帧即时处理执行点，返回档案 wardId（非 null）决定是否触发状态事件回调 */
     private final IDeviceStatusService deviceStatusService;
 
     /** 时钟抽象：建链凭证时间戳与断链起点计时（可注入假时钟供单测进动） */
@@ -111,8 +112,9 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
 
     /**
      * 状态事件回调（构造期注入）：设备状态 apply 成功后经回调发布 iot.device.status-changed 至
-     * fy.topic——回调运行于本消费线程（非事务上下文），满足发布器"事务内禁发送"调用约束；
-     * 上下文未装配发布器时为空实现防御（无消费源头，回调不会被触达）。
+     * fy.topic——回调入参为以档案 wardId 补全后的事件（构造于本消费线程），回调运行于本消费
+     * 线程（非事务上下文），满足发布器"事务内禁发送"调用约束；上下文未装配发布器时为空实现
+     * 防御（无消费源头，回调不会被触达）。
      */
     private final Consumer<DeviceStatusEvent> statusEventSink;
 
@@ -505,16 +507,18 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     }
 
     /**
-     * 状态帧即时处理：apply 成功（设备有效）触发状态事件回调；随后即时确认（状态帧不入攒批）。
+     * 状态帧即时处理：apply 成功（返回档案 wardId）以该 wardId 补全事件载荷后触发状态事件回调；
+     * 返回 null（设备不存在/竞态未命中/档案未编病区）不发布；随后即时确认（状态帧不入攒批）。
      *
-     * @param event   状态帧解析产物，非空
+     * @param event   状态帧解析产物（wardId 恒 null——P0 契约不含，由本方法以档案值补全），非空
      * @param message 来源 JMS 消息，非空
      */
     private void handleStatusFrame(DeviceStatusEvent event, Message message) {
-        boolean validDevice = deviceStatusService.apply(event);
-        if (validDevice) {
-            // 状态事件回调（构造期注入 IotEventPublisher::publishDeviceStatus，事务外调用）
-            statusEventSink.accept(event);
+        Long wardId = deviceStatusService.apply(event);
+        if (wardId != null) {
+            // 以设备档案 ward_id 补全事件载荷（P0 状态帧契约不含 wardId，同数据行回填）——
+            // /topic/iot/device-status/{wardId} 生产数据源恢复（审核 F-2 死路径修复）
+            statusEventSink.accept(new DeviceStatusEvent(event.deviceId(), event.status(), event.occurredAt(), wardId));
         }
         try {
             message.acknowledge();
@@ -523,10 +527,10 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             throw new JMSRuntimeException(e.getMessage(), e.getErrorCode(), e);
         }
         log.info(
-                "设备状态帧已处理：deviceId={}，status={}，effective={}，occurredAt={}",
+                "设备状态帧已处理：deviceId={}，status={}，wardId={}，occurredAt={}",
                 event.deviceId(),
                 event.status(),
-                validDevice,
+                wardId,
                 event.occurredAt());
     }
 
