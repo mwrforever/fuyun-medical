@@ -65,7 +65,7 @@ class IotAmqpTelemetryConsumerTest {
     /** 测试资产假 accessKey（仅具单测意义） */
     private static final String TEST_ACCESS_KEY = "test-access-key";
 
-    /** 测试资产假 accessSecret（仅具单测意义，禁入断言与日志） */
+    /** 测试资产假凭证（仅具单测意义，仅可断言口令形态，禁断言真实值与日志输出） */
     private static final String TEST_ACCESS_SECRET = "test-access-secret";
 
     /** 测试用 AMQP 参数：batchSize=2/interval=50ms 便于批确认断言；退避 10ms→30ms 毫秒级验证节奏 */

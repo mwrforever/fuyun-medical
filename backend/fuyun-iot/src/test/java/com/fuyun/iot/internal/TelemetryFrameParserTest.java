@@ -61,7 +61,7 @@ class TelemetryFrameParserTest {
     }
 
     @Test
-    @DisplayName("value 非数值：quality 强制 BAD 且原文保留入库不阻断（标注不丢弃口径）")
+    @DisplayName("value 非数值：quality 强制 BAD 且原文保留于解析产物、落库跳过不阻断（标注不丢弃口径）")
     void nonNumericValueIsMarkedBadWithOriginalTextKept() {
         byte[] raw = """
                 {"deviceId":"dev-03","metricCode":"MDC_ECG_HEART_RATE","value":"N/A","occurredAt":"2026-09-10T04:00:00Z"}
@@ -69,6 +69,7 @@ class TelemetryFrameParserTest {
 
         StandardTelemetryMessage message = ((TelemetryFrame) TelemetryFrameParser.parse(raw)).message();
 
+        // 解析器仅负责标注与保留原文；落库侧由 TelemetryIngestServiceImpl 对非数值行跳过不入库（不阻断批次）
         assertThat(message.value()).isEqualTo("N/A");
         assertThat(message.quality()).isEqualTo("BAD");
     }
