@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-10 · PR-4 B4.3 任务 B：STOMP/WebSocket 依赖申报与 deploy 兜底密钥变更（先记再改）
+
+- **fuyun-iot pom 依赖申报（BOM/父 POM 托管零版本声明，PR 描述申报）**：① `org.springframework.boot:spring-boot-starter-websocket`——`/ws/iot` STOMP 端点（IotWebSocketConfig：@EnableWebSocketMessageBroker + 内存 SimpleBroker(/topic) + 无 SockJS，P0 客户端仅 PR-5 bigscreen 原生 WebSocket）；② `io.micrometer:micrometer-core`——IotAmqpMetrics 三 gauge（iot.amqp.connected / disconnect.duration.seconds / batch.queue.fill.ratio）与双 counter（reconnect.total / batch.flush.failure.total）注册的 MeterRegistry 编译依赖；③ `com.fuyun:fuyun-system`——仅消费 api 包 TokenVerifier（任务 A 已交付契约）作 STOMP 握手鉴权，宪法 B.2-2 合规。
+- **deploy 变更面申报（简报附 1 待裁决项，主控已裁决 nginx /ingest 路由纳入本 PR）**：`.env.example` 增 `FUYUN_IOT_FALLBACK_TOKEN=` 空占位（独立行中文注释"必填：IoT 兜底通道共享密钥，禁止提交真实值"）；`docker-compose.yml` backend environment 增同名透传一行；`deploy/nginx/fuyun.conf` 增 `location /ingest/` 反代——兜底端点 `POST /ingest/iotda-fallback` 不在 `/api/v1` 前缀下，既有 `/api/`、`/ws/` 两条路由无法覆盖，唯一公网入口原则下的路由缺口补齐（对齐既有 /api location 写法）。
+- **fuyun-app application.yml 配置占位**：增 `fuyun.iot.fallback.token: ${FUYUN_IOT_FALLBACK_TOKEN:}` 映射（B4.2 已落 IotProperties.Fallback 嵌套 record，本次补 yml 环境变量映射行）；空默认 = 未配置，兜底鉴权比对侧 fail-closed 一律拒绝（IOT-1001）。
+
 ## 2026-09-10 · PR-4 B4.3：TokenVerifier 跨模块小改与 iot 扇出依赖申报（先记再改）
 
 - **跨模块小改申报（D-7 先例，随本批次首个功能提交生效）**：fuyun-system api 新增 `TokenVerifier` 接口（`boolean verifyAccessToken(String rawToken)`——校验 access 令牌全链（签名/过期/typ/会话存在），通过 true、任何失败 false 不抛异常且不区分原因防枚举，适配 WebSocket 握手与 MQ 线程等无 ProblemDetail 出口场景）；`TokenServiceImpl` implements 增补（内部委托既有 verify(ACCESS) 校验链，捕获 BizException 返回 false）；`SystemWebConfig` 增补一行 @Bean 以接口类型暴露同一实例。消费方：iot /ws/iot STOMP 握手鉴权（本批次仅交付契约与单测，握手拦截器随任务 B）；fuyun-iot 后续仅依赖 system api 包（宪法 B.2-2 合规）。接口属对外契约新增，PR 描述申报。
