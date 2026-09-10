@@ -34,6 +34,14 @@ class SensitiveMaskerTest {
     }
 
     @Test
+    @DisplayName("maskPhone：长数字串（12 位工单号/19 位雪花 ID）内部不误命中脱敏")
+    void maskPhoneLeavesLongDigitRunsUntouched() {
+        // 数字边界（前后视）：长数字串内部任一 11 位窗口均非独立手机号段，整串原样保留
+        assertThat(SensitiveMasker.maskPhone("138123456789")).isEqualTo("138123456789");
+        assertThat(SensitiveMasker.maskPhone("1948302573904857291")).isEqualTo("1948302573904857291");
+    }
+
+    @Test
     @DisplayName("maskIdCard：18 位身份证保留前 6 后 4（含 X 校验位）")
     void maskIdCardKeepsHeadSixAndTailFourFor18Digits() {
         assertThat(SensitiveMasker.maskIdCard("11010119900101123X")).isEqualTo("110101********123X");
@@ -43,6 +51,13 @@ class SensitiveMaskerTest {
     @DisplayName("maskIdCard：15 位老号保留前 6 后 4")
     void maskIdCardKeepsHeadSixAndTailFourFor15Digits() {
         assertThat(SensitiveMasker.maskIdCard("110101900101123")).isEqualTo("110101*****1123");
+    }
+
+    @Test
+    @DisplayName("maskIdCard：19 位长数字串（非证号长度边界）不误命中脱敏")
+    void maskIdCardLeavesLongDigitRunsUntouched() {
+        // 数字边界（前后视）：19 位连续数字既非 15 位也非 18 位证号段，不得内部截断
+        assertThat(SensitiveMasker.maskIdCard("1101011990010112345")).isEqualTo("1101011990010112345");
     }
 
     @Test

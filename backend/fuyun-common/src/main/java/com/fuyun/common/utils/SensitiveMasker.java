@@ -15,14 +15,15 @@ import java.util.regex.Pattern;
  */
 public final class SensitiveMasker {
 
-    /** 18 位身份证号：前 6 位（行政区划）+ 8 位生日 + 3 位顺序码 + 1 位校验位（数字或 X/x） */
-    private static final Pattern ID_CARD_18 = Pattern.compile("(\\d{6})\\d{8}(\\d{3}[0-9Xx])");
+    /** 18 位身份证号：前 6 位（行政区划）+ 8 位生日 + 3 位顺序码 + 1 位校验位（数字或 X/x）；
+     * 前后视数字边界（(?<!\d)/(?!\d)）防长数字串（雪花 ID 等）内部误命中截断 */
+    private static final Pattern ID_CARD_18 = Pattern.compile("(?<!\\d)(\\d{6})\\d{8}(\\d{3}[0-9Xx])(?!\\d)");
 
-    /** 15 位老号身份证号：前 6 位（行政区划）+ 9 位数字 */
-    private static final Pattern ID_CARD_15 = Pattern.compile("(\\d{6})\\d{5}(\\d{4})");
+    /** 15 位老号身份证号：前 6 位（行政区划）+ 9 位数字；同带数字边界（防长数字串内部误命中） */
+    private static final Pattern ID_CARD_15 = Pattern.compile("(?<!\\d)(\\d{6})\\d{5}(\\d{4})(?!\\d)");
 
-    /** 11 位手机号：前 3 位（号段）+ 4 位 + 后 4 位 */
-    private static final Pattern PHONE = Pattern.compile("(\\d{3})\\d{4}(\\d{4})");
+    /** 11 位手机号：前 3 位（号段）+ 4 位 + 后 4 位；同带数字边界（长数字串与工号短号均不误伤） */
+    private static final Pattern PHONE = Pattern.compile("(?<!\\d)(\\d{3})\\d{4}(\\d{4})(?!\\d)");
 
     /** 纯静态工具类，禁止实例化（backend 宪法 A.2-6） */
     private SensitiveMasker() {}
