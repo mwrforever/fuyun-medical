@@ -32,7 +32,8 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>value 定型语义：CF-7 value 为字符串载体，落 NUMERIC NOT NULL 列前经 BigDecimal 解析；
  * 不可解析行（解析器已标 BAD 保留原文）跳过并整批汇总告警——跳过理由：NOT NULL 列无法承载
  * 非数值原文，哨兵值（如 0）会污染生理指标统计，跳过是"标注不阻断"约束下的批次无损选项
- * （BAD 行本就供质量统计口径，不参与有效值分析）。
+ * （BAD 行本就供质量统计口径，不参与有效值分析）；整批均不可解析时零触库短路返回 0
+ * （防空 VALUES 非法 SQL 引发事务异常与 IoTDA 毒帧重投循环）。
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1/B.4.2-12）。
  * JaCoCo 核心包（com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
@@ -62,6 +63,13 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
     public int ingest(List<StandardTelemetryMessage> batch) {
         // 空批次防御：直接返回零行（避免空 IN 列表与空 VALUES 生成非法 SQL）
         if (batch.isEmpty()) {
+            return 0;
+        }
+        // 整批非数值短路：全部行 value 均不可数值定型时无可写实体（唯一跳过路径即 value 解析失败，
+        // 实体列表必为空），先于一切触库返回零行——否则空实体批次会渲染出空 VALUES 非法 SQL，事务异常
+        // 致攒批器零确认，IoTDA 重推同帧形成毒帧重投循环
+        if (batch.stream().allMatch(message -> parseValue(message) == null)) {
+            log.warn("遥测批次全部为非数值/无效行，跳过绑定查询与落库：batchSize={}", batch.size());
             return 0;
         }
         // 绑定快照一次批量查询（distinct 去重防同设备多帧撑大 in 列表；只取 BOUND 精确投影三列）

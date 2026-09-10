@@ -141,6 +141,17 @@ class TelemetryIngestServiceImplTest {
     }
 
     @Test
+    @DisplayName("整批非数值：返回 0 且零触库（防空 VALUES 非法 SQL 引发事务异常与毒帧重投循环）")
+    void allNonNumericBatchShortCircuitsWithoutTouchingDatabase() {
+        // 两行 value 均不可数值定型：若不短路将组装出空实体批次，空 VALUES 渲染出非法 SQL
+        int inserted = service.ingest(
+                List.of(message("dev-001", "MDC_ECG_HEART_RATE", "N/A"), message("dev-002", "MDC_SPO2", "abc")));
+
+        assertThat(inserted).isZero();
+        verifyNoInteractions(bindingMapper, telemetryMapper);
+    }
+
+    @Test
     @DisplayName("value 不可数值定型：该行跳过不入库且批次不断（NUMERIC NOT NULL 列物理约束）")
     void nonNumericValueRowIsSkippedWithoutBlockingBatch() {
         when(bindingMapper.selectList(any())).thenReturn(List.of(binding("dev-001", 1001L, 2001L)));
