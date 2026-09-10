@@ -2,7 +2,14 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
-## 2026-09-10 · PR-4 B4.3 批次审核修复（Important×2：摘要推送出事务 + 设备状态主题死路径，先记再改）
+## 2026-09-10 · PR-4 B4.4：iot-simulator 子模块、表外依赖核实与一机一密算法官方核对（先记再改）
+
+- **iot-simulator Maven 子模块申报（D-3 默认裁决，纯 Java 零 Spring）**：父 POM `<modules>` 增 `iot-simulator`（fuyun-app 之后）；新增 `backend/iot-simulator/Dockerfile`（多阶段独立镜像，与 backend/Dockerfile 七条规范对齐）；`backend/Dockerfile` 两处小改——pom COPY 清单追加 `COPY iot-simulator/pom.xml iot-simulator/` 一行 + 删除尾部 `# TODO(iot-simulator)` 注释行；CI images job 追加第三构建步骤「构建镜像（iot-simulator）」（同构显式步骤、禁 matrix、job 名 `images` 不变、cache scope=iot-simulator、step 级 if 与 backend 步骤同条件）并删除第 149 行 TODO 注释。
+- **表外依赖核实与申报（简报 §10 要求落码前以 Maven Central 元数据核实）**：① `org.eclipse.paho:org.eclipse.paho.client.mqttv3` **1.2.5**——Central maven-metadata 实测 `<release>`/`<latest>` 均为 1.2.5（Eclipse Paho 官方最新稳定行，技术栈定稿未收录 MQTT 客户端），版本经父 POM dependencyManagement 集中声明（属性 `paho-mqtt.version`，遵循「BOM 外依赖集中声明、子模块禁自带版本号」宪法口径，qpid 2.11.0 先例）；② `maven-jar-plugin` **3.4.2**——Central versions 清单核实存在（3.4.2 命中 1 行）；③ `maven-dependency-plugin` **3.8.1**——Central versions 清单核实存在（3.8.1 命中 1 行，目录探针 HTTP 200），simulator 模块内显式锁定。
+- **一机一密连接三元组官方核对结论（简报 §5 要求实现期核对，来源：华为云 IoTDA 官方文档《密钥鉴权_MQTT(S)协议接入》support.huaweicloud.com/devg-iothub/iot_02_0203.html）**：clientId = `{deviceId}_0_0_{时间戳}`（第 2 段固定 0=设备 ID 标识、第 3 段 0=HMACSHA256 不校验时间戳准确度但仍须携带时间戳，官方生成工具默认形态）、username = deviceId、password = **HmacSHA256(key=UTC 时间戳, message=deviceSecret) 小写十六进制**——时间戳格式为 **UTC `yyyyMMddHH`（10 位，小时粒度）而非简报预判的 13 位毫秒**，HMAC 方向为时间戳作密钥、secret 作内容（官方示例实测复算一致：secret=12345678、timestamp=2025041401 → `c75150e6cb841417396819e4d2ee4358a416344a03a083e3a8567074ddec820a`，与文档原例逐字符相同）。**与简报 §5 预判口径（13 位毫秒时间戳）偏离，以官方文档为准落码**，核对结论写入 DeviceCredentialEncoder javadoc；若真实联调发现服务端行为出入，改动面仅该类 + 单测。
+- **T-R3-3 本地两级实测与延后登记预告**：supervisor 单测（B4.2 已交付）+ 本地 broker 断链恢复 IT（IotAmqpReconnectIT，本批次交付）构成代码级实测闭环；「真实 IoTDA 端点 10 分钟断链演示」与 `--profile sim` 全链路演示、真实 IoTDA 规则引擎报文映射冻结（P0 线格式=CF-7）、真实积压水位指标（IoTDA 侧最旧未消费消息年龄）四条一并延后登记 TASK.md（本批次收口提交执行）。
+
+
 
 - **F-1 摘要推送违反宪法 A.4.2-7**：TelemetryIngestServiceImpl 在 @Transactional ingest 事务方法内直推 STOMP 摘要（"进程内直推非 MQ"自我解释不成立，宪法原文"事务内禁止远程调用、消息发送与人工等待"不限 MQ）——修复为 TransactionSynchronizationManager 注册 afterCommit 回调执行既有 pushSummariesByWard（分组数据事务内组装、推送 I/O 移出事务）；isSynchronizationActive=false（单测直调无事务）时保持直推行为不变，相关 javadoc 同步修正；单测补 TransactionTemplate 时序断言（事务内不推、提交后推送）。
 - **F-2 状态主题生产死路径（wardId 恒 null）**：P0 状态帧契约不含 wardId、解析产物恒 null，消费者原样发布致 /topic/iot/device-status/{wardId} 生产无数据源——IDeviceStatusService.apply 返回值 boolean→Long（模块内接口，返回设备档案 ward_id；null=设备不存在/条件未命中/档案未编病区，不发布事件），select 投影增补 ward_id；IotAmqpTelemetryConsumer.handleStatusFrame 以返回 wardId 构造含 wardId 的事件再发布；IotTelemetryPipelineIT 步骤 5 恢复 AMQP→STOMP 全链断言（不再以手工信封替代链路）、步骤 6 改从 integration.received_event 台账读取真实已消费 eventId 重建重投。
