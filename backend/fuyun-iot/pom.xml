@@ -8,13 +8,41 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M14 医疗设备物联网平台）：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M14 医疗设备物联网平台）：B4.2 起领域基座实装（枚举/实体/mapper/遥测消费服务），
+       依赖版本全 BOM/父 POM 托管零声明（fuyun-system 先例，PR 描述申报理由）；
+       Qpid JMS（qpid-jms-client，父 POM 已锁 2.11.0）随 AMQP 消费者批次（B4.2 任务 B）按需引入 -->
   <artifactId>fuyun-iot</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- IoTDA AMQP 消费链数据访问：spring-boot3 后缀 starter（禁再引入 mybatis-spring 系，宪法 A.4.3-12） -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <!-- 配置属性启动期校验（IotProperties @Validated + JSR-303 分组校验，backend 宪法 A.2-2） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- Lombok（BOM 托管版本）：实体 @Getter/@Setter 编译期依赖，provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <!-- 测试：枚举映射/帧解析器/遥测服务单测（JUnit/AssertJ/Mockito），BOM 托管版本 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>
