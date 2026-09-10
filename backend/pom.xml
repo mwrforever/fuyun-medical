@@ -243,6 +243,9 @@
                   <include>com.fuyun.integration.service.impl</include>
                   <include>com.fuyun.billing.service.impl</include>
                   <include>com.fuyun.system.service.impl</include>
+                  <!-- iot 消费落库链核心包（B4.2 起随首个 service.impl 实装生效，BRIEF-PR4-01 §7；
+                       CHANGELOG 2026-09-10 条目先记再改，PR 描述申报） -->
+                  <include>com.fuyun.iot.service.impl</include>
                 </includes>
                 <limits>
                   <limit>

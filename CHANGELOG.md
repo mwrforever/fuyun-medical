@@ -2,6 +2,10 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-10 · PR-4 B4.2：JaCoCo 核心包增补 iot service.impl（先记再改）
+
+- **POM 门禁变更登记**：父 POM JaCoCo PACKAGE 级 LINE=1.00 规则 include 清单增补 `com.fuyun.iot.service.impl`，与首个 iot service.impl 实装类同一提交生效（BRIEF-PR4-01 §7 处置结论）——iot 消费落库链属"对外服务接口（第三方对接）"核心功能（全局 §四核心界定），沿用 backend 宪法 C.5-2"核心包 rule 随模块实装逐步声明"既有模式（integration/billing/system 三包先例）；SmartLifecycle 消费器/监听器/解析器落 internal/ 包按 BUNDLE 0.80 承载，1.00 规则不误伤难测基础设施类。本项属 PR-4 表外申报清单预告项（B4.1 条目已预告），PR 描述重申申报。
+
 ## 2026-09-10 · PR-4 B4.1：iot 号段占用登记（先记再改）
 
 - **号段登记（TASK.md W-4 载体）**：iot 域（M14）占用 **V400–V499**，本批（PR-4 B4.1）使用 V400–V403——V400 设备档案与绑定表、V401 消费错误日志表、V402 遥测超表与压缩/保留策略（T-R3-2 实测锁定）、V403 设备状态事件种子登记。核对结论：现存迁移仅 integration V1–V5 与 system V300–V303，V400–V499 无冲突。
