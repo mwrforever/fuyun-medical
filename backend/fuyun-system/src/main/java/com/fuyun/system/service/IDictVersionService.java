@@ -22,13 +22,16 @@ public interface IDictVersionService extends IService<DictVersionEntity> {
     DictVersionVO createVersion(String typeCode);
 
     /**
-     * 发布版本（仅 DRAFT 可发布）：置 PUBLISHED + published_at/effective_at=now（P0 发布即生效），
-     * 同类型旧 PUBLISHED 行置 DEPRECATED，事务提交后经 AFTER_COMMIT 监听广播
-     * system.dict.published（事务内禁 MQ 发送，A.4.2-7/B.3-1）。
+     * 发布版本（仅 DRAFT 可发布）：以条件更新原子抢占发布权
+     * （{@code UPDATE ... SET status='PUBLISHED' WHERE id=? AND status='DRAFT'}，影响行数=0
+     * 抛 SYS-1013——并发双 publish 仅一者成功，防双广播）+ published_at/effective_at=now
+     * （P0 发布即生效），同类型旧 PUBLISHED 行置 DEPRECATED；事务提交后经 AFTER_COMMIT
+     * 监听广播 system.dict.published（事务内禁 MQ 发送，A.4.2-7/B.3-1）。
      *
      * @param versionId 字典版本 ID，非空
      * @throws com.fuyun.common.exception.BizException SYS-1012（字典版本不存在，404）、
-     *                                                 SYS-1013（版本状态不允许发布，409，仅 DRAFT 可发布）
+     *                                                 SYS-1011（所属类型缺失，404）、
+     *                                                 SYS-1013（版本状态不允许发布/并发发布落败，409）
      */
     void publish(Long versionId);
 }

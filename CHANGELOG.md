@@ -2,6 +2,11 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-10 · PR #6 审查修复（Minor×2：脱敏正则数字边界 + 字典发布条件更新防双广播）
+
+- F-1（fuyun-common/utils/SensitiveMasker.java）：PHONE/ID_CARD_15/ID_CARD_18 三正则补前后视数字边界（`(?<!\d)...(?!\d)`）——原实现对长数字串（12 位工单号/19 位雪花 ID 等）内部会误命中截断，与 javadoc「非目标长度不处理」承诺矛盾；SensitiveMaskerTest 补 12+/19 位数字串不脱敏断言（先 RED：19 位串现行实现被误脱敏，修复后 GREEN）。
+- F-2（fuyun-system/service/impl/DictVersionServiceImpl.publish）：DRAFT 读-检-写改为条件更新原子抢占发布权（`UPDATE ... WHERE id=? AND status='DRAFT'`，MP 单表链式 A.4.3-13）——并发双 publish 原先双双通过前置校验并触发两次 AFTER_COMMIT 广播；现仅影响行数=1 者继续旧版本 DEPRECATED 与事务内事件，=0 抛 SYS-1013（竞态落败方不发事件）；DictVersionServiceImplTest 改条件更新语义并补「已发布版本重复 publish 不发事件」「竞态落败不发事件」两断言（先 RED 后 GREEN）。
+
 ## 2026-09-10 · PR-3 B3.4：workstation 登录页 + 主布局 + Axios 单例（前端接入认证链路）
 
 - Axios 单例（src/api/http.ts，web A.3-1 唯一出网口）：baseURL = VITE_API_BASE_URL ?? '/api'、timeout 15s 模块级导出；请求拦截器注入 `Authorization: Bearer {token}`（useAuthStore 延迟到回调运行时调用，web B.3-1 组件外口径）+ 每请求唯一 `X-Trace-Id`（crypto.randomUUID，后端 TraceIdFilter 复用为 MDC 锚点并回写响应头）；响应拦截器统一错误出口——非 2xx 提取 ProblemDetail.detail 经 ElMessage 统一提示（缺省回退「请求失败」）、401 触发注册的未授权回调；`setUnauthorizedHandler` 回调解耦（http.ts 禁反向 import router，防循环依赖），拦截器内不落业务逻辑（A.3-2）。
