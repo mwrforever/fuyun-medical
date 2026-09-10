@@ -10,8 +10,8 @@
 | D-3 | iot-simulator 实现语言与代码位置 | R5 §5-3：未定稿；若 Java 建议放 `backend/iot-simulator/`（Maven 子模块），若 Node 建议顶层目录；影响 images job 的第三条 matrix | CI images job、deploy compose |
 | D-4 | OWASP 周审失败处置流程 | R5 §5-4：fail 后开 issue 还是仅通知，属流程决策 | security.yml |
 | D-5 | 方案 C 二期演进（CodeQL / Trivy / dependency-review / Renovate/Dependabot / SonarQube） | R1 §3.3/§4：用户已定方案 B 上线基线、C 为二期；SonarQube 若引入需 CI 双 JDK（17 构建 + 21 扫描）；Renovate vs Dependabot 二选一（倾向 Renovate 的 monorepo 分组能力） | security.yml 扩展、仓库设置 |
-| D-6 | 宪法 `enum/` 包目录命名与 Java 保留字冲突 | P0 PR-1 审核发现（2026-09-09）：backend 宪法 B.1/C.3 规定枚举包目录为 `enum/`，但 `enum` 是 Java 保留字，`package com.fuyun.{domain}.enum` 无法编译——目前仅 .gitkeep 占位无碍，首个枚举类落地（PR-2/PR-3）前必须裁决（如改 `enums/`、`enumeration/` 或 `constant/`+枚举混放，需修宪：先记 CHANGELOG） | backend 全部 20 模块目录结构、PR-2/PR-3 枚举类落位 |
-| D-7 | 幂等前置去重 NX 误判丢消息窗口的补救策略 | P0 PR-2 B2.2 审核发现（2026-09-09）：标准消费范式 NX 失败即判重复并确认（简报冻结语义），若消费实例在 NX 成功后、recordProcessed 前崩溃，残留键存活至 TTL（默认 24h）期间重投会被永久跳过且不留死信——唯一索引救不了（insert 未执行）。补救候选：NX-false 回查 received_event 表 / 缩短 TTL / 维持现状接受 at-most-once 窗口。需在首个真实业务消费者（PR-3 字典广播）落地前裁决 | M20 幂等构件消费范式、PR-3 起全部 @RabbitListener 消费者 |
+| D-6 | 宪法 `enum/` 包目录命名与 Java 保留字冲突 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：枚举包目录改 `enums/`——B.1/C.3 正文随 PR-3 修宪提交更新，已建的 `enum/.gitkeep` 目录同步改名；若用户改判 enumeration/ 或其他，改动面=目录名+包名+宪法正文，一次替换可回收 | backend 全部 20 模块目录结构、PR-3 枚举类落位 |
+| D-7 | 幂等前置去重 NX 误判丢消息窗口的补救策略 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：消费范式改为「Redis NX 失败时回查 received_event 表（唯一索引查询），确认已处理才跳过」——彻底消除丢消息窗口、保持 at-least-once；代价为每条重复消息一次 DB 点查。若用户改判缩短 TTL 或维持现状，改动面=MessageIdempotencyServiceImpl 单类+单测 | M20 幂等构件消费范式、PR-3 起全部 @RabbitListener 消费者 |
 
 ## 待调研项（检索不可得 / 需实测，回填后删除）
 

@@ -8,6 +8,10 @@
     "noEmit": true,
     "jsx": "preserve",
     "types": ["vite/client"],
+    // skipLibCheck：跳过声明文件自检，项目源码全量受检（Vue 官方脚手架标准配置）。
+    // 开启动因：element-plus 传递依赖 @vueuse/core 的 d.ts 引用标准 lib 外的
+    // WebBluetooth 类型、其 dropdown 声明与 vue-tsc 3.3.10 存在库内兼容问题
+    "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]

@@ -39,7 +39,7 @@
 4. 业务配置统一 `fuyun.*` 前缀（与 `FUYUN_*` 环境变量组 relaxed binding 对应）。
 5. 敏感配置（数据库口令 / Redis 口令 / RabbitMQ 凭证 / MinIO 密钥 / IoTDA 凭证 / NVD API key 等）一律环境变量占位 `${VAR}` 注入；yml / 代码 / compose / 文档中出现明文密钥即为红线违规。
 6. **常量集中 constants/ 包**：项目全部常量配置走常量类，定义使用 `public final static` 字段 + 私有构造器防实例化；禁止魔法值散落业务代码；Lua 脚本 SHA、Redis 键前缀、错误码前缀等运行期不变量同属常量。
-7. **枚举统一 enum 类型**：定义于 enum/ 包，禁止用常量类 / 整型魔法值模拟枚举；携带业务 code 的状态枚举必须实现 code↔enum 双向映射方法（供 JSON 序列化与 MyBatis-Plus TypeHandler 使用）。
+7. **枚举统一 enum 类型**：定义于 enums/ 包（D-6 裁决：`enum` 为 Java 保留字不可作包名），禁止用常量类 / 整型魔法值模拟枚举；携带业务 code 的状态枚举必须实现 code↔enum 双向映射方法（供 JSON 序列化与 MyBatis-Plus TypeHandler 使用）。
 
 ### A.3 API 设计（REST + OpenAPI）
 
@@ -145,7 +145,7 @@
 | `cache/` | 领域缓存服务 `{Domain}CacheService`（如 UserCacheService）：复杂缓存设计（热 key / 批量失效 / Lua 原子操作）；简单场景走 Spring Cache 注解（A.5-16） |
 | `gateway/` | 外部系统适配（IoTDA / HL7 / DICOM / 医保 / 短信，B.4） |
 | `config/` `properties/` | @Configuration 与插件 Bean / @ConfigurationProperties 属性类，全部集中、禁止散落 |
-| `constants/` `enum/` | 常量类（public final static + 私有构造器，A.2-6）与枚举（enum 类型 + code 双向映射，A.2-7） |
+| `constants/` `enums/` | 常量类（public final static + 私有构造器，A.2-6）与枚举（enum 类型 + code 双向映射，A.2-7） |
 | `exception/` | 模块业务异常与错误码（基座与全局渲染在 common） |
 
 ### B.2 层级依赖（强制）
@@ -236,7 +236,7 @@ backend/
 │       │   ├── convert/       # MapStruct 转换器 + MoneyUtil 金额换算
 │       │   ├── cache/         # 领域缓存 {Domain}CacheService
 │       │   ├── gateway/       # 外部系统适配（B.4）
-│       │   ├── config/ properties/ constants/ enum/ exception/
+│       │   ├── config/ properties/ constants/ enums/ exception/
 │       │   └── internal/      # 禁止外部引用
 │       └── resources/
 │           ├── db/migration/{domain}/   # Flyway 迁移（号段制）

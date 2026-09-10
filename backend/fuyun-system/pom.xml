@@ -8,13 +8,67 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M01 系统与权限管理）：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M01 系统与权限管理）：RBAC 数据访问与 D-2 令牌/会话构件落本模块（BRIEF-PR3-01 §3.1，
+       版本全部 BOM/父 POM 托管零声明，PR 描述申报理由）；B3.2 增补登录端点与字典广播依赖 -->
   <artifactId>fuyun-system</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- M20 消息治理构件：仅消费 fuyun-integration api 包（MessagingGovernance/ConsumerQueueSpec，
+         B.2-2 业务模块可依赖其他模块 api 包）；本模块编译依赖 fuyun-common，无反向依赖 -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 字典广播发布器/消费者（B3.2）：RabbitTemplate 与 @RabbitListener，BOM 托管 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <!-- RBAC 实体/mapper 数据访问：spring-boot3 后缀 starter（禁再引入 mybatis-spring 系，宪法 A.4.3-12） -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <!-- D-2 令牌会话 Redis 承载：StringRedisTemplate（backend 宪法 A.5-1，String 序列化禁 JDK 序列化） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <!-- 配置属性启动期校验（SecurityProperties @Validated + JSR-303，backend 宪法 A.2-2） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- 审计切面（B3.3）：@Aspect/@Around 编译期注解与 AspectJ 切点表达式依赖 aspectjweaver
+         （BOM 托管 starter，运行期自动代理由 fuyun-app 同款 starter 装配，A.1-15 注解优先） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-aop</artifactId>
+    </dependency>
+    <!-- 登录口令 bcrypt 校验（宪法 A.4.2-10 点名 BOM 托管单 jar，非 spring-security 全家桶） -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+    <!-- DTO/VO 映射（A.7-4）：AuthConverter/DictConverter，版本父 POM 托管，处理器路径已在父 compiler 插件配置 -->
+    <dependency>
+      <groupId>org.mapstruct</groupId>
+      <artifactId>mapstruct</artifactId>
+    </dependency>
+    <!-- Lombok（BOM 托管版本）：实体 @Getter/@Setter 编译期依赖，provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
     </dependency>
     <!-- 测试：CF-2 载荷线格式冻结断言（SystemMasterDataPayloadTest），BOM 托管版本 -->
     <dependency>

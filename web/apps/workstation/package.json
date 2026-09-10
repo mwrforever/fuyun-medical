@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@fuyun/shared": "workspace:*",
+    "axios": "catalog:",
     "dayjs": "1.11.23",
     "element-plus": "2.14.5",
     "pinia": "catalog:",
