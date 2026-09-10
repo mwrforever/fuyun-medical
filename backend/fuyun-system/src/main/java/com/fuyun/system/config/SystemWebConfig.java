@@ -1,6 +1,7 @@
 package com.fuyun.system.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.system.api.TokenVerifier;
 import com.fuyun.system.controller.AuthController;
 import com.fuyun.system.controller.DictController;
 import com.fuyun.system.controller.DictTypeController;
@@ -81,8 +82,8 @@ public class SystemWebConfig implements WebMvcConfigurer {
     /** Boot 全局定制 ObjectMapper（401 ProblemDetail 手工序列化与全局渲染同源） */
     private final ObjectMapper objectMapper;
 
-    /** 令牌服务实例：构造期一次性创建，经 {@link #tokenService()} 以 Bean 暴露为容器单例 */
-    private final ITokenService tokenService;
+    /** 令牌服务实例：构造期一次性创建，经 {@link #tokenService()}/{@link #tokenVerifier()} 双接口以 Bean 暴露为容器单例 */
+    private final TokenServiceImpl tokenService;
 
     /**
      * 全参构造器：依赖全部为外部 Bean（无本类 @Bean 产物，无装配环），令牌服务在此即建。
@@ -105,6 +106,18 @@ public class SystemWebConfig implements WebMvcConfigurer {
      */
     @Bean
     public ITokenService tokenService() {
+        return tokenService;
+    }
+
+    /**
+     * 访问令牌布尔校验 Bean（PR-4 B4.3 跨模块小改）：与令牌服务同一实例，以 {@link TokenVerifier}
+     * 接口类型单独暴露，供 iot 握手鉴权等跨模块消费方按最小契约注入（B.2-2 只依赖 api 包，
+     * 不感知 ITokenService 完整签发/刷新/登出面）。
+     *
+     * @return 访问令牌布尔校验实例（与 {@link #tokenService()} 同一单例，非新建）
+     */
+    @Bean
+    public TokenVerifier tokenVerifier() {
         return tokenService;
     }
 
