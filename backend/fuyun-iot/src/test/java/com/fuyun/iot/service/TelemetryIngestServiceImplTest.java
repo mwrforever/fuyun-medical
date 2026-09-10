@@ -283,7 +283,7 @@ class TelemetryIngestServiceImplTest {
                 .when(pushService)
                 .pushSummary(any(), eq(WARD_A));
 
-        // ResourcelessTransactionManager 无需数据源即激活完整事务同步链（getTransaction 即注册
+        // 匿名 AbstractPlatformTransactionManager（最小实现）无需数据源即激活完整事务同步链（getTransaction 即注册
         // 同步、commit 触发 afterCommit），真实覆盖"推送必须发生在事务提交之后"的 A.4.2-7 语义
         transactionTemplate.executeWithoutResult(status -> {
             service.ingest(List.of(message("dev-001", "MDC_ECG_HEART_RATE", "72")));
