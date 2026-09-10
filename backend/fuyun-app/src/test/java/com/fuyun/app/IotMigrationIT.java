@@ -187,12 +187,13 @@ class IotMigrationIT {
     /**
      * 断言⑤：事件契约台账含 iot.device.status-changed 种子登记行。
      *
-     * <p>先登记后订阅治理链路的种子回归（V403 幂等种子）：producer=iot、status=ACTIVE、订阅清单为空
-     * （P0 无订阅方登记，消费队列声明构件在建队列时自动补登记）。
+     * <p>先登记后订阅治理链路的种子回归（V403 幂等种子）：producer=iot、status=ACTIVE、订阅清单含
+     * iot（B4.3 起本模块自事件订阅上线——IotMessagingConfig 消费队列声明构件在建队列时自动补登记；
+     * B4.1 交付时的"零订阅"断言因本订阅落地同步失效改造）。
      */
     @Test
     @Order(5)
-    @DisplayName("事件种子断言：event_registry 含 iot.device.status-changed 行且 producer=iot、ACTIVE、零订阅")
+    @DisplayName("事件种子断言：event_registry 含 iot.device.status-changed 行且 producer=iot、ACTIVE、订阅含 iot")
     void deviceStatusChangedEventIsRegistered() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT producer_module, subscriber_modules, status FROM integration.event_registry"
@@ -202,7 +203,7 @@ class IotMigrationIT {
         assertThat(rows.get(0).get("status")).as("登记状态必须为 ACTIVE").isEqualTo("ACTIVE");
         assertThat(rows.get(0).get("subscriber_modules"))
                 .asString()
-                .as("P0 零订阅，清单为空")
-                .isEmpty();
+                .as("自事件订阅已落地（治理队列声明自动补登记）")
+                .contains("iot");
     }
 }

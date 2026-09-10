@@ -1,6 +1,7 @@
 package com.fuyun.app.config;
 
 import com.fuyun.iot.config.IotAmqpConfig;
+import com.fuyun.iot.config.IotMessagingConfig;
 import com.fuyun.iot.properties.IotProperties;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
@@ -18,8 +19,9 @@ import org.springframework.context.annotation.Import;
  * @Import 注册为 Bean（com.fuyun.iot 不在扫描范围，宪法 B.1；mapper 由既有 @MapperScan 按注解
  * 自动覆盖）；AMQP 消费链（Qpid 连接工厂/攒批器/SmartLifecycle 消费者）经 {@link IotAmqpConfig}
  * 生效——该配置类带 enabled 开关条件装配，默认 {@code fuyun.iot.amqp.enabled=false} 下零连接
- * 尝试（存量 IT 回归零行为差异的保障）。B4.3 扩展点：@Import 追加 IotMessagingConfig（fy.topic
- * 发布与自事件消费）、IotWebSocketConfig（/ws/iot STOMP 端点）。
+ * 尝试（存量 IT 回归零行为差异的保障）；MQ 事件总线域（fy.topic 状态事件发布器 + 自事件幂等
+ * 消费者 + 治理队列声明）经 {@link IotMessagingConfig} 生效（无条件装配，与 AMQP 开关解耦）。
+ * B4.3 任务 B 扩展点：@Import 追加 IotWebSocketConfig（/ws/iot STOMP 端点）。
  */
 @Configuration
 @EnableConfigurationProperties(IotProperties.class)
@@ -27,6 +29,7 @@ import org.springframework.context.annotation.Import;
     TelemetryIngestServiceImpl.class,
     ConsumeErrorLogServiceImpl.class,
     DeviceStatusServiceImpl.class,
-    IotAmqpConfig.class
+    IotAmqpConfig.class,
+    IotMessagingConfig.class
 })
 public class IotConfig {}

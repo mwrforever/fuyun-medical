@@ -38,6 +38,19 @@
       <groupId>org.apache.qpid</groupId>
       <artifactId>qpid-jms-client</artifactId>
     </dependency>
+    <!-- MQ 事件总线域（B4.3 扇出，与 IoTDA AMQP 消费链完全隔离）：IotEventPublisher RabbitTemplate
+         发布与 IotFanoutListener @RabbitListener 自事件消费，版本 BOM 托管零声明 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <!-- 消息治理构件 api 包（MessagingGovernance/ConsumerQueueSpec 声明自事件消费队列，V403 已登记）：
+         仅消费 api 包，宪法 B.2-2 允许，B4.2 审核 Minor 4 遗留项补齐（system pom 先例） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- Lombok（BOM 托管版本）：实体 @Getter/@Setter 编译期依赖，provided 不打进运行产物 -->
     <dependency>
       <groupId>org.projectlombok</groupId>

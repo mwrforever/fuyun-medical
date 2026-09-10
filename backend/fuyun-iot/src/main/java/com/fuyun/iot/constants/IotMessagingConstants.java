@@ -23,6 +23,10 @@ public final class IotMessagingConstants {
     /** 本模块自事件消费队列：q.&lt;消费者模块&gt;.&lt;事件类型&gt;（治理构件声明用） */
     public static final String QUEUE_DEVICE_STATUS = "q.iot.iot.device.status-changed";
 
+    /** MDC traceId 键名：与 fuyun.trace.mdc-key 配置默认值一致（发布点从 MDC 取当前值进信封，
+     * AMQP 消费线程无 HTTP 上下文时取值为 null，信封契约允许） */
+    public static final String TRACE_ID_MDC_KEY = "traceId";
+
     /** 帧判别键：设备号（遥测/状态帧公共必填字段） */
     public static final String FRAME_FIELD_DEVICE_ID = "deviceId";
 

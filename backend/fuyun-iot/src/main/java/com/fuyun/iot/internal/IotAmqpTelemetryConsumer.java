@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.SmartLifecycle;
 
@@ -54,9 +55,10 @@ import org.springframework.context.SmartLifecycle;
  *
  * <p><b>消费处理流程（四路同构）</b>：receive → 载体解码（字节/文本）→ TelemetryFrameParser 解析 →
  * 遥测帧入 {@link TelemetryBatchAssembler} 有界队列（满则阻塞等待背压）；状态帧即时交
- * {@link IDeviceStatusService}，返回 true 时触发状态事件回调（B4.3 由 IotEventPublisher 接线发布
- * fy.topic，本版默认空实现）；解析失败帧落 iot_consume_error_log（stage=PARSE）后确认抛弃
- * （毒丸隔离，不阻塞队列）。
+ * {@link IDeviceStatusService}，返回 true 时经状态事件回调（构造期注入
+ * {@link IotEventPublisher}#publishDeviceStatus，ObjectProvider 可选解析）发布
+ * iot.device.status-changed 至 fy.topic；解析失败帧落 iot_consume_error_log（stage=PARSE）后
+ * 确认抛弃（毒丸隔离，不阻塞队列）。
  *
  * <p><b>连接数预算（宪法 A.5-9）</b>：连接数 = 实例数 × 每实例连接数（=配置队列数），上限
  * ≤32（IoTDA 单凭证上限）；P0 单实例 × ≤4 队列 = ≤4 连接，扩容上界 8 实例 × 4 队列 = 32。
@@ -108,12 +110,11 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     private final List<QueueWorker> workers = new CopyOnWriteArrayList<>();
 
     /**
-     * 状态事件回调（B4.3 接线点，最小侵入预留）：默认空实现——设备状态 apply 成功后本应发布
-     * iot.device.status-changed 至 fy.topic，但 IotEventPublisher 属 B4.3（信封 codec + Confirm/Returns
-     * 回调，SystemEventPublisher 同模式），本任务禁止提前建发布器类；B4.3 交付后由 IotAmqpConfig
-     * 以 {@code setStatusEventSink(publisher::publishDeviceStatus)} 一行接线，消费循环零改动。
+     * 状态事件回调（构造期注入）：设备状态 apply 成功后经回调发布 iot.device.status-changed 至
+     * fy.topic——回调运行于本消费线程（非事务上下文），满足发布器"事务内禁发送"调用约束；
+     * 上下文未装配发布器时为空实现防御（无消费源头，回调不会被触达）。
      */
-    private volatile Consumer<DeviceStatusEvent> statusEventSink = event -> {};
+    private final Consumer<DeviceStatusEvent> statusEventSink;
 
     /** connected gauge 载体：1=连接正常 / 0=断链（TODO(B4.3): IotAmqpMetrics 以此绑定 Micrometer gauge iot.amqp.connected） */
     private final AtomicLong connectedFlag = new AtomicLong(0);
@@ -142,7 +143,13 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     /**
      * Spring 装配构造器（@Autowired 消歧，装配归 IotAmqpConfig @Import，宪法 A.1-7 构造器注入）：
      * Thread::sleep 退避 + 容器时钟 Bean（iotAmqpClock，生产恒为系统 UTC；IT 可注入固定时钟使
-     * IoTDA 时间戳口令可预置）。
+     * IoTDA 时间戳口令可预置）+ 状态事件发布器可选解析（B4.3 扇出接线）。
+     *
+     * <p>发布器为何经 {@link ObjectProvider} 可选解析而非必填参数：IotEventPublisher 归
+     * IotMessagingConfig 装配（MQ 事件总线域，无条件 Bean），本消费者归 IotAmqpConfig 装配
+     * （AMQP 消费链域，enabled 开关条件 Bean）——两域解耦，消费链启用而事件域未装配时发布器
+     * 缺席合法，回调降级为空实现；getIfAvailable 于构造期解析（发布器依赖链 RabbitTemplate/
+     * codec 与本类无装配环，即时解析安全）。
      *
      * @param properties          IoT 配置属性，非空；本类仅消费其 amqp() 消费链参数
      * @param connectionFactory   Qpid JMS 连接工厂，非空；来源：IotAmqpConfig Bean
@@ -150,6 +157,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
      * @param errorLogService     消费错误日志服务，非空；来源：IotConfig 装配链
      * @param deviceStatusService 设备状态服务，非空；来源：IotConfig 装配链
      * @param clock               凭证时间戳时钟，非空；来源：IotAmqpConfig iotAmqpClock Bean
+     * @param statusEventPublisher 状态事件发布器解析器，非空；来源：IotMessagingConfig 装配
+     *                             （缺席时回调为空实现）
      */
     @Autowired
     public IotAmqpTelemetryConsumer(
@@ -158,15 +167,25 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             TelemetryBatchAssembler assembler,
             IConsumeErrorLogService errorLogService,
             IDeviceStatusService deviceStatusService,
-            Clock clock) {
-        this(properties, connectionFactory, assembler, errorLogService, deviceStatusService, clock, Thread::sleep);
+            Clock clock,
+            ObjectProvider<IotEventPublisher> statusEventPublisher) {
+        this(
+                properties,
+                connectionFactory,
+                assembler,
+                errorLogService,
+                deviceStatusService,
+                clock,
+                Thread::sleep,
+                optionalSink(statusEventPublisher));
     }
 
     /**
-     * 全参构造器（包内测试用）：显式注入时钟与退避睡眠抽象。
+     * 全参构造器（包内测试用）：显式注入时钟、退避睡眠抽象与状态事件回调。
      *
      * @param clock               时钟，非空；凭证时间戳与断链计时来源
      * @param sleeper             退避睡眠，非空；可中断
+     * @param statusEventSink     状态事件回调，非空；测试注入记录型收集器（生产为发布器方法引用）
      */
     IotAmqpTelemetryConsumer(
             IotProperties properties,
@@ -175,7 +194,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             IConsumeErrorLogService errorLogService,
             IDeviceStatusService deviceStatusService,
             Clock clock,
-            Sleeper sleeper) {
+            Sleeper sleeper,
+            Consumer<DeviceStatusEvent> statusEventSink) {
         this.amqp = properties.amqp();
         this.connectionFactory = connectionFactory;
         this.assembler = assembler;
@@ -183,15 +203,18 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         this.deviceStatusService = deviceStatusService;
         this.clock = clock;
         this.sleeper = sleeper;
+        this.statusEventSink = statusEventSink;
     }
 
     /**
-     * 接线状态事件回调（B4.3 由 IotAmqpConfig 调用，发布器交付前保持默认空实现）。
+     * 解析可选发布器为状态事件回调：发布器在场取其方法引用，缺席降级为空实现。
      *
-     * @param sink 状态事件消费者（如 B4.3 IotEventPublisher::publishDeviceStatus），非空
+     * @param statusEventPublisher 发布器解析器，非空
+     * @return 状态事件回调，非空
      */
-    void setStatusEventSink(Consumer<DeviceStatusEvent> sink) {
-        this.statusEventSink = sink;
+    private static Consumer<DeviceStatusEvent> optionalSink(ObjectProvider<IotEventPublisher> statusEventPublisher) {
+        IotEventPublisher publisher = statusEventPublisher.getIfAvailable();
+        return publisher == null ? event -> {} : publisher::publishDeviceStatus;
     }
 
     /** connected gauge 载体（单测断言 + B4.3 IotAmqpMetrics gauge 绑定点），非空 */
@@ -490,7 +513,7 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     private void handleStatusFrame(DeviceStatusEvent event, Message message) {
         boolean validDevice = deviceStatusService.apply(event);
         if (validDevice) {
-            // B4.3 接线点：默认空实现，发布器交付后由 IotAmqpConfig 注入 publishDeviceStatus
+            // 状态事件回调（构造期注入 IotEventPublisher::publishDeviceStatus，事务外调用）
             statusEventSink.accept(event);
         }
         try {

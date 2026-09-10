@@ -99,6 +99,9 @@ class IotAmqpTelemetryConsumerTest {
 
     private TelemetryBatchAssembler assembler;
 
+    /** 状态事件回调收集器：构造期注入消费者（发布器接线点的记录型替身） */
+    private final List<DeviceStatusEvent> statusEventsPublished = new CopyOnWriteArrayList<>();
+
     /** 记录型假 sleeper：只记不睡（避免真实 sleep，退避节奏断言载体） */
     private List<Long> recordedDelays;
 
@@ -132,7 +135,8 @@ class IotAmqpTelemetryConsumerTest {
                 errorLogService,
                 deviceStatusService,
                 mutableClock,
-                recordedDelays::add);
+                recordedDelays::add,
+                statusEventsPublished::add);
     }
 
     @AfterEach
@@ -180,15 +184,13 @@ class IotAmqpTelemetryConsumerTest {
     }
 
     @Test
-    @DisplayName("状态帧即时处理：设备有效时触发状态事件回调（B4.3 发布器接线点）并即时确认")
+    @DisplayName("状态帧即时处理：设备有效时触发状态事件回调（IotEventPublisher 接线点）并即时确认")
     void appliesStatusFrameAndFiresEventSinkWhenDeviceValid() throws Exception {
         Message statusFrame = bytesMessage(
                 "{\"deviceId\":\"it-dev-001\",\"status\":\"OFFLINE\",\"occurredAt\":\"2026-09-10T00:00:00Z\"}");
         stubContextCreation();
         when(jmsConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
         when(deviceStatusService.apply(any(DeviceStatusEvent.class))).thenReturn(true);
-        List<DeviceStatusEvent> published = new CopyOnWriteArrayList<>();
-        consumer.setStatusEventSink(published::add);
 
         consumer.start();
 
@@ -196,7 +198,7 @@ class IotAmqpTelemetryConsumerTest {
         verify(deviceStatusService, timeout(AWAIT_MILLIS)).apply(eventCaptor.capture());
         assertThat(eventCaptor.getValue().deviceId()).isEqualTo("it-dev-001");
         assertThat(eventCaptor.getValue().status()).isEqualTo(DeviceStatus.OFFLINE);
-        assertThat(published).as("有效设备的状态事件必须触发回调（默认空实现，B4.3 换发布器）").hasSize(1);
+        assertThat(statusEventsPublished).as("有效设备的状态事件必须触发回调（构造期接线发布器）").hasSize(1);
         verify(statusFrame, timeout(AWAIT_MILLIS)).acknowledge();
         verifyNoInteractions(ingestService);
     }
@@ -209,13 +211,11 @@ class IotAmqpTelemetryConsumerTest {
         stubContextCreation();
         when(jmsConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
         when(deviceStatusService.apply(any(DeviceStatusEvent.class))).thenReturn(false);
-        List<DeviceStatusEvent> published = new CopyOnWriteArrayList<>();
-        consumer.setStatusEventSink(published::add);
 
         consumer.start();
 
         verify(statusFrame, timeout(AWAIT_MILLIS)).acknowledge();
-        assertThat(published).as("无效设备不发布状态事件").isEmpty();
+        assertThat(statusEventsPublished).as("无效设备不发布状态事件").isEmpty();
     }
 
     @Test
@@ -311,7 +311,8 @@ class IotAmqpTelemetryConsumerTest {
                 errorLogService,
                 deviceStatusService,
                 mutableClock,
-                recordedDelays::add);
+                recordedDelays::add,
+                statusEventsPublished::add);
         try {
             Message firstFrame = bytesMessage(telemetryJson("it-dev-001", "vital.heart-rate", "72"));
             Message secondFrame = bytesMessage(telemetryJson("it-dev-001", "vital.spo2", "98"));
