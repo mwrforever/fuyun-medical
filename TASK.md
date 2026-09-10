@@ -21,7 +21,6 @@
 | T-R2-3 | 统一 envelope 响应模式权威出处（本宪法已裁决走 ProblemDetail 路线，仅存档） | R2 T-3 | 已闭环 |
 | T-R2-5 | MyBatis-Plus SQL 日志配置细节（MP 配置项承载，替代裸 MyBatis log-impl） | R2 T-5 | P0 实施期 |
 | T-R3-1 | `CREATE INDEX CONCURRENTLY` 在 Flyway 11.7.2 的事务外执行兼容性 | R3 T1 | P0 实测 |
-| T-R3-2 | TimescaleDB 2.29.2 `add_columnstore_policy` vs `add_compression_policy` 实测差异 | R3 T2 | P0 实测后锁定压缩策略函数 |
 | T-R3-3 | Qpid failover 重连后 Session/Consumer 自动重建行为（IoTDA 断链 10 分钟实测） | R3 T3 | P0 实测 |
 | T-R3-4 | `fy.delay` quorum 队列 TTL+DLX 到期转发时延压测 | R3 T4 | P0 实测 |
 | T-R3-5 | IoTDA 单消息 ≤0.5KB 限制对遥测报文分片的影响 | R3 T5 | 与 14-iot Spec 联动 |

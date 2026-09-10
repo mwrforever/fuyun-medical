@@ -6,6 +6,7 @@
 
 - **号段登记（TASK.md W-4 载体）**：iot 域（M14）占用 **V400–V499**，本批（PR-4 B4.1）使用 V400–V403——V400 设备档案与绑定表、V401 消费错误日志表、V402 遥测超表与压缩/保留策略（T-R3-2 实测锁定）、V403 设备状态事件种子登记。核对结论：现存迁移仅 integration V1–V5 与 system V300–V303，V400–V499 无冲突。
 - **PR-4 表外申报预告**（简报 §10 清单，随各批次落地逐项申报）：qpid-jms-client 2.11.0（父 POM 已锁）、Boot BOM 托管 starter 集合（validation / websocket / amqp / micrometer / mybatis-plus / mapstruct / lombok 等）、Eclipse Paho MQTT 客户端 1.2.5 与 maven-jar-plugin 3.4.2 / maven-dependency-plugin 3.8.1（iot-simulator）、父 POM modules 增 iot-simulator + JaCoCo 核心包增补 `com.fuyun.iot.service.impl`、fuyun-app pom 增 fuyun-iot 依赖、fuyun-system api 增 TokenVerifier 接口、deploy 增 FUYUN_IOT_FALLBACK_TOKEN 占位与 nginx `/ingest/` 路由、CI images job 追加 iot-simulator 第三构建步骤。
+- **T-R3-2 实测结论（收口补记）**：压缩策略函数胜者 = `add_columnstore_policy`（2026-09-10，`timescale/timescaledb:2.29.2-pg16` 探针容器实测）——探针 SQL「`SELECT proname FROM pg_proc WHERE proname IN ('add_columnstore_policy','add_compression_policy') ORDER BY 1;`」输出两函数均存在；`pg_proc.prokind` 实测 `add_columnstore_policy = p`（过程，须 `CALL` 调用）、`add_compression_policy = f`（函数，自 2.18.0 起弃用），两函数并存以非弃用者为胜 → V402 压缩策略以 `CALL add_columnstore_policy('iot.iot_telemetry', INTERVAL '7 days')` 落盘；保留策略 `add_retention_policy` 实测 `prokind = f`（SELECT 函数，非 T-R3-2 比对项）照常调用。样例超表实证：CALL 后 `timescaledb_information.jobs` 落 `policy_compression` 作业、`SELECT add_retention_policy` 落 `policy_retention` 作业（均 scheduled=true）。TASK.md T-R3-2 行按登记台规则回填后删除。
 
 ## 2026-09-10 · PR #6 审查修复（Minor×2：脱敏正则数字边界 + 字典发布条件更新防双广播）
 
