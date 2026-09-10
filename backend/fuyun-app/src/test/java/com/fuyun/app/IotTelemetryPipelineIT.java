@@ -82,14 +82,15 @@ import org.testcontainers.utility.MountableFile;
  *
  * <p>业务意图：以真实三中间件 + 真实 Servlet 容器（RANDOM_PORT，STOMP 握手与 HTTP 兜底必需）
  * 打通「AMQP 注入 → Qpid 消费 → 四路解析 → 绑定快照 → 批量冲突忽略落库 → 客户端确认」、
- * 「落库 → STOMP 遥测摘要推送」、「状态帧 → 档案状态机 → fy.topic 自事件 → 治理队列 AUTO+幂等
- * 消费 → STOMP 设备状态推送」与「HTTP 兜底通道独立鉴权 + 双通道同键去重」全链路。七步断言
- * （§6.2 原文序）：①种子；②AMQP 注入落库幂等（4 帧两两重复键 → 恰 2 行 + 快照值）；③STOMP
- * 摘要断言（订阅 /topic/iot/telemetry/1001 → 发 1 帧新遥测 → 收摘要帧含 deviceId/metricCode）；
- * ④毒丸隔离（非 JSON + 缺字段落 PARSE 错误日志 PENDING → 锚点帧证明消费未阻塞）；⑤状态扇出
- * 全链（OFFLINE 帧→档案更新→received_event PROCESSED；带 wardId 自事件推
- * /topic/iot/device-status/1001 收状态帧）；⑥幂等重投（已消费 eventId 重发跳过，台账行数不变）；
- * ⑦HTTP 兜底（无/错 token 401 IOT-1001；对 token 同键载荷 202 且 iot_telemetry 行数不增）。
+ * 「落库 → STOMP 遥测摘要推送」、「状态帧 → 档案状态机 → 档案 wardId 补全自事件 → fy.topic →
+ * 治理队列 AUTO+幂等消费 → STOMP 设备状态推送」与「HTTP 兜底通道独立鉴权 + 双通道同键去重」
+ * 全链路。七步断言（§6.2 原文序）：①种子；②AMQP 注入落库幂等（4 帧两两重复键 → 恰 2 行 +
+ * 快照值）；③STOMP 摘要断言（订阅 /topic/iot/telemetry/1001 → 发 1 帧新遥测 → 收摘要帧含
+ * deviceId/metricCode）；④毒丸隔离（非 JSON + 缺字段落 PARSE 错误日志 PENDING → 锚点帧证明
+ * 消费未阻塞）；⑤状态扇出 AMQP 全链（OFFLINE 帧→档案更新→received_event PROCESSED；消费者
+ * 以设备档案 ward_id=1001 补全自事件 → /topic/iot/device-status/1001 收状态帧）；⑥幂等重投
+ * （台账真实已消费 eventId 重发跳过，台账行数不变）；⑦HTTP 兜底（无/错 token 401 IOT-1001；
+ * 对 token 同键载荷 202 且 iot_telemetry 行数不增）。
  *
  * <p><b>STOMP 客户端与握手鉴权方案（简报 §6.1/§6.2 步骤 5）</b>：spring-websocket
  * WebSocketStompClient(StandardWebSocketClient) 连 ws://localhost:{port}/ws/iot；握手
@@ -97,10 +98,11 @@ import org.testcontainers.utility.MountableFile;
  * Configurator 透传自定义头至 Tomcat 升级请求），令牌为 IT 内经 HTTP 真实登录 M01 签发的 access
  * 令牌——握手鉴权走生产 TokenVerifier 全链，不为可测性削弱拦截器逻辑。
  *
- * <p><b>步骤⑤带 wardId 自事件为何经 rabbitTemplate 手工发布</b>：P0 状态帧契约不含 wardId
- * （TelemetryFrameParser 解析恒 null，V403 占位载荷四字段），AMQP 链路产生的自事件推送自然
- * 静默降级；以手工信封发布带 wardId 的同事件覆盖"带 ward 主题推送"分支（wardId 空跳过分支由
- * TelemetryPushServiceImplTest 承载）。
+ * <p><b>步骤⑤状态主题收帧为何即 AMQP 全链断言（审核 F-2 修复后）</b>：P0 状态帧契约不含
+ * wardId（TelemetryFrameParser 解析恒 null，V403 占位载荷四字段），消费者以 IDeviceStatusService.apply
+ * 返回的设备档案 ward_id 补全事件后再发布（it-dev-001 种子 ward_id=1001）——AMQP 状态帧经
+ * 档案状态机 → fy.topic 自事件 → 幂等消费后自然携带 wardId 推达订阅主题，生产链路无死路径；
+ * 步骤⑥手工信封仅作幂等重投样本（eventId 取自 integration.received_event 台账真实已消费行）。
  *
  * <p>容器三件套与 {@link IotMigrationIT} 完全同款（tag 与 deploy compose 严格一致 + it/rabbitmq.conf
  * 挂载 + static 类级共享 + @ServiceConnection）。RabbitMQ 4.x 原生 AMQP 1.0 默认启用（无插件），
@@ -162,10 +164,6 @@ class IotTelemetryPipelineIT {
 
     /** 步骤⑥锚点状态帧发生时刻：ONLINE 帧（与 OFFLINE 帧区分，驱动第二台账行） */
     private static final String ANCHOR_STATUS_OCCURRED_AT = "2026-09-10T05:06:07Z";
-
-    /** 步骤⑤带 wardId 自事件的固定 eventId（步骤⑥以其重投验证幂等，跨步共享故固定取值；信封
-     * eventId 线格式为字符串，DB 台账列为 uuid 形态） */
-    private static final String WARD_EVENT_ID = "b4e5f6a7-8c9d-4e0f-1a2b-3c4d5e6f7a8b";
 
     /** 消费端订阅队列（fuyun.iot.amqp.queues[0]，值原样传给 JMS createQueue）：RabbitMQ 4.x 仅接受
      * address-v2 语法 /queues/{name}（address-v1 裸名被服务端拒绝 amqp_address_v1_not_permitted，
@@ -427,16 +425,16 @@ class IotTelemetryPipelineIT {
     }
 
     /**
-     * 步骤⑤：状态扇出全链——发 OFFLINE 状态帧 → 断言 iot_device.status=OFFLINE 且
+     * 步骤⑤：状态扇出 AMQP 全链——发 OFFLINE 状态帧 → 断言 iot_device.status=OFFLINE 且
      * last_offline_at 非空（状态帧即时处理不入攒批）；断言 integration.received_event 出现
-     * consumer_module='iot' 且 status=PROCESSED 行（AMQP 状态帧→apply→IotEventPublisher 投
-     * fy.topic→治理队列→AUTO+幂等消费全链）；再以手工信封发布带 wardId 的同型自事件（P0 状态帧
-     * 契约不含 wardId，见类注释），断言 STOMP 订阅 /topic/iot/device-status/1001 收到状态帧且
-     * 台账增至 2 行（推送在 recordProcessed 之前，收帧 + 落账共同证明全链完成）。
+     * consumer_module='iot' 且 status=PROCESSED 行（AMQP 状态帧→apply→消费者以档案 wardId 补全
+     * 事件→IotEventPublisher 投 fy.topic→治理队列→AUTO+幂等消费全链）；随后轮询 STOMP 订阅
+     * /topic/iot/device-status/1001 断言收到<b>AMQP 全链</b>状态帧（种子设备 ward_id=1001，
+     * 不再以手工信封替代 AMQP 链路——推送在 recordProcessed 之前，收帧 + 落账共同证明全链完成）。
      */
     @Test
     @Order(5)
-    @DisplayName("状态扇出全链：OFFLINE 帧→档案更新→fy.topic 自事件→幂等消费落账；带 wardId 自事件推 STOMP 设备状态主题")
+    @DisplayName("状态扇出全链：OFFLINE 帧→档案更新→档案 wardId 补全自事件→幂等消费落账→STOMP 设备状态主题收帧")
     void statusFrameFansOutThroughTopicAndSelfConsumptionRecordsLedger() throws Exception {
         StompSession session = connectStompSession(loginAndGetAccessToken());
         try {
@@ -460,51 +458,54 @@ class IotTelemetryPipelineIT {
                     .as("台账状态 = PROCESSED")
                     .isEqualTo(MessagingConstants.RECEIVED_STATUS_PROCESSED);
 
-            // 断言 3：带 wardId 自事件推 STOMP 设备状态主题（载荷四字段与契约同构）
-            rabbitTemplate.convertAndSend(
-                    IotMessagingConstants.TOPIC_EXCHANGE,
-                    IotMessagingConstants.EVENT_DEVICE_STATUS,
-                    wardEnvelope(WARD_EVENT_ID, "iot-fanout-it-ward"));
+            // 断言 3：AMQP 全链 STOMP 设备状态主题收帧——消费者以设备档案 ward_id（种子 1001）
+            // 补全事件后经 fy.topic 往返推送，载荷四字段与契约同构
             String frame = frames.poll(PIPELINE_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
-            assertThat(frame).as("设备状态主题收到状态帧").isNotNull();
+            assertThat(frame).as("设备状态主题收到 AMQP 全链状态帧").isNotNull();
             JsonNode status = objectMapper.readTree(frame);
             assertThat(status.path("deviceId").asText()).isEqualTo(DEVICE_ID);
             assertThat(status.path("status").asText()).isEqualTo("OFFLINE");
             assertThat(status.path("occurredAt").asText()).isEqualTo(STATUS_OCCURRED_AT);
-            assertThat(status.path("wardId").asLong()).as("载荷 wardId 与信封一致").isEqualTo(SNAPSHOT_WARD_ID);
-            awaitUntil("带 wardId 自事件落账（推送成功后 recordProcessed）", () -> iotProcessedLedgerRows() == 2);
+            assertThat(status.path("wardId").asLong())
+                    .as("载荷 wardId = 设备档案 ward_id（审核 F-2 补全语义）")
+                    .isEqualTo(SNAPSHOT_WARD_ID);
         } finally {
             session.disconnect();
         }
     }
 
     /**
-     * 步骤⑥：幂等重投（MQ 侧）——以步骤⑤已消费的带 wardId 自事件 eventId 重建同构信封手工重发
-     * fy.topic → 标准范式 tryAcquire 前置键拦截 + D-7 回查确认已处理 → 跳过（含 STOMP 推送不重放）；
-     * 断言该 (event_id, consumer_module) 台账行数仍为 1。
+     * 步骤⑥：幂等重投（MQ 侧）——从 integration.received_event 台账读取步骤⑤<b>真实已消费</b>
+     * eventId 重建同 eventId 信封手工重发 fy.topic → 标准范式 tryAcquire 前置键拦截 + D-7 回查
+     * 确认已处理 → 跳过（含 STOMP 推送不重放）；断言该 (event_id, consumer_module) 台账行数仍为 1。
      *
      * <p>锚点机制（单队列单消费者按序处理）：重投帧发出后发第二帧真实 ONLINE 状态事件——锚点
      * 台账行可见即重投帧已被处理完毕，断言非轮询竞态假阳性。
      */
     @Test
     @Order(6)
-    @DisplayName("幂等重投：已消费 eventId 同构信封重发 fy.topic 被跳过，台账行数仍为 1")
+    @DisplayName("幂等重投：台账真实已消费 eventId 同构信封重发 fy.topic 被跳过，台账行数仍为 1")
     void redeliveredStatusEventIsSkippedByIdempotencyLedger() {
-        // 以已消费 eventId 重建同构信封（模拟 at-least-once 服务端重投，其余五要素与原信封同构）
+        // 从台账读取真实已消费 eventId（uuid 列直取，重建信封模拟 at-least-once 服务端重投）
+        UUID consumedEventId = jdbcTemplate.queryForObject(
+                "SELECT event_id FROM integration.received_event WHERE consumer_module = ? AND status = ?",
+                UUID.class,
+                IotMessagingConstants.MODULE,
+                MessagingConstants.RECEIVED_STATUS_PROCESSED);
         rabbitTemplate.convertAndSend(
                 IotMessagingConstants.TOPIC_EXCHANGE,
                 IotMessagingConstants.EVENT_DEVICE_STATUS,
-                wardEnvelope(WARD_EVENT_ID, "iot-fanout-it-redelivery"));
+                wardEnvelope(consumedEventId.toString(), "iot-fanout-it-redelivery"));
 
         // 锚点：第二帧真实状态事件（ONLINE）——锚点台账行可见即重投帧已被处理完毕
         sendFrames(List.of(statusJson(DEVICE_ID, "ONLINE", ANCHOR_STATUS_OCCURRED_AT)));
-        awaitUntil("iot 幂等台账达 3 行（重投帧处理完毕 + 锚点事件落账）", () -> iotProcessedLedgerRows() == 3);
+        awaitUntil("iot 幂等台账达 2 行（重投帧处理完毕 + 锚点事件落账）", () -> iotProcessedLedgerRows() == 2);
 
         // 幂等台账终局断言：重投 eventId 行数仍为 1（D-7：NX 失败 + 台账已处理 → 跳过）
         Integer redeliveredRows = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM integration.received_event WHERE event_id = ? AND consumer_module = ?",
                 Integer.class,
-                UUID.fromString(WARD_EVENT_ID),
+                consumedEventId,
                 IotMessagingConstants.MODULE);
         assertThat(redeliveredRows).as("重投 eventId 台账行数仍为 1").isEqualTo(1);
     }
@@ -541,7 +542,7 @@ class IotTelemetryPipelineIT {
         assertThat(countTelemetry()).as("同键载荷经唯一约束冲突忽略，iot_telemetry 行数不增").isEqualTo(rowsBefore);
     }
 
-    /** 构造带 wardId 的设备状态自事件信封（步骤⑤发布/步骤⑥重投共用同构形态） */
+    /** 构造带 wardId 的设备状态自事件信封（步骤⑥幂等重投样本，eventId 取自台账真实已消费行） */
     private EventEnvelope wardEnvelope(String eventId, String traceId) {
         return new EventEnvelope(
                 eventId,
