@@ -51,6 +51,12 @@ public final class IotMessagingConstants {
     /** 帧判别键：设备状态（状态形态判据之一，值域 = DeviceStatus 枚举） */
     public static final String FRAME_FIELD_STATUS = "status";
 
+    /** STOMP 遥测摘要主题前缀：/topic/iot/telemetry/{wardId}（B4.3 推送语义，简报 §1.4） */
+    public static final String TOPIC_TELEMETRY_PREFIX = "/topic/iot/telemetry/";
+
+    /** STOMP 设备状态主题前缀：/topic/iot/device-status/{wardId}（B4.3 推送语义，简报 §1.5） */
+    public static final String TOPIC_DEVICE_STATUS_PREFIX = "/topic/iot/device-status/";
+
     /** 错误留痕摘要算法：SHA-256，十六进制摘要 64 位与 raw_digest 列宽一致（DeadLetterListener 同口径） */
     public static final String DIGEST_ALGORITHM_SHA256 = "SHA-256";
 

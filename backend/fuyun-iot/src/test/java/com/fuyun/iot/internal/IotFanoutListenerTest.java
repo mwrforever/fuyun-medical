@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,6 +18,7 @@ import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.constants.IotMessagingConstants;
 import com.fuyun.iot.enums.DeviceStatus;
+import com.fuyun.iot.service.ITelemetryPushService;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,8 +38,9 @@ import org.springframework.amqp.core.MessageProperties;
  *
  * <p>覆盖：重复投递（tryAcquire=false，D-7 回查确认已处理）跳过即 AUTO 确认、成功消费落
  * received_event 登记（信封五要素完整，consumerModule=iot）、业务失败释放前置键后重抛（交容器
- * 有界重试）、不合规信封上抛（不触达幂等构件）、载荷契约不符按消费失败处置。真实 broker 链路
- * （含幂等重投）归 IotTelemetryPipelineIT 步骤 5/6。
+ * 有界重试）、不合规信封上抛（不触达幂等构件）、载荷契约不符按消费失败处置、B4.3-b 接线——
+ * 载荷含 wardId 推 STOMP 设备状态主题、wardId null 跳过推送、推送失败按业务失败释放重抛。
+ * 真实 broker 链路（含幂等重投与 STOMP 收帧）归 IotTelemetryPipelineIT 步骤 5/6。
  */
 @ExtendWith(MockitoExtension.class)
 class IotFanoutListenerTest {
@@ -52,8 +55,14 @@ class IotFanoutListenerTest {
     private static final DeviceStatusEvent STATUS_EVENT =
             new DeviceStatusEvent("it-dev-001", DeviceStatus.OFFLINE, OCCURRED_AT, null);
 
+    /** 测试病区 ID：带 ward 主题推送断言值 */
+    private static final long WARD_ID = 1001L;
+
     @Mock
     private MessageIdempotencyService idempotencyService;
+
+    @Mock
+    private ITelemetryPushService pushService;
 
     @Captor
     private ArgumentCaptor<ReceivedEventRecord> recordCaptor;
@@ -65,7 +74,8 @@ class IotFanoutListenerTest {
     @BeforeEach
     void setUp() {
         objectMapper = testObjectMapper();
-        listener = new IotFanoutListener(idempotencyService, new EventEnvelopeCodec(objectMapper), objectMapper);
+        listener = new IotFanoutListener(
+                idempotencyService, new EventEnvelopeCodec(objectMapper), objectMapper, pushService);
     }
 
     @Test
@@ -78,6 +88,7 @@ class IotFanoutListenerTest {
 
         verify(idempotencyService, never()).recordProcessed(any());
         verify(idempotencyService, never()).release(anyString(), anyString());
+        verifyNoInteractions(pushService);
     }
 
     @Test
@@ -95,6 +106,52 @@ class IotFanoutListenerTest {
         assertThat(record.producer()).isEqualTo(IotMessagingConstants.MODULE);
         assertThat(record.occurredAt()).isEqualTo(OCCURRED_AT);
         assertThat(record.consumerModule()).isEqualTo(IotMessagingConstants.MODULE);
+        // P0 状态帧契约不含 wardId（载荷恒 null）：推送委托照常发生，跳过决策在推送服务内（info 降级）
+        verify(pushService).pushDeviceStatus(STATUS_EVENT);
+    }
+
+    @Test
+    @DisplayName("B4.3-b 接线：载荷含 wardId 消费后推送设备状态主题（载荷与事件契约同构）")
+    void pushesDeviceStatusTopicWhenPayloadCarriesWardId() {
+        DeviceStatusEvent wardEvent = new DeviceStatusEvent("it-dev-001", DeviceStatus.OFFLINE, OCCURRED_AT, WARD_ID);
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
+                .thenReturn(true);
+        EventEnvelope envelope = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_DEVICE_STATUS,
+                "1",
+                null,
+                objectMapper.valueToTree(wardEvent));
+
+        listener.onDeviceStatusChanged(message(toJson(envelope)));
+
+        verify(pushService).pushDeviceStatus(wardEvent);
+        verify(idempotencyService).recordProcessed(any());
+    }
+
+    @Test
+    @DisplayName("推送失败按业务失败处置：释放前置键后重抛（交容器有界重试，不落 PROCESSED）")
+    void releasesIdempotencyKeyAndRethrowsWhenPushFails() {
+        DeviceStatusEvent wardEvent = new DeviceStatusEvent("it-dev-001", DeviceStatus.OFFLINE, OCCURRED_AT, WARD_ID);
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
+                .thenReturn(true);
+        IllegalStateException failure = new IllegalStateException("STOMP 推送失败");
+        doThrow(failure).when(pushService).pushDeviceStatus(wardEvent);
+        EventEnvelope envelope = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_DEVICE_STATUS,
+                "1",
+                null,
+                objectMapper.valueToTree(wardEvent));
+
+        assertThatThrownBy(() -> listener.onDeviceStatusChanged(message(toJson(envelope))))
+                .isSameAs(failure);
+        verify(idempotencyService).release(EVENT_ID, IotMessagingConstants.MODULE);
+        verify(idempotencyService, never()).recordProcessed(any());
     }
 
     @Test

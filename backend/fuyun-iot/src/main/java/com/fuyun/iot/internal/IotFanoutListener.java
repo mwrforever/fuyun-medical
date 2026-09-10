@@ -8,6 +8,7 @@ import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.constants.IotMessagingConstants;
+import com.fuyun.iot.service.ITelemetryPushService;
 import java.nio.charset.StandardCharsets;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -28,9 +29,10 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
  * （回查确认已处理）→ return 跳过即 AUTO 确认；业务执行 + recordProcessed 成功登记；业务失败
  * release 释放前置键后重抛（交容器有界重试，耗尽进 fy.dlx）。DictPublishedListener 同构先例。
  *
- * <p>消费后动作（P0）：载荷契约解析 + info 日志留痕（deviceId/status/wardId）。
- * <b>B4.3-b 接线点</b>：STOMP 设备状态主题推送（/topic/iot/device-status/{wardId}，任务 B
- * 推送服务）以同款函数式 sink/回调模式在本类接入，消费范式与登记语义不变（接入点见 doBusiness）。
+ * <p>消费后动作（P0，B4.3-b 已接线）：载荷契约解析 + info 日志留痕（deviceId/status/wardId）
+ * + <b>STOMP 设备状态主题推送</b>（经 {@link ITelemetryPushService#pushDeviceStatus} 推
+ * /topic/iot/device-status/{wardId}，载荷 wardId 为空时推送静默降级）——推送失败按业务失败
+ * 处置（释放前置键重抛走有界重试），推送成功后才登记 PROCESSED。
  *
  * <p>归 internal/ 包：容器驱动的模块内入口，禁止外部引用（backend 宪法 B.1）；Bean 注册点
  * 为 IotMessagingConfig @Import。
@@ -44,6 +46,9 @@ public class IotFanoutListener {
 
     private final ObjectMapper objectMapper;
 
+    /** STOMP 推送服务：消费后设备状态主题推送的唯一出口（/topic/iot/device-status/{wardId}） */
+    private final ITelemetryPushService pushService;
+
     /**
      * 全参构造器（装配归 IotMessagingConfig @Import，backend 宪法 B.1）。
      *
@@ -51,12 +56,17 @@ public class IotFanoutListener {
      *                           实现经 fuyun-app MessagingConfig @Import 已在上下文可用）
      * @param codec              信封编解码器，非空；来源：MessagingGovernanceConfig 装配
      * @param objectMapper       JSON 转换器，非空；载荷契约 record 反序列化（全局定制实例）
+     * @param pushService        STOMP 推送服务，非空；来源：fuyun-app IotConfig 装配链
      */
     public IotFanoutListener(
-            MessageIdempotencyService idempotencyService, EventEnvelopeCodec codec, ObjectMapper objectMapper) {
+            MessageIdempotencyService idempotencyService,
+            EventEnvelopeCodec codec,
+            ObjectMapper objectMapper,
+            ITelemetryPushService pushService) {
         this.idempotencyService = idempotencyService;
         this.codec = codec;
         this.objectMapper = objectMapper;
+        this.pushService = pushService;
     }
 
     /**
@@ -94,11 +104,12 @@ public class IotFanoutListener {
     }
 
     /**
-     * 消费业务（P0）：载荷契约解析 + 结构化日志留痕。
+     * 消费业务（P0，B4.3-b 已接线）：载荷契约解析 + 结构化日志留痕 + STOMP 设备状态主题推送。
      *
-     * <p>B4.3-b 接线点：STOMP 设备状态主题推送（任务 B）在本方法日志留痕之后、返回之前接入
-     * （推送失败按业务失败处置——由调用方释放前置键重抛交有界重试），接入时替换本注释标注处，
-     * 消费范式与登记语义不变。
+     * <p>推送语义：经 {@link ITelemetryPushService#pushDeviceStatus} 推
+     * /topic/iot/device-status/{wardId}——载荷 wardId 为空时推送静默降级（简报 §1.5"wardId
+     * 空则 info 跳过推送"，P0 状态帧契约不含 wardId 属预期场景）；推送失败按业务失败处置
+     * （异常上抛由调用方释放前置键重抛交有界重试），推送成功后才执行 recordProcessed 登记。
      *
      * @param envelope 已解析的合规信封，非空
      * @throws IllegalStateException 载荷与 DeviceStatusEvent 契约不符（字段缺失或类型错误）——
@@ -119,6 +130,7 @@ public class IotFanoutListener {
                 event.wardId(),
                 envelope.eventId(),
                 envelope.traceId());
-        // B4.3-b 接线点：STOMP /topic/iot/device-status/{wardId} 推送随任务 B 接入（见方法注释）
+        // STOMP 设备状态主题推送（wardId 空由推送服务静默降级；失败上抛走释放重推，范式③承接）
+        pushService.pushDeviceStatus(event);
     }
 }

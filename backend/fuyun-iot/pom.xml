@@ -44,6 +44,19 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-amqp</artifactId>
     </dependency>
+    <!-- /ws/iot STOMP 端点（B4.3 任务 B）：@EnableWebSocketMessageBroker + 内存 SimpleBroker(/topic)，
+         无 SockJS（P0 客户端仅 bigscreen 原生 WebSocket）；版本 BOM 托管零声明（PR 描述申报） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+    <!-- STOMP 握手鉴权跨模块契约（任务 A 交付）：仅消费 system api 包 TokenVerifier，
+         宪法 B.2-2 允许（system pom 先例） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 消息治理构件 api 包（MessagingGovernance/ConsumerQueueSpec 声明自事件消费队列，V403 已登记）：
          仅消费 api 包，宪法 B.2-2 允许，B4.2 审核 Minor 4 遗留项补齐（system pom 先例） -->
     <dependency>

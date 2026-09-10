@@ -10,10 +10,12 @@ import com.fuyun.iot.enums.TelemetrySource;
 import com.fuyun.iot.mapper.IotBindingMapper;
 import com.fuyun.iot.mapper.IotTelemetryMapper;
 import com.fuyun.iot.service.ITelemetryIngestService;
+import com.fuyun.iot.service.ITelemetryPushService;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -28,6 +30,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 冗余 patient_id/visit_id（写入时快照，无绑定落 NULL——遥测仍入库仅无患者归属，14-iot §3.3
  * "消毒/未绑定场景设备数据标'未关联'仍入库"）→ mapper 多值 INSERT ON CONFLICT DO NOTHING
  * （唯一约束冲突忽略 = 明细层幂等，返回实际插入行数）。方法级独立事务（宪法 A.4.2-7）。
+ *
+ * <p>B4.3 摘要推送接线：落库成功后按绑定快照病区分组，每组经 {@link ITelemetryPushService}
+ * 推一帧遥测摘要（/topic/iot/telemetry/{wardId}，简报 §1.4"遥测批量落库成功后推一帧汇总；
+ * 无绑定快照的帧不推送仅落库"）。推送为进程内 SimpleBroker 直推（非 MQ 代理发送，不涉
+ * "事务内禁 MQ 发送"约束），失败仅 error 告警不回滚落库批次——落库是主职责、推送是辅助语义。
  *
  * <p>value 定型语义：CF-7 value 为字符串载体，落 NUMERIC NOT NULL 列前经 BigDecimal 解析；
  * 不可解析行（解析器已标 BAD 保留原文）跳过并整批汇总告警——跳过理由：NOT NULL 列无法承载
@@ -47,15 +54,21 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
     /** 遥测明细数据访问：多值 INSERT ON CONFLICT DO NOTHING 唯一写通道 */
     private final IotTelemetryMapper telemetryMapper;
 
+    /** STOMP 推送服务：落库成功后按病区分组推送摘要帧（/topic/iot/telemetry/{wardId}） */
+    private final ITelemetryPushService pushService;
+
     /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1）。
      *
      * @param bindingMapper   设备绑定 mapper，非空；来源：同模块 mapper 包
      * @param telemetryMapper 遥测明细 mapper，非空；来源：同模块 mapper 包
+     * @param pushService     STOMP 推送服务，非空；来源：IotConfig 装配链
      */
-    public TelemetryIngestServiceImpl(IotBindingMapper bindingMapper, IotTelemetryMapper telemetryMapper) {
+    public TelemetryIngestServiceImpl(
+            IotBindingMapper bindingMapper, IotTelemetryMapper telemetryMapper, ITelemetryPushService pushService) {
         this.bindingMapper = bindingMapper;
         this.telemetryMapper = telemetryMapper;
+        this.pushService = pushService;
     }
 
     @Override
@@ -72,7 +85,8 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
             log.warn("遥测批次全部为非数值/无效行，跳过绑定查询与落库：batchSize={}", batch.size());
             return 0;
         }
-        // 绑定快照一次批量查询（distinct 去重防同设备多帧撑大 in 列表；只取 BOUND 精确投影三列）
+        // 绑定快照一次批量查询（distinct 去重防同设备多帧撑大 in 列表；只取 BOUND 精确投影四列，
+        // wardId 供 B4.3 摘要推送按病区分组）
         List<String> deviceIds = batch.stream()
                 .map(StandardTelemetryMessage::deviceId)
                 .distinct()
@@ -84,7 +98,8 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
                         .select(
                                 IotBindingEntity::getDeviceId,
                                 IotBindingEntity::getPatientId,
-                                IotBindingEntity::getVisitId))
+                                IotBindingEntity::getVisitId,
+                                IotBindingEntity::getWardId))
                 .stream()
                 .collect(Collectors.toMap(IotBindingEntity::getDeviceId, Function.identity()));
 
@@ -113,7 +128,41 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
                 inserted,
                 countUnbound(entities),
                 unparsableValueKeys.size());
+        pushSummariesByWard(entities, boundByDeviceId);
         return inserted;
+    }
+
+    /**
+     * 落库成功后按绑定快照病区分组推送摘要帧（B4.3，简报 §1.4）。
+     *
+     * <p>分组语义：wardId 取设备 BOUND 绑定的写入时快照（iot_binding.ward_id），无绑定或绑定
+     * 未编病区的行仅落库不入组；每组一帧（条数/items/occurredAt 上界见推送服务载荷契约）。
+     * 推送失败仅 error 告警——推送是辅助语义，落库批次与客户端确认语义不受影响（broker 抖动
+     * 不阻断遥测持久化，失败帧靠唯一约束重推兜底）。
+     *
+     * @param entities        已组装并落库的遥测实体批次，非空
+     * @param boundByDeviceId 绑定快照映射（deviceId → BOUND 绑定行，含 wardId 投影），非空
+     */
+    private void pushSummariesByWard(List<IotTelemetryEntity> entities, Map<String, IotBindingEntity> boundByDeviceId) {
+        Map<Long, List<IotTelemetryEntity>> writtenByWardId = new HashMap<>();
+        for (IotTelemetryEntity entity : entities) {
+            IotBindingEntity binding = boundByDeviceId.get(entity.getDeviceId());
+            Long wardId = binding == null ? null : binding.getWardId();
+            if (wardId != null) {
+                // 按病区分组：同病区多设备/多帧合并为一帧摘要（每批每病区一帧，简报 §1.4 推送频率口径）
+                writtenByWardId
+                        .computeIfAbsent(wardId, key -> new ArrayList<>())
+                        .add(entity);
+            }
+        }
+        writtenByWardId.forEach((wardId, written) -> {
+            try {
+                pushService.pushSummary(written, wardId);
+            } catch (RuntimeException e) {
+                // 推送失败吞并：错误留痕后批次照常返回（辅助语义不阻断主链路，javadoc 声明）
+                log.error("遥测摘要推送失败（不影响落库批次）：wardId={}，count={}，原因={}", wardId, written.size(), e.getMessage(), e);
+            }
+        });
     }
 
     /**
