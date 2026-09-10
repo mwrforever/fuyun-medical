@@ -3,6 +3,7 @@ package com.fuyun.iot.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -23,6 +24,7 @@ import com.fuyun.iot.service.impl.TelemetryIngestServiceImpl;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,6 +38,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 遥测入库服务单元测试（BRIEF-PR4-01 §3 单测清单：快照注入正确、无绑定落 NULL、冲突忽略行数、
@@ -77,6 +83,9 @@ class TelemetryIngestServiceImplTest {
 
     private TelemetryIngestServiceImpl service;
 
+    /** 无数据源事务模板：激活真实 Spring 事务同步语义（afterCommit 注册/触发链），供推送时序断言 */
+    private TransactionTemplate transactionTemplate;
+
     @BeforeAll
     static void initTableInfo() {
         // 绑定快照查询 lambda 条件的列名解析依赖 TableInfo（容器外单测需手动初始化一次）
@@ -87,6 +96,31 @@ class TelemetryIngestServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new TelemetryIngestServiceImpl(bindingMapper, telemetryMapper, pushService);
+        // 无资源事务管理器（AbstractPlatformTransactionManager 最小实现）：仅承载真实事务同步链
+        // 语义——getTransaction 激活同步、commit 触发 afterCommit 回调，无数据源即可驱动被测时序
+        transactionTemplate = new TransactionTemplate(new AbstractPlatformTransactionManager() {
+
+            @Override
+            protected Object doGetTransaction() {
+                // 无资源事务令牌：同步激活由父类统一完成，令牌本身无消费方
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+                // 无资源 begin：无需打开任何连接资源
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+                // 无资源 commit：提交点即 afterCommit 同步回调触发点（被测推送时序依赖此语义）
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+                // 无资源 rollback：本测试不涉及回滚路径
+            }
+        });
     }
 
     @Test
@@ -233,6 +267,35 @@ class TelemetryIngestServiceImplTest {
         int inserted = service.ingest(List.of(message("dev-001", "MDC_ECG_HEART_RATE", "72")));
 
         assertThat(inserted).as("推送失败不影响落库结果").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("事务内推送时序（A.4.2-7）：事务同步激活时推送注册于 afterCommit——事务内不推、提交后推送")
+    void defersSummaryPushUntilAfterCommitWhenTransactionSynchronizationActive() {
+        when(bindingMapper.selectList(any())).thenReturn(List.of(binding("dev-001", 1001L, 2001L, WARD_A)));
+        when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
+        // 推送时点记录器：push 记入 timeline，与 ingest 返回点 / execute（提交）返回点比对时序
+        List<String> timeline = new ArrayList<>();
+        doAnswer(invocation -> {
+                    timeline.add("push");
+                    return null;
+                })
+                .when(pushService)
+                .pushSummary(any(), eq(WARD_A));
+
+        // ResourcelessTransactionManager 无需数据源即激活完整事务同步链（getTransaction 即注册
+        // 同步、commit 触发 afterCommit），真实覆盖"推送必须发生在事务提交之后"的 A.4.2-7 语义
+        transactionTemplate.executeWithoutResult(status -> {
+            service.ingest(List.of(message("dev-001", "MDC_ECG_HEART_RATE", "72")));
+            // ingest 返回时事务尚未提交：此刻推送必须尚未发生（I/O 移出事务）
+            assertThat(timeline).as("事务提交前推送不得执行").isEmpty();
+            timeline.add("ingest-returned");
+        });
+        timeline.add("commit-returned");
+
+        assertThat(timeline)
+                .as("推送必须晚于 ingest 返回（事务内）与提交点、早于 execute 返回（afterCommit 回调时序）")
+                .containsExactly("ingest-returned", "push", "commit-returned");
     }
 
     /** 构造绑定快照行（投影四列：device/患者/就诊/病区，病区供摘要推送分组） */

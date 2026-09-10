@@ -11,8 +11,10 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 /**
  * 遥测 STOMP 推送服务实现（P0 直推语义，BRIEF-PR4-01 §4）：经 {@link SimpMessagingTemplate}
- * 向内存 SimpleBroker（/topic 前缀）分发，进程内直达已订阅 WebSocket 会话——非 MQ 代理发送，
- * 不涉"事务内禁 MQ 发送"约束（宪法 A.4.2-7）；推送失败原样向调用方抛出，由调用方按各自语义
+ * 向内存 SimpleBroker（/topic 前缀）分发，进程内直达已订阅 WebSocket 会话。调用方须遵守宪法
+ * A.4.2-7"事务内禁止远程调用、消息发送与人工等待，对外调用在事务提交后执行"——本类不感知
+ * 事务，由调用侧保证时序：入库侧 TelemetryIngestServiceImpl 以 afterCommit 回调承接，消费
+ * 监听器侧运行于 MQ 消费线程（无事务上下文）。推送失败原样向调用方抛出，由调用方按各自语义
  * 处置（入库侧吞并告警、监听器侧业务失败重抛）。
  *
  * <p>无状态单例：SimpMessagingTemplate 线程安全（Spring 官方契约），可多线程并发推送。

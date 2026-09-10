@@ -22,6 +22,8 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * 遥测入库服务实现（iot.iot_telemetry 批量写唯一入口，BRIEF-PR4-01 §3 service 行）。
@@ -33,8 +35,11 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>B4.3 摘要推送接线：落库成功后按绑定快照病区分组，每组经 {@link ITelemetryPushService}
  * 推一帧遥测摘要（/topic/iot/telemetry/{wardId}，简报 §1.4"遥测批量落库成功后推一帧汇总；
- * 无绑定快照的帧不推送仅落库"）。推送为进程内 SimpleBroker 直推（非 MQ 代理发送，不涉
- * "事务内禁 MQ 发送"约束），失败仅 error 告警不回滚落库批次——落库是主职责、推送是辅助语义。
+ * 无绑定快照的帧不推送仅落库"）。推送时机遵守宪法 A.4.2-7"事务内禁止远程调用、消息发送与
+ * 人工等待，对外调用在事务提交后执行"：分组数据在事务方法内组装完成，推送 I/O 经
+ * TransactionSynchronizationManager 注册 afterCommit 回调延迟至<b>事务提交后</b>执行（回滚
+ * 事务不推送——摘要只对已提交批次负责）；无事务同步上下文（单测直调等未经代理场景）时直接
+ * 推送，行为不变。推送失败仅 error 告警不回滚落库批次——落库是主职责、推送是辅助语义。
  *
  * <p>value 定型语义：CF-7 value 为字符串载体，落 NUMERIC NOT NULL 列前经 BigDecimal 解析；
  * 不可解析行（解析器已标 BAD 保留原文）跳过并整批汇总告警——跳过理由：NOT NULL 列无法承载
@@ -128,22 +133,38 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
                 inserted,
                 countUnbound(entities),
                 unparsableValueKeys.size());
-        pushSummariesByWard(entities, boundByDeviceId);
+        // 摘要推送分组数据在事务方法内组装完成（快照 wardId 分组），推送 I/O 移出事务执行——
+        // 宪法 A.4.2-7"事务内禁止远程调用、消息发送与人工等待，对外调用在事务提交后执行"
+        Map<Long, List<IotTelemetryEntity>> writtenByWardId = groupWrittenByWard(entities, boundByDeviceId);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            // 事务同步激活（经 Spring 代理调用）：注册 afterCommit 回调，事务提交后才执行推送；
+            // 回调运行于提交线程且不新开事务（SimpleBroker 进程内直推，无二次远程调用）
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+
+                @Override
+                public void afterCommit() {
+                    pushSummariesByWard(writtenByWardId);
+                }
+            });
+        } else {
+            // 无事务同步上下文（单测直调等未经代理场景）：无事务可出，行为不变直接推送
+            pushSummariesByWard(writtenByWardId);
+        }
         return inserted;
     }
 
     /**
-     * 落库成功后按绑定快照病区分组推送摘要帧（B4.3，简报 §1.4）。
+     * 按绑定快照病区分组本批已写入实体（纯内存组装，无 I/O，供推送时机分派复用）。
      *
      * <p>分组语义：wardId 取设备 BOUND 绑定的写入时快照（iot_binding.ward_id），无绑定或绑定
      * 未编病区的行仅落库不入组；每组一帧（条数/items/occurredAt 上界见推送服务载荷契约）。
-     * 推送失败仅 error 告警——推送是辅助语义，落库批次与客户端确认语义不受影响（broker 抖动
-     * 不阻断遥测持久化，失败帧靠唯一约束重推兜底）。
      *
      * @param entities        已组装并落库的遥测实体批次，非空
      * @param boundByDeviceId 绑定快照映射（deviceId → BOUND 绑定行，含 wardId 投影），非空
+     * @return 病区 → 本批该病区已写入实体列表（值列表非空），非空；无归属行不出现
      */
-    private void pushSummariesByWard(List<IotTelemetryEntity> entities, Map<String, IotBindingEntity> boundByDeviceId) {
+    private static Map<Long, List<IotTelemetryEntity>> groupWrittenByWard(
+            List<IotTelemetryEntity> entities, Map<String, IotBindingEntity> boundByDeviceId) {
         Map<Long, List<IotTelemetryEntity>> writtenByWardId = new HashMap<>();
         for (IotTelemetryEntity entity : entities) {
             IotBindingEntity binding = boundByDeviceId.get(entity.getDeviceId());
@@ -155,6 +176,18 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
                         .add(entity);
             }
         }
+        return writtenByWardId;
+    }
+
+    /**
+     * 执行按病区分组的摘要帧推送（推送 I/O 执行点：调用方须保证已处于事务提交后或无事务上下文）。
+     *
+     * <p>推送失败仅 error 告警不中断其余病区批次——推送是辅助语义，落库批次与客户端确认语义
+     * 不受影响（broker 抖动不阻断遥测持久化，失败帧靠唯一约束重推兜底）。
+     *
+     * @param writtenByWardId 病区 → 已写入实体列表分组（{@link #groupWrittenByWard} 产物），非空
+     */
+    private void pushSummariesByWard(Map<Long, List<IotTelemetryEntity>> writtenByWardId) {
         writtenByWardId.forEach((wardId, written) -> {
             try {
                 pushService.pushSummary(written, wardId);
