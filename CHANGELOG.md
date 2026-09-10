@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-10 · PR-4 B4.3：TokenVerifier 跨模块小改与 iot 扇出依赖申报（先记再改）
+
+- **跨模块小改申报（D-7 先例，随本批次首个功能提交生效）**：fuyun-system api 新增 `TokenVerifier` 接口（`boolean verifyAccessToken(String rawToken)`——校验 access 令牌全链（签名/过期/typ/会话存在），通过 true、任何失败 false 不抛异常且不区分原因防枚举，适配 WebSocket 握手与 MQ 线程等无 ProblemDetail 出口场景）；`TokenServiceImpl` implements 增补（内部委托既有 verify(ACCESS) 校验链，捕获 BizException 返回 false）；`SystemWebConfig` 增补一行 @Bean 以接口类型暴露同一实例。消费方：iot /ws/iot STOMP 握手鉴权（本批次仅交付契约与单测，握手拦截器随任务 B）；fuyun-iot 后续仅依赖 system api 包（宪法 B.2-2 合规）。接口属对外契约新增，PR 描述申报。
+- **fuyun-iot pom 依赖申报（BOM/父 POM 托管零版本声明，B4.2 审核 Minor 4 遗留项补齐）**：① `com.fuyun:fuyun-integration`——IotMessagingConfig 经 api 包 MessagingGovernance/ConsumerQueueSpec 声明自事件消费队列 q.iot.iot.device.status-changed（V403 已登记，先登记后订阅；system pom 先例）；② `org.springframework.boot:spring-boot-starter-amqp`——IotEventPublisher RabbitTemplate 发布与 IotFanoutListener @RabbitListener 消费（AUTO 确认 + MessageIdempotencyService 标准幂等范式，与 AMQP 主链路客户端确认两套机制并存）。
+- **实现偏差申报（简报 §4 IotEventPublisher"Confirm/Returns 回调 SystemEventPublisher 同模式"）**：Spring AMQP 对共享 RabbitTemplate 强制断言仅支持单一 Confirm/Returns 回调（注册第二个不同实例即启动失败，IT 实证）——双发布器并存下"各自注册"不可成立，故回调保持由 PR-3 交付的 SystemEventPublisher 构造期统一注册（与装配顺序无关：iot 发布器不注册），iot 发布的 nack/不可路由告警复用同一回调（error 日志含 eventId/路由三要素、P0 不自动重发，语义等价）；回调归属整合（如 RabbitTemplateCustomizer 收口治理装配）归 P1 治理完整化，届时 iot 侧零改动。
+
 ## 2026-09-10 · PR-4 B4.2：JaCoCo 核心包增补 iot service.impl（先记再改）
 
 - **POM 门禁变更登记**：父 POM JaCoCo PACKAGE 级 LINE=1.00 规则 include 清单增补 `com.fuyun.iot.service.impl`，与首个 iot service.impl 实装类同一提交生效（BRIEF-PR4-01 §7 处置结论）——iot 消费落库链属"对外服务接口（第三方对接）"核心功能（全局 §四核心界定），沿用 backend 宪法 C.5-2"核心包 rule 随模块实装逐步声明"既有模式（integration/billing/system 三包先例）；SmartLifecycle 消费器/监听器/解析器落 internal/ 包按 BUNDLE 0.80 承载，1.00 规则不误伤难测基础设施类。本项属 PR-4 表外申报清单预告项（B4.1 条目已预告），PR 描述重申申报。
