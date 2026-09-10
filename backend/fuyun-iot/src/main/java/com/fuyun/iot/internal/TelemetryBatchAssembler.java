@@ -60,7 +60,7 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
     /** flush 线程运行标记：start/stop CAS 闸门，兼作消费循环的停机信号 */
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    /** 落库/确认失败累计计数（B4.3 Micrometer counter 绑定的观测载体，此处先落业务语义） */
+    /** 落库/确认失败累计计数（B4.3 IotAmqpMetrics counter iot.amqp.batch.flush.failure.total 绑定载体） */
     private final AtomicLong flushFailureCount = new AtomicLong(0);
 
     /** 单 flush 线程池（命名、有界、随上下文关闭，宪法 B.3-4 线程池纪律） */
@@ -97,10 +97,19 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
     /**
      * 落库/确认失败累计计数（观测载体）。
      *
-     * @return 失败次数的原子载体，非空；B4.3 IotAmqpMetrics 将以此绑定 Micrometer counter
+     * @return 失败次数的原子载体，非空；IotAmqpMetrics 以此绑定 Micrometer counter
      */
     AtomicLong flushFailureCount() {
         return flushFailureCount;
+    }
+
+    /**
+     * 攒批挂起队列当前深度（B4.3 IotAmqpMetrics 填充率 gauge 的读数载体——本地积压水位口径）。
+     *
+     * @return 队列当前条目数（非负，上界 = batchQueueCapacity）
+     */
+    int pendingQueueSize() {
+        return pendingQueue.size();
     }
 
     /**

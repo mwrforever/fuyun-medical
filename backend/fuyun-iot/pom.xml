@@ -50,6 +50,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-websocket</artifactId>
     </dependency>
+    <!-- Micrometer 指标（B4.3 积压/断链双指标）：IotAmqpMetrics gauge/counter 注册的 MeterRegistry
+         编译依赖，版本 BOM 托管零声明（PR 描述申报） -->
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-core</artifactId>
+    </dependency>
     <!-- STOMP 握手鉴权跨模块契约（任务 A 交付）：仅消费 system api 包 TokenVerifier，
          宪法 B.2-2 允许（system pom 先例） -->
     <dependency>

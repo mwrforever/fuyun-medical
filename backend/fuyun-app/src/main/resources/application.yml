@@ -113,3 +113,6 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       # batch-queue-capacity: 5000 # 攒批有界内存队列容量（满则消费侧阻塞背压）
       # reconnect-initial-delay: 3s  # 断链重建退避起步（宪法 A.5-9 failover 参数）
       # reconnect-max-delay: 30s    # 断链重建退避上限（指数封顶，supervisor 重建节奏）
+    fallback:                     # HTTP 兜底通道（POST /ingest/iotda-fallback 独立鉴权，B4.3）
+      token: ${FUYUN_IOT_FALLBACK_TOKEN:}   # 敏感红线：仅 env 注入，任何 profile 禁明文默认值；
+                                            #   空默认 = 未配置，鉴权比对侧 fail-closed 一律拒绝

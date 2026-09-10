@@ -116,13 +116,13 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
      */
     private final Consumer<DeviceStatusEvent> statusEventSink;
 
-    /** connected gauge 载体：1=连接正常 / 0=断链（TODO(B4.3): IotAmqpMetrics 以此绑定 Micrometer gauge iot.amqp.connected） */
+    /** connected gauge 载体：1=连接正常 / 0=断链（IotAmqpMetrics 以此绑定 gauge iot.amqp.connected） */
     private final AtomicLong connectedFlag = new AtomicLong(0);
 
-    /** 断链起点毫秒载体：0=连接正常（TODO(B4.3): 绑定 gauge iot.amqp.disconnect.duration.seconds） */
+    /** 断链起点毫秒载体：0=连接正常（IotAmqpMetrics 绑定 gauge iot.amqp.disconnect.duration.seconds） */
     private final AtomicLong disconnectSinceMillis = new AtomicLong(0);
 
-    /** supervisor 断链重建累计计数（TODO(B4.3): 绑定 counter iot.amqp.reconnect.total） */
+    /** supervisor 断链重建累计计数（IotAmqpMetrics 绑定 counter iot.amqp.reconnect.total） */
     private final AtomicInteger reconnectCount = new AtomicInteger(0);
 
     /**
@@ -217,17 +217,17 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         return publisher == null ? event -> {} : publisher::publishDeviceStatus;
     }
 
-    /** connected gauge 载体（单测断言 + B4.3 IotAmqpMetrics gauge 绑定点），非空 */
+    /** connected gauge 载体（单测断言 + IotAmqpMetrics gauge 绑定点），非空 */
     AtomicLong connectedFlag() {
         return connectedFlag;
     }
 
-    /** 断链起点毫秒载体（0=正常；单测断言 + B4.3 断链时长 gauge 绑定点），非空 */
+    /** 断链起点毫秒载体（0=正常；单测断言 + IotAmqpMetrics 断链时长 gauge 绑定点），非空 */
     AtomicLong disconnectSinceMillis() {
         return disconnectSinceMillis;
     }
 
-    /** supervisor 重建累计计数载体（单测断言 + B4.3 counter 绑定点），非空 */
+    /** supervisor 重建累计计数载体（单测断言 + IotAmqpMetrics counter 绑定点），非空 */
     AtomicInteger reconnectCount() {
         return reconnectCount;
     }

@@ -1,5 +1,6 @@
 package com.fuyun.iot.config;
 
+import com.fuyun.iot.internal.IotAmqpMetrics;
 import com.fuyun.iot.internal.IotAmqpTelemetryConsumer;
 import com.fuyun.iot.internal.TelemetryBatchAssembler;
 import com.fuyun.iot.properties.IotProperties;
@@ -32,12 +33,12 @@ import org.springframework.context.annotation.Import;
  * 8 实例 × 4 队列 = 32。
  *
  * <p>归 fuyun-iot config/ 包（宪法 B.1 配置集中），Bean 注册点为 fuyun-app IotConfig @Import
- * （iot 包不在组件扫描范围）；@Import 引入攒批器与消费者两个 SmartLifecycle Bean（phase=0/1
+ * （iot 包不在组件扫描范围）；@Import 引入攒批器、消费者与双指标绑定三个 Bean（phase=0/1
  * 保证"先攒批接帧后拉取"启动，停止按 phase 降序反向——"先停拉取再排空在途批"，宪法 A.5-15）。
  */
 @Configuration
 @ConditionalOnProperty(name = "fuyun.iot.amqp.enabled", havingValue = "true")
-@Import({TelemetryBatchAssembler.class, IotAmqpTelemetryConsumer.class})
+@Import({TelemetryBatchAssembler.class, IotAmqpTelemetryConsumer.class, IotAmqpMetrics.class})
 public class IotAmqpConfig {
 
     /**
