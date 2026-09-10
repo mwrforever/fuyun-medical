@@ -2,6 +2,11 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-10 · PR-4 B4.1：iot 号段占用登记（先记再改）
+
+- **号段登记（TASK.md W-4 载体）**：iot 域（M14）占用 **V400–V499**，本批（PR-4 B4.1）使用 V400–V403——V400 设备档案与绑定表、V401 消费错误日志表、V402 遥测超表与压缩/保留策略（T-R3-2 实测锁定）、V403 设备状态事件种子登记。核对结论：现存迁移仅 integration V1–V5 与 system V300–V303，V400–V499 无冲突。
+- **PR-4 表外申报预告**（简报 §10 清单，随各批次落地逐项申报）：qpid-jms-client 2.11.0（父 POM 已锁）、Boot BOM 托管 starter 集合（validation / websocket / amqp / micrometer / mybatis-plus / mapstruct / lombok 等）、Eclipse Paho MQTT 客户端 1.2.5 与 maven-jar-plugin 3.4.2 / maven-dependency-plugin 3.8.1（iot-simulator）、父 POM modules 增 iot-simulator + JaCoCo 核心包增补 `com.fuyun.iot.service.impl`、fuyun-app pom 增 fuyun-iot 依赖、fuyun-system api 增 TokenVerifier 接口、deploy 增 FUYUN_IOT_FALLBACK_TOKEN 占位与 nginx `/ingest/` 路由、CI images job 追加 iot-simulator 第三构建步骤。
+
 ## 2026-09-10 · PR #6 审查修复（Minor×2：脱敏正则数字边界 + 字典发布条件更新防双广播）
 
 - F-1（fuyun-common/utils/SensitiveMasker.java）：PHONE/ID_CARD_15/ID_CARD_18 三正则补前后视数字边界（`(?<!\d)...(?!\d)`）——原实现对长数字串（12 位工单号/19 位雪花 ID 等）内部会误命中截断，与 javadoc「非目标长度不处理」承诺矛盾；SensitiveMaskerTest 补 12+/19 位数字串不脱敏断言（先 RED：19 位串现行实现被误脱敏，修复后 GREEN）。
