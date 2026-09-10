@@ -96,6 +96,15 @@
       <artifactId>fuyun-system</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M14 医疗设备物联网：V400+ 迁移资源（db/migration/iot）随本依赖进入 fuyun-app 的 Flyway
+         classpath（spring.flyway.locations 已显式枚举该目录）；B4.2 起 IotConfig @Import 装配刚需
+         同源（BRIEF-PR4-01 §2 申报：原计划随 B4.2 落 pom，因 B4.1 IotMigrationIT 须真实重放 iot
+         迁移前移至本批，PR 描述申报） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-iot</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
