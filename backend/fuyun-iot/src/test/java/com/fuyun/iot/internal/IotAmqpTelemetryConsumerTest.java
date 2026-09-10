@@ -326,7 +326,8 @@ class IotAmqpTelemetryConsumerTest {
             verify(secondFrame, timeout(AWAIT_MILLIS)).getBody(byte[].class);
             verify(secondFrame, timeout(300).times(0)).acknowledge();
 
-            // 优雅停机：消费者先停拉取（phase=0），攒批器 stop 排空在途批（phase=1）
+            // 优雅停机：按 Spring 真实停止顺序编排——消费者（phase=1）先停拉取，攒批器（phase=0）后停排空
+            // 在途批；此序保证排空时不再有新帧入队（宪法 A.5-15）
             holdingConsumer.stop();
             holdingAssembler.stop();
 
@@ -343,12 +344,14 @@ class IotAmqpTelemetryConsumerTest {
     }
 
     @Test
-    @DisplayName("生命周期契约：自动启动、phase 先于攒批器（先停拉取后排空的顺序基础）")
+    @DisplayName("生命周期契约：自动启动、phase 后于攒批器（先停拉取后排空的顺序基础）")
     void exposesLifecycleContractForGracefulShutdownOrder() {
         assertThat(consumer.isAutoStartup()).as("SmartLifecycle 自动启动（宪法 A.5-9）").isTrue();
+        // Spring SmartLifecycle 语义：启动按 phase 升序、停止按降序——消费者 phase 必须更大，
+        // 才能"先攒批接帧后拉取"启动、"先停拉取后排空在途批"停机（宪法 A.5-15）
         assertThat(consumer.getPhase())
-                .as("消费者 phase=0 必须小于攒批器 phase=1（启动先攒批后消费者，停止反向）")
-                .isLessThan(assembler.getPhase());
+                .as("消费者 phase=1 必须大于攒批器 phase=0（启动先攒批接帧后拉取，停止先停拉取后排空）")
+                .isGreaterThan(assembler.getPhase());
     }
 
     @Test

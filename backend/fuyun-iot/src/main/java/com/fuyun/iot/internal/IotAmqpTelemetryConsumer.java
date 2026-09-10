@@ -42,7 +42,7 @@ import org.springframework.context.SmartLifecycle;
  *
  * <p><b>生命周期（宪法 A.5-9/A.5-15/B.3-4）</b>：实现 SmartLifecycle（非 @PostConstruct 起线程），
  * start 按队列清单各起一个消费线程（命名有界线程池随上下文关闭）；stop 优雅停机——先停拉取
- * （interrupt receive 等待并关连接），在途批排空由攒批器（phase=1 后于本类停止）承接；
+ * （interrupt receive 等待并关连接），在途批排空由攒批器（phase=0 后于本类停止）承接；
  * isAutoStartup=true。连接失败在后台线程重试，<b>不阻塞应用启动</b>（宪法 B.4-4，fail-fast 仅限
  * DB/Redis/RabbitMQ）。
  *
@@ -239,7 +239,7 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
 
     /**
      * 优雅停机（宪法 A.5-15 顺序）：先停拉取（中断 receive 等待与退避睡眠），消费线程自行关闭
-     * 本线程连接；在途批排空由攒批器 stop（phase=1 后于本类停止）承接。幂等：重复调用零副作用。
+     * 本线程连接；在途批排空由攒批器 stop（phase=0 后于本类停止）承接。幂等：重复调用零副作用。
      */
     @Override
     public void stop() {
@@ -264,10 +264,10 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         log.info("AMQP 遥测消费者已停机：supervisor 重建累计={}", reconnectCount.get());
     }
 
-    /** 停机顺序契约：phase=0 后于攒批器（phase=1）启动、先于其停止——先停拉取再排空在途批。 */
+    /** 停机顺序契约：phase=1 后于攒批器（phase=0）启动、先于其停止——先停拉取再排空在途批。 */
     @Override
     public int getPhase() {
-        return 0;
+        return 1;
     }
 
     @Override

@@ -32,8 +32,8 @@ import org.springframework.context.annotation.Import;
  * 8 实例 × 4 队列 = 32。
  *
  * <p>归 fuyun-iot config/ 包（宪法 B.1 配置集中），Bean 注册点为 fuyun-app IotConfig @Import
- * （iot 包不在组件扫描范围）；@Import 引入攒批器与消费者两个 SmartLifecycle Bean（phase=1/0
- * 保证"先攒批后消费启动、先停拉取再排空在途批"的停机顺序）。
+ * （iot 包不在组件扫描范围）；@Import 引入攒批器与消费者两个 SmartLifecycle Bean（phase=0/1
+ * 保证"先攒批接帧后拉取"启动，停止按 phase 降序反向——"先停拉取再排空在途批"，宪法 A.5-15）。
  */
 @Configuration
 @ConditionalOnProperty(name = "fuyun.iot.amqp.enabled", havingValue = "true")

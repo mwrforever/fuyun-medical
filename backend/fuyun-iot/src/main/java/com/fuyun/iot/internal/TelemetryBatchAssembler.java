@@ -35,8 +35,8 @@ import org.springframework.context.SmartLifecycle;
  * 失败处理：ingest 或 ack 回调抛出仅累计 {@link #flushFailureCount}（B4.3 Micrometer 绑定观测）
  * 并 error 告警，<b>绝不抛出 flush 线程</b>（连接层故障归消费者 supervisor，本层只保数据管道存活）。
  *
- * <p>生命周期：实现 SmartLifecycle（phase=1，先于消费者启动、后于消费者停止——宪法 A.5-15 停机
- * 顺序"先停拉取再排空在途批"：消费者 phase=0 先停拉取，本类 stop 排空滞留批后才关线程）。
+ * <p>生命周期：实现 SmartLifecycle（phase=0，先于消费者启动、后于消费者停止——宪法 A.5-15 停机
+ * 顺序"先停拉取再排空在途批"：消费者 phase=1 先停拉取，本类 stop 排空滞留批后才关线程）。
  * 归 internal/ 包：容器驱动链路的模块内组件，禁止外部引用（宪法 B.1），装配归 IotAmqpConfig @Import。
  */
 @Slf4j
@@ -104,7 +104,7 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
     }
 
     /**
-     * 启动单 flush 线程（SmartLifecycle，phase=1 先于消费者）：线程命名 iot-telemetry-batch-flush。
+     * 启动单 flush 线程（SmartLifecycle，phase=0 先于消费者）：线程命名 iot-telemetry-batch-flush。
      */
     @Override
     public void start() {
@@ -122,7 +122,7 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
     }
 
     /**
-     * 停机并排空在途批（SmartLifecycle，phase=1 后于消费者停止）：以中断为停机信号打断 flush 线程
+     * 停机并排空在途批（SmartLifecycle，phase=0 后于消费者停止）：以中断为停机信号打断 flush 线程
      * ——flush 循环被中断时<b>先把已收集的部分批刷出再退出</b>（在途数据不丢，确认回调照常执行，
      * IoTDA 不重推已落库帧）；随后由停机调用线程兜底排空队列内残余条目。
      */
@@ -141,10 +141,10 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
         log.info("遥测攒批器已停机：落库/确认失败累计={}", flushFailureCount.get());
     }
 
-    /** 启动顺序契约：phase=1 保证先于消费者（phase=0）启动、后于其停止（宪法 A.5-15 停机顺序）。 */
+    /** 启动顺序契约：phase=0 保证先于消费者（phase=1）启动、后于其停止（宪法 A.5-15 停机顺序）。 */
     @Override
     public int getPhase() {
-        return 1;
+        return 0;
     }
 
     @Override
