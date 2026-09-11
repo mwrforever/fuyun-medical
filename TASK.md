@@ -26,7 +26,6 @@
 | T-R3-5 | IoTDA 单消息 ≤0.5KB 限制对遥测报文分片的影响 | R3 T5 | 与 14-iot Spec 联动 |
 | T-R3-6 | HAPI MLLP `stop()` 与 `stopAndShutdown()` 排空语义差异 | R3 T6 | 联调期实测 |
 | T-R4-1 | Axios 新官方站（axios.rest）实例/默认配置页稳定 URL | R4 §8 | A.3 引用归位 |
-| T-R4-2 | stompjs 7.3.0 断线自动重订阅语义官方文档位置 | R4 §8 | STOMP 封装定稿前 |
 | T-R4-3 | openapi-typescript 对 Springdoc 2.8.17 产出端到端兼容性 | R4 §8 | 后端首个 OpenAPI 端点可用后演练 |
 | T-R4-4 | Element Plus 在 pnpm 12 workspace 下 dayjs 最小显式依赖集 | R4 §8 | workstation 脚手架初始化 |
 | T-R5-1 | Testcontainers 官方无 GHA 专页（以 runner-images 预装 Docker 为依据），首跑 verify 实测 | R5 §5-1 | CI 首跑 |
