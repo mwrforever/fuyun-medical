@@ -11,8 +11,8 @@
 | P2 | PR-2 M20 治理构件（B2.1~B2.3） | complete | PR #5 合入 dev（a019f47）；五 checks 绿；批次审核四轮独立审查全过；PR 时点 /code-review 未单独派遣（流程偏差已登记交接 §2.3，P6 终验对 diff ed5e34e..a019f47 补跑） |
 | P3 | PR-3 M01 系统与权限（B3.1~B3.4） | complete | PR #6 合入 dev（a93179a）；五 checks 绿 + /code-review findings 修复（efd674b/4e577d5）；JaCoCo 双核心包 LINE=1.00（203 单测+21 IT） |
 | P4 | PR-4 M14 IoT 通路（B4.1~B4.4） | complete | **PR #7 合入 dev（9107f92）**：五 checks 绿（backend verify 4m9s 含 380 测试、images 三镜像真跑绿含 iot-simulator 第三镜像、commitlint/hygiene 过，frontend skip=web 零变更）；/code-review 2 findings 修复+复审 PASS（Critical：CLIENT_ACK 累计确认丢数→失败即重建会话+真实 broker 重投 IT RED/GREEN 实证；Important：simulator MQTT 凭证缺失→补 username/password）；CI 一轮 flaky 攒批测试加固（失败收尾闩锁同步，10/10 绿）；commitlint 3 提交 body 超长 rebase reword 修正（树零变化）；终态 342 单测+38 IT、三核心包 LINE=1.00；延后条款 L-1~L-4 登记 TASK.md |
-| P5 | PR-5 收口（B5.1~B5.2） | in_progress | 前置：PR-4 合入 dev（9107f92）✓；台账 P4 终态登记随本 PR 分支首提交 |
-| P6 | 终验报告 | pending | DoD 逐项附证据，docs PR 合入 dev |
+| P5 | PR-5 收口（B5.1~B5.2） | complete | **PR #8 合入 dev（86e1420，2026-09-11）**：CI run 34646796652 六 job 全 SUCCESS（backend verify/frontend verify 含 audit/images/commitlint/hygiene）；B5.1 前端六门禁 53 例全绿 + code-review 4 findings 修复复审 PASS；B5.2 W-3 销项 + T-R3 回填核对 + DoD 预检报告落盘；CI 守卫缺陷同 PR 修复（2548043） |
+| P6 | 终验报告 | complete | 终验报告 docs/prompt/2026-09-09-P0终验报告.md 经 docs PR 合入 dev；DoD 七条：1/2/4/5/6 ✓ 附命令输出证据（compose 七服务 healthy、后端 343+39 全绿三核心包 1.00、前端六门禁 53 例、gh api 双分支保护逐字段一致、CF-1/2/7 断言在位），第 1 条 sim 演示延后豁免（L-1~L-4），第 3 条 5/5（PR-2 补跑通过，3 Minor→W-6），第 7 条台账完整+停留 dev；PR-2 补跑缺口、PR-5 CI 守卫缺陷修复、commitlint reword 四项流程偏差处置已记录报告 §3；合并后本地停留 dev，P0 主循环退出 |
 
 ## 冲突扫描记录（P0，2026-09-09）
 
