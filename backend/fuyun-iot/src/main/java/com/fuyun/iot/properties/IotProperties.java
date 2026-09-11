@@ -107,12 +107,13 @@ public record IotProperties(
                 Validation.buildDefaultValidatorFactory().getValidator();
 
         /**
-         * 启用态连接参数 fail-fast 校验：enabled=true 时按启用组校验连接四要素，任一缺失即抛出
-         * 阻断 AMQP Bean 装配（宪法 B.4-4：fail-fast 仅限显式启用场景）；enabled=false 直接放行
-         * （空值合法的安全默认姿态）。由 AMQP 装配方在建 Bean 前调用。
+         * 启用态连接参数 fail-fast 校验：enabled=true 时按启用组校验连接四要素并对队列清单做空段
+         * 防御，任一缺失或无效即抛出阻断 AMQP Bean 装配（宪法 B.4-4：fail-fast 仅限显式启用场景）；
+         * enabled=false 直接放行（空值合法的安全默认姿态）。由 AMQP 装配方在建 Bean 前调用。
          *
          * @throws IllegalStateException enabled=true 且 endpoint/accessKey/accessSecret/queues
-         *                               任一缺失或空值；消息只含字段路径与约束描述，不携带凭证值
+         *                               任一缺失或空值，或 queues 含空白队列名（空段 env 元素）；
+         *                               消息只含字段路径与约束描述，不携带凭证值
          */
         public void validateAmqpEnabled() {
             if (!enabled) {
@@ -124,6 +125,13 @@ public record IotProperties(
                         .map(violation -> violation.getPropertyPath() + " " + violation.getMessage())
                         .collect(Collectors.joining("；"));
                 throw new IllegalStateException("fuyun.iot.amqp.enabled=true 但 AMQP 连接参数缺失或不合法：" + detail);
+            }
+            // 空段队列名防御（2026-09-11 终审修复）：relaxed binding 对逗号分隔清单保留空段/空白项
+            // （实测 "q1,,q2" 绑定为含空串元素列表），@NotEmpty 只拦整体缺失——显式拒绝无效元素，
+            // 防消费者以空地址建链产生无意义连接
+            if (queues != null && queues.stream().anyMatch(queue -> queue == null || queue.isBlank())) {
+                throw new IllegalStateException(
+                        "fuyun.iot.amqp.queues 含空白队列名（FUYUN_IOT_AMQP_QUEUES 为逗号分隔清单，" + "禁止空段与空白项，请与 IoTDA 推送队列逐一对齐）");
             }
         }
     }

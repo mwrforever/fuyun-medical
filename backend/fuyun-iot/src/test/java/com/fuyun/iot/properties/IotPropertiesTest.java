@@ -156,6 +156,59 @@ class IotPropertiesTest {
                 .hasMessageNotContaining("test-access-secret");
     }
 
+    @Test
+    @DisplayName("queues 空串 env 绑定：relaxed binding 绑定为空列表（非 null、无空串元素），enabled=false 零校验通过")
+    void emptyQueuesEnvBindsEmptyListAndSkipsValidationWhenDisabled() {
+        runner.withPropertyValues("fuyun.iot.amqp.queues=").run(context -> {
+            assertThat(context).hasNotFailed();
+            IotProperties properties = context.getBean(IotProperties.class);
+            assertThat(properties.amqp().enabled()).isFalse();
+            // 绑定语义实测（2026-09-11 终审修复）：空串 env 经 relaxed binding 绑定为空列表，
+            // 不产生含空串元素的列表——启用组 @NotEmpty 承接其 fail-fast（见下一用例）
+            assertThat(properties.amqp().queues())
+                    .as("空串 env 绑定为空列表")
+                    .isNotNull()
+                    .isEmpty();
+        });
+    }
+
+    @Test
+    @DisplayName("queues 空串 env 且 enabled=true：空列表经启用组 @NotEmpty fail-fast（中文报错）")
+    void enabledAmqpWithEmptyQueuesEnvFailsFastViaNotEmpty() {
+        runner.withPropertyValues("fuyun.iot.amqp.enabled=true", "fuyun.iot.amqp.queues=")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    IotProperties properties = context.getBean(IotProperties.class);
+
+                    assertThatThrownBy(properties.amqp()::validateAmqpEnabled)
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("订阅队列清单为空");
+                });
+    }
+
+    @Test
+    @DisplayName("queues env 含空段/空白项且 enabled=true：validateAmqpEnabled 拒绝空白队列名（防订阅空地址）")
+    void enabledAmqpWithBlankQueueElementsFailsFast() {
+        runner.withPropertyValues(
+                        "fuyun.iot.amqp.enabled=true",
+                        "fuyun.iot.amqp.endpoint=amqp://127.0.0.1:5672",
+                        "fuyun.iot.amqp.access-key=test-access-key",
+                        "fuyun.iot.amqp.access-secret=test-access-secret",
+                        // relaxed binding 对逗号分隔清单保留空段（实测 "q1,,q2" 绑定为 [q1, , q2]），
+                        // @NotEmpty 只拦整体缺失，空段元素由 validateAmqpEnabled 显式拒绝
+                        "fuyun.iot.amqp.queues=it.iot.telemetry,,second.queue")
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    IotProperties properties = context.getBean(IotProperties.class);
+
+                    assertThatThrownBy(properties.amqp()::validateAmqpEnabled)
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageContaining("空白队列名")
+                            // 敏感红线：校验消息不得携带凭证值（BRIEF-PR4-01 §9-6）
+                            .hasMessageNotContaining("test-access-secret");
+                });
+    }
+
     /** 绑定载体：@EnableConfigurationProperties 生产同型注册（B4.2 任务 B IotConfig 承接） */
     @Configuration
     @Validated
