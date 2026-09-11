@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR #7 独立审查修复：AMQP 确认语义修正（累计确认丢数窗口）与 simulator MQTT 鉴权凭证补齐（先记再改）
+
+- **Finding 1（Critical，确认语义设计前提被证伪）**：JMS `CLIENT_ACKNOWLEDGE` 为会话级累计确认（JMS 规范 §4.4.11）——对同会话任一消息 `acknowledge()` 会一并确认此前全部未确认交付。原设计「落库失败零回调→帧留待 IoTDA 重推」只在会话/连接重建时成立：真实时序下失败批 [A,B] 未确认，后续成功批 [C,D] 的批末确认会把 A、B 一并累计确认，broker 不再重投，数据无痕丢失；状态帧 `apply` 失败帧同根缺陷（被后续成功状态帧确认吞掉）。
+- **修复裁决（审查方向①，失败即重建会话）**：落库失败（攒批 flushBatch）与状态帧业务失败（dispatchSafely 业务异常域）统一触发既有 supervisor 全局重建路径——关闭全部在册上下文，会话销毁令其全部未确认交付回归 broker 重投域，重投帧由 iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 幂等去重；worker 线程的业务失败在触发重建后仍上抛走既有退避（防 DB 持续故障下无退避热循环）。线程安全：复用 onException 同款机制（volatile 引用置换 + CopyOnWriteArrayList 遍历 + 幂等关闭），攒批 flush 线程与消费线程并发触发无新锁。在途帧处置：失败瞬间清空攒批挂起队列（在途帧均为已交付未确认态，且清空先于上下文关闭，其会话销毁后必然回归重投域——丢弃语义自洽）；极小窗口内旧会话帧再入队时其确认失败将再次触发重建直至收敛（幂等无害）。javadoc 旧「落库失败零确认待重推」表述一并改写为真实语义。
+- **Finding 2（Important，iot-simulator）**：`IotdaMqttClient.connect` 构造 MqttConnectOptions 从未设置 username/password，真实 IoTDA 一机一密鉴权（CONNECT 报文 username=deviceId、password=HMAC 摘要）必然拒绝——connect 补 `setUserName`/`setPassword`，修正「凭证随 clientId 构造生效」错误注释，单测补 options 携带凭证断言。
+
 ## 2026-09-11 · PR-4 终审修复：sim 全链路 backend 侧 AMQP 启用接线闭环（先记再改）
 
 - **问题（终审 Finding 1，Important）**：`fuyun.iot.amqp.enabled/queues` 在 application.yml 硬编码 `false`/`[]` 无 env 占位，deploy 编排未透传启用开关与队列清单——用户按 .env.example 填齐 IOTDA_* 六变量后 `docker compose --profile sim up`，AMQP 消费链仍静默 disabled，TASK.md L-1 延后演示路径不通；且手动 enabled=true 而未配 queues 时 fail-fast 全栈不可用无前置提示。
