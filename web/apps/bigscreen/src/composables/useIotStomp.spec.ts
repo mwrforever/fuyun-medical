@@ -205,4 +205,45 @@ describe('STOMP 单例封装（web B.3-3）', () => {
     expect(h.deactivateCalls).toBe(1);
     expect(stomp.connectionState.value).toBe('disconnected');
   });
+
+  it('断线 close 后重连 onConnect 重新落地订阅且新帧入流（stompjs 7.3.0 无自动重订阅）', () => {
+    const onFrame = vi.fn();
+    stomp.connect({ token: 'token-a', wardId: '1001' });
+    stomp.subscribeTelemetrySummary('1001', onFrame);
+    const config = lastConfig();
+    (config['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(1);
+    // 模拟断线：stompjs 7.3.0 整体作废 _stompHandler（旧订阅句柄随连接失效）
+    (config['onWebSocketClose'] as () => void)();
+    expect(stomp.connectionState.value).toBe('disconnected');
+    // 模拟库内建自动重连成功：onConnect 二次触发必须重新 subscribe（禁假连接——徽标已连接零帧）
+    (config['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(2);
+    expect(h.subscriptions.at(-1)?.destination).toBe('/topic/iot/telemetry/1001');
+    // 新句柄帧入流：新订阅回调正常触达页面帧回调
+    h.subscriptions.at(-1)?.callback({
+      body: JSON.stringify({
+        count: 1,
+        occurredAtUpperBound: '2026-09-11T02:00:00Z',
+        items: [{ deviceId: 'dev-1', metricCode: 'vital.heart-rate' }],
+      }),
+    });
+    expect(onFrame).toHaveBeenCalledTimes(1);
+    expect(stomp.connectionState.value).toBe('connected');
+  });
+
+  it('已连接态再次 connect（换病区）：保持 connected 不进 connecting 且不重复 activate', () => {
+    stomp.connect({ token: 'token-a', wardId: '1001' });
+    (lastConfig()['onConnect'] as () => void)();
+    // 模拟库已建立连接
+    lastClient().connected = true;
+    // 已连接态换病区再点连接：状态机不得回退 connecting（stompjs activate 对已激活 Client 为 no-op）
+    stomp.connect({ token: 'token-b', wardId: '1002' });
+    expect(stomp.connectionState.value).toBe('connected');
+    expect(h.activateCalls).toBe(1);
+    // 订阅切换由紧随的 subscribeTelemetrySummary 已连接分支立即落地新主题
+    stomp.subscribeTelemetrySummary('1002', () => {});
+    expect(h.subscriptions).toHaveLength(1);
+    expect(h.subscriptions.at(-1)?.destination).toBe('/topic/iot/telemetry/1002');
+  });
 });

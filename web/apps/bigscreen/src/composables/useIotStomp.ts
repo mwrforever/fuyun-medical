@@ -8,11 +8,15 @@
  *    「指数退避」与该库实况存在措辞出入，随 P1 修宪，合规核心=禁自研循环，见 CHANGELOG
  *    2026-09-11 登记）；
  * 3. 【订阅句柄统一管理】subscribeTelemetrySummary 统一返回代理句柄（退订单出口），连接落地前
- *    登记待订阅、onConnect 转正；组件卸载 unsubscribe 由 useIotTelemetry 的 onUnmounted 承接，
- *    显式 disconnect() 先退订在册订阅再 deactivate；
+ *    登记待订阅、onConnect 转正；断线重连后由 onConnect 无条件重订阅——stompjs 7.3.0 在
+ *    onWebSocketClose 时整体作废 _stompHandler 且库内无自动重订阅（T-R4-2 实测结论），故
+ *    onWebSocketClose/onStompError 先将在册句柄置 null 作废（不置 null 会让重连跳过重订阅，
+ *    形成「徽标已连接、零帧流入」假连接，PR-5 Finding 2）；组件卸载 unsubscribe 由
+ *    useIotTelemetry 的 onUnmounted 承接，显式 disconnect() 先退订在册订阅再 deactivate；
  * 4. 【token 经 beforeConnect 动态注入】每次连接尝试（含断线自动重连）实时读 sessionStorage 键
- *    fy:bigscreen:iot-token 拼 Bearer 头——重连自动携带最新令牌，禁构造参数固化一次性 token、
- *    禁 URL/query 传递（web A.2-2/A.6 红线：令牌与该键值禁入任何日志）；
+ *    fy:bigscreen:iot-token 拼 Bearer 头进 STOMP CONNECT 帧（后端帧级鉴权唯一输入，PR-5
+ *    Finding 1 迁移后口径）——重连自动携带最新令牌，禁构造参数固化一次性 token、禁 URL/query
+ *    传递（web A.2-2/A.6 红线：令牌与该键值禁入任何日志）；
  * 5. 【onStompError / onWebSocketClose 统一挂接】经 utils/logger 输出（含 brokerURL、订阅主题、
  *    连接 traceId），统一置 disconnected 态。
  *
@@ -113,6 +117,17 @@ function traceTag(): string {
 }
 
 /**
+ * 作废在册订阅句柄（置 null 是重连 onConnect 重订阅的前提，PR-5 Finding 2）：stompjs 7.3.0
+ * 连接关闭后 _stompHandler 整体作废、旧订阅句柄已随连接失效且库内无自动重订阅——不清句柄
+ * 会导致重连 onConnect 跳过重订阅的假连接。
+ */
+function invalidateSubscriptionHandle(): void {
+  if (telemetrySubscription !== null) {
+    telemetrySubscription.handle = null;
+  }
+}
+
+/**
  * 惰性创建全应用唯一 Client（仅首次 connect 时执行；配置参数为 web B.3-3 合规锚点）。
  */
 function getOrCreateClient(): Client {
@@ -134,27 +149,34 @@ function getOrCreateClient(): Client {
       if (token !== null && token !== '') {
         client.connectHeaders = { Authorization: `Bearer ${token}` };
       } else {
-        // 令牌缺失：本次尝试无凭证（预期被后端握手 401 拒绝后按库内建周期重试）；warn 不含键值
+        // 令牌缺失：本次尝试无凭证（预期被后端 CONNECT 帧鉴权拒绝——ERROR 帧后连接关闭，
+        // 按库内建周期重试）；warn 不含键值
         warn('STOMP 连接缺少访问令牌，本次尝试将被服务端拒绝', traceTag());
       }
     },
     onConnect: () => {
       setConnectionState('connected');
-      // 连接落地：登记中的待订阅转正为库订阅（订阅路径含主题与 traceId 入日志）
+      // 无条件重订阅（PR-5 Finding 2）：stompjs 7.3.0 断线重连不自动恢复订阅，旧句柄已在
+      // onWebSocketClose/onStompError 置 null 作废——重连路径与首连路径复用同一 doSubscribe
+      // 落地方法（与已连接态换病区重订阅共用，防两处订阅逻辑漂移）
       const record = telemetrySubscription;
-      if (record !== null && record.handle === null) {
+      if (record !== null) {
         record.handle = doSubscribe(record);
         info('已订阅遥测摘要主题', record.destination, traceTag());
       }
       info('STOMP 已连接', buildBrokerUrl(), traceTag());
     },
     onStompError: (frame) => {
-      // broker ERROR 帧：置断开态留痕，库将按内建周期重试；日志含主题与 traceId、禁含令牌
+      // broker ERROR 帧：在册订阅句柄随连接作废置 null，置断开态留痕，库将按内建周期重试；
+      // 日志含主题与 traceId、禁含令牌
+      invalidateSubscriptionHandle();
       setConnectionState('disconnected');
       logError('STOMP broker 错误帧', frame.headers['message'] ?? '', traceTag());
     },
     onWebSocketClose: () => {
-      // 连接关闭（含 401 拒绝握手）：置断开态；重连完全由库内建 reconnectDelay 接管
+      // 连接关闭（含 CONNECT 帧鉴权被拒的 ERROR+PROTOCOL_ERROR 关闭）：在册订阅句柄置 null
+      // 作废并置断开态；重连完全由库内建 reconnectDelay 接管
+      invalidateSubscriptionHandle();
       setConnectionState('disconnected');
       warn('STOMP 连接已关闭，等待库内建自动重连', buildBrokerUrl(), traceTag());
     },
@@ -195,8 +217,12 @@ function unsubscribeTelemetry(): void {
 }
 
 /**
- * 建连（全 app 唯一入口）：令牌写入 sessionStorage 后激活库连接，状态进入 connecting。
- * 令牌为空时拒绝建连并 warn 提示（后端握手 401 硬约束的前置拦截；提示注入令牌由页面承载）。
+ * 建连（全 app 唯一入口）：令牌写入 sessionStorage 后激活库连接，状态进入 connecting；
+ * 已连接态再次调用（换病区场景）走「保持 connected + 不重复 activate」分支——stompjs
+ * activate() 对已激活 Client 为 no-op，无条件置 connecting 会让状态机卡死在 connecting
+ * （断开按钮 v-if connected 消失，PR-5 Finding 3），订阅切换由紧随其后的
+ * subscribeTelemetrySummary 已连接分支承接。令牌为空时拒绝建连并 warn 提示（后端 CONNECT
+ * 帧鉴权硬约束的前置拦截；提示注入令牌由页面承载）。
  *
  * @param options 连接参数对象（token/wardId/onStateChange），见 StompConnectOptions
  */
@@ -207,11 +233,19 @@ export function connect(options: StompConnectOptions): void {
   }
   // 令牌写入 sessionStorage（仅标签页周期存活）；beforeConnect 每次尝试实时读取，禁构造期固化
   sessionStorage.setItem(IOT_TOKEN_STORAGE_KEY, options.token);
+  stateChangeListener = options.onStateChange ?? null;
+  const activeClient = getOrCreateClient();
+  if (activeClient.connected) {
+    // 已连接：保持 connected 态、不置 connecting、不重复 activate（no-op）——traceId 保持
+    // 当前连接会话值（未新建传输层），换病区重订阅由 subscribeTelemetrySummary 立即落地
+    setConnectionState('connected');
+    info('STOMP 已连接，保持连接并按新参数切换订阅', buildBrokerUrl(), traceTag());
+    return;
+  }
   // 每次连接生成链路 traceId 作日志锚点（不与令牌同帧输出）
   connectionTraceId = crypto.randomUUID();
-  stateChangeListener = options.onStateChange ?? null;
   setConnectionState('connecting');
-  getOrCreateClient().activate();
+  activeClient.activate();
   info('STOMP 连接发起', buildBrokerUrl(), traceTag());
 }
 
