@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR-5 B5.1：bigscreen 最小遥测页与 STOMP 单例封装、workstation 首页骨架（先记再改）
+
+- **依赖申报（表外申报①，随本批次首个功能提交生效）**：bigscreen app 级 package.json 新增 `@stomp/stompjs` **7.3.0**（版本来源=技术栈定稿 §4.1 与 web 宪法 C.2 唯一权威值，非新值）；**申报位置=app 级而非 catalog**——依据 pnpm-workspace.yaml 第 2 行既有注释先例（「业务独立依赖不进 catalog：……echarts/@stomp 待 PR-5 再引」），与 axios 跨 app 共享进 catalog 的口径不同；lockfile 随同一提交更新。
+- **bigscreen 最小遥测页**：`/ws/iot` STOMP 单例封装（web 宪法 B.3-3 逐条款：Client 首次 connect 惰性单例、重连心跳全交库内建固定间隔 10s 禁自研循环、订阅句柄组件卸载统一退订、token 经 beforeConnect 每次连接尝试实时读 sessionStorage 键 `fy:bigscreen:iot-token`、onStompError/onWebSocketClose 统一日志含主题与 traceId 禁打令牌）；首页原位改造三区——连接设置（wardId 路由 query 可书签化 + 令牌 password 输入）、链路状态（徽标/订阅主题/帧计数）、遥测摘要（最近一帧覆盖渲染，count/occurredAtUpperBound 原样展示/items 明细表）；手写后备类型 types/iot.ts（openapi-typescript 生成链路不覆盖 STOMP 载荷，字段与后端 ITelemetryPushService record 逐字对齐并声明漂移风险）与 unknown 收窄解析 utils/iotMessage.ts；不引 echarts、不订设备状态主题（P5 负面清单，简报 §0）。
+- **workstation 首页骨架**：HomeView 原位改造两区——会话问候（displayName/loginName 取既有 auth store，空值兜底「未登录用户」防御文案）+ 业务开通占位卡（文案与 AppSidebar 占位口径一致）；零新增依赖、零 api/store/路由改动、零出网调用（P0 无首页数据接口，禁止推测性调用）。
+- **宪法 B.3-3 措辞差异关注项（不阻塞，简报附 1）**：条款括号「reconnectDelay 指数退避」与 @stomp/stompjs 7.3.0 内建实况（固定间隔毫秒值，无内建指数退避）存在措辞出入，本 PR 按库内建固定间隔 10000ms 落地、绝不自研退避循环（合规核心=重连完全交库内建）；措辞修订随 P1 workstation 接入 STOMP 时走修宪流程（先记 CHANGELOG 再改正文），本 PR 不动宪法。
+
 ## 2026-09-11 · PR #7 独立审查修复：AMQP 确认语义修正（累计确认丢数窗口）与 simulator MQTT 鉴权凭证补齐（先记再改）
 
 - **Finding 1（Critical，确认语义设计前提被证伪）**：JMS `CLIENT_ACKNOWLEDGE` 为会话级累计确认（JMS 规范 §4.4.11）——对同会话任一消息 `acknowledge()` 会一并确认此前全部未确认交付。原设计「落库失败零回调→帧留待 IoTDA 重推」只在会话/连接重建时成立：真实时序下失败批 [A,B] 未确认，后续成功批 [C,D] 的批末确认会把 A、B 一并累计确认，broker 不再重投，数据无痕丢失；状态帧 `apply` 失败帧同根缺陷（被后续成功状态帧确认吞掉）。
