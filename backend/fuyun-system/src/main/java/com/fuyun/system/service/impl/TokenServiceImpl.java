@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
+import com.fuyun.system.api.TokenVerifier;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.properties.SecurityProperties;
 import com.fuyun.system.record.RefreshedAccess;
@@ -37,7 +38,7 @@ import org.springframework.http.HttpStatus;
  * 全部状态取自不可变 {@link SecurityProperties} 与注入的线程安全 Bean。
  */
 @Slf4j
-public class TokenServiceImpl implements ITokenService {
+public class TokenServiceImpl implements ITokenService, TokenVerifier {
 
     /** HMAC 算法名：JDK 标准算法，跨实例可复算（密钥轮换属 P1 治理项，P0 单密钥静态注入） */
     private static final String HMAC_ALGORITHM = "HmacSHA256";
@@ -131,6 +132,31 @@ public class TokenServiceImpl implements ITokenService {
     @Override
     public SessionData verify(String rawToken, String expectedType) {
         return verifyInternal(rawToken, expectedType).session();
+    }
+
+    /**
+     * 访问令牌布尔校验（TokenVerifier 契约实现，PR-4 B4.3 跨模块小改）：内部委托既有校验链
+     * （typ 强制 access），通过返回 true、任何校验失败返回 false。
+     *
+     * <p>语义边界：仅捕获 BizException（校验链的全部失败形态）收敛为 false——失败不区分原因
+     * （格式/签名/过期/typ/会话缺失统一 false，防握手调用方枚举探测），不抛异常适配 WebSocket
+     * 握手与 MQ 线程等无 ProblemDetail 出口场景；基础设施异常（Redis 不可达等）不在此吞掉，
+     * 原样上抛交调用方 fail-closed 处置。
+     *
+     * @param rawToken 访问令牌原文（Bearer 方案后的值），允许为空或空白（一律 false）
+     * @return true=令牌全链有效；false=校验链任一环节失败
+     */
+    @Override
+    public boolean verifyAccessToken(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) {
+            return false;
+        }
+        try {
+            verifyInternal(rawToken, SecurityConstants.TOKEN_TYPE_ACCESS);
+            return true;
+        } catch (BizException e) {
+            return false;
+        }
     }
 
     /**

@@ -2,6 +2,57 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR #7 独立审查修复：AMQP 确认语义修正（累计确认丢数窗口）与 simulator MQTT 鉴权凭证补齐（先记再改）
+
+- **Finding 1（Critical，确认语义设计前提被证伪）**：JMS `CLIENT_ACKNOWLEDGE` 为会话级累计确认（JMS 规范 §4.4.11）——对同会话任一消息 `acknowledge()` 会一并确认此前全部未确认交付。原设计「落库失败零回调→帧留待 IoTDA 重推」只在会话/连接重建时成立：真实时序下失败批 [A,B] 未确认，后续成功批 [C,D] 的批末确认会把 A、B 一并累计确认，broker 不再重投，数据无痕丢失；状态帧 `apply` 失败帧同根缺陷（被后续成功状态帧确认吞掉）。
+- **修复裁决（审查方向①，失败即重建会话）**：落库失败（攒批 flushBatch）与状态帧业务失败（dispatchSafely 业务异常域）统一触发既有 supervisor 全局重建路径——关闭全部在册上下文，会话销毁令其全部未确认交付回归 broker 重投域，重投帧由 iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 幂等去重；worker 线程的业务失败在触发重建后仍上抛走既有退避（防 DB 持续故障下无退避热循环）。线程安全：复用 onException 同款机制（volatile 引用置换 + CopyOnWriteArrayList 遍历 + 幂等关闭），攒批 flush 线程与消费线程并发触发无新锁。在途帧处置：失败瞬间清空攒批挂起队列（在途帧均为已交付未确认态，且清空先于上下文关闭，其会话销毁后必然回归重投域——丢弃语义自洽）；极小窗口内旧会话帧再入队时其确认失败将再次触发重建直至收敛（幂等无害）。javadoc 旧「落库失败零确认待重推」表述一并改写为真实语义。
+- **Finding 2（Important，iot-simulator）**：`IotdaMqttClient.connect` 构造 MqttConnectOptions 从未设置 username/password，真实 IoTDA 一机一密鉴权（CONNECT 报文 username=deviceId、password=HMAC 摘要）必然拒绝——connect 补 `setUserName`/`setPassword`，修正「凭证随 clientId 构造生效」错误注释，单测补 options 携带凭证断言。
+
+## 2026-09-11 · PR-4 终审修复：sim 全链路 backend 侧 AMQP 启用接线闭环（先记再改）
+
+- **问题（终审 Finding 1，Important）**：`fuyun.iot.amqp.enabled/queues` 在 application.yml 硬编码 `false`/`[]` 无 env 占位，deploy 编排未透传启用开关与队列清单——用户按 .env.example 填齐 IOTDA_* 六变量后 `docker compose --profile sim up`，AMQP 消费链仍静默 disabled，TASK.md L-1 延后演示路径不通；且手动 enabled=true 而未配 queues 时 fail-fast 全栈不可用无前置提示。
+- **修复范围**：① application.yml 两键改 env 占位（`FUYUN_IOT_AMQP_ENABLED:false` / `FUYUN_IOT_AMQP_QUEUES:` 空占位）+ 中文注释说明逗号分隔格式与默认值语义；② IotProperties.validateAmqpEnabled 增空白队列名 fail-fast 校验（空串绑定实测 + 单测固化）；③ .env.example 增两变量占位与注释；④ docker-compose.yml backend environment 增两行透传；⑤ TASK.md L-1 行补启用前提说明。deploy 透传带 `:-` 默认值属有据偏差：实测 enabled 绑定不接受空串（boolean 绑定失败阻断启动），`:-false` 防 .env 缺键/留空，environment 段优先级高于 env_file 可覆盖整组注入的空值。
+- **queues 空串绑定实测结论（ApplicationContextRunner 实测，2026-09-11）**：空串 env 经 relaxed binding 绑定为**空列表**（size=0，非 null、无空串元素），enabled=true 时由既有启用组 @NotEmpty fail-fast（中文报错），单测固化该绑定语义；但含空段的 env（如 `q1,,q2`、尾逗号、空白项）绑定为**含空串元素**的列表，@NotEmpty 只拦整体缺失放行无效元素——validateAmqpEnabled 增空白队列名显式拒绝（fail-fast 中文报错），单测固化。
+
+## 2026-09-11 · PR-4 B4.4：T-R3-3 本地实测重要发现——Qpid failover 透明恢复屏蔽 supervisor，AMQP URI 补正官方选项语法并改有限重试移交（先记再改）
+
+- **实测发现（IotAmqpReconnectIT 首跑 RED 留证，2026-09-11）**：`rabbitmqctl stop_app` 优雅断链下，Qpid failover 传输层做纯透明恢复——ExceptionListener 不触发、阻塞中的 receive() 持续等待重连、消费者 supervisor 全程未介入（`iot.amqp.connected` 恒 1、`iot.amqp.reconnect.total` 恒 0，断链时长指标恒 0）。推演生产语义：IoTDA 真实断链超 5 分钟后，failover 仍以连接建立时捕获的旧时间戳凭证无限重试（`failover.maxReconnectAttempts=-1`），被服务端拒绝后永续循环且消费链路无感知——supervisor 的「新时间戳凭证重建」被完全屏蔽，宪法 A.5-9 的 supervisor 语义落空。
+- **对策（AMQP 连接 URI 修正为官方 failover 选项语法 + maxReconnectAttempts 改有限值移交 supervisor）**：① 选项前缀修正——qpid-jms 官方文档「Client configuration」明确 failover 选项语法为 `failover.` 前缀形态（failover.initialReconnectDelay / failover.reconnectDelay / failover.maxReconnectDelay），B4.2 起的裸名形态不会被 failover 层识别为选项（语义等同未配置，三值 3s/3s/30s 从未真实生效），本次按官方语法补正前缀、取值零变化。② 移交机制——qpid-jms 2.11 官方选项表核对（来源 qpid.apache.org/releases/qpid-jms-2.11.0/docs）**无 timeout 类移交参数**（`failover.timeout` 属 ActiveMQ failover 词表，Qpid 下装配即报「Failed to create JMS Provider instance for: failover」，第二次 RED 实测留证）；官方选项表内唯一移交机制为有限 `failover.maxReconnectAttempts`——由宪法/简报锁定的 -1 改为 3：provider 连续重试 3 次放弃后连接失败（ExceptionListener 触发 / receive 失败上抛），控制权移交 supervisor 以新时间戳凭证无限重建，「无限重连」语义上移到凭证刷新层（每次重建刷新 13 位时间戳，正对 IoTDA 5 分钟拒绝语义）；瞬时抖动（≤3 次重试约 9s 内）仍走透明恢复。**偏差申报**：此为宪法 A.5-9「failover.maxReconnectAttempts=-1（无限次）」文字的实测修正——无限重连语义在 supervisor 层完整保留，总重连次数不设上限，仅传输层透明重试限 3 次；真实 IoTDA 端点的等价行为验证随 TASK.md L-2 联调演示回填。
+
+## 2026-09-10 · PR-4 B4.4：iot-simulator 子模块、表外依赖核实与一机一密算法官方核对（先记再改）
+
+- **iot-simulator Maven 子模块申报（D-3 默认裁决，纯 Java 零 Spring）**：父 POM `<modules>` 增 `iot-simulator`（fuyun-app 之后）；新增 `backend/iot-simulator/Dockerfile`（多阶段独立镜像，与 backend/Dockerfile 七条规范对齐）；`backend/Dockerfile` 两处小改——pom COPY 清单追加 `COPY iot-simulator/pom.xml iot-simulator/` 一行 + 删除尾部 `# TODO(iot-simulator)` 注释行；CI images job 追加第三构建步骤「构建镜像（iot-simulator）」（同构显式步骤、禁 matrix、job 名 `images` 不变、cache scope=iot-simulator、step 级 if 与 backend 步骤同条件）并删除第 149 行 TODO 注释。
+- **表外依赖核实与申报（简报 §10 要求落码前以 Maven Central 元数据核实）**：① `org.eclipse.paho:org.eclipse.paho.client.mqttv3` **1.2.5**——Central maven-metadata 实测 `<release>`/`<latest>` 均为 1.2.5（Eclipse Paho 官方最新稳定行，技术栈定稿未收录 MQTT 客户端），版本经父 POM dependencyManagement 集中声明（属性 `paho-mqtt.version`，遵循「BOM 外依赖集中声明、子模块禁自带版本号」宪法口径，qpid 2.11.0 先例）；② `maven-jar-plugin` **3.4.2**——Central versions 清单核实存在（3.4.2 命中 1 行）；③ `maven-dependency-plugin` **3.8.1**——Central versions 清单核实存在（3.8.1 命中 1 行，目录探针 HTTP 200），simulator 模块内显式锁定。
+- **一机一密连接三元组官方核对结论（简报 §5 要求实现期核对，来源：华为云 IoTDA 官方文档《密钥鉴权_MQTT(S)协议接入》support.huaweicloud.com/devg-iothub/iot_02_0203.html）**：clientId = `{deviceId}_0_0_{时间戳}`（第 2 段固定 0=设备 ID 标识、第 3 段 0=HMACSHA256 不校验时间戳准确度但仍须携带时间戳，官方生成工具默认形态）、username = deviceId、password = **HmacSHA256(key=UTC 时间戳, message=deviceSecret) 小写十六进制**——时间戳格式为 **UTC `yyyyMMddHH`（10 位，小时粒度）而非简报预判的 13 位毫秒**，HMAC 方向为时间戳作密钥、secret 作内容（官方示例实测复算一致：secret=12345678、timestamp=2025041401 → `c75150e6cb841417396819e4d2ee4358a416344a03a083e3a8567074ddec820a`，与文档原例逐字符相同）。**与简报 §5 预判口径（13 位毫秒时间戳）偏离，以官方文档为准落码**，核对结论写入 DeviceCredentialEncoder javadoc；若真实联调发现服务端行为出入，改动面仅该类 + 单测。
+- **T-R3-3 本地两级实测与延后登记预告**：supervisor 单测（B4.2 已交付）+ 本地 broker 断链恢复 IT（IotAmqpReconnectIT，本批次交付）构成代码级实测闭环；「真实 IoTDA 端点 10 分钟断链演示」与 `--profile sim` 全链路演示、真实 IoTDA 规则引擎报文映射冻结（P0 线格式=CF-7）、真实积压水位指标（IoTDA 侧最旧未消费消息年龄）四条一并延后登记 TASK.md（本批次收口提交执行）。
+
+## 2026-09-10 · PR-4 B4.3 审核修复
+
+- **F-1 摘要推送违反宪法 A.4.2-7**：TelemetryIngestServiceImpl 在 @Transactional ingest 事务方法内直推 STOMP 摘要（"进程内直推非 MQ"自我解释不成立，宪法原文"事务内禁止远程调用、消息发送与人工等待"不限 MQ）——修复为 TransactionSynchronizationManager 注册 afterCommit 回调执行既有 pushSummariesByWard（分组数据事务内组装、推送 I/O 移出事务）；isSynchronizationActive=false（单测直调无事务）时保持直推行为不变，相关 javadoc 同步修正；单测补 TransactionTemplate 时序断言（事务内不推、提交后推送）。
+- **F-2 状态主题生产死路径（wardId 恒 null）**：P0 状态帧契约不含 wardId、解析产物恒 null，消费者原样发布致 /topic/iot/device-status/{wardId} 生产无数据源——IDeviceStatusService.apply 返回值 boolean→Long（模块内接口，返回设备档案 ward_id；null=设备不存在/条件未命中/档案未编病区，不发布事件），select 投影增补 ward_id；IotAmqpTelemetryConsumer.handleStatusFrame 以返回 wardId 构造含 wardId 的事件再发布；IotTelemetryPipelineIT 步骤 5 恢复 AMQP→STOMP 全链断言（不再以手工信封替代链路）、步骤 6 改从 integration.received_event 台账读取真实已消费 eventId 重建重投。
+
+## 2026-09-10 · PR-4 B4.3 任务 B：STOMP/WebSocket 依赖申报与 deploy 兜底密钥变更（先记再改）
+
+- **fuyun-iot pom 依赖申报（BOM/父 POM 托管零版本声明，PR 描述申报）**：① `org.springframework.boot:spring-boot-starter-websocket`——`/ws/iot` STOMP 端点（IotWebSocketConfig：@EnableWebSocketMessageBroker + 内存 SimpleBroker(/topic) + 无 SockJS，P0 客户端仅 PR-5 bigscreen 原生 WebSocket）；② `io.micrometer:micrometer-core`——IotAmqpMetrics 三 gauge（iot.amqp.connected / disconnect.duration.seconds / batch.queue.fill.ratio）与双 counter（reconnect.total / batch.flush.failure.total）注册的 MeterRegistry 编译依赖；③ `com.fuyun:fuyun-system`——仅消费 api 包 TokenVerifier（任务 A 已交付契约）作 STOMP 握手鉴权，宪法 B.2-2 合规。
+- **deploy 变更面申报（简报附 1 待裁决项，主控已裁决 nginx /ingest 路由纳入本 PR）**：`.env.example` 增 `FUYUN_IOT_FALLBACK_TOKEN=` 空占位（独立行中文注释"必填：IoT 兜底通道共享密钥，禁止提交真实值"）；`docker-compose.yml` backend environment 增同名透传一行；`deploy/nginx/fuyun.conf` 增 `location /ingest/` 反代——兜底端点 `POST /ingest/iotda-fallback` 不在 `/api/v1` 前缀下，既有 `/api/`、`/ws/` 两条路由无法覆盖，唯一公网入口原则下的路由缺口补齐（对齐既有 /api location 写法）。
+- **fuyun-app application.yml 配置占位**：增 `fuyun.iot.fallback.token: ${FUYUN_IOT_FALLBACK_TOKEN:}` 映射（B4.2 已落 IotProperties.Fallback 嵌套 record，本次补 yml 环境变量映射行）；空默认 = 未配置，兜底鉴权比对侧 fail-closed 一律拒绝（IOT-1001）。
+
+## 2026-09-10 · PR-4 B4.3：TokenVerifier 跨模块小改与 iot 扇出依赖申报（先记再改）
+
+- **跨模块小改申报（D-7 先例，随本批次首个功能提交生效）**：fuyun-system api 新增 `TokenVerifier` 接口（`boolean verifyAccessToken(String rawToken)`——校验 access 令牌全链（签名/过期/typ/会话存在），通过 true、任何失败 false 不抛异常且不区分原因防枚举，适配 WebSocket 握手与 MQ 线程等无 ProblemDetail 出口场景）；`TokenServiceImpl` implements 增补（内部委托既有 verify(ACCESS) 校验链，捕获 BizException 返回 false）；`SystemWebConfig` 增补一行 @Bean 以接口类型暴露同一实例。消费方：iot /ws/iot STOMP 握手鉴权（本批次仅交付契约与单测，握手拦截器随任务 B）；fuyun-iot 后续仅依赖 system api 包（宪法 B.2-2 合规）。接口属对外契约新增，PR 描述申报。
+- **fuyun-iot pom 依赖申报（BOM/父 POM 托管零版本声明，B4.2 审核 Minor 4 遗留项补齐）**：① `com.fuyun:fuyun-integration`——IotMessagingConfig 经 api 包 MessagingGovernance/ConsumerQueueSpec 声明自事件消费队列 q.iot.iot.device.status-changed（V403 已登记，先登记后订阅；system pom 先例）；② `org.springframework.boot:spring-boot-starter-amqp`——IotEventPublisher RabbitTemplate 发布与 IotFanoutListener @RabbitListener 消费（AUTO 确认 + MessageIdempotencyService 标准幂等范式，与 AMQP 主链路客户端确认两套机制并存）。
+- **实现偏差申报（简报 §4 IotEventPublisher"Confirm/Returns 回调 SystemEventPublisher 同模式"）**：Spring AMQP 对共享 RabbitTemplate 强制断言仅支持单一 Confirm/Returns 回调（注册第二个不同实例即启动失败，IT 实证）——双发布器并存下"各自注册"不可成立，故回调保持由 PR-3 交付的 SystemEventPublisher 构造期统一注册（与装配顺序无关：iot 发布器不注册），iot 发布的 nack/不可路由告警复用同一回调（error 日志含 eventId/路由三要素、P0 不自动重发，语义等价）；回调归属整合（如 RabbitTemplateCustomizer 收口治理装配）归 P1 治理完整化，届时 iot 侧零改动。
+
+## 2026-09-10 · PR-4 B4.2：JaCoCo 核心包增补 iot service.impl（先记再改）
+
+- **POM 门禁变更登记**：父 POM JaCoCo PACKAGE 级 LINE=1.00 规则 include 清单增补 `com.fuyun.iot.service.impl`，与首个 iot service.impl 实装类同一提交生效（BRIEF-PR4-01 §7 处置结论）——iot 消费落库链属"对外服务接口（第三方对接）"核心功能（全局 §四核心界定），沿用 backend 宪法 C.5-2"核心包 rule 随模块实装逐步声明"既有模式（integration/billing/system 三包先例）；SmartLifecycle 消费器/监听器/解析器落 internal/ 包按 BUNDLE 0.80 承载，1.00 规则不误伤难测基础设施类。本项属 PR-4 表外申报清单预告项（B4.1 条目已预告），PR 描述重申申报。
+
+## 2026-09-10 · PR-4 B4.1：iot 号段占用登记（先记再改）
+
+- **号段登记（TASK.md W-4 载体）**：iot 域（M14）占用 **V400–V499**，本批（PR-4 B4.1）使用 V400–V403——V400 设备档案与绑定表、V401 消费错误日志表、V402 遥测超表与压缩/保留策略（T-R3-2 实测锁定）、V403 设备状态事件种子登记。核对结论：现存迁移仅 integration V1–V5 与 system V300–V303，V400–V499 无冲突。
+- **PR-4 表外申报预告**（简报 §10 清单，随各批次落地逐项申报）：qpid-jms-client 2.11.0（父 POM 已锁）、Boot BOM 托管 starter 集合（validation / websocket / amqp / micrometer / mybatis-plus / mapstruct / lombok 等）、Eclipse Paho MQTT 客户端 1.2.5 与 maven-jar-plugin 3.4.2 / maven-dependency-plugin 3.8.1（iot-simulator）、父 POM modules 增 iot-simulator + JaCoCo 核心包增补 `com.fuyun.iot.service.impl`、fuyun-app pom 增 fuyun-iot 依赖、fuyun-system api 增 TokenVerifier 接口、deploy 增 FUYUN_IOT_FALLBACK_TOKEN 占位与 nginx `/ingest/` 路由、CI images job 追加 iot-simulator 第三构建步骤。
+- **T-R3-2 实测结论（收口补记）**：压缩策略函数胜者 = `add_columnstore_policy`（2026-09-10，`timescale/timescaledb:2.29.2-pg16` 探针容器实测）——探针 SQL「`SELECT proname FROM pg_proc WHERE proname IN ('add_columnstore_policy','add_compression_policy') ORDER BY 1;`」输出两函数均存在；`pg_proc.prokind` 实测 `add_columnstore_policy = p`（过程，须 `CALL` 调用）、`add_compression_policy = f`（函数，自 2.18.0 起弃用），两函数并存以非弃用者为胜 → V402 压缩策略以 `CALL add_columnstore_policy('iot.iot_telemetry', INTERVAL '7 days')` 落盘；保留策略 `add_retention_policy` 实测 `prokind = f`（SELECT 函数，非 T-R3-2 比对项）照常调用。样例超表实证：CALL 后 `timescaledb_information.jobs` 落 `policy_compression` 作业、`SELECT add_retention_policy` 落 `policy_retention` 作业（均 scheduled=true）。TASK.md T-R3-2 行按登记台规则回填后删除。
+
 ## 2026-09-10 · PR #6 审查修复（Minor×2：脱敏正则数字边界 + 字典发布条件更新防双广播）
 
 - F-1（fuyun-common/utils/SensitiveMasker.java）：PHONE/ID_CARD_15/ID_CARD_18 三正则补前后视数字边界（`(?<!\d)...(?!\d)`）——原实现对长数字串（12 位工单号/19 位雪花 ID 等）内部会误命中截断，与 javadoc「非目标长度不处理」承诺矛盾；SensitiveMaskerTest 补 12+/19 位数字串不脱敏断言（先 RED：19 位串现行实现被误脱敏，修复后 GREEN）。

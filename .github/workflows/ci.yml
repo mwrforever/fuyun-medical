@@ -145,8 +145,7 @@ jobs:
       # buildx 缺省 docker driver 不支持 gha 缓存导出（cache-to: type=gha 会报错），须先创建 docker-container driver builder
       - name: 安装 buildx
         uses: docker/setup-buildx-action@v3
-      # backend 镜像：仅 backend 有变更且 backend verify 真实成功才构建；两步顺序执行，一步失败 job 即败、后续步骤跳过（等价原 fail-fast）
-      # TODO(iot-simulator): 第三镜像待 TASK.md D-3（实现语言与位置）裁决后在此追加同构构建步骤，禁改回 matrix（required check 名对齐）
+      # backend 镜像：仅 backend 有变更且 backend verify 真实成功才构建；多步顺序执行，一步失败 job 即败、后续步骤跳过（等价原 fail-fast）
       - name: 构建镜像（backend）
         if: needs.changes.outputs.backend == 'true' && needs.backend.result == 'success'
         uses: docker/build-push-action@v7
@@ -173,6 +172,21 @@ jobs:
             ghcr.io/${{ github.repository }}/web:${{ steps.branch.outputs.name }}-latest
           cache-from: type=gha,scope=web
           cache-to: type=gha,scope=web,mode=max
+      # iot-simulator 镜像（PR-4 B4.4 第三构建步骤，锁定决策：非 matrix，required check 名 images 对齐）：
+      # 与 backend 同条件同 context——simulator 在 backend/** 下，changes 过滤器天然覆盖，无需改过滤器
+      - name: 构建镜像（iot-simulator）
+        if: needs.changes.outputs.backend == 'true' && needs.backend.result == 'success'
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          file: backend/iot-simulator/Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/${{ github.repository }}/iot-simulator:${{ github.sha }}
+            ghcr.io/${{ github.repository }}/iot-simulator:${{ steps.branch.outputs.name }}-latest
+          # GHA 内建缓存后端，scope 按镜像名隔离防互相踩缓存
+          cache-from: type=gha,scope=iot-simulator
+          cache-to: type=gha,scope=iot-simulator,mode=max
 
   # ===== 提交规范：conventional commits（push 查最近一条，PR 查 base..head 区间） =====
   commitlint:

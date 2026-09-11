@@ -106,9 +106,16 @@ services:
       FUYUN_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       # D-2 令牌 HMAC 密钥（必填，≥32 字符）：凭据一律来自 .env，禁止硬编码；缺失则 backend 启动 fail-fast
       FUYUN_SECURITY_TOKEN_HMAC_SECRET: ${FUYUN_SECURITY_TOKEN_HMAC_SECRET}
+      # IoT 兜底通道共享密钥（B4.3）：/ingest/iotda-fallback 独立鉴权用，凭据来自 .env 禁止硬编码
+      FUYUN_IOT_FALLBACK_TOKEN: ${FUYUN_IOT_FALLBACK_TOKEN}
       FUYUN_IOTDA_AMQP_ENDPOINT: ${IOTDA_AMQP_ENDPOINT}   # 华为云 IoTDA AMQP 接入地址（出站，非容器网络；PR-4 前无消费方）
       FUYUN_IOTDA_AMQP_ACCESS_KEY: ${IOTDA_AMQP_ACCESS_KEY}
       FUYUN_IOTDA_AMQP_ACCESS_SECRET: ${IOTDA_AMQP_ACCESS_SECRET}
+      # AMQP 消费链启用开关/订阅队列清单（队列逗号分隔，与 IoTDA 推送队列一致；默认关闭，sim 全链路演示时启用）。
+      # 带 :- 默认值而非裸透传：.env 缺键或留空时插值兜底 false/空串——enabled 空串会 boolean 绑定失败阻断启动；
+      # environment 段优先级高于 env_file，可覆盖 .env 整组注入的空值
+      FUYUN_IOT_AMQP_ENABLED: ${FUYUN_IOT_AMQP_ENABLED:-false}
+      FUYUN_IOT_AMQP_QUEUES: ${FUYUN_IOT_AMQP_QUEUES:-}
     depends_on:
       # 全部 service_healthy，禁止裸 service_started（定稿报告 §6.3）：healthy 即依赖可用，backend 启动期 Flyway 迁移不再撞未就绪中间件
       postgres:

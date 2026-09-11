@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  遥测明细批量写映射（IotTelemetryMapper.insertBatchIgnoreConflict，宪法 A.4.3-15 复杂 SQL 走 mapper+XML）。
+  冲突忽略 = 写入幂等载体：唯一索引 uk_iot_telemetry_device_metric_time (device_id, metric_code, occurred_at)
+  命中已落库行时 DO NOTHING（14-iot §3.1 明细层幂等，AMQP 重推与 HTTP 兜底双通道去重同键）。
+  枚举列（quality/source）经 MP MybatisEnumTypeHandler 按 @EnumValue code 绑定（starter 全局默认）。
+  加载路径：MP starter 默认 mapper-locations=classpath*:/mapper/**/*.xml，零配置生效。
+-->
+<mapper namespace="com.fuyun.iot.mapper.IotTelemetryMapper">
+
+    <!-- 多值 INSERT 一次落整批（500-5000 条/批独立事务由 service 层承担）；冲突行忽略不中断批次 -->
+    <insert id="insertBatchIgnoreConflict">
+        INSERT INTO iot.iot_telemetry
+            (device_id, patient_id, visit_id, metric_code, value, unit, occurred_at, quality, source)
+        VALUES
+        <foreach collection="batch" item="item" separator=",">
+            (#{item.deviceId}, #{item.patientId}, #{item.visitId}, #{item.metricCode},
+             #{item.value}, #{item.unit}, #{item.occurredAt}, #{item.quality}, #{item.source})
+        </foreach>
+        ON CONFLICT (device_id, metric_code, occurred_at) DO NOTHING
+    </insert>
+</mapper>

@@ -99,3 +99,25 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
     # D-2 令牌 HMAC 密钥：仅经 FUYUN_SECURITY_TOKEN_HMAC_SECRET 环境变量注入，任何 profile 均不放默认密钥——
     # 空占位表示"未设 env 即启动 fail-fast 报缺失"，属预期安全姿态（BRIEF-PR3-01 §3.1；TTL 默认值见 SecurityProperties @DefaultValue）
     token-hmac-secret: ${FUYUN_SECURITY_TOKEN_HMAC_SECRET:}
+  iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
+    amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
+                                  #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）
+      # 启用开关仅经 FUYUN_IOT_AMQP_ENABLED 注入：只接受 true/false（留空会 boolean 绑定失败阻断启动），
+      # 未置 env 取默认 false
+      enabled: ${FUYUN_IOT_AMQP_ENABLED:false}
+      endpoint: ${IOTDA_AMQP_ENDPOINT:}
+      access-key: ${IOTDA_AMQP_ACCESS_KEY:}
+      access-secret: ${IOTDA_AMQP_ACCESS_SECRET:}   # 敏感红线：仅 env 注入，任何 profile 禁明文默认值
+      # 订阅队列清单：FUYUN_IOT_AMQP_QUEUES 逗号分隔（须与 IoTDA 规则引擎推送队列逐一对齐）；空串 env
+      # 绑定为空清单（启用 AMQP 时 fail-fast），含空段（如 q1,,q2）由启用组校验拒绝空白队列名
+      queues: ${FUYUN_IOT_AMQP_QUEUES:}
+      # 以下参数全部取 IotProperties @DefaultValue（值词表见 IotProperties.Amqp javadoc，按需覆盖）：
+      # queue-prefetch: 1000       # IoTDA 默认预取上限（宪法 A.5-9）
+      # batch-size: 500            # 攒批落库条数阈值，合法区间 500–5000（宪法 A.4.2-7）
+      # batch-flush-interval: 2s   # 攒批时间窗（批首消息起算超时即刷批）
+      # batch-queue-capacity: 5000 # 攒批有界内存队列容量（满则消费侧阻塞背压）
+      # reconnect-initial-delay: 3s  # 断链重建退避起步（宪法 A.5-9 failover 参数）
+      # reconnect-max-delay: 30s    # 断链重建退避上限（指数封顶，supervisor 重建节奏）
+    fallback:                     # HTTP 兜底通道（POST /ingest/iotda-fallback 独立鉴权，B4.3）
+      token: ${FUYUN_IOT_FALLBACK_TOKEN:}   # 敏感红线：仅 env 注入，任何 profile 禁明文默认值；
+                                            #   空默认 = 未配置，鉴权比对侧 fail-closed 一律拒绝
