@@ -26,6 +26,7 @@ import jakarta.jms.BytesMessage;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSConsumer;
 import jakarta.jms.JMSContext;
+import jakarta.jms.JMSException;
 import jakarta.jms.JMSRuntimeException;
 import jakarta.jms.Message;
 import jakarta.jms.Queue;
@@ -374,6 +375,63 @@ class IotAmqpTelemetryConsumerTest {
         consumer.start();
 
         verify(ingestService, timeout(AWAIT_MILLIS)).ingest(anyList());
+    }
+
+    @Test
+    @DisplayName("异常监听回调（running）：直调 onException 全局标记断链（connected 置 0+断链起点记录）并关闭在册连接")
+    void onExceptionMarksGlobalDisconnectAndClosesWorkerContextsWhileRunning() throws Exception {
+        // 首建链成功、后续建链一律失败：钉住 onException 自身的断链标记效果（防 worker 立即重连把
+        // connected 翻回 1 造成断言竞态），重连本身由 supervisor 既有用例覆盖
+        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+                .thenReturn(jmsContext)
+                .thenThrow(new JMSRuntimeException("rebuild blocked for assertion stability"));
+        stubReceiveIdle();
+        consumer.start();
+        awaitConnectedFlag(1L);
+
+        // 直调 ExceptionListener 回调（JMS 异常回调无法定位具体连接，契约=全局标记断链+关闭全部在册连接）
+        consumer.onException(new JMSException("connection lost"));
+
+        assertThat(consumer.connectedFlag().get()).as("断链标记：connected 载体置 0").isEqualTo(0L);
+        assertThat(consumer.disconnectSinceMillis().get())
+                .as("断链起点仅在首个失败时记录（断链时长指标起算点）")
+                .isPositive();
+        // 全局关闭在册连接：消费线程经 receive 异常进入 supervisor 重建路径（对已关闭线程幂等无害）
+        verify(jmsContext).close();
+    }
+
+    @Test
+    @DisplayName("异常监听回调守卫分支（非 running）：已 stop 后直调 onException 零副作用（断链标记不动）")
+    void onExceptionIsNoOpWhenConsumerAlreadyStopped() throws Exception {
+        stubContextCreation();
+        stubReceiveIdle();
+        consumer.start();
+        awaitConnectedFlag(1L);
+
+        // 优雅停机（等消费线程退出，running=false）后再直调回调：守卫分支必须直接返回
+        consumer.stop();
+        consumer.onException(new JMSException("connection lost after stop"));
+
+        assertThat(consumer.connectedFlag().get())
+                .as("停机后回调不改写断链标记（保持停机前的连接正常态）")
+                .isEqualTo(1L);
+        assertThat(consumer.disconnectSinceMillis().get()).as("停机后回调不记录断链起点").isEqualTo(0L);
+    }
+
+    /** 桩：receive 空闲轮询（短暂休眠返回 null，模拟 broker 无消息） */
+    private void stubReceiveIdle() {
+        when(jmsConsumer.receive(anyLong())).thenAnswer(this::idleAnswer);
+    }
+
+    /** 轮询等待 connected 载体到达目标值（异步建链，3s 容忍调度抖动） */
+    private void awaitConnectedFlag(long expected) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
+        while (consumer.connectedFlag().get() != expected && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertThat(consumer.connectedFlag().get())
+                .as("等待 connected 载体到达 " + expected)
+                .isEqualTo(expected);
     }
 
     /** 桩：建链工厂返回共享 JMS 上下文（口令 = accessSecret + 时间戳形态，单测不断言其值） */
