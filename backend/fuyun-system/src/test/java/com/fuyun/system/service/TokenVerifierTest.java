@@ -103,7 +103,7 @@ class TokenVerifierTest {
     }
 
     @Test
-    @DisplayName("typ 不符返回 false：refresh 令牌不得当 access 令牌通过握手鉴权（防跨类型复用）")
+    @DisplayName("typ 不符返回 false：refresh 令牌不得当 access 令牌通过帧级鉴权（防跨类型复用）")
     void refreshTokenTypedAsAccessVerifiesFalse() throws Exception {
         TokenPair pair = tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN")));
         stubSessionJson(readSid(pair.refreshToken()));

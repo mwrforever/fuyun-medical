@@ -170,7 +170,7 @@
 - 发布：`iot.alarm.triggered`（告警触发，payload 含告警号/设备/患者/病区/等级/指标与触发值）、`iot.alarm.escalated`（超时升级）、`iot.alarm.closed`（闭环完成，供 M05/M16 复位与统计）、`iot.device.status-changed`（设备上下线/异常）、`iot.binding.changed`（绑定/解绑，payload 含五元组与变更类型）、`iot.telemetry.anomaly`（断流/异常值，联动业务用）、`iot.command.completed`（命令终态，供审计与运维订阅）、`iot.linkage.executed`（联动执行结果）、`iot.call.triggered`（呼叫信令上行：设备号/呼叫类型/床位/触发时刻，供 M16 路由建 ward_call）、`iot.access.passed`（门禁通行结果：门点/方向/结果/介质摘要，供 M16 落通行台账）。事件型设备上行按业务语义拆分为上述具体事件，不设泛化 `iot.device.event`（统一审查裁决）；本模块全部发布事件走 outbox + 发布确认，遵循 M20 事件总线治理约定
 - 订阅：`system.dict.published`（M01 国标字典引用刷新——患者上下文/单位等展示字典；MDC 指标术语字典为本模块自管专业字典 iot_metric_dict，不经 M01）、`system.org.changed` / `system.param.changed`（M01 主数据：病区组织、模块参数热刷新）；M04 住院事件 `inpatient.visit.admitted` / `inpatient.visit.transferred` / `inpatient.visit.discharged`（驱动绑定提醒与强制解绑，事件名已经 M04 Spec 在 event_registry 登记核实）；M05 事件 `nursing.task.created` / `nursing.infusion.started` / `nursing.infusion.completed`（输液告警↔任务↔传感器关联建立与输注结束后的监测复位）；M15 资产事件 `asset.asset.scrapped`（必选：驱动 iot_device 置 DISABLED）、`asset.asset.created` / `asset.asset.changed`（asset_ref 冗余引用维护）、`asset.metrology.overdue`（绑定/命令下发界面合规标识，最低保障）；M02 患者事件 `patient.merged` / `patient.split`（成对订阅：绑定校验与遥测/告警归属经 EMPI 归一刷新）、`patient.frozen` / `patient.unfrozen`（成对订阅：冻结档案拒绝新绑定、解冻恢复）。消费队列按 README 约定命名（`q.iot.<事件名>`，如 `q.iot.system.dict.published`、`q.iot.inpatient.visit.transferred`）；消费一律 @RabbitListener + 容器 AUTO 确认 + `integration.received_event` 幂等。
 
-**WebSocket 主题（STOMP，端点 `/ws/iot`，握手鉴权）**：
+**WebSocket 主题（STOMP，端点 `/ws/iot`，CONNECT 帧令牌鉴权）**：
 - `/topic/iot/alarm/{wardId}`：病区告警主题（触发/升级/关闭事件，独立主题保证告警低延迟不与遥测争抢）
 - `/topic/iot/telemetry/{wardId}`：病区遥测摘要主题（2 秒窗口按床位合并节流）
 - `/topic/iot/device-status/{wardId}`：病区设备状态主题（上下线/离线告警提示）
@@ -192,7 +192,7 @@
 - 性能：遥测管道常态 50 msg/s、峰值 500 msg/s（总 Spec 8），批量落库下单批万级行写入 P95 < 1s；最新值查询 P99 < 100ms（Redis 快照）；历史查询（聚合路由）P95 < 1s；告警端到端时延（数据到达→通知发出）P95 < 2s；大屏刷新 ≤2s（总 Spec 8）。
 - 容量：遥测明细 90 天在线（按 432 万行/天外推约 3.9 亿行，压缩后存储可控，社区实践压缩率 90%+，调研依据 10）；两级聚合 1 年；告警/命令/绑定历史长期保留（医疗审计要求）；消费错误日志保留 180 天。
 - 可用性：消费者多实例（实例数×连接数 ≤ 单凭证 32 连接上限并预留余量）；单实例故障 failover 自动重连不丢消息（客户端确认未完成即重推）；积压分级预案（>5 分钟告警人工介入、>30 分钟扩容实例）；HTTP 兜底通道独立于 AMQP 进程；TimescaleDB 随 PostgreSQL 主备流复制容灾（总 Spec 8：RPO ≤15min、RTO ≤4h）。
-- 安全：设备凭证密文托管（明文不入库、不入日志）；命令三级管控（白名单/二次确认/审计，方案 3.5）；遥测与告警中的患者身份字段脱敏展示（对齐 M01/M02 脱敏规则）；患者维度查询强制数据范围校验（病区/科室范围外 403 并审计）；WebSocket 握手鉴权与主题订阅数据范围校验（不得跨病区订阅）；全接口审计切面覆盖（等保三级安全审计）。
+- 安全：设备凭证密文托管（明文不入库、不入日志）；命令三级管控（白名单/二次确认/审计，方案 3.5）；遥测与告警中的患者身份字段脱敏展示（对齐 M01/M02 脱敏规则）；患者维度查询强制数据范围校验（病区/科室范围外 403 并审计）；WebSocket CONNECT 帧令牌鉴权与主题订阅数据范围校验（不得跨病区订阅）；全接口审计切面覆盖（等保三级安全审计）。
 - 合规映射：等保三级（身份鉴别/访问控制/审计/TLS 传输加密）；数据安全法/个保法（患者数据脱敏、查阅留痕）；医学装备管理规范（设备档案、利用率数据支撑质控考核）；数据质量治理（回应 ICU 论文实证不足，调研依据 6）。
 
 ## 10. 测试要点
