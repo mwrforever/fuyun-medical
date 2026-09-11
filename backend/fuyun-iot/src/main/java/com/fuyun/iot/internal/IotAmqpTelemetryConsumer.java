@@ -49,9 +49,12 @@ import org.springframework.context.SmartLifecycle;
  *
  * <p><b>断链重建 supervisor</b>：实现 JMS ExceptionListener。transport 级 failover 透明重连
  * <b>不会刷新凭证内嵌的 13 位毫秒时间戳</b>，断链超 5 分钟后 IoTDA 将以时间戳过期拒绝重连——
- * 因此连接异常时<b>销毁旧连接并以新时间戳凭证重建</b>连接与 consumer：消费线程捕获连接级异常或
- * ExceptionListener 全局标记后，先 close 旧连接、再按 initialReconnectDelay（默认 3s）起步、
- * 指数退避至 maxReconnectDelay（默认 30s）封顶的节奏重建，连接成功即复位退避节奏并继续消费。
+ * 且 B4.4 本地实测（IotAmqpReconnectIT）证明 failover 对断链做纯透明恢复（ExceptionListener 不触发、
+ * 阻塞中的 receive() 持续等待重连）。因此连接 URI 以有限重试上限（maxReconnectAttempts=3，
+ * IotAmqpConfig）约定移交点：provider 连续重试放弃后连接失败，消费线程随后<b>销毁旧连接并以新
+ * 时间戳凭证无限重建</b>：先 close 旧连接、再按 initialReconnectDelay（默认 3s）起步、指数退避至
+ * maxReconnectDelay（默认 30s）封顶的节奏重建，连接成功即复位退避节奏并继续消费——重连无限次
+ * 语义由 supervisor 承接，且每次重建均携带新时间戳凭证（透明重连不刷新时间戳的 IoTDA 语义对策）。
  *
  * <p><b>消费处理流程（四路同构）</b>：receive → 载体解码（字节/文本）→ TelemetryFrameParser 解析 →
  * 遥测帧入 {@link TelemetryBatchAssembler} 有界队列（满则阻塞等待背压）；状态帧即时交

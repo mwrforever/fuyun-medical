@@ -21,12 +21,16 @@ import org.springframework.context.annotation.Import;
  * DB/Redis/RabbitMQ）；enabled=true 时建 Bean 前先调 {@link IotProperties.Amqp#validateAmqpEnabled()}
  * 对连接四要素 fail-fast（缺失即启动失败）。
  *
- * <p><b>连接 URI（宪法 A.5-9 原文参数）</b>：{@code failover:(amqp://...)?initialReconnectDelay=3000
- * &reconnectDelay=3000&maxReconnectDelay=30000&failover.maxReconnectAttempts=-1}——P0 对接本地 broker
- * 为 {@code amqp://}，生产 IoTDA 真实端点为 {@code amqps://host:5671}（TLS 1.2+，14-iot 调研依据 1，
- * 仅 env 注入的 endpoint 值差异，代码零改动）；transport 级 failover 透明重连不刷新凭证内嵌时间戳
- * （IoTDA 拒绝超 5 分钟旧时间戳），故消费者侧 supervisor 始终销毁重建连接（IotAmqpTelemetryConsumer
- * 类注释），URI 层无限重连参数仅承载传输层兜底。queuePrefetch=1000 为 IoTDA 默认（14-iot 调研依据 2）。
+ * <p><b>连接 URI（宪法 A.5-9 三参数 + B4.4 实测修正选项语法与移交机制）</b>：{@code failover:(amqp://...)?
+ * failover.initialReconnectDelay=3000&failover.reconnectDelay=3000&failover.maxReconnectDelay=30000
+ * &failover.maxReconnectAttempts=3}——P0 对接本地 broker 为 {@code amqp://}，生产 IoTDA 真实端点为
+ * {@code amqps://host:5671}（TLS 1.2+，14-iot 调研依据 1，仅 env 注入的 endpoint 值差异，代码零改动）；
+ * transport 级 failover 透明重连不刷新凭证内嵌时间戳（IoTDA 拒绝超 5 分钟旧时间戳），且其官方语义为
+ * 纯透明恢复（B4.4 本地实测：不触发 ExceptionListener、阻塞中的 receive() 持续等待重连）——无限透明
+ * 重试将令 supervisor 永不介入，故 maxReconnectAttempts 设有限值 3：provider 放弃后连接失败，控制权
+ * 移交 supervisor 以新时间戳凭证无限重建（重连无限语义上移到凭证刷新层，2026-09-11 CHANGELOG 登记）；
+ * 三延迟参数按官方「failover.」前缀语法补正（B4.2 起的裸名形态不被 failover 层识别，取值不变）。
+ * queuePrefetch=1000 为 IoTDA 默认（14-iot 调研依据 2）。
  *
  * <p><b>连接数预算（宪法 A.5-9）</b>：连接数 = 实例数 × 每实例连接数（每实例连接数 = 配置队列数，
  * 每队列独占一条连接）≤ 32（IoTDA 单凭证上限）；P0 单实例 × ≤4 队列 = ≤4 连接，扩容上界
@@ -40,6 +44,23 @@ import org.springframework.context.annotation.Import;
 @ConditionalOnProperty(name = "fuyun.iot.amqp.enabled", havingValue = "true")
 @Import({TelemetryBatchAssembler.class, IotAmqpTelemetryConsumer.class, IotAmqpMetrics.class})
 public class IotAmqpConfig {
+
+    /**
+     * 传输层透明重连的有限尝试上限（次）：连续失败达到该次数后 provider 放弃并使连接失败
+     * （ExceptionListener 触发 / 阻塞中的 receive 失败上抛），控制权移交消费者 supervisor——
+     * 由 supervisor 以新时间戳凭证无限重建（「无限重连」语义上移到凭证刷新层）。
+     *
+     * <p>为何必须有限（B4.4 IotAmqpReconnectIT 实测发现，T-R3-3 本地实测结论）：① Qpid failover
+     * 对断链做纯透明恢复——ExceptionListener 不触发、receive() 持续阻塞等待重连，无限重试
+     * （maxReconnectAttempts=-1）下 supervisor 永不介入；生产推演下 IoTDA 断链超 5 分钟后
+     * failover 仍以连接建立时捕获的旧时间戳凭证永续重试，被服务端拒绝后消费链路无感知——
+     * supervisor 的「新时间戳凭证重建」被完全屏蔽。② qpid-jms 官方选项表无 timeout 类移交参数
+     * （failover.timeout 属 ActiveMQ failover 词表，Qpid 2.11 装配即报 provider 创建失败，实测留证），
+     * 有限尝试是官方选项表内唯一的移交机制。3 次取值兼顾「瞬时抖动（≤3 次重试约 9s 内）仍走透明
+     * 恢复」与「断链感知时延约 3s×3 次 + 3s supervisor 退避」；检测后重连无限次由 supervisor 承接，
+     * 总重连次数不设上限。
+     */
+    static final int FAILOVER_MAX_RECONNECT_ATTEMPTS = 3;
 
     /**
      * AMQP 凭证时间戳时钟（IoTDA 口令 = accessSecret + 13 位毫秒时间戳，每次建链刷新）。
@@ -72,11 +93,15 @@ public class IotAmqpConfig {
     public JmsConnectionFactory iotAmqpConnectionFactory(IotProperties properties) {
         properties.amqp().validateAmqpEnabled();
         long initialDelayMillis = properties.amqp().reconnectInitialDelay().toMillis();
+        // failover 选项一律用官方「failover.」前缀形态（qpid-jms 官方文档语法；B4.4 实测后修正——
+        // B4.2 起的裸名 initialReconnectDelay 等不会被 failover 层识别为选项，语义等同未配置）；
+        // maxReconnectAttempts 由 -1 改为有限值移交 supervisor（详见 FAILOVER_MAX_RECONNECT_ATTEMPTS 注释）
         String remoteUri = "failover:(" + properties.amqp().endpoint() + ")"
-                + "?initialReconnectDelay=" + initialDelayMillis
-                + "&reconnectDelay=" + initialDelayMillis
-                + "&maxReconnectDelay=" + properties.amqp().reconnectMaxDelay().toMillis()
-                + "&failover.maxReconnectAttempts=-1";
+                + "?failover.initialReconnectDelay=" + initialDelayMillis
+                + "&failover.reconnectDelay=" + initialDelayMillis
+                + "&failover.maxReconnectDelay="
+                + properties.amqp().reconnectMaxDelay().toMillis()
+                + "&failover.maxReconnectAttempts=" + FAILOVER_MAX_RECONNECT_ATTEMPTS;
         JmsConnectionFactory connectionFactory = new JmsConnectionFactory(remoteUri);
         // queuePrefetch 走类型安全的策略接口（endpoint 值可能自带查询参数，禁 URI 追加拼接）
         if (connectionFactory.getPrefetchPolicy() instanceof JmsDefaultPrefetchPolicy prefetchPolicy) {
