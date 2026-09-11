@@ -31,9 +31,10 @@ import org.mockito.ArgumentCaptor;
  * <p>业务意图：验证攒批写库四类契约——①条数阈值触发（攒够 batchSize 即刷批）；②时间窗触发
  * （批首消息起算超 batchFlushInterval 未攒满也刷批，IoTDA 低流量不停批）；③满容量背压（有界队列
  * 打满后消费侧阻塞等待，防 IoTDA 24h/1GB 缓存被本地内存放大击穿）；④确认回调语义（落库成功后
- * 仅批末消息的 ack 回调执行——JMS CLIENT_ACKNOWLEDGE 会话级累计确认；落库失败零回调，IoTDA 重推
- * 由唯一约束兜底幂等）。另覆盖 stop 排空在途批（宪法 A.5-15 停机顺序）。测试批次参数取亚秒级
- * 小值避免真实长等待，与任何生产默认值无关。
+ * 仅批末消息的 ack 回调执行——JMS CLIENT_ACKNOWLEDGE 会话级累计确认；落库失败零回调并<b>触发
+ * 会话重建回调</b>，令失败批与其会话内全部未确认交付回归 broker 重投域，重投由唯一约束兜底幂等）。
+ * 另覆盖 stop 排空在途批（宪法 A.5-15 停机顺序）。测试批次参数取亚秒级小值避免真实长等待，与任何
+ * 生产默认值无关。
  */
 class TelemetryBatchAssemblerTest {
 
@@ -161,6 +162,40 @@ class TelemetryBatchAssemblerTest {
         assembler.put(telemetry("dev-recovered"), recoveredAck);
         verify(recoveredAck, timeout(AWAIT_MILLIS)).run();
         assertThat(assembler.flushFailureCount().get()).as("恢复后的成功批次不累计失败").isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("落库失败触发会话重建回调：失败批零 ack 且重建回调被触发，重建后新批成功照常确认（重投域语义）")
+    void triggersSessionRebuildListenerAndSkipsAckWhenIngestFails() throws Exception {
+        // CLIENT_ACKNOWLEDGE 会话级累计确认下，失败批若仅"零确认继续消费"会被后续成功批的累计
+        // 确认静默吞掉——失败必须触发会话重建回调（消费者关闭上下文令未确认交付回归 broker 重投域）
+        List<Long> rebuildTriggers = new CopyOnWriteArrayList<>();
+        assembler.registerFlushFailureListener(() -> rebuildTriggers.add(System.nanoTime()));
+        doThrow(new IllegalStateException("数据库瞬断")).when(ingestService).ingest(anyList());
+        Runnable failedBatchAck = mock(Runnable.class);
+        assembler.put(telemetry("dev-rebuild-fail"), failedBatchAck);
+        assembler.put(telemetry("dev-rebuild-fail"), mock(Runnable.class));
+        assembler.put(telemetry("dev-rebuild-fail"), mock(Runnable.class));
+
+        verify(ingestService, timeout(AWAIT_MILLIS)).ingest(anyList());
+        long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
+        while (rebuildTriggers.isEmpty() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        assertThat(rebuildTriggers).as("失败必须触发会话重建回调（回归 broker 重投域的消费者侧信号）").hasSize(1);
+        // 失败批零确认：不得有任何 acknowledge 副作用（重投域语义的前提）
+        verifyNoInteractions(failedBatchAck);
+        assertThat(failureCountEventually(assembler, 1)).as("失败计数同步递增").isTrue();
+
+        // 重建后（模拟 broker 重投投递的新帧）落库成功：批末确认照常执行（重投帧经新会话成功后确认）
+        doReturn(1).when(ingestService).ingest(anyList());
+        Runnable redeliveredAck = mock(Runnable.class);
+        assembler.put(telemetry("dev-rebuild-redelivered"), redeliveredAck);
+        assembler.put(telemetry("dev-rebuild-redelivered"), mock(Runnable.class));
+        assembler.put(telemetry("dev-rebuild-redelivered"), redeliveredAck);
+        verify(redeliveredAck, timeout(AWAIT_MILLIS)).run();
+        assertThat(rebuildTriggers).as("成功批次不得再触发重建回调").hasSize(1);
+        assertThat(assembler.flushFailureCount().get()).as("失败计数仍为失败批的 1 次").isEqualTo(1L);
     }
 
     /**

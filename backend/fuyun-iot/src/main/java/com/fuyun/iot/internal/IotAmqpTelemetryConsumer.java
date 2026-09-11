@@ -41,6 +41,13 @@ import org.springframework.context.SmartLifecycle;
  * {@code @RabbitListener} 为容器 <b>AUTO 确认</b>——监听方法成功返回即由容器确认（宪法 A.5-5）。
  * 两套机制互不相干，iot AMQP 主链路一律用客户端确认。
  *
+ * <p><b>失败重建（重投域语义，审查修复）</b>：CLIENT_ACKNOWLEDGE 累计确认下"业务失败仅不确认
+ * 继续消费"不成立——失败帧会被后续成功批对同会话任一消息的确认一并累计确认（broker 不再重投，
+ * 数据无痕丢失）。故落库失败（攒批器回调，见构造器接线）与状态帧业务失败统一触发
+ * {@link #triggerGlobalRebuildForRedelivery 全局会话重建}：关闭全部在册上下文，会话销毁令其全部
+ * 未确认交付回归 broker 重投域，重投帧由 iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 幂等去重；
+ * worker 线程的业务失败在触发重建后仍上抛走既有 supervisor 退避（防 DB 持续故障下无退避热循环）。
+ *
  * <p><b>生命周期（宪法 A.5-9/A.5-15/B.3-4）</b>：实现 SmartLifecycle（非 @PostConstruct 起线程），
  * start 按队列清单各起一个消费线程（命名有界线程池随上下文关闭）；stop 优雅停机——先停拉取
  * （interrupt receive 等待并关连接），在途批排空由攒批器（phase=0 后于本类停止）承接；
@@ -209,6 +216,9 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         this.clock = clock;
         this.sleeper = sleeper;
         this.statusEventSink = statusEventSink;
+        // 攒批器落库失败回调接线（审查修复）：失败批必须以会话销毁收场——CLIENT_ACKNOWLEDGE 累计
+        // 确认下"零确认待重推"仅在会话销毁时成立，关闭全部在册上下文令未确认交付回归重投域
+        assembler.registerFlushFailureListener(() -> triggerGlobalRebuildForRedelivery("遥测批落库失败"));
     }
 
     /**
@@ -332,6 +342,28 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     private void markDisconnected() {
         connectedFlag.set(0);
         disconnectSinceMillis.compareAndSet(0, clock.millis());
+    }
+
+    /**
+     * 触发全局会话重建（重投域语义的统一入口）：标记断链并关闭全部在册上下文——会话销毁令其全部
+     * 未确认交付回归 broker 重投域，各消费线程随后经 receive 异常进入既有 supervisor 退避重建
+     * （新时间戳凭证）；重投帧由 iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 幂等去重。
+     *
+     * <p>触发来源两路：①攒批器落库失败回调（flush 线程，构造器注册）；②状态帧业务失败
+     * （worker 线程，触发后仍上抛走 supervisor 退避，防 DB 持续故障下无退避热循环）。线程安全：
+     * 与 {@link #onException} 同机制（volatile 引用置换 + CopyOnWriteArrayList 遍历 + 幂等关闭），
+     * flush 线程与 worker 线程并发触发无新锁，对已关闭上下文幂等无害；停机后（running=false）
+     * 直接返回（上下文已由停机链关闭）。
+     *
+     * @param trigger 触发来源描述（warn 日志溯源，不含敏感值），非空
+     */
+    private void triggerGlobalRebuildForRedelivery(String trigger) {
+        if (!running.get()) {
+            return;
+        }
+        log.warn("业务失败触发全局会话重建，未确认交付回归 broker 重投域：trigger={}", trigger);
+        markDisconnected();
+        workers.forEach(QueueWorker::closeContextQuietly);
     }
 
     /** 标记连接恢复：connected 置 1，断链起点清零（断链时长指标回零）。 */
@@ -464,7 +496,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
      * 单帧分发：载体解码 → 形态解析 → 遥测帧入攒批 / 状态帧即时处理 / 毒丸留痕抛弃。
      *
      * <p>异常分域：<b>毒丸</b>（非 JSON/缺字段/载体不可读）→ 落 iot_consume_error_log 后确认抛弃；
-     * <b>业务失败</b>（落库/状态更新 DB 异常）→ 不确认不中断（IoTDA 重推，唯一约束兜底幂等）；
+     * <b>业务失败</b>（落库/状态更新 DB 异常）→ 触发全局会话重建（失败帧回归 broker 重投域，累计
+     * 确认语义下"仅不确认继续消费"会被后续成功批静默吞掉）后上抛交 supervisor 退避重建；
      * <b>连接级失败</b>（JMS 运行时异常/中断）→ 上抛交 supervisor 重建路径。
      *
      * @param queueAddress 来源队列地址（毒丸留痕溯源），非空
@@ -504,8 +537,12 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             // 连接级失败（确认失败等 JMS 运行时异常）：上抛交 supervisor 重建
             throw e;
         } catch (RuntimeException e) {
-            // 业务处理失败（落库/状态更新 DB 异常等）：不确认不中断消费线程，IoTDA 重推兜底
-            log.error("遥测帧处理失败（业务异常），本帧不确认待 IoTDA 重推：queue={}，原因={}", queueAddress, e.getMessage(), e);
+            // 业务处理失败（状态更新 DB 异常等）：CLIENT_ACKNOWLEDGE 累计确认下"仅不确认继续消费"
+            // 会让本帧被后续成功确认静默吞掉——先触发全局会话重建令本帧回归 broker 重投域，再上抛
+            // 交 supervisor 退避重建（防 DB 持续故障下无退避热循环）
+            log.error("遥测帧处理失败（业务异常），触发会话重建令本帧回归重投域：queue={}，原因={}", queueAddress, e.getMessage(), e);
+            triggerGlobalRebuildForRedelivery("状态帧业务处理失败");
+            throw e;
         }
     }
 

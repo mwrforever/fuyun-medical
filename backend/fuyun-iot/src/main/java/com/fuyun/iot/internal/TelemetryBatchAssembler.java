@@ -26,14 +26,21 @@ import org.springframework.context.SmartLifecycle;
  * <p><b>确认回调时机（两套确认机制之客户端确认侧，锁定决策 6）</b>：本攒批器不直接触碰 JMS——
  * 消费方为每帧附一个 ack 回调（对 {@code message.acknowledge()} 的包装）；落库<b>成功后仅执行批末
  * 条目的回调</b>：JMS Session.CLIENT_ACKNOWLEDGE 为会话级累计确认，确认批末消息即统一确认本批
- * 全部（同会话此前已消费消息一并落账）；<b>落库失败零回调</b>——不确认的帧由 IoTDA 重推，
- * at-least-once 语义由 iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 兜底幂等。这与 RabbitMQ
- * @RabbitListener 容器 AUTO 确认（监听方法成功返回即确认，宪法 A.5-5）互不相干。
+ * 全部（同会话此前已消费消息一并落账）。这与 RabbitMQ @RabbitListener 容器 AUTO 确认（监听方法
+ * 成功返回即确认，宪法 A.5-5）互不相干。
+ *
+ * <p><b>失败语义（审查修复后的真实口径）</b>：落库/确认失败零回调——失败批帧仍处"已交付未确认"
+ * 状态；但 CLIENT_ACKNOWLEDGE 累计确认下"仅不确认继续消费"不成立（后续成功批对同会话任一消息
+ * 的确认会把失败批一并累计确认，broker 不再重投，数据无痕丢失），故失败瞬间<b>清空挂起队列并
+ * 触发会话重建回调</b>（消费者注册，见 {@link #registerFlushFailureListener}）：会话销毁令失败批
+ * 与在途帧回归 broker 重投域，重投帧由 iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 兜底幂等
+ * （at-least-once）。在途帧处置：清空动作先于上下文关闭，被丢弃帧的会话必然随之销毁，故丢弃
+ * 即依赖重投、语义自洽；停机排空期（running=false）上下文已由消费者先行关闭，跳过回调。
  *
  * <p>保序与并发口径：单 flush 线程按接收序提交整批 = 同设备帧天然保序落库；设备哈希多线程分片
  * 属 P1 压测演进项（宪法 A.5-8），P0 简化理由：单写线程吞吐已满足遥测量级且避免分片重排复杂度。
- * 失败处理：ingest 或 ack 回调抛出仅累计 {@link #flushFailureCount}（B4.3 Micrometer 绑定观测）
- * 并 error 告警，<b>绝不抛出 flush 线程</b>（连接层故障归消费者 supervisor，本层只保数据管道存活）。
+ * 失败处理：失败仅累计 {@link #flushFailureCount}（B4.3 Micrometer 绑定观测）+ error 告警 + 触发
+ * 重建回调，<b>绝不抛出 flush 线程</b>（连接层故障归消费者 supervisor，本层只保数据管道存活）。
  *
  * <p>生命周期：实现 SmartLifecycle（phase=0，先于消费者启动、后于消费者停止——宪法 A.5-15 停机
  * 顺序"先停拉取再排空在途批"：消费者 phase=1 先停拉取，本类 stop 排空滞留批后才关线程）。
@@ -62,6 +69,14 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
 
     /** 落库/确认失败累计计数（B4.3 IotAmqpMetrics counter iot.amqp.batch.flush.failure.total 绑定载体） */
     private final AtomicLong flushFailureCount = new AtomicLong(0);
+
+    /**
+     * 会话重建回调（消费者构造期一次性注册）：落库/确认失败时由 flush 线程触发，消费者据此关闭
+     * 全部在册上下文——会话销毁令失败批与其会话内全部未确认交付回归 broker 重投域（审查修复：
+     * CLIENT_ACKNOWLEDGE 累计确认下"零确认待重推"仅在会话销毁时成立）；默认空实现（未注册或
+     * 停机排空期失败时仅计数告警，上下文已由停机链关闭）。
+     */
+    private volatile Runnable flushFailureListener = () -> {};
 
     /** 单 flush 线程池（命名、有界、随上下文关闭，宪法 B.3-4 线程池纪律） */
     private volatile ExecutorService flushExecutor;
@@ -92,6 +107,19 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
      */
     public void put(StandardTelemetryMessage message, Runnable ackAction) throws InterruptedException {
         pendingQueue.put(new PendingTelemetry(message, ackAction));
+    }
+
+    /**
+     * 注册落库失败会话重建回调（包内装配边界：消费者构造期一次性注册，禁止运行期替换）。
+     *
+     * <p>回调契约：实现方须关闭消费侧全部在册 JMS 上下文（本攒批器已在回调前清空挂起队列），
+     * 会话销毁即令全部未确认交付回归 broker 重投域；回调运行于 flush 线程，实现必须非阻塞且
+     * 线程安全（生产实现 = 消费者 volatile 引用置换 + 幂等关闭，无锁）。
+     *
+     * @param listener 会话重建回调，非空；来源：IotAmqpTelemetryConsumer 构造器
+     */
+    void registerFlushFailureListener(Runnable listener) {
+        this.flushFailureListener = listener;
     }
 
     /**
@@ -218,8 +246,13 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
     }
 
     /**
-     * 整批落库 + 批末统一确认：成功后仅执行批末条目 ack 回调（会话级累计确认覆盖本批全部）；
-     * 任何异常（ingest 事务回滚 / ack 回调 JMS 故障）只累计失败计数与 error 告警，不抛出 flush 线程。
+     * 整批落库 + 批末统一确认：成功后仅执行批末条目 ack 回调（会话级累计确认覆盖本批全部）。
+     *
+     * <p>失败路径（审查修复后语义）：ingest 事务回滚或 ack 回调 JMS 故障时——累计失败计数、error
+     * 告警，随后<b>清空挂起队列并触发会话重建回调</b>：CLIENT_ACKNOWLEDGE 累计确认下失败批若仅
+     * "零确认继续消费"，会被后续成功批对同会话任一消息的确认一并累计确认（broker 不再重投，数据
+     * 无痕丢失），必须销毁会话令失败批与在途帧回归 broker 重投域（清空先于上下文关闭，被丢弃帧
+     * 的会话必然随之销毁，丢弃即依赖重投、语义自洽）。不抛出 flush 线程。
      *
      * @param batch 本轮收集的挂起条目（按接收序），可为空列表（空批直接跳过不触库）
      */
@@ -235,9 +268,15 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
             batch.get(batch.size() - 1).ackAction().run();
             log.info("遥测批落库并统一确认完成：batchSize={}，inserted={}", batch.size(), inserted);
         } catch (Exception e) {
-            // 失败零确认：本批帧不 ack，IoTDA 重推后由唯一约束冲突忽略兜底幂等；flush 线程必须存活
             flushFailureCount.incrementAndGet();
-            log.error("遥测批落库失败，本批不确认待 IoTDA 重推：batchSize={}，原因={}", batch.size(), e.getMessage(), e);
+            log.error("遥测批落库失败，丢弃在途帧并触发会话重建令失败批回归重投域：batchSize={}，原因={}", batch.size(), e.getMessage(), e);
+            if (running.get()) {
+                // 会话级累计确认（JMS 规范 §4.4.11）：失败必须以会话销毁收场——先清空挂起队列再触发
+                // 重建（被丢弃帧的会话随后必然销毁，重投域语义成立）；停机排空期（running=false）
+                // 上下文已由消费者先行关闭，重投由连接关闭自然达成，跳过回调
+                pendingQueue.clear();
+                flushFailureListener.run();
+            }
         }
     }
 

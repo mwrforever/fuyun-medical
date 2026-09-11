@@ -56,8 +56,10 @@ import org.mockito.invocation.InvocationOnMock;
  * 即时确认，返回 null 仅确认不发布；④断链重建：连接异常后销毁旧连接、以<b>新时间戳凭证</b>重建
  * （IoTDA 拒绝超 5 分钟旧时间戳，failover 透明重连不刷新时间戳）；⑤退避节奏：初始延迟起步指数
  * 退避至上限封顶（测试用毫秒级参数验证节奏公式，record 型假 sleeper 避免真实睡眠）；⑥stop 排空：
- * 先停拉取，在途帧经攒批器停机排空后统一确认。测试凭证均为无意义假值（测试资产，与任何真实
- * IOTDA 凭证无关）。
+ * 先停拉取，在途帧经攒批器停机排空后统一确认；⑦失败重建（重投域语义）：攒批落库失败与状态帧
+ * apply 业务失败均触发全局会话重建——CLIENT_ACKNOWLEDGE 会话级累计确认下"仅不确认继续消费"会让
+ * 失败帧被后续成功批确认静默吞掉，必须销毁会话令未确认交付回归 broker 重投域（重投帧由唯一约束
+ * 幂等去重）。测试凭证均为无意义假值（测试资产，与任何真实 IOTDA 凭证无关）。
  */
 class IotAmqpTelemetryConsumerTest {
 
@@ -416,6 +418,87 @@ class IotAmqpTelemetryConsumerTest {
                 .as("停机后回调不改写断链标记（保持停机前的连接正常态）")
                 .isEqualTo(1L);
         assertThat(consumer.disconnectSinceMillis().get()).as("停机后回调不记录断链起点").isEqualTo(0L);
+    }
+
+    @Test
+    @DisplayName("落库失败重建（重投域语义）：攒批落库失败触发旧会话销毁与 supervisor 重建，重投帧在新会话成功后确认")
+    void flushFailureTriggersSessionRebuildAndRedeliveredFrameIsReingested() throws Exception {
+        // 独立的第一代上下文/消费者 mock：与重建后的第二代分离，杜绝共享 mock 的投递次序竞态
+        JMSContext staleContext = mock(JMSContext.class);
+        JMSConsumer staleConsumer = mock(JMSConsumer.class);
+        Queue staleQueue = mock(Queue.class);
+        when(staleContext.createQueue(QUEUE_ADDRESS)).thenReturn(staleQueue);
+        when(staleContext.createConsumer(staleQueue)).thenReturn(staleConsumer);
+        doAnswer(invocation -> null).when(staleContext).setExceptionListener(any());
+
+        Message frame = bytesMessage(telemetryJson("it-dev-001", "vital.glucose", "5.6"));
+        // 首建链返回第一代上下文，落库失败触发重建后返回第二代上下文（新会话 = 重投域语义的载体）
+        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+                .thenReturn(staleContext, jmsContext);
+        // 第一代：仅投递一帧后空闲轮询（攒批落库即将失败）；第二代：模拟 broker 重投同帧后再空闲
+        when(staleConsumer.receive(anyLong())).thenReturn(frame).thenAnswer(this::idleAnswer);
+        when(jmsConsumer.receive(anyLong())).thenReturn(frame).thenAnswer(this::idleAnswer);
+        // 落库首刷失败、重投批次成功（装饰器时序 = 失败批零确认 → 重建 → 重投 → 成功确认）
+        when(ingestService.ingest(anyList()))
+                .thenThrow(new IllegalStateException("数据库瞬断"))
+                .thenReturn(1);
+
+        consumer.start();
+
+        // 断言 1：失败触发会话重建——旧会话销毁（未确认交付回归 broker 重投域）+ 建链两次（supervisor 介入）
+        verify(staleContext, timeout(AWAIT_MILLIS)).close();
+        verify(connectionFactory, timeout(AWAIT_MILLIS).times(2))
+                .createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE));
+        // 断言 2：失败批零确认 + 重投批成功后确认（acknowledge 恰一次 = 重投域语义的消费者侧行为）
+        assertThat(failureCountEventually()).as("攒批失败计数递增（落库失败真实发生）").isTrue();
+        verify(ingestService, timeout(AWAIT_MILLIS).times(2)).ingest(anyList());
+        verify(frame, timeout(AWAIT_MILLIS)).acknowledge();
+    }
+
+    @Test
+    @DisplayName("状态帧 apply 失败重建：旧会话销毁与 supervisor 重建，重投状态帧成功后确认且事件仅发布一次")
+    void statusFrameApplyFailureTriggersRebuildAndRedeliveredFrameSucceeds() throws Exception {
+        JMSContext staleContext = mock(JMSContext.class);
+        JMSConsumer staleConsumer = mock(JMSConsumer.class);
+        Queue staleQueue = mock(Queue.class);
+        when(staleContext.createQueue(QUEUE_ADDRESS)).thenReturn(staleQueue);
+        when(staleContext.createConsumer(staleQueue)).thenReturn(staleConsumer);
+        doAnswer(invocation -> null).when(staleContext).setExceptionListener(any());
+
+        Message statusFrame = bytesMessage(
+                "{\"deviceId\":\"it-dev-001\",\"status\":\"OFFLINE\",\"occurredAt\":\"2026-09-10T00:00:00Z\"}");
+        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+                .thenReturn(staleContext, jmsContext);
+        // 第一代投递状态帧（apply 即将失败）；第二代重投同状态帧（broker 重投域语义）后空闲
+        when(staleConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
+        when(jmsConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
+        // apply 首调失败（业务异常域）、重投后成功并返回档案 wardId
+        when(deviceStatusService.apply(any(DeviceStatusEvent.class)))
+                .thenThrow(new IllegalStateException("档案库瞬断"))
+                .thenReturn(1001L);
+
+        consumer.start();
+
+        // 断言 1：业务失败触发会话重建——旧会话销毁 + 建链两次（走 supervisor 退避重建路径）
+        verify(staleContext, timeout(AWAIT_MILLIS)).close();
+        verify(connectionFactory, timeout(AWAIT_MILLIS).times(2))
+                .createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE));
+        // 断言 2：重投状态帧在新会话成功——apply 恰两次（失败 + 重投成功），确认与事件发布仅成功侧执行
+        verify(deviceStatusService, timeout(AWAIT_MILLIS).times(2)).apply(any(DeviceStatusEvent.class));
+        verify(statusFrame, timeout(AWAIT_MILLIS)).acknowledge();
+        assertThat(statusEventsPublished).as("状态事件仅由重投成功侧发布一次").hasSize(1);
+        assertThat(statusEventsPublished.get(0).wardId())
+                .as("重投成功事件携带档案 wardId")
+                .isEqualTo(1001L);
+    }
+
+    /** 轮询等待攒批失败计数达到 1（失败计数在 flush 线程异步链路递增，存在微小相位差）。 */
+    private boolean failureCountEventually() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
+        while (assembler.flushFailureCount().get() < 1 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20);
+        }
+        return assembler.flushFailureCount().get() == 1L;
     }
 
     /** 桩：receive 空闲轮询（短暂休眠返回 null，模拟 broker 无消息） */
