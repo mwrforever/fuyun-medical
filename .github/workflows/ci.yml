@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  # ===== 路径过滤：骨架期仅文档（**/*.md）变更不触发构建，P0 代码落地后自然生效 =====
+  # ===== 路径过滤：后端/前端路径有变更即触发对应 verify 全量门禁，纯文档（**/*.md）变更不触发 =====
   # 不用 workflow 级 paths 过滤：被路径过滤整体跳过的 workflow 其 required check 停留 Pending 阻塞合并；
   # job 级条件跳过会上报 Success，满足 required check 语义（细则 §3.3）
   changes:
@@ -28,8 +28,6 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      pom: ${{ steps.filter.outputs.pom }}
-      webpkg: ${{ steps.filter.outputs.webpkg }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3.0.2
@@ -42,11 +40,6 @@ jobs:
             frontend:
               - 'web/**'
               - '!web/**/*.md'
-            # 构建文件存在性守卫：骨架期 pom.xml/package.json 尚未落盘，即使发生误判也不运行构建门禁
-            pom:
-              - 'backend/**/pom.xml'
-            webpkg:
-              - 'web/**/package.json'
 
   # ===== 后端全量门禁：Spotless 格式 + surefire 单测 + Testcontainers 集成测试 + JaCoCo 覆盖率门禁 =====
   backend:
@@ -54,8 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     needs: changes
-    # 双重条件：后端有变更 且 父 POM 已落盘（骨架期 pom.xml 不存在时一律跳过，防缓存与构建空跑）
-    if: needs.changes.outputs.backend == 'true' && needs.changes.outputs.pom == 'true'
+    # 触发条件：后端路径有变更即跑全量门禁（仅改 java/资源文件不触碰 pom.xml 亦必须过门禁）
+    if: needs.changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
@@ -75,8 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: changes
-    # 双重条件：前端有变更 且 workspace 根 package.json 已落盘（骨架期不存在时一律跳过，防 pnpm 版本解析空跑）
-    if: needs.changes.outputs.frontend == 'true' && needs.changes.outputs.webpkg == 'true'
+    # 触发条件：前端路径有变更即跑全量门禁（仅改 vue/ts 不触碰 package.json 亦必须过门禁）
+    if: needs.changes.outputs.frontend == 'true'
     steps:
       - uses: actions/checkout@v7
       # 顺序不可颠倒：setup-node 的 pnpm 缓存要求 pnpm 已安装；版本经 web/package.json 的 packageManager 字段锁定

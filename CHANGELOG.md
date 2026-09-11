@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR-5 CI 门禁缺陷修复：移除骨架期 pom/webpkg 构建守卫，恢复后端/前端门禁触发（先记再改）
+
+- **缺陷实证（PR #8，CI run 34645973742）**：changes job 判定输出 `Filter backend = true`、`Filter pom = false`，backend job 双条件 `needs.changes.outputs.backend == 'true' && needs.changes.outputs.pom == 'true'` 为 false → `backend / verify` skipping——本 PR 明确含后端改动（fuyun-iot 鉴权迁移 + fuyun-app IT，9 个 java 文件）却未跑后端门禁，属于严格门禁模型（方案 B）下的门禁绕过缺陷。
+- **根因与守卫退役原因**：`pom: 'backend/**/pom.xml'` 与 `webpkg: 'web/**/package.json'` 两个过滤器是 PR-1 骨架期的「构建文件存在性守卫」——骨架期 pom.xml/package.json 尚未落盘时防止构建 job 空跑；骨架早已落盘后该守卫存在前提消失，语义退化为「diff 必须触碰 pom.xml/package.json 才跑门禁」，改 java/vue 不碰构建文件的后端/前端改动全部绕过 verify 门禁，故按死配置退役删除。
+- **PR-2~PR-4 未暴露原因**：各 PR 均恰好新增模块/依赖（必碰 pom.xml 或 package.json），守卫条件恒为 true，双条件退化等价于单条件，缺陷未显形。
+- **修复面**：backend/frontend job 的 if 删除 pom/webpkg 条件（仅保留路径变更单条件）；changes job 的 pom/webpkg 过滤器定义与 outputs 映射一并删除（全仓 grep 核实 `outputs.pom`/`outputs.webpkg` 无其他消费方；setup-java 的 `cache-dependency-path: backend/**/pom.xml` 与 pnpm 的 `package_json_file: web/package.json` 属工具自身参数，与该 output 无关，不受影响）；五 checks 名（backend / verify、frontend / verify、images、commitlint、hygiene）与其余 filter/job 结构零改动。
+
 ## 2026-09-11 · PR-5 独立审查修复：/ws/iot 鉴权点迁移（HTTP 握手层→STOMP CONNECT 帧）、断线重订阅读断言与 bigscreen 状态机/traceId 修复（先记再改）
 
 - **Finding 1（Critical，跨栈）**：fuyun-iot 鉴权点由 HTTP 握手层迁移至 STOMP CONNECT 帧级——浏览器原生 WebSocket API 无法携带自定义 HTTP 头，stompjs connectHeaders 只进入建连后的 CONNECT 帧，原 `StompHandshakeAuthInterceptor` 读 HTTP 升级头对浏览器客户端必然 401（端到端永远无法建连）。迁移后 /ws/iot 升级端点允许匿名建立 WebSocket 传输层，但任何 STOMP 会话必须先通过 CONNECT 帧令牌校验方可 CONNECTED——SimpleBroker 仅在 CONNECTED 后接受 SUBSCRIBE，未授权会话无法订阅/收发任何数据（订阅前无数据暴露），鉴权时点仍先于一切数据通道，安全等价。拒绝语义（spring-websocket 6.2.19 `StompSubProtocolHandler` 字节码实证）：帧级 ChannelInterceptor 抛 MessagingException → 服务端回 ERROR 帧（message=不含令牌与原因的固定摘要，防枚举）→ 随即以 CloseStatus.PROTOCOL_ERROR 关闭连接。`StompHandshakeAuthInterceptor` 及其单测删除，鉴权逻辑全部迁至 `StompConnectAuthInterceptor`（clientInboundChannel 挂载）；`IotTelemetryPipelineIT` 改为 CONNECT 头承载令牌（与生产浏览器客户端同通道）并补无/错令牌拒绝负路径用例；docs/specs 14-iot §WebSocket 两处「握手鉴权」表述同步（接口契约同步条款）。web 端零改动理由：前端 connectHeaders 注入方式本就承载于 CONNECT 帧，迁移后与帧级拦截器天然对齐，仅修正注释中「握手层」表述。
