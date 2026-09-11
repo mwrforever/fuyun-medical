@@ -1,6 +1,7 @@
 package com.fuyun.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +36,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import org.apache.qpid.jms.JmsConnectionFactory;
@@ -58,6 +61,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.messaging.simp.stomp.ConnectionLostException;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
@@ -84,19 +88,21 @@ import org.testcontainers.utility.MountableFile;
  * 打通「AMQP 注入 → Qpid 消费 → 四路解析 → 绑定快照 → 批量冲突忽略落库 → 客户端确认」、
  * 「落库 → STOMP 遥测摘要推送」、「状态帧 → 档案状态机 → 档案 wardId 补全自事件 → fy.topic →
  * 治理队列 AUTO+幂等消费 → STOMP 设备状态推送」与「HTTP 兜底通道独立鉴权 + 双通道同键去重」
- * 全链路。七步断言（§6.2 原文序）：①种子；②AMQP 注入落库幂等（4 帧两两重复键 → 恰 2 行 +
- * 快照值）；③STOMP 摘要断言（订阅 /topic/iot/telemetry/1001 → 发 1 帧新遥测 → 收摘要帧含
- * deviceId/metricCode）；④毒丸隔离（非 JSON + 缺字段落 PARSE 错误日志 PENDING → 锚点帧证明
- * 消费未阻塞）；⑤状态扇出 AMQP 全链（OFFLINE 帧→档案更新→received_event PROCESSED；消费者
- * 以设备档案 ward_id=1001 补全自事件 → /topic/iot/device-status/1001 收状态帧）；⑥幂等重投
- * （台账真实已消费 eventId 重发跳过，台账行数不变）；⑦HTTP 兜底（无/错 token 401 IOT-1001；
- * 对 token 同键载荷 202 且 iot_telemetry 行数不增）。
+ * 全链路。八步断言（§6.2 原文序 + PR-5 Finding 1 迁移后新增步骤 8）：①种子；②AMQP 注入落库
+ * 幂等（4 帧两两重复键 → 恰 2 行 + 快照值）；③STOMP 摘要断言（订阅 /topic/iot/telemetry/1001
+ * → 发 1 帧新遥测 → 收摘要帧含 deviceId/metricCode）；④毒丸隔离（非 JSON + 缺字段落 PARSE
+ * 错误日志 PENDING → 锚点帧证明消费未阻塞）；⑤状态扇出 AMQP 全链（OFFLINE 帧→档案更新→
+ * received_event PROCESSED；消费者以设备档案 ward_id=1001 补全自事件 → /topic/iot/device-status/1001
+ * 收状态帧）；⑥幂等重投（台账真实已消费 eventId 重发跳过，台账行数不变）；⑦HTTP 兜底（无/错
+ * token 401 IOT-1001；对 token 同键载荷 202 且 iot_telemetry 行数不增）；⑧STOMP 帧级鉴权负路径
+ * （无/错令牌 CONNECT 被拒——ERROR 帧后连接关闭，会话无法建立）。
  *
- * <p><b>STOMP 客户端与握手鉴权方案（简报 §6.1/§6.2 步骤 5）</b>：spring-websocket
- * WebSocketStompClient(StandardWebSocketClient) 连 ws://localhost:{port}/ws/iot；握手
- * Authorization 头经 WebSocketHttpHeaders 携带（StandardWebSocketClient 经 ClientEndpointConfig
- * Configurator 透传自定义头至 Tomcat 升级请求），令牌为 IT 内经 HTTP 真实登录 M01 签发的 access
- * 令牌——握手鉴权走生产 TokenVerifier 全链，不为可测性削弱拦截器逻辑。
+ * <p><b>STOMP 客户端与帧级鉴权方案（PR-5 Finding 1 迁移后）</b>：spring-websocket
+ * WebSocketStompClient(StandardWebSocketClient) 连 ws://localhost:{port}/ws/iot；令牌承载于
+ * CONNECT 帧 Authorization 原生头（StompHeaders，与生产浏览器客户端 stompjs connectHeaders
+ * 同通道——浏览器原生 WebSocket 无法携带自定义 HTTP 头，HTTP 升级头对生产客户端不可达），
+ * 令牌为 IT 内经 HTTP 真实登录 M01 签发的 access 令牌——帧级鉴权走生产 TokenVerifier 全链，
+ * 不为可测性削弱拦截器逻辑。
  *
  * <p><b>步骤⑤状态主题收帧为何即 AMQP 全链断言（审核 F-2 修复后）</b>：P0 状态帧契约不含
  * wardId（TelemetryFrameParser 解析恒 null，V403 占位载荷四字段），消费者以 IDeviceStatusService.apply
@@ -111,7 +117,7 @@ import org.testcontainers.utility.MountableFile;
  * 2026-09-11，见 @DynamicPropertySource 注释）。消费者在建链失败/断链时由 supervisor 按退避节奏
  * 重建（测试轮询上限已覆盖 3s→30s 退避窗口）。
  *
- * <p>七步断言按 @Order 串联（消费状态跨步累积属业务链路语义）。
+ * <p>八步断言按 @Order 串联（消费状态跨步累积属业务链路语义）。
  */
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -266,7 +272,7 @@ class IotTelemetryPipelineIT {
     /** RabbitTemplate：以治理装配的 JSON 转换器重发幂等重投帧（生产/测试同源，DictBroadcastIT 先例） */
     private final RabbitTemplate rabbitTemplate;
 
-    /** 随机端口 HTTP 客户端：M01 真实登录取令牌（STOMP 握手鉴权输入）与 HTTP 兜底端点调用 */
+    /** 随机端口 HTTP 客户端：M01 真实登录取令牌（STOMP CONNECT 帧鉴权输入）与 HTTP 兜底端点调用 */
     private final TestRestTemplate restTemplate;
 
     /** 嵌入式 Servlet 容器随机端口：STOMP WebSocket 握手与 HTTP 兜底请求目标 */
@@ -542,6 +548,29 @@ class IotTelemetryPipelineIT {
         assertThat(countTelemetry()).as("同键载荷经唯一约束冲突忽略，iot_telemetry 行数不增").isEqualTo(rowsBefore);
     }
 
+    /**
+     * 步骤⑧：STOMP 帧级鉴权负路径（PR-5 Finding 1 迁移后新增）——无令牌/错令牌的 CONNECT 帧
+     * 被服务端拒绝：帧级拦截器抛 MessagingException → 客户端收到 ERROR 帧（message=固定摘要）
+     * → 服务端以 PROTOCOL_ERROR 关闭连接。spring 客户端在 CONNECTED 前连接关闭即连接未来异常
+     * 完成（cause=ConnectionLostException）——断言会话无法建立，拒绝语义不弱化。
+     */
+    @Test
+    @Order(8)
+    @DisplayName("STOMP 帧级鉴权负路径：无/错令牌 CONNECT 被拒（ERROR 帧后连接关闭，会话无法建立）")
+    void stompConnectWithMissingOrWrongTokenIsRejected() {
+        // 无令牌：CONNECT 帧不带 Authorization 原生头
+        assertThatThrownBy(() -> connectStompFuture(null).get(STOMP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                .as("无令牌 CONNECT 必须被拒绝（连接无法建立）")
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(ConnectionLostException.class);
+        // 错令牌：Bearer 格式合法但 TokenVerifier 校验链不通过
+        assertThatThrownBy(() -> connectStompFuture("Bearer it-invalid-token")
+                        .get(STOMP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                .as("错令牌 CONNECT 必须被拒绝（连接无法建立）")
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(ConnectionLostException.class);
+    }
+
     /** 构造带 wardId 的设备状态自事件信封（步骤⑥幂等重投样本，eventId 取自台账真实已消费行） */
     private EventEnvelope wardEnvelope(String eventId, String traceId) {
         return new EventEnvelope(
@@ -555,7 +584,7 @@ class IotTelemetryPipelineIT {
                         DEVICE_ID, DeviceStatus.OFFLINE, Instant.parse(STATUS_OCCURRED_AT), SNAPSHOT_WARD_ID)));
     }
 
-    /** 经 M01 真实登录取 access 令牌（V303 种子 admin；令牌为 STOMP 握手鉴权输入，不进断言与日志） */
+    /** 经 M01 真实登录取 access 令牌（V303 种子 admin；令牌为 STOMP CONNECT 帧鉴权输入，不进断言与日志） */
     private String loginAndGetAccessToken() throws Exception {
         ResponseEntity<String> response = postJson(
                 "/api/v1/system/auth/login", "{\"loginName\":\"admin\",\"password\":\"Fuyun@2026\"}", Map.of());
@@ -574,8 +603,26 @@ class IotTelemetryPipelineIT {
         return restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(jsonBody, headers), String.class);
     }
 
-    /** 建立 STOMP 会话：WebSocketStompClient(StandardWebSocketClient)，握手 Authorization 头携 Bearer 令牌 */
+    /**
+     * 建立 STOMP 会话：WebSocketStompClient(StandardWebSocketClient)，CONNECT 帧头携 Bearer 令牌
+     * （帧级鉴权与生产浏览器客户端同通道，PR-5 Finding 1 迁移后口径）。
+     *
+     * @param accessToken access 令牌原文，非空；来源：{@link #loginAndGetAccessToken()}
+     * @return 已完成 CONNECT 的会话，非空
+     * @throws Exception 连接超时或被拒绝时抛出（正路径不应发生）
+     */
     private StompSession connectStompSession(String accessToken) throws Exception {
+        return connectStompFuture("Bearer " + accessToken).get(STOMP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 发起 STOMP 连接（正/负路径共用）：CONNECT 帧 Authorization 原生头携 Bearer 令牌；
+     * authorization 为 null 时 CONNECT 帧不带该头（负路径无令牌样本）。令牌禁入 URL 与日志（红线 6）。
+     *
+     * @param authorization Authorization 头完整值（含 Bearer 前缀），null=不带该头
+     * @return 未阻塞的连接未来（CONNECTED 完成即完成；被拒时异常完成，cause=ConnectionLostException）
+     */
+    private CompletableFuture<StompSession> connectStompFuture(String authorization) {
         WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
         // 订阅收据回执（receipt）跟踪依赖客户端 TaskScheduler；短会话关闭心跳降低噪音
         ThreadPoolTaskScheduler taskScheduler = new ThreadPoolTaskScheduler();
@@ -584,16 +631,16 @@ class IotTelemetryPipelineIT {
         taskScheduler.initialize();
         stompClient.setTaskScheduler(taskScheduler);
         stompClient.setDefaultHeartbeat(new long[] {0, 0});
-        WebSocketHttpHeaders handshakeHeaders = new WebSocketHttpHeaders();
-        handshakeHeaders.add(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken);
-        // CONNECT 帧头为空 StompHeaders（显式定型消歧 3/4 参重载），鉴权只在握手层（生产客户端同口径）
-        return stompClient
-                .connectAsync(
-                        "ws://localhost:" + localServerPort + "/ws/iot",
-                        handshakeHeaders,
-                        new StompHeaders(),
-                        new StompSessionHandlerAdapter() {})
-                .get(STOMP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        // 令牌承载于 CONNECT 帧原生头（帧级鉴权唯一输入）；HTTP 升级头保持为空（生产浏览器客户端不可达）
+        StompHeaders connectHeaders = new StompHeaders();
+        if (authorization != null) {
+            connectHeaders.add(HttpHeaders.AUTHORIZATION, authorization);
+        }
+        return stompClient.connectAsync(
+                "ws://localhost:" + localServerPort + "/ws/iot",
+                new WebSocketHttpHeaders(),
+                connectHeaders,
+                new StompSessionHandlerAdapter() {});
     }
 
     /**

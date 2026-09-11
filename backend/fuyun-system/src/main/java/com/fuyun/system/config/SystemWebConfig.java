@@ -111,8 +111,8 @@ public class SystemWebConfig implements WebMvcConfigurer {
 
     /**
      * 访问令牌布尔校验 Bean（PR-4 B4.3 跨模块小改）：与令牌服务同一实例，以 {@link TokenVerifier}
-     * 接口类型单独暴露，供 iot 握手鉴权等跨模块消费方按最小契约注入（B.2-2 只依赖 api 包，
-     * 不感知 ITokenService 完整签发/刷新/登出面）。
+     * 接口类型单独暴露，供 iot STOMP CONNECT 帧鉴权等跨模块消费方按最小契约注入（B.2-2 只依赖
+     * api 包，不感知 ITokenService 完整签发/刷新/登出面）。
      *
      * @return 访问令牌布尔校验实例（与 {@link #tokenService()} 同一单例，非新建）
      */

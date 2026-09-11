@@ -5,8 +5,9 @@ package com.fuyun.system.api;
  * ProblemDetail 出口场景的最小暴露面。
  *
  * <p>落 api 包为宪法 B.1 明文（跨模块契约唯一出口）：消费方为 fuyun-iot 的 /ws/iot STOMP
- * 握手鉴权——HandshakeInterceptor 拒绝握手仅置 401 状态码，无全局异常渲染器出口；MQ 线程
- * 同理无 HTTP 语义。两场景布尔语义足够，故独立于
+ * CONNECT 帧级鉴权（PR-5 Finding 1 迁移——浏览器原生 WebSocket 无法携带自定义 HTTP 头，令牌
+ * 承载于建连后的 CONNECT 帧）——帧级拒绝以 MessagingException 触发 ERROR 帧 + 连接关闭，无
+ * 全局异常渲染器出口；MQ 线程同理无 HTTP 语义。两场景布尔语义足够，故独立于
  * {@link com.fuyun.system.service.ITokenService}（其 verify 抛 BizException 携带错误码细分，
  * 服务 HTTP 401 渲染）单列契约，两者互不继承防契约耦合；实现类 TokenServiceImpl 同一实例
  * 双接口暴露（SystemWebConfig 装配）。

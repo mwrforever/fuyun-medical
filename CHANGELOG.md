@@ -2,6 +2,34 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR-5 CI 门禁缺陷修复：移除骨架期 pom/webpkg 构建守卫，恢复后端/前端门禁触发（先记再改）
+
+- **缺陷实证（PR #8，CI run 34645973742）**：changes job 判定输出 `Filter backend = true`、`Filter pom = false`，backend job 双条件 `needs.changes.outputs.backend == 'true' && needs.changes.outputs.pom == 'true'` 为 false → `backend / verify` skipping——本 PR 明确含后端改动（fuyun-iot 鉴权迁移 + fuyun-app IT，9 个 java 文件）却未跑后端门禁，属于严格门禁模型（方案 B）下的门禁绕过缺陷。
+- **根因与守卫退役原因**：`pom: 'backend/**/pom.xml'` 与 `webpkg: 'web/**/package.json'` 两个过滤器是 PR-1 骨架期的「构建文件存在性守卫」——骨架期 pom.xml/package.json 尚未落盘时防止构建 job 空跑；骨架早已落盘后该守卫存在前提消失，语义退化为「diff 必须触碰 pom.xml/package.json 才跑门禁」，改 java/vue 不碰构建文件的后端/前端改动全部绕过 verify 门禁，故按死配置退役删除。
+- **PR-2~PR-4 未暴露原因**：各 PR 均恰好新增模块/依赖（必碰 pom.xml 或 package.json），守卫条件恒为 true，双条件退化等价于单条件，缺陷未显形。
+- **修复面**：backend/frontend job 的 if 删除 pom/webpkg 条件（仅保留路径变更单条件）；changes job 的 pom/webpkg 过滤器定义与 outputs 映射一并删除（全仓 grep 核实 `outputs.pom`/`outputs.webpkg` 无其他消费方；setup-java 的 `cache-dependency-path: backend/**/pom.xml` 与 pnpm 的 `package_json_file: web/package.json` 属工具自身参数，与该 output 无关，不受影响）；五 checks 名（backend / verify、frontend / verify、images、commitlint、hygiene）与其余 filter/job 结构零改动。
+
+## 2026-09-11 · PR-5 独立审查修复：/ws/iot 鉴权点迁移（HTTP 握手层→STOMP CONNECT 帧）、断线重订阅读断言与 bigscreen 状态机/traceId 修复（先记再改）
+
+- **Finding 1（Critical，跨栈）**：fuyun-iot 鉴权点由 HTTP 握手层迁移至 STOMP CONNECT 帧级——浏览器原生 WebSocket API 无法携带自定义 HTTP 头，stompjs connectHeaders 只进入建连后的 CONNECT 帧，原 `StompHandshakeAuthInterceptor` 读 HTTP 升级头对浏览器客户端必然 401（端到端永远无法建连）。迁移后 /ws/iot 升级端点允许匿名建立 WebSocket 传输层，但任何 STOMP 会话必须先通过 CONNECT 帧令牌校验方可 CONNECTED——SimpleBroker 仅在 CONNECTED 后接受 SUBSCRIBE，未授权会话无法订阅/收发任何数据（订阅前无数据暴露），鉴权时点仍先于一切数据通道，安全等价。拒绝语义（spring-websocket 6.2.19 `StompSubProtocolHandler` 字节码实证）：帧级 ChannelInterceptor 抛 MessagingException → 服务端回 ERROR 帧（message=不含令牌与原因的固定摘要，防枚举）→ 随即以 CloseStatus.PROTOCOL_ERROR 关闭连接。`StompHandshakeAuthInterceptor` 及其单测删除，鉴权逻辑全部迁至 `StompConnectAuthInterceptor`（clientInboundChannel 挂载）；`IotTelemetryPipelineIT` 改为 CONNECT 头承载令牌（与生产浏览器客户端同通道）并补无/错令牌拒绝负路径用例；docs/specs 14-iot §WebSocket 两处「握手鉴权」表述同步（接口契约同步条款）。web 端零改动理由：前端 connectHeaders 注入方式本就承载于 CONNECT 帧，迁移后与帧级拦截器天然对齐，仅修正注释中「握手层」表述。
+- **Finding 2（Critical，T-R4-2 实测结论回填）**：stompjs 7.3.0 断线自动重连后无自动重订阅（onWebSocketClose 时 _stompHandler 整体作废，库内不重建订阅）——bigscreen useIotStomp 在 onWebSocketClose/onStompError 将在册订阅句柄置 null（旧句柄已随连接作废），onConnect 无条件重订阅（与首连复用同一 doSubscribe 落地方法），消除「徽标已连接、零帧流入」假连接。**T-R4-2 结论**：stompjs 7.3.0 无自动重订阅，客户端须在 onConnect 重订阅，已在 PR-5 落码；TASK.md 该行按登记台规则回填删除。
+- **Finding 3（Important）**：stompjs activate() 对已激活 Client 为 no-op，connect() 无条件置 connecting 使已连接换病区再点连接卡死 connecting 态（断开按钮 v-if connected 消失）——已连接（client.connected=true）时改为保持 connected 态、不置 connecting、不重复 activate，订阅切换由紧随其后的 subscribeTelemetrySummary 已连接分支承接（与断线重连重订阅复用同一内部方法，防两处订阅逻辑漂移）。
+- **Finding 4（Important）**：crypto.randomUUID 带 [SecureContext] 限定，仓库拓扑 nginx :80 无 TLS、内网 HTTP 访问下为 undefined（TypeError）——useIotStomp traceId 生成加守卫降级（时间戳+随机数组合串，仅作日志锚点非密码学用途）。
+
+## 2026-09-11 · PR-5 B5.2：P0 收口事务——W-3 销项、T-R3 回填核对、计划完成项标注与 DoD 预检落盘（先记再改）
+
+- **W-3 销项（逐项核实后删除，禁盲删）**：三项对齐逐一实测复核达成——① `backend/Dockerfile` 26 条显式 COPY 逐模块（含 fuyun-iot/iot-simulator POM 行），glob 拍平已消除（台账 B1.2 行 complete）；② web 产物路径三处同路径（compose 三应用 dist bind mount + web/Dockerfile 三条 `COPY --from=build .../apps/<app>/dist` + nginx 三 location alias，均为 W-3 裁决口径 `web/apps/<app>/dist`）；③ `ci.yml` 无骨架期排除项（changes 过滤器仅永久 `*.md` 排除，images job 三镜像构建步骤在位，台账 B1.3 行 complete）——W-3 整行删除；W-4/W-5/D-8/L-1~L-4/T-R4-2 等行一律不动。
+- **T-R3-2/T-R3-3 回填核对（无文件改动，声明核对结论）**：T-R3-2 原行已于 PR-4 B4.1 实测回填删除（结论 = `add_columnstore_policy` 胜出，见 2026-09-10 B4.1 条目收口补记），TASK.md 待调研表现无该行；T-R3-3 原行已于 B4.4 回填删除，本地两级实测结论（supervisor 单测 + IotAmqpReconnectIT）并入 TASK.md L-2 行，核对在位且表述完整。
+- **计划完成项标注（最小内联标注法，禁改正文语义）**：`docs/plans/2026-09-08-P0实施计划.md` §1 五个 PR 标题行尾对 PR-1~PR-4 追加「——已完成（PR #N，dev@<hash>）」四处标注，合入点以台账记录为准（#4/ed5e34e、#5/a019f47、#6/a93179a、#7/9107f92）；PR-5 行不自标（合入时点未知，随 P6 终验补记）；§3 DoD 五条不动——勾选属 P6 终验，提前打勾即伪造证据。
+- **DoD 预检报告落盘**：新增 `docs/plans/2026-09-11-P0-DoD预检.md`——对交付 loop §5 七条 DoD 逐条预检（已满足 / 待 P6 终验附证据 / 延后条款豁免三态，附验证命令与证据来源）；属 PR-5 时点预检而非终验勾选，终验逐项附证据归 P6。
+
+## 2026-09-11 · PR-5 B5.1：bigscreen 最小遥测页与 STOMP 单例封装、workstation 首页骨架（先记再改）
+
+- **依赖申报（表外申报①，随本批次首个功能提交生效）**：bigscreen app 级 package.json 新增 `@stomp/stompjs` **7.3.0**（版本来源=技术栈定稿 §4.1 与 web 宪法 C.2 唯一权威值，非新值）；**申报位置=app 级而非 catalog**——依据 pnpm-workspace.yaml 第 2 行既有注释先例（「业务独立依赖不进 catalog：……echarts/@stomp 待 PR-5 再引」），与 axios 跨 app 共享进 catalog 的口径不同；lockfile 随同一提交更新。
+- **bigscreen 最小遥测页**：`/ws/iot` STOMP 单例封装（web 宪法 B.3-3 逐条款：Client 首次 connect 惰性单例、重连心跳全交库内建固定间隔 10s 禁自研循环、订阅句柄组件卸载统一退订、token 经 beforeConnect 每次连接尝试实时读 sessionStorage 键 `fy:bigscreen:iot-token`、onStompError/onWebSocketClose 统一日志含主题与 traceId 禁打令牌）；首页原位改造三区——连接设置（wardId 路由 query 可书签化 + 令牌 password 输入）、链路状态（徽标/订阅主题/帧计数）、遥测摘要（最近一帧覆盖渲染，count/occurredAtUpperBound 原样展示/items 明细表）；手写后备类型 types/iot.ts（openapi-typescript 生成链路不覆盖 STOMP 载荷，字段与后端 ITelemetryPushService record 逐字对齐并声明漂移风险）与 unknown 收窄解析 utils/iotMessage.ts；不引 echarts、不订设备状态主题（P5 负面清单，简报 §0）。
+- **workstation 首页骨架**：HomeView 原位改造两区——会话问候（displayName/loginName 取既有 auth store，空值兜底「未登录用户」防御文案）+ 业务开通占位卡（文案与 AppSidebar 占位口径一致）；零新增依赖、零 api/store/路由改动、零出网调用（P0 无首页数据接口，禁止推测性调用）。
+- **宪法 B.3-3 措辞差异关注项（不阻塞，简报附 1）**：条款括号「reconnectDelay 指数退避」与 @stomp/stompjs 7.3.0 内建实况（固定间隔毫秒值，无内建指数退避）存在措辞出入，本 PR 按库内建固定间隔 10000ms 落地、绝不自研退避循环（合规核心=重连完全交库内建）；措辞修订随 P1 workstation 接入 STOMP 时走修宪流程（先记 CHANGELOG 再改正文），本 PR 不动宪法。
+
 ## 2026-09-11 · PR #7 独立审查修复：AMQP 确认语义修正（累计确认丢数窗口）与 simulator MQTT 鉴权凭证补齐（先记再改）
 
 - **Finding 1（Critical，确认语义设计前提被证伪）**：JMS `CLIENT_ACKNOWLEDGE` 为会话级累计确认（JMS 规范 §4.4.11）——对同会话任一消息 `acknowledge()` 会一并确认此前全部未确认交付。原设计「落库失败零回调→帧留待 IoTDA 重推」只在会话/连接重建时成立：真实时序下失败批 [A,B] 未确认，后续成功批 [C,D] 的批末确认会把 A、B 一并累计确认，broker 不再重投，数据无痕丢失；状态帧 `apply` 失败帧同根缺陷（被后续成功状态帧确认吞掉）。
