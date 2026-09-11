@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR-5 独立审查修复：/ws/iot 鉴权点迁移（HTTP 握手层→STOMP CONNECT 帧）、断线重订阅读断言与 bigscreen 状态机/traceId 修复（先记再改）
+
+- **Finding 1（Critical，跨栈）**：fuyun-iot 鉴权点由 HTTP 握手层迁移至 STOMP CONNECT 帧级——浏览器原生 WebSocket API 无法携带自定义 HTTP 头，stompjs connectHeaders 只进入建连后的 CONNECT 帧，原 `StompHandshakeAuthInterceptor` 读 HTTP 升级头对浏览器客户端必然 401（端到端永远无法建连）。迁移后 /ws/iot 升级端点允许匿名建立 WebSocket 传输层，但任何 STOMP 会话必须先通过 CONNECT 帧令牌校验方可 CONNECTED——SimpleBroker 仅在 CONNECTED 后接受 SUBSCRIBE，未授权会话无法订阅/收发任何数据（订阅前无数据暴露），鉴权时点仍先于一切数据通道，安全等价。拒绝语义（spring-websocket 6.2.19 `StompSubProtocolHandler` 字节码实证）：帧级 ChannelInterceptor 抛 MessagingException → 服务端回 ERROR 帧（message=不含令牌与原因的固定摘要，防枚举）→ 随即以 CloseStatus.PROTOCOL_ERROR 关闭连接。`StompHandshakeAuthInterceptor` 及其单测删除，鉴权逻辑全部迁至 `StompConnectAuthInterceptor`（clientInboundChannel 挂载）；`IotTelemetryPipelineIT` 改为 CONNECT 头承载令牌（与生产浏览器客户端同通道）并补无/错令牌拒绝负路径用例；docs/specs 14-iot §WebSocket 两处「握手鉴权」表述同步（接口契约同步条款）。web 端零改动理由：前端 connectHeaders 注入方式本就承载于 CONNECT 帧，迁移后与帧级拦截器天然对齐，仅修正注释中「握手层」表述。
+- **Finding 2（Critical，T-R4-2 实测结论回填）**：stompjs 7.3.0 断线自动重连后无自动重订阅（onWebSocketClose 时 _stompHandler 整体作废，库内不重建订阅）——bigscreen useIotStomp 在 onWebSocketClose/onStompError 将在册订阅句柄置 null（旧句柄已随连接作废），onConnect 无条件重订阅（与首连复用同一 doSubscribe 落地方法），消除「徽标已连接、零帧流入」假连接。**T-R4-2 结论**：stompjs 7.3.0 无自动重订阅，客户端须在 onConnect 重订阅，已在 PR-5 落码；TASK.md 该行按登记台规则回填删除。
+- **Finding 3（Important）**：stompjs activate() 对已激活 Client 为 no-op，connect() 无条件置 connecting 使已连接换病区再点连接卡死 connecting 态（断开按钮 v-if connected 消失）——已连接（client.connected=true）时改为保持 connected 态、不置 connecting、不重复 activate，订阅切换由紧随其后的 subscribeTelemetrySummary 已连接分支承接（与断线重连重订阅复用同一内部方法，防两处订阅逻辑漂移）。
+- **Finding 4（Important）**：crypto.randomUUID 带 [SecureContext] 限定，仓库拓扑 nginx :80 无 TLS、内网 HTTP 访问下为 undefined（TypeError）——useIotStomp traceId 生成加守卫降级（时间戳+随机数组合串，仅作日志锚点非密码学用途）。
+
 ## 2026-09-11 · PR-5 B5.2：P0 收口事务——W-3 销项、T-R3 回填核对、计划完成项标注与 DoD 预检落盘（先记再改）
 
 - **W-3 销项（逐项核实后删除，禁盲删）**：三项对齐逐一实测复核达成——① `backend/Dockerfile` 26 条显式 COPY 逐模块（含 fuyun-iot/iot-simulator POM 行），glob 拍平已消除（台账 B1.2 行 complete）；② web 产物路径三处同路径（compose 三应用 dist bind mount + web/Dockerfile 三条 `COPY --from=build .../apps/<app>/dist` + nginx 三 location alias，均为 W-3 裁决口径 `web/apps/<app>/dist`）；③ `ci.yml` 无骨架期排除项（changes 过滤器仅永久 `*.md` 排除，images job 三镜像构建步骤在位，台账 B1.3 行 complete）——W-3 整行删除；W-4/W-5/D-8/L-1~L-4/T-R4-2 等行一律不动。
