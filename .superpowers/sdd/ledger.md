@@ -10,8 +10,8 @@
 | P1 | PR-1 工程骨架（B1.1~B1.4） | complete | PR #4 合入 dev（ed5e34e）；五 checks 绿（backend verify/frontend verify/images 双镜像/commitlint/hygiene）；/code-review 2 findings 均核实修复；CI 缺陷修复 2 项（buildx 安装、images 去 matrix 化保住必需检查名） |
 | P2 | PR-2 M20 治理构件（B2.1~B2.3） | complete | PR #5 合入 dev（a019f47）；五 checks 绿；批次审核四轮独立审查全过；PR 时点 /code-review 未单独派遣（流程偏差已登记交接 §2.3，P6 终验对 diff ed5e34e..a019f47 补跑） |
 | P3 | PR-3 M01 系统与权限（B3.1~B3.4） | complete | PR #6 合入 dev（a93179a）；五 checks 绿 + /code-review findings 修复（efd674b/4e577d5）；JaCoCo 双核心包 LINE=1.00（203 单测+21 IT） |
-| P4 | PR-4 M14 IoT 通路（B4.1~B4.4） | complete | 四批次循环全部收口（实现→审核→修复→复审）；分支 feat/pr4-m14-iot 共 40 提交（4b457f2 起，终审时点，后续修复批次另计）；终审 FAIL→终审修复批次（接线闭环+3 Minor+onException 单测）后待 PR；终态 334 单测+37 IT 全绿、三核心包 LINE=1.00（system/integration/iot.service.impl）、双镜像构建成功；延后条款生效：.env 无 IOTDA_*→代码+模拟信封 IT 交付、L-1~L-4 登记 TASK.md；待 PR+五 checks+/code-review+合入 |
-| P5 | PR-5 收口（B5.1~B5.2） | pending | 前置：PR-4 合入 dev |
+| P4 | PR-4 M14 IoT 通路（B4.1~B4.4） | complete | **PR #7 合入 dev（9107f92）**：五 checks 绿（backend verify 4m9s 含 380 测试、images 三镜像真跑绿含 iot-simulator 第三镜像、commitlint/hygiene 过，frontend skip=web 零变更）；/code-review 2 findings 修复+复审 PASS（Critical：CLIENT_ACK 累计确认丢数→失败即重建会话+真实 broker 重投 IT RED/GREEN 实证；Important：simulator MQTT 凭证缺失→补 username/password）；CI 一轮 flaky 攒批测试加固（失败收尾闩锁同步，10/10 绿）；commitlint 3 提交 body 超长 rebase reword 修正（树零变化）；终态 342 单测+38 IT、三核心包 LINE=1.00；延后条款 L-1~L-4 登记 TASK.md |
+| P5 | PR-5 收口（B5.1~B5.2） | in_progress | 前置：PR-4 合入 dev（9107f92）✓；台账 P4 终态登记随本 PR 分支首提交 |
 | P6 | 终验报告 | pending | DoD 逐项附证据，docs PR 合入 dev |
 
 ## 冲突扫描记录（P0，2026-09-09）
