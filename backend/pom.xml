@@ -35,6 +35,9 @@
     <module>fuyun-ops</module>
     <module>fuyun-integration</module>
     <module>fuyun-app</module>
+    <!-- 模拟设备端（M14 P0，D-3 裁决）：纯 Java 零 Spring 子模块，仅复用父 POM 工具链；
+         独立镜像（backend/iot-simulator/Dockerfile），不参与 fuyun-app 装配 -->
+    <module>iot-simulator</module>
   </modules>
 
   <properties>
@@ -55,6 +58,9 @@
     <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
     <mybatis-plus.version>3.5.17</mybatis-plus.version>
     <qpid-jms.version>2.11.0</qpid-jms.version>
+    <!-- 表外版本：Eclipse Paho MQTT 3.1.1 客户端（iot-simulator 一机一密上行），技术栈定稿未收录 MQTT 客户端；
+         Maven Central maven-metadata 核实 1.2.5 为 latest/release 行（2026-09-10），BRIEF-PR4-01 §10 申报 -->
+    <paho-mqtt.version>1.2.5</paho-mqtt.version>
     <shedlock.version>6.10.0</shedlock.version>
     <archunit.version>1.5.0</archunit.version>
 
@@ -92,6 +98,12 @@
         <groupId>org.apache.qpid</groupId>
         <artifactId>qpid-jms-client</artifactId>
         <version>${qpid-jms.version}</version>
+      </dependency>
+      <!-- iot-simulator 模拟设备 MQTT 客户端（表外依赖，版本 Central 核实，PR 描述申报） -->
+      <dependency>
+        <groupId>org.eclipse.paho</groupId>
+        <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
+        <version>${paho-mqtt.version}</version>
       </dependency>
       <dependency>
         <groupId>net.javacrumbs.shedlock</groupId>

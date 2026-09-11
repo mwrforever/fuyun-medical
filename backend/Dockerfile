@@ -28,6 +28,7 @@ COPY fuyun-peis/pom.xml fuyun-peis/
 COPY fuyun-internet/pom.xml fuyun-internet/
 COPY fuyun-ops/pom.xml fuyun-ops/
 COPY fuyun-integration/pom.xml fuyun-integration/
+COPY iot-simulator/pom.xml iot-simulator/
 # 预热依赖层：仅 pom 变动才失效，日常源码提交不重复下载依赖
 RUN mvn -B -ntp dependency:go-offline
 # 再拷源码全量
@@ -50,4 +51,3 @@ COPY --from=build --chown=fuyun:fuyun /workspace/fuyun-app/target/*-exec.jar app
 EXPOSE 8080
 # $JAVA_OPTS 经环境变量注入 JVM 参数（凭据一律运行时 env 注入，镜像内零密钥）
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
-# TODO(iot-simulator): PR-4 若按 D-3 默认裁决增补 backend/iot-simulator Maven 子模块，上方 POM 拷贝清单同步追加其 COPY 行

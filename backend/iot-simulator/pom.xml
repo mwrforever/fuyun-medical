@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/xsd/maven-4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.fuyun</groupId>
+    <artifactId>fuyun-backend</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+  <!-- 模拟设备端（M14 P0，TASK.md D-3 默认裁决）：纯 Java 零 Spring Maven 子模块——
+       仅复用父 POM 工具链（编译/Spotless/JaCoCo 门禁全继承），不引入任何 Spring 运行时；
+       职责：以一机一密凭证经 MQTT 周期上行确定性体征序列至 IoTDA（或本地 EMQX 等联调 broker），
+       打通 IoTDA→AMQP→库→WebSocket 演示链路（compose profile sim）。
+       打包形态：薄 jar + target/libs 依赖目录，运行入口 java -cp app.jar:libs/*（见 Dockerfile）。 -->
+  <artifactId>iot-simulator</artifactId>
+  <dependencies>
+    <!-- MQTT 3.1.1 客户端（表外依赖，父 POM dependencyManagement 锁 1.2.5，Central 核实 2026-09-10）：
+         IoTDA 设备侧官方同款 MQTT 3.1.1 协议客户端 -->
+    <dependency>
+      <groupId>org.eclipse.paho</groupId>
+      <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
+    </dependency>
+    <!-- 中文日志 SLF4J 基座（BOM 托管）：与后端 logback 输出格式同族，deviceSecret 禁入日志 -->
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+    </dependency>
+    <!-- 物模型 properties/report 上行 JSON 组装（BOM 托管）：ObjectNode 有序构造 -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!-- 测试：JUnit/AssertJ/Mockito（BOM 托管；仅用测试三件套，不引 Spring 上下文） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <!-- 薄 jar 主清单写入 Main-Class（表外插件版本，Central 核实 3.4.2，PR 描述申报）：
+           ENTRYPOINT 走 -cp 显式主类，清单仅为 java -jar 直跑调试能力兜底 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <version>3.4.2</version>
+        <configuration>
+          <archive>
+            <manifest>
+              <mainClass>com.fuyun.iotsimulator.IotSimulatorApplication</mainClass>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+      <!-- 运行期依赖复制到 target/libs（表外插件版本，Central 核实 3.8.1，PR 描述申报）：
+           runtime 范围（test 依赖不入 libs），与薄 jar 组成容器运行类路径 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <executions>
+          <execution>
+            <id>copy-runtime-libs</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}/libs</outputDirectory>
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
