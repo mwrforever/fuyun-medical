@@ -246,4 +246,23 @@ describe('STOMP 单例封装（web B.3-3）', () => {
     expect(h.subscriptions).toHaveLength(1);
     expect(h.subscriptions.at(-1)?.destination).toBe('/topic/iot/telemetry/1002');
   });
+
+  it('非安全上下文（crypto.randomUUID 缺失）connect 不抛异常且仍生成降级 traceId', () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+    // 模拟 HTTP 内网部署（非安全上下文）：crypto.randomUUID 因 [SecureContext] 限定为 undefined
+    vi.stubGlobal('crypto', { randomUUID: undefined });
+    try {
+      expect(() => stomp.connect({ token: 'token-a', wardId: '1001' })).not.toThrow();
+      // traceId 已生成：连接日志携带非占位 traceId 锚点（降级串，非 '-' 占位）
+      const traceLogged = infoSpy.mock.calls
+        .flat()
+        .some(
+          (arg) => typeof arg === 'string' && arg.startsWith('traceId=') && arg !== 'traceId=-',
+        );
+      expect(traceLogged).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      infoSpy.mockRestore();
+    }
+  });
 });

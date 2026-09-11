@@ -117,6 +117,18 @@ function traceTag(): string {
 }
 
 /**
+ * 生成连接链路 traceId（仅作日志锚点，非密码学用途）：安全上下文（HTTPS/localhost）用
+ * crypto.randomUUID；HTTP 内网部署（仓库拓扑 nginx :80 无 TLS）下 randomUUID 因
+ * [SecureContext] 限定为 undefined，降级为时间戳+随机数组合串（PR-5 Finding 4）。
+ */
+function generateTraceId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
  * 作废在册订阅句柄（置 null 是重连 onConnect 重订阅的前提，PR-5 Finding 2）：stompjs 7.3.0
  * 连接关闭后 _stompHandler 整体作废、旧订阅句柄已随连接失效且库内无自动重订阅——不清句柄
  * 会导致重连 onConnect 跳过重订阅的假连接。
@@ -242,8 +254,8 @@ export function connect(options: StompConnectOptions): void {
     info('STOMP 已连接，保持连接并按新参数切换订阅', buildBrokerUrl(), traceTag());
     return;
   }
-  // 每次连接生成链路 traceId 作日志锚点（不与令牌同帧输出）
-  connectionTraceId = crypto.randomUUID();
+  // 每次连接生成链路 traceId 作日志锚点（不与令牌同帧输出；兼容非安全上下文降级）
+  connectionTraceId = generateTraceId();
   setConnectionState('connecting');
   activeClient.activate();
   info('STOMP 连接发起', buildBrokerUrl(), traceTag());
