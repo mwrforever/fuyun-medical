@@ -52,7 +52,7 @@ class IotdaMqttClientTest {
     }
 
     @Test
-    @DisplayName("连接选项：automaticReconnect=true、cleanSession=false，ssl:// 主机设置 TLS 套接字工厂")
+    @DisplayName("连接选项：automaticReconnect=true、cleanSession=false、一机一密 username/password，ssl 主机设 TLS 工厂")
     void connectsWithReconnectPersistentSessionAndTlsForSslHost() throws MqttException {
         client.connect();
 
@@ -61,6 +61,11 @@ class IotdaMqttClientTest {
         assertThat(options.isAutomaticReconnect()).as("断链自动重连（演示链路韧性）").isTrue();
         assertThat(options.isCleanSession()).as("持久会话（断链期间服务端保留订阅态）").isFalse();
         assertThat(options.getSocketFactory()).as("ssl:// 前缀主机启用 TLS").isNotNull();
+        // 华为云 MQTT(S) 一机一密鉴权：CONNECT 报文 username=deviceId、password=HMAC 摘要（缺省即拒绝）
+        assertThat(options.getUserName()).as("username = deviceId（一机一密三元组）").isEqualTo("dev-001");
+        assertThat(new String(options.getPassword()))
+                .as("password = 一机一密 HMAC 摘要（DeviceCredentialEncoder 产出）")
+                .isEqualTo("aa".repeat(32));
     }
 
     @Test

@@ -22,7 +22,8 @@ import org.slf4j.LoggerFactory;
  * broker。topic 常量 = {@code $oc/devices/{deviceId}/sys/properties/report}（物模型属性上行
  * 标准主题），上行 qos=1（至少一次，IoTDA 物模型上行口径）。
  *
- * <p><b>凭证边界</b>：一机一密三元组仅经构造参数传入（DeviceCredentialEncoder 产出），
+ * <p><b>凭证边界</b>：一机一密三元组仅经构造参数传入（DeviceCredentialEncoder 产出），连接时写入
+ * CONNECT 报文 username/password（华为云 MQTT(S) 鉴权要求：username=deviceId、password=HMAC 摘要），
  * username/deviceId 可入日志，<b>password 禁入任何日志与异常消息</b>。
  *
  * <p>封装为薄委托：连接/发布动作直接透传 Paho，异常按 MqttException 受检上抛交调用方
@@ -51,6 +52,12 @@ public class IotdaMqttClient {
     private final String deviceId;
 
     /**
+     * 一机一密连接三元组（connect 时写入 CONNECT 报文 username/password；clientId 已在 Paho 客户端
+     * 构造期使用，三元组其余两值仅本类持有，password 禁入日志）。
+     */
+    private final MqttCredential credential;
+
+    /**
      * 生产构造：自建 Paho 客户端（内存持久化——持久会话态由 broker 侧承载，客户端侧无落盘诉求）。
      *
      * @param mqttHost MQTT 接入地址，非空；ssl:// 前缀启用 TLS
@@ -71,6 +78,7 @@ public class IotdaMqttClient {
     IotdaMqttClient(MqttClient client, MqttCredential credential, String mqttHost) throws MqttException {
         this.client = client;
         this.mqttHost = mqttHost;
+        this.credential = credential;
         this.deviceId = credential.username();
         this.topic = String.format(TOPIC_PROPERTIES_REPORT_TEMPLATE, deviceId);
         // 断连回调仅记录中文 error（重连交由 Paho automaticReconnect）；上行-only 客户端不消费下行帧
@@ -78,13 +86,17 @@ public class IotdaMqttClient {
     }
 
     /**
-     * 建立 MQTT 连接（一机一密凭证已在 Paho 客户端构造期随 clientId 生效，口令由服务端按
-     * clientId 时间戳段复算比对）。
+     * 建立 MQTT 连接：CONNECT 报文携带一机一密 username/password（华为云 MQTT(S) 鉴权口径——
+     * username=deviceId、password=DeviceCredentialEncoder 产出的 HMAC 摘要，服务端按三元组复算
+     * 比对，缺省即鉴权拒绝），口令由服务端按 clientId 时间戳段复算。
      *
      * @throws MqttException 建链失败（网络不可达/鉴权拒绝等）；由调用方决定重试或终止启动
      */
     public void connect() throws MqttException {
         MqttConnectOptions options = new MqttConnectOptions();
+        // 一机一密鉴权：CONNECT 报文 username=deviceId、password=HMAC 摘要（真实 IoTDA 必填）
+        options.setUserName(credential.username());
+        options.setPassword(credential.password().toCharArray());
         // 断链自动重连：演示链路韧性兜底（Paho 内建指数退避）
         options.setAutomaticReconnect(true);
         // 持久会话：断链期间服务端保留会话态，重连后不丢订阅上下文
