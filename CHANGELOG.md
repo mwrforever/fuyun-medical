@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR-5 B5.2：P0 收口事务——W-3 销项、T-R3 回填核对、计划完成项标注与 DoD 预检落盘（先记再改）
+
+- **W-3 销项（逐项核实后删除，禁盲删）**：三项对齐逐一实测复核达成——① `backend/Dockerfile` 26 条显式 COPY 逐模块（含 fuyun-iot/iot-simulator POM 行），glob 拍平已消除（台账 B1.2 行 complete）；② web 产物路径三处同路径（compose 三应用 dist bind mount + web/Dockerfile 三条 `COPY --from=build .../apps/<app>/dist` + nginx 三 location alias，均为 W-3 裁决口径 `web/apps/<app>/dist`）；③ `ci.yml` 无骨架期排除项（changes 过滤器仅永久 `*.md` 排除，images job 三镜像构建步骤在位，台账 B1.3 行 complete）——W-3 整行删除；W-4/W-5/D-8/L-1~L-4/T-R4-2 等行一律不动。
+- **T-R3-2/T-R3-3 回填核对（无文件改动，声明核对结论）**：T-R3-2 原行已于 PR-4 B4.1 实测回填删除（结论 = `add_columnstore_policy` 胜出，见 2026-09-10 B4.1 条目收口补记），TASK.md 待调研表现无该行；T-R3-3 原行已于 B4.4 回填删除，本地两级实测结论（supervisor 单测 + IotAmqpReconnectIT）并入 TASK.md L-2 行，核对在位且表述完整。
+- **计划完成项标注（最小内联标注法，禁改正文语义）**：`docs/plans/2026-09-08-P0实施计划.md` §1 五个 PR 标题行尾对 PR-1~PR-4 追加「——已完成（PR #N，dev@<hash>）」四处标注，合入点以台账记录为准（#4/ed5e34e、#5/a019f47、#6/a93179a、#7/9107f92）；PR-5 行不自标（合入时点未知，随 P6 终验补记）；§3 DoD 五条不动——勾选属 P6 终验，提前打勾即伪造证据。
+- **DoD 预检报告落盘**：新增 `docs/plans/2026-09-11-P0-DoD预检.md`——对交付 loop §5 七条 DoD 逐条预检（已满足 / 待 P6 终验附证据 / 延后条款豁免三态，附验证命令与证据来源）；属 PR-5 时点预检而非终验勾选，终验逐项附证据归 P6。
+
 ## 2026-09-11 · PR-5 B5.1：bigscreen 最小遥测页与 STOMP 单例封装、workstation 首页骨架（先记再改）
 
 - **依赖申报（表外申报①，随本批次首个功能提交生效）**：bigscreen app 级 package.json 新增 `@stomp/stompjs` **7.3.0**（版本来源=技术栈定稿 §4.1 与 web 宪法 C.2 唯一权威值，非新值）；**申报位置=app 级而非 catalog**——依据 pnpm-workspace.yaml 第 2 行既有注释先例（「业务独立依赖不进 catalog：……echarts/@stomp 待 PR-5 再引」），与 axios 跨 app 共享进 catalog 的口径不同；lockfile 随同一提交更新。
