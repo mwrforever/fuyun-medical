@@ -39,9 +39,9 @@
 
 | 编号 | 事项 | 说明（来源） | 回填时点 |
 | --- | --- | --- | --- |
-| L-1 | `--profile sim` 全链路演示 | IOTDA_MQTT_HOST / IOTDA_DEVICE_ID / IOTDA_DEVICE_SECRET 三变量用户侧准备就绪后，以 iot-simulator 镜像（PR-4 B4.4 已交付，本地 `docker build -f backend/iot-simulator/Dockerfile -t fuyun/iot-simulator:dev backend`）走通 IoTDA→AMQP→库→WebSocket 演示链路并留演示记录 | IOTDA 六变量就绪后 |
+| L-1 | `--profile sim` 全链路演示 | IOTDA_MQTT_HOST / IOTDA_DEVICE_ID / IOTDA_DEVICE_SECRET 三变量用户侧准备就绪后，以 iot-simulator 镜像（PR-4 B4.4 已交付，本地 `docker build -f backend/iot-simulator/Dockerfile -t fuyun/iot-simulator:dev backend`）走通 IoTDA→AMQP→库→WebSocket 演示链路并留演示记录；backend 侧需同步置 FUYUN_IOT_AMQP_ENABLED=true 且 FUYUN_IOT_AMQP_QUEUES 与 IoTDA 推送队列一致（AMQP 消费链默认关闭，终审修复 2026-09-11 已打通 env 透传） | IOTDA 六变量就绪后 |
 | L-2 | T-R3-3 真实 IoTDA 端点 10 分钟断链演示（回填结论：本地两级实测已完成） | 本地两级实测已于 PR-4 B4.2/B4.4 完成——supervisor 单测（fake ConnectionFactory 覆盖断链异常→退避重建→恢复续费）+ 本地 broker 断链恢复 IT（IotAmqpReconnectIT：stop_app 断链→connected=0/断链时长增长→退避不雪崩→start_app 重连→新锚点帧落库）全绿；真实端点 + 10 分钟断链窗口演示只能产生于联调时点（本地 broker 无法复现 IoTDA「凭证内嵌时间戳超 5 分钟拒绝建链」服务端语义，强行伪测违反验证纪律），原 T-R3-3 行按登记台规则回填删除 | 与 L-1 同一时点 |
-| L-3 | 真实 IoTDA 规则引擎报文映射冻结 | P0 线格式 = CF-7 JSON（AMQP 解析器与 HTTP 兜底同构）；真实 IoTDA 转发报文（messageId/properties/services 结构）到 CF-7 的字段映射随联调批次冻结（BRIEF-PR4-01 §1.3，禁猜测性兼容） | 与 L-1 同一时点 |
+| L-3 | 真实 IoTDA 规则引擎报文映射冻结 | P0 线格式 = CF-7 JSON（AMQP 解析器与 HTTP 兜底同构）；真实 IoTDA 转发报文（messageId/properties/services 结构）到 CF-7 的字段映射随联调批次冻结（BRIEF-PR4-01 §1.3，禁猜测性兼容）；L-3 落地时 iot_consume_error_log.raw_payload 原文接 SensitiveMasker 脱敏或白名单字段提取（终审 Minor 2026-09-11：P0 靠 CF-7 线格式无 PHI 前提实质合规，真实报文映射后必须显式脱敏） | 与 L-1 同一时点 |
 | L-4 | 真实积压水位指标（IoTDA 侧最旧未消费消息年龄） | 本地不可测，P0 以断链时长 + 攒批队列填充率 + 消费/重建计数承载（iot.amqp.* 指标词表，B4.3 交付）；真实积压指标随 IOTDA 联调补全（BRIEF-PR4-01 §10 附 8） | 与 L-1 同一时点 |
 
 ## TODO 工单
