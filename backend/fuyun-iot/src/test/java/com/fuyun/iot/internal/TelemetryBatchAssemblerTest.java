@@ -143,6 +143,12 @@ class TelemetryBatchAssemblerTest {
     @Test
     @DisplayName("落库失败不确认：ingest 抛异常时零 ack 回调、失败计数递增，且 flush 线程存活可处理下一批")
     void skipsAckAndSurvivesWhenIngestFails() throws Exception {
+        // 失败收尾同步闸：失败路径的末步是"清空挂起队列 + 触发重建回调"，以回调执行作为收尾完成的
+        // 确定性信号。失败计数递增先于清空对测试线程可见（两者间隔着带堆栈的 error 日志，CI 慢机上
+        // 窗口被调度放大），若恢复批在收尾落定前投递，会被收尾中的 pendingQueue.clear() 整批吞掉，
+        // 恢复批 ack 永不执行——即本地绿 CI 红的时序根因，必须等收尾完成后再切成功桩投恢复批
+        CountDownLatch failureTailLatch = new CountDownLatch(1);
+        assembler.registerFlushFailureListener(failureTailLatch::countDown);
         doThrow(new IllegalStateException("数据库瞬断")).when(ingestService).ingest(anyList());
         Runnable ack = mock(Runnable.class);
         assembler.put(telemetry("dev-fail"), ack);
@@ -153,6 +159,12 @@ class TelemetryBatchAssemblerTest {
                 .as("失败计数必须递增（B4.3 指标绑定的观测载体）")
                 .isTrue();
         verifyNoInteractions(ack);
+
+        // 确定性同步：await 返回即失败收尾（含清空挂起队列）已全部落定（latch 建立先行发生关系），
+        // 此后投递恢复批不再可能与清空动作交叠
+        assertThat(failureTailLatch.await(AWAIT_MILLIS, TimeUnit.MILLISECONDS))
+                .as("失败收尾（清空挂起队列并触发会话重建回调）必须在等待窗口内完成")
+                .isTrue();
 
         // flush 线程存活契约：失败不抛出线程，落库恢复后下一批照常落库并确认
         doReturn(1).when(ingestService).ingest(anyList());
