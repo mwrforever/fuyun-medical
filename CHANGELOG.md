@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-11 · PR-4 终审修复：sim 全链路 backend 侧 AMQP 启用接线闭环（先记再改）
+
+- **问题（终审 Finding 1，Important）**：`fuyun.iot.amqp.enabled/queues` 在 application.yml 硬编码 `false`/`[]` 无 env 占位，deploy 编排未透传启用开关与队列清单——用户按 .env.example 填齐 IOTDA_* 六变量后 `docker compose --profile sim up`，AMQP 消费链仍静默 disabled，TASK.md L-1 延后演示路径不通；且手动 enabled=true 而未配 queues 时 fail-fast 全栈不可用无前置提示。
+- **修复范围**：① application.yml 两键改 env 占位（`FUYUN_IOT_AMQP_ENABLED:false` / `FUYUN_IOT_AMQP_QUEUES:` 空占位）+ 中文注释说明逗号分隔格式与默认值语义；② IotProperties.validateAmqpEnabled 增空白队列名 fail-fast 校验（空串绑定实测 + 单测固化）；③ .env.example 增两变量占位与注释；④ docker-compose.yml backend environment 增两行透传；⑤ TASK.md L-1 行补启用前提说明。deploy 透传带 `:-` 默认值属有据偏差：实测 enabled 绑定不接受空串（boolean 绑定失败阻断启动），`:-false` 防 .env 缺键/留空，environment 段优先级高于 env_file 可覆盖整组注入的空值。
+- **queues 空串绑定实测结论（ApplicationContextRunner 实测，2026-09-11）**：空串 env 经 relaxed binding 绑定为**空列表**（size=0，非 null、无空串元素），enabled=true 时由既有启用组 @NotEmpty fail-fast（中文报错），单测固化该绑定语义；但含空段的 env（如 `q1,,q2`、尾逗号、空白项）绑定为**含空串元素**的列表，@NotEmpty 只拦整体缺失放行无效元素——validateAmqpEnabled 增空白队列名显式拒绝（fail-fast 中文报错），单测固化。
+
 ## 2026-09-11 · PR-4 B4.4：T-R3-3 本地实测重要发现——Qpid failover 透明恢复屏蔽 supervisor，AMQP URI 补正官方选项语法并改有限重试移交（先记再改）
 
 - **实测发现（IotAmqpReconnectIT 首跑 RED 留证，2026-09-11）**：`rabbitmqctl stop_app` 优雅断链下，Qpid failover 传输层做纯透明恢复——ExceptionListener 不触发、阻塞中的 receive() 持续等待重连、消费者 supervisor 全程未介入（`iot.amqp.connected` 恒 1、`iot.amqp.reconnect.total` 恒 0，断链时长指标恒 0）。推演生产语义：IoTDA 真实断链超 5 分钟后，failover 仍以连接建立时捕获的旧时间戳凭证无限重试（`failover.maxReconnectAttempts=-1`），被服务端拒绝后永续循环且消费链路无感知——supervisor 的「新时间戳凭证重建」被完全屏蔽，宪法 A.5-9 的 supervisor 语义落空。
@@ -14,7 +20,7 @@
 - **一机一密连接三元组官方核对结论（简报 §5 要求实现期核对，来源：华为云 IoTDA 官方文档《密钥鉴权_MQTT(S)协议接入》support.huaweicloud.com/devg-iothub/iot_02_0203.html）**：clientId = `{deviceId}_0_0_{时间戳}`（第 2 段固定 0=设备 ID 标识、第 3 段 0=HMACSHA256 不校验时间戳准确度但仍须携带时间戳，官方生成工具默认形态）、username = deviceId、password = **HmacSHA256(key=UTC 时间戳, message=deviceSecret) 小写十六进制**——时间戳格式为 **UTC `yyyyMMddHH`（10 位，小时粒度）而非简报预判的 13 位毫秒**，HMAC 方向为时间戳作密钥、secret 作内容（官方示例实测复算一致：secret=12345678、timestamp=2025041401 → `c75150e6cb841417396819e4d2ee4358a416344a03a083e3a8567074ddec820a`，与文档原例逐字符相同）。**与简报 §5 预判口径（13 位毫秒时间戳）偏离，以官方文档为准落码**，核对结论写入 DeviceCredentialEncoder javadoc；若真实联调发现服务端行为出入，改动面仅该类 + 单测。
 - **T-R3-3 本地两级实测与延后登记预告**：supervisor 单测（B4.2 已交付）+ 本地 broker 断链恢复 IT（IotAmqpReconnectIT，本批次交付）构成代码级实测闭环；「真实 IoTDA 端点 10 分钟断链演示」与 `--profile sim` 全链路演示、真实 IoTDA 规则引擎报文映射冻结（P0 线格式=CF-7）、真实积压水位指标（IoTDA 侧最旧未消费消息年龄）四条一并延后登记 TASK.md（本批次收口提交执行）。
 
-
+## 2026-09-10 · PR-4 B4.3 审核修复
 
 - **F-1 摘要推送违反宪法 A.4.2-7**：TelemetryIngestServiceImpl 在 @Transactional ingest 事务方法内直推 STOMP 摘要（"进程内直推非 MQ"自我解释不成立，宪法原文"事务内禁止远程调用、消息发送与人工等待"不限 MQ）——修复为 TransactionSynchronizationManager 注册 afterCommit 回调执行既有 pushSummariesByWard（分组数据事务内组装、推送 I/O 移出事务）；isSynchronizationActive=false（单测直调无事务）时保持直推行为不变，相关 javadoc 同步修正；单测补 TransactionTemplate 时序断言（事务内不推、提交后推送）。
 - **F-2 状态主题生产死路径（wardId 恒 null）**：P0 状态帧契约不含 wardId、解析产物恒 null，消费者原样发布致 /topic/iot/device-status/{wardId} 生产无数据源——IDeviceStatusService.apply 返回值 boolean→Long（模块内接口，返回设备档案 ward_id；null=设备不存在/条件未命中/档案未编病区，不发布事件），select 投影增补 ward_id；IotAmqpTelemetryConsumer.handleStatusFrame 以返回 wardId 构造含 wardId 的事件再发布；IotTelemetryPipelineIT 步骤 5 恢复 AMQP→STOMP 全链断言（不再以手工信封替代链路）、步骤 6 改从 integration.received_event 台账读取真实已消费 eventId 重建重投。
