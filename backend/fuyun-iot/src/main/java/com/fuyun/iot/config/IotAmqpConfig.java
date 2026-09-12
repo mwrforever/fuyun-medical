@@ -25,6 +25,10 @@ import org.springframework.context.annotation.Import;
  * failover.initialReconnectDelay=3000&failover.reconnectDelay=3000&failover.maxReconnectDelay=30000
  * &failover.maxReconnectAttempts=3}——P0 对接本地 broker 为 {@code amqp://}，生产 IoTDA 真实端点为
  * {@code amqps://host:5671}（TLS 1.2+，14-iot 调研依据 1，仅 env 注入的 endpoint 值差异，代码零改动）；
+ * amqps 子 URI 按华为云官方《AMQP客户端接入说明》连接串示例追加
+ * {@code amqp.vhost=default&amqp.idleTimeout=8000&amqp.saslMechanisms=PLAIN}（vhost 仅支持 default；
+ * 属 IoTDA 接入面参数故仅随 amqps 端点追加，本地 amqp:// RabbitMQ 不适用，2026-09-12 CHANGELOG
+ * 凭证格式修复条目）；
  * transport 级 failover 透明重连不刷新凭证内嵌时间戳（IoTDA 拒绝超 5 分钟旧时间戳），且其官方语义为
  * 纯透明恢复（B4.4 本地实测：不触发 ExceptionListener、阻塞中的 receive() 持续等待重连）——无限透明
  * 重试将令 supervisor 永不介入，故 maxReconnectAttempts 设有限值 3：provider 放弃后连接失败，控制权
@@ -63,10 +67,11 @@ public class IotAmqpConfig {
     static final int FAILOVER_MAX_RECONNECT_ATTEMPTS = 3;
 
     /**
-     * AMQP 凭证时间戳时钟（IoTDA 口令 = accessSecret + 13 位毫秒时间戳，每次建链刷新）。
+     * AMQP 凭证时间戳时钟（官方三段 username 中 timestamp 段的取值来源，13 位毫秒、每次建链刷新）。
      *
-     * <p>独立成 Bean 的原因：集成测试需注入固定时钟使口令可预置（IoTDA 语义的口令含时间戳后缀，
-     * 本地 broker 只做字面比对）；生产恒为系统 UTC 时钟，消费链路禁止替换。
+     * <p>独立成 Bean 的原因：集成测试需注入固定时钟使凭证可预置（IoTDA 官方语义的 username 内嵌
+     * timestamp 段，固定时钟下三段 username 整串字面可预置，本地 broker 按字面建号比对）；生产恒为
+     * 系统 UTC 时钟，消费链路禁止替换。
      *
      * @return 系统 UTC 时钟，非空
      */
@@ -83,7 +88,8 @@ public class IotAmqpConfig {
      * accessSecret/queues 任一缺失即抛出阻断启动（fail-fast 前置于一切连接尝试）。failover 三参数
      * 取值链：initialReconnectDelay/reconnectDelay 取 reconnectInitialDelay（默认 3s）、
      * maxReconnectDelay 取 reconnectMaxDelay（默认 30s），与宪法 A.5-9 原文值一致；凭证不在工厂上
-     * 预置（username/password 由消费者每次建链以新时间戳传入）。
+     * 预置（username/password 由消费者每次建链按官方三段 username 与 accessSecret 原值传入，
+     * 见 IotAmqpTelemetryConsumer#ensureConnected）。
      *
      * @param properties IoT 配置属性，非空；来源：fuyun-app IotConfig @EnableConfigurationProperties
      * @return Qpid JMS 连接工厂，非空
@@ -93,10 +99,20 @@ public class IotAmqpConfig {
     public JmsConnectionFactory iotAmqpConnectionFactory(IotProperties properties) {
         properties.amqp().validateAmqpEnabled();
         long initialDelayMillis = properties.amqp().reconnectInitialDelay().toMillis();
+        // IoTDA 官方连接串子参数（华为云《AMQP客户端接入说明》示例 amqps://host:5671?amqp.vhost=default
+        // &amqp.idleTimeout=8000&amqp.saslMechanisms=PLAIN）：vhost 仅支持 default、空闲超时 8s、
+        // SASL 机制固定 PLAIN（与凭证格式同源官方要求）。属 IoTDA 接入面参数，仅追加于生产 amqps
+        // 子 URI——本地联调的 amqp:// RabbitMQ vhost 为 "/" 且非 IoTDA 端，追加 vhost=default
+        // 将无法建链；endpoint 自带查询参数时以 & 续接防双 ?
+        String endpoint = properties.amqp().endpoint();
+        String iotdaChildOptions = endpoint.startsWith("amqps:")
+                ? (endpoint.contains("?") ? "&" : "?")
+                        + "amqp.vhost=default&amqp.idleTimeout=8000&amqp.saslMechanisms=PLAIN"
+                : "";
         // failover 选项一律用官方「failover.」前缀形态（qpid-jms 官方文档语法；B4.4 实测后修正——
         // B4.2 起的裸名 initialReconnectDelay 等不会被 failover 层识别为选项，语义等同未配置）；
         // maxReconnectAttempts 由 -1 改为有限值移交 supervisor（详见 FAILOVER_MAX_RECONNECT_ATTEMPTS 注释）
-        String remoteUri = "failover:(" + properties.amqp().endpoint() + ")"
+        String remoteUri = "failover:(" + endpoint + iotdaChildOptions + ")"
                 + "?failover.initialReconnectDelay=" + initialDelayMillis
                 + "&failover.reconnectDelay=" + initialDelayMillis
                 + "&failover.maxReconnectDelay="
