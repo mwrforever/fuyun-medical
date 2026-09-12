@@ -95,11 +95,12 @@ class IotAmqpIngestFailureRedeliveryIT {
     /** 测试资产假 accessSecret（与任何真实 IOTDA 凭证无关；凭证值不进任何断言与日志） */
     private static final String TEST_ACCESS_SECRET = "it-iot-flushfail-secret";
 
-    /** 固定时钟毫秒值（13 位）：broker 用户口令 = accessSecret + 该值字面（重建凭证同值，测试资产） */
+    /** 固定时钟毫秒值（13 位）：三段 username 的 timestamp 段字面值（首连与重建同值，测试资产） */
     private static final long FIXED_CLOCK_MILLIS = 1_700_000_000_000L;
 
-    /** 固定时钟下的建链口令（首连与重建均须命中该字面值，broker 用户按此预置） */
-    private static final String TEST_COMPOSED_PASSWORD = TEST_ACCESS_SECRET + FIXED_CLOCK_MILLIS;
+    /** 固定时钟下的建链 username 字面值（官方三段格式，首连与重建均须命中，broker 用户按此预置） */
+    private static final String TEST_AMQP_USERNAME =
+            "accessKey=" + TEST_ACCESS_KEY + "|timestamp=" + FIXED_CLOCK_MILLIS + "|";
 
     /** 首刷失败注入装饰器（类级单例，@Bean 装配时绑定真实委托，测试断言读其尝试计数） */
     private static final FailOnceIngestService FLAKY_INGEST = new FailOnceIngestService();
@@ -125,17 +126,17 @@ class IotAmqpIngestFailureRedeliveryIT {
     /**
      * 注入 AMQP 消费链测试参数与容器侧准备（既有 IT 同构）：假 HMAC 密钥 + enabled=true + 端点指向
      * 本类容器 + 假凭证（测试资产）+ 订阅队列。容器侧两项准备——rabbitmqctl 为假凭证建号授权
-     * （口令 = accessSecret + 固定毫秒字面，与固定时钟对齐）、管理 API 预声明 quorum 订阅队列——
-     * 均在 Spring 上下文启动前完成。
+     * （用户名 = 三段 username 字面、口令 = accessSecret 原值，与固定时钟对齐）、管理 API 预声明
+     * quorum 订阅队列——均在 Spring 上下文启动前完成。
      *
      * @param registry 动态属性注册器，非空；来源：Spring TestContext 框架
      */
     @DynamicPropertySource
     static void registerFlushFailureProperties(DynamicPropertyRegistry registry) {
         try {
-            RABBITMQ.execInContainer("rabbitmqctl", "add_user", TEST_ACCESS_KEY, TEST_COMPOSED_PASSWORD);
-            RABBITMQ.execInContainer("rabbitmqctl", "set_user_tags", TEST_ACCESS_KEY, "administrator");
-            RABBITMQ.execInContainer("rabbitmqctl", "set_permissions", "-p", "/", TEST_ACCESS_KEY, ".*", ".*", ".*");
+            RABBITMQ.execInContainer("rabbitmqctl", "add_user", TEST_AMQP_USERNAME, TEST_ACCESS_SECRET);
+            RABBITMQ.execInContainer("rabbitmqctl", "set_user_tags", TEST_AMQP_USERNAME, "administrator");
+            RABBITMQ.execInContainer("rabbitmqctl", "set_permissions", "-p", "/", TEST_AMQP_USERNAME, ".*", ".*", ".*");
             declareItQuorumQueueViaManagementApi();
         } catch (Exception e) {
             throw new IllegalStateException("测试容器内 AMQP 假凭证建号或队列预建失败（测试资产，与真实凭证无关）", e);
@@ -155,7 +156,7 @@ class IotAmqpIngestFailureRedeliveryIT {
      */
     private static void declareItQuorumQueueViaManagementApi() throws Exception {
         String auth = Base64.getEncoder()
-                .encodeToString((TEST_ACCESS_KEY + ":" + TEST_COMPOSED_PASSWORD).getBytes(StandardCharsets.UTF_8));
+                .encodeToString((TEST_AMQP_USERNAME + ":" + TEST_ACCESS_SECRET).getBytes(StandardCharsets.UTF_8));
         HttpResponse<String> response = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .build()
@@ -268,11 +269,11 @@ class IotAmqpIngestFailureRedeliveryIT {
         throw new IllegalStateException("测试生产端投帧超时（broker 未就绪）", lastFailure);
     }
 
-    /** 单次投帧（BytesMessage UTF-8 载荷，与消费端解码同源；凭证为字面预置的测试资产口令）。 */
+    /** 单次投帧（BytesMessage UTF-8 载荷，与消费端解码同源；凭证为字面预置的测试资产凭证）。 */
     private static void sendFrame(String frame) {
         JmsConnectionFactory producerFactory =
                 new JmsConnectionFactory("amqp://" + RABBITMQ.getHost() + ":" + RABBITMQ.getMappedPort(5672));
-        try (JMSContext context = producerFactory.createContext(TEST_ACCESS_KEY, TEST_COMPOSED_PASSWORD)) {
+        try (JMSContext context = producerFactory.createContext(TEST_AMQP_USERNAME, TEST_ACCESS_SECRET)) {
             Queue queue = context.createQueue(QUEUE_ADDRESS);
             BytesMessage message = context.createBytesMessage();
             message.writeBytes(frame.getBytes(StandardCharsets.UTF_8));

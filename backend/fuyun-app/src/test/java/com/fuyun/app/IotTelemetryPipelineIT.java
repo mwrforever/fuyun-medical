@@ -149,18 +149,20 @@ class IotTelemetryPipelineIT {
     /** 测试资产假 accessKey（与任何真实 IOTDA 凭证无关，仅用于容器内 rabbitmqctl 一次性建号） */
     private static final String TEST_ACCESS_KEY = "it-iot-amqp-user";
 
-    /** 测试资产假 accessSecret（与任何真实 IOTDA 凭证无关；IoTDA 真实语义为 secret+时间戳拼出口令，
-     * 容器 broker 只做等价性校验，凭证值本身不进任何断言与日志） */
+    /** 测试资产假 accessSecret（与任何真实 IOTDA 凭证无关；IoTDA 官方语义为 SASL password 原值
+     * 无拼接，容器 broker 按字面校验，凭证值本身不进任何断言与日志） */
     private static final String TEST_ACCESS_SECRET = "it-iot-amqp-secret";
 
     /** 测试资产假兜底共享密钥（fuyun.iot.fallback.token，仅具 IT 意义，与任何真实凭证无关） */
     private static final String TEST_FALLBACK_TOKEN = "it-iot-fallback-token";
 
-    /** 固定时钟毫秒值（13 位）：IoTDA 口令内嵌时间戳需可预置，本地 broker 才能按字面口令建号 */
+    /** 固定时钟毫秒值（13 位）：IoTDA 官方三段 username 内嵌 timestamp 段需可预置，本地 broker 才能按字面建号 */
     private static final long FIXED_CLOCK_MILLIS = 1_700_000_000_000L;
 
-    /** 固定时钟下的建链口令（= accessSecret + 13 位时间戳；broker 用户口令按此字面预置，测试资产） */
-    private static final String TEST_COMPOSED_PASSWORD = TEST_ACCESS_SECRET + FIXED_CLOCK_MILLIS;
+    /** 固定时钟下的建链 username 字面值（官方三段格式 accessKey=...|timestamp=固定值|instanceId
+     * 留空段；broker 用户名按此字面预置，测试资产） */
+    private static final String TEST_AMQP_USERNAME =
+            "accessKey=" + TEST_ACCESS_KEY + "|timestamp=" + FIXED_CLOCK_MILLIS + "|";
 
     /** 种子设备号：两步断言共用的消费链锚点 */
     private static final String DEVICE_ID = "it-dev-001";
@@ -210,10 +212,10 @@ class IotTelemetryPipelineIT {
     @DynamicPropertySource
     static void registerIotPipelineProperties(DynamicPropertyRegistry registry) {
         try {
-            RABBITMQ.execInContainer("rabbitmqctl", "add_user", TEST_ACCESS_KEY, TEST_COMPOSED_PASSWORD);
+            RABBITMQ.execInContainer("rabbitmqctl", "add_user", TEST_AMQP_USERNAME, TEST_ACCESS_SECRET);
             // management 标签仅为管理 API 预建队列所需（AMQP 建链本身只需 set_permissions 的读写权限）
-            RABBITMQ.execInContainer("rabbitmqctl", "set_user_tags", TEST_ACCESS_KEY, "administrator");
-            RABBITMQ.execInContainer("rabbitmqctl", "set_permissions", "-p", "/", TEST_ACCESS_KEY, ".*", ".*", ".*");
+            RABBITMQ.execInContainer("rabbitmqctl", "set_user_tags", TEST_AMQP_USERNAME, "administrator");
+            RABBITMQ.execInContainer("rabbitmqctl", "set_permissions", "-p", "/", TEST_AMQP_USERNAME, ".*", ".*", ".*");
             declareItQuorumQueueViaManagementApi();
         } catch (Exception e) {
             throw new IllegalStateException("测试容器内 AMQP 假凭证建号或队列预建失败（测试资产，与真实凭证无关）", e);
@@ -238,7 +240,7 @@ class IotTelemetryPipelineIT {
      */
     private static void declareItQuorumQueueViaManagementApi() throws Exception {
         String auth = Base64.getEncoder()
-                .encodeToString((TEST_ACCESS_KEY + ":" + TEST_COMPOSED_PASSWORD).getBytes(StandardCharsets.UTF_8));
+                .encodeToString((TEST_AMQP_USERNAME + ":" + TEST_ACCESS_SECRET).getBytes(StandardCharsets.UTF_8));
         HttpResponse<String> response = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .build()
@@ -678,7 +680,7 @@ class IotTelemetryPipelineIT {
     private void sendFrames(List<String> frames) {
         JmsConnectionFactory producerFactory =
                 new JmsConnectionFactory("amqp://" + RABBITMQ.getHost() + ":" + RABBITMQ.getMappedPort(5672));
-        try (JMSContext context = producerFactory.createContext(TEST_ACCESS_KEY, TEST_COMPOSED_PASSWORD)) {
+        try (JMSContext context = producerFactory.createContext(TEST_AMQP_USERNAME, TEST_ACCESS_SECRET)) {
             Queue queue = context.createQueue(QUEUE_ADDRESS);
             for (String frame : frames) {
                 BytesMessage message = context.createBytesMessage();
@@ -760,9 +762,10 @@ class IotTelemetryPipelineIT {
     private record ErrorRow(String errorStage, String status, String rawDigest) {}
 
     /**
-     * IT 专用固定时钟：以 {@code @Primary} 覆盖 IotAmqpConfig 的 iotAmqpClock Bean——IoTDA 口令
-     * 语义（accessSecret + 13 位时间戳）在固定时钟下可预置，本地 broker 才能按字面口令完成建号
-     * 比对（真实 IoTDA 由服务端解析时间戳并校验 5 分钟偏差，无需固定）。
+     * IT 专用固定时钟：以 {@code @Primary} 覆盖 IotAmqpConfig 的 iotAmqpClock Bean——IoTDA 官方
+     * 三段 username 语义（accessKey/timestamp/instanceId 竖线拼接）在固定时钟下 timestamp 段可预置，
+     * 整串 username 字面可预置，本地 broker 才能按字面完成建号比对（真实 IoTDA 由服务端解析
+     * 时间戳并校验 5 分钟偏差，无需固定）。
      */
     @TestConfiguration
     static class IotAmqpFixedClockConfig {

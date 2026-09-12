@@ -46,10 +46,11 @@ public record IotProperties(
      * @param endpoint             IoTDA AMQP 接入端点（本地 broker 为 amqp://host:5672，真实
      *                             IoTDA 为 amqps://host:5671）；仅启用组必填；来源：
      *                             IOTDA_AMQP_ENDPOINT 环境变量映射
-     * @param accessKey            接入凭证 accessKey（IoTDA 建链 username 明文侧）；仅启用组必填；
-     *                             来源：IOTDA_AMQP_ACCESS_KEY 环境变量映射；禁入日志
-     * @param accessSecret         接入凭证 accessCode/secret（password = 值 + 13 位毫秒时间戳拼接）；
-     *                             仅启用组必填；来源：IOTDA_AMQP_SECRET 环境变量映射；禁入日志
+     * @param accessKey            接入凭证 accessKey（官方三段 username 的 accessKey 段取值）；
+     *                             仅启用组必填；来源：IOTDA_AMQP_ACCESS_KEY 环境变量映射；禁入日志
+     * @param accessSecret         接入凭证 accessCode/secret（SASL password 原值，无任何拼接；
+     *                             华为云官方《AMQP客户端接入说明》iot_01_00100_2）；仅启用组必填；
+     *                             来源：IOTDA_AMQP_SECRET 环境变量映射；禁入日志
      * @param queues               订阅队列清单（IoTDA 规则引擎转发队列名），至少 1 条；仅启用组必填；
      *                             来源：fuyun.iot.amqp.queues[n]
      * @param queuePrefetch        单消费者预取上限，默认 1000（IoTDA 默认值，14-iot 调研依据 2）

@@ -60,12 +60,12 @@ import org.testcontainers.utility.MountableFile;
  * 若该类仍抖动允许再放宽上限一次并按修复循环处理，<b>禁止 @Disabled 或静默删除</b>（失效测试
  * 零容忍）。
  *
- * <p><b>可冻结时钟（本类特有）</b>：本地 broker 用户口令按「accessSecret + 固定毫秒」字面预置，
- * 建链凭证必须恒等于该字面值——而断链时长指标又要求时钟真实前进。故注入可冻结的 Clock Bean
- * （@Primary 覆盖 IotAmqpConfig.iotAmqpClock）：初始冻结于固定值（首连与断后重建都用该字面
- * 口令），步骤②释放为真实时钟（断链起点与增长进入真实时间域；断链期间的重建尝试因 broker
- * 不可达在建链前即失败，错误口令永不到达认证环节），步骤④重冻结回固定值（重建凭证与预置
- * 口令重新对齐，重连成功）。
+ * <p><b>可冻结时钟（本类特有）</b>：本地 broker 用户按「官方三段 username 字面 + accessSecret
+ * 原值口令」预置，建链 username 必须恒等于该字面值——而断链时长指标又要求时钟真实前进。故注入
+ * 可冻结的 Clock Bean（@Primary 覆盖 IotAmqpConfig.iotAmqpClock）：初始冻结于固定值（首连与
+ * 断后重建的 username timestamp 段都用该字面值），步骤②释放为真实时钟（断链起点与增长进入
+ * 真实时间域；断链期间的重建尝试因 broker 不可达在建链前即失败，错误凭证永不到达认证环节），
+ * 步骤④重冻结回固定值（重建 username 与预置用户名重新对齐，重连成功）。
  *
  * <p><b>独立成类（§6.3）</b>：stop_app 会中断同容器的 Spring AMQP/扇出等其余链路，禁止与
  * IotTelemetryPipelineIT 共用容器或上下文，防互相污染。容器三件套与既有 IT 同款（tag 与
@@ -105,11 +105,12 @@ class IotAmqpReconnectIT {
     /** 测试资产假 accessSecret（与任何真实 IOTDA 凭证无关；凭证值不进任何断言与日志） */
     private static final String TEST_ACCESS_SECRET = "it-iot-reconnect-secret";
 
-    /** 固定时钟毫秒值（13 位）：broker 用户口令 = accessSecret + 该值字面（测试资产） */
+    /** 固定时钟毫秒值（13 位）：三段 username 的 timestamp 段字面值（测试资产） */
     private static final long FIXED_CLOCK_MILLIS = 1_700_000_000_000L;
 
-    /** 固定时钟下的建链口令（首连与断后重建均须命中该字面值，broker 用户按此预置） */
-    private static final String TEST_COMPOSED_PASSWORD = TEST_ACCESS_SECRET + FIXED_CLOCK_MILLIS;
+    /** 固定时钟下的建链 username 字面值（官方三段格式，首连与断后重建均须命中，broker 用户按此预置） */
+    private static final String TEST_AMQP_USERNAME =
+            "accessKey=" + TEST_ACCESS_KEY + "|timestamp=" + FIXED_CLOCK_MILLIS + "|";
 
     /** 可冻结时钟（类级单例，经 @Primary Clock Bean 注入消费链；冻结/释放语义见类注释） */
     private static final FreezableClock IT_CLOCK = new FreezableClock(FIXED_CLOCK_MILLIS);
@@ -145,17 +146,17 @@ class IotAmqpReconnectIT {
     /**
      * 注入 AMQP 消费链测试参数与容器侧准备（与 IotTelemetryPipelineIT 同构）：假 HMAC 密钥 +
      * enabled=true + 端点指向本类容器 + 假凭证（测试资产）+ 订阅队列。容器侧两项准备——
-     * rabbitmqctl 为假凭证建号授权（口令 = accessSecret + 固定毫秒字面，与可冻结时钟初值对齐）、
-     * 管理 API 预声明 quorum 订阅队列——均在 Spring 上下文启动前完成。
+     * rabbitmqctl 为假凭证建号授权（用户名 = 三段 username 字面、口令 = accessSecret 原值，
+     * 与可冻结时钟初值对齐）、管理 API 预声明 quorum 订阅队列——均在 Spring 上下文启动前完成。
      *
      * @param registry 动态属性注册器，非空；来源：Spring TestContext 框架
      */
     @DynamicPropertySource
     static void registerReconnectProperties(DynamicPropertyRegistry registry) {
         try {
-            RABBITMQ.execInContainer("rabbitmqctl", "add_user", TEST_ACCESS_KEY, TEST_COMPOSED_PASSWORD);
-            RABBITMQ.execInContainer("rabbitmqctl", "set_user_tags", TEST_ACCESS_KEY, "administrator");
-            RABBITMQ.execInContainer("rabbitmqctl", "set_permissions", "-p", "/", TEST_ACCESS_KEY, ".*", ".*", ".*");
+            RABBITMQ.execInContainer("rabbitmqctl", "add_user", TEST_AMQP_USERNAME, TEST_ACCESS_SECRET);
+            RABBITMQ.execInContainer("rabbitmqctl", "set_user_tags", TEST_AMQP_USERNAME, "administrator");
+            RABBITMQ.execInContainer("rabbitmqctl", "set_permissions", "-p", "/", TEST_AMQP_USERNAME, ".*", ".*", ".*");
             declareItQuorumQueueViaManagementApi();
         } catch (Exception e) {
             throw new IllegalStateException("测试容器内 AMQP 假凭证建号或队列预建失败（测试资产，与真实凭证无关）", e);
@@ -175,7 +176,7 @@ class IotAmqpReconnectIT {
      */
     private static void declareItQuorumQueueViaManagementApi() throws Exception {
         String auth = Base64.getEncoder()
-                .encodeToString((TEST_ACCESS_KEY + ":" + TEST_COMPOSED_PASSWORD).getBytes(StandardCharsets.UTF_8));
+                .encodeToString((TEST_AMQP_USERNAME + ":" + TEST_ACCESS_SECRET).getBytes(StandardCharsets.UTF_8));
         HttpResponse<String> response = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .build()
@@ -260,7 +261,7 @@ class IotAmqpReconnectIT {
     }
 
     /**
-     * 步骤④：start_app 恢复 broker → 重冻结时钟回固定值（重建凭证与预置口令重新对齐）→ 轮询
+     * 步骤④：start_app 恢复 broker → 重冻结时钟回固定值（重建 username 与预置用户名重新对齐）→ 轮询
      * connected 回 1 且断链时长指标回零 → 发新锚点帧 → 断言落库（supervisor 新时间戳凭证重建
      * 成功、消费续费）。
      */
@@ -269,7 +270,7 @@ class IotAmqpReconnectIT {
     @DisplayName("恢复：start_app 后 connected 回 1、断链时长回零，新锚点帧经重建连接落库")
     void brokerRestartRecoversConnectionAndConsumesNewAnchor() throws Exception {
         RABBITMQ.execInContainer("rabbitmqctl", "start_app");
-        // 重冻结回固定值：此后 supervisor 的重建凭证 = accessSecret + 固定毫秒，与预置口令对齐；
+        // 重冻结回固定值：此后 supervisor 重建凭证的 username timestamp 段回到字面预置值，与建号用户对齐；
         // 恢复前仍处于真实时钟域的失败尝试只会退避重试，无副作用
         IT_CLOCK.pin(FIXED_CLOCK_MILLIS);
 
@@ -333,11 +334,11 @@ class IotAmqpReconnectIT {
         throw new IllegalStateException("测试生产端投帧超时（broker 未就绪）", lastFailure);
     }
 
-    /** 单次投帧（BytesMessage UTF-8 载荷，与消费端解码同源；凭证为字面预置的测试资产口令）。 */
+    /** 单次投帧（BytesMessage UTF-8 载荷，与消费端解码同源；凭证为字面预置的测试资产凭证）。 */
     private static void sendFrame(String frame) {
         JmsConnectionFactory producerFactory =
                 new JmsConnectionFactory("amqp://" + RABBITMQ.getHost() + ":" + RABBITMQ.getMappedPort(5672));
-        try (JMSContext context = producerFactory.createContext(TEST_ACCESS_KEY, TEST_COMPOSED_PASSWORD)) {
+        try (JMSContext context = producerFactory.createContext(TEST_AMQP_USERNAME, TEST_ACCESS_SECRET)) {
             Queue queue = context.createQueue(QUEUE_ADDRESS);
             BytesMessage message = context.createBytesMessage();
             message.writeBytes(frame.getBytes(StandardCharsets.UTF_8));
@@ -381,7 +382,7 @@ class IotAmqpReconnectIT {
         private volatile Long frozenMillis;
 
         /**
-         * 构造即冻结于指定值（首连凭证对齐 broker 预置口令）。
+         * 构造即冻结于指定值（首连 username timestamp 段对齐 broker 预置字面值）。
          *
          * @param initialMillis 初始冻结毫秒值
          */
@@ -389,7 +390,7 @@ class IotAmqpReconnectIT {
             this.frozenMillis = initialMillis;
         }
 
-        /** 冻结回指定毫秒值（恢复阶段重建凭证对齐预置口令）。 */
+        /** 冻结回指定毫秒值（恢复阶段重建 username 对齐预置用户名）。 */
         void pin(long millis) {
             this.frozenMillis = millis;
         }

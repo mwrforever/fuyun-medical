@@ -155,7 +155,7 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     /**
      * Spring 装配构造器（@Autowired 消歧，装配归 IotAmqpConfig @Import，宪法 A.1-7 构造器注入）：
      * Thread::sleep 退避 + 容器时钟 Bean（iotAmqpClock，生产恒为系统 UTC；IT 可注入固定时钟使
-     * IoTDA 时间戳口令可预置）+ 状态事件发布器可选解析（B4.3 扇出接线）。
+     * IoTDA 时间戳凭证可预置）+ 状态事件发布器可选解析（B4.3 扇出接线）。
      *
      * <p>发布器为何经 {@link ObjectProvider} 可选解析而非必填参数：IotEventPublisher 归
      * IotMessagingConfig 装配（MQ 事件总线域，无条件 Bean），本消费者归 IotAmqpConfig 装配
@@ -419,17 +419,24 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         /**
          * 确保连接可用：未连接时以<b>新时间戳凭证</b>建链并创建消费者。
          *
-         * <p>凭证语义（IoTDA）：username = accessKey 明文；password = accessSecret + 13 位毫秒时间戳，
-         * <b>每次建链刷新</b>（服务端校验偏差超 5 分钟即拒绝建链，故断链重建必须换新凭证而非依赖
-         * failover 透明重连）。
+         * <p>凭证语义（华为云官方《AMQP客户端接入说明》
+         * <a href="https://support.huaweicloud.com/usermanual-iothub/iot_01_00100_2.html">iot_01_00100_2</a>）：
+         * username = {@code accessKey=${accessKey}|timestamp=${timestamp}|instanceId=${instanceId}}
+         * 三段竖线拼接（instanceId 为可选段——同一 Region 购买多个标准版实例时才需设置，单实例
+         * 留空段即可，本工程 P0 单实例故恒留空）；password = accessSecret（accessCode）<b>原值、
+         * 无任何拼接</b>。timestamp 为 13 位毫秒，服务端校验偏差超 5 分钟即拒绝建链，故<b>每次
+         * 建链刷新</b>（断链重建必须换新时间戳而非依赖 failover 透明重连——透明重连不刷新时间戳，
+         * 超 5 分钟旧凭证必被拒，supervisor 重建语义由此保留）。
          */
         private void ensureConnected() {
             if (consumer != null) {
                 return;
             }
-            String password = amqp.accessSecret() + clock.millis();
+            // 官方三段 username：timestamp 段每次建链取时钟当前值，instanceId 段单实例恒留空（尾竖线保留空段）
+            String timestamp = String.valueOf(clock.millis());
+            String username = "accessKey=" + amqp.accessKey() + "|timestamp=" + timestamp + "|";
             JMSContext newContext =
-                    connectionFactory.createContext(amqp.accessKey(), password, JMSContext.CLIENT_ACKNOWLEDGE);
+                    connectionFactory.createContext(username, amqp.accessSecret(), JMSContext.CLIENT_ACKNOWLEDGE);
             try {
                 newContext.setExceptionListener(IotAmqpTelemetryConsumer.this);
                 Queue destination = newContext.createQueue(queueAddress);

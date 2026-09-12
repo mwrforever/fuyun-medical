@@ -69,7 +69,7 @@ class IotAmqpTelemetryConsumerTest {
     /** 测试资产假 accessKey（仅具单测意义） */
     private static final String TEST_ACCESS_KEY = "test-access-key";
 
-    /** 测试资产假凭证（仅具单测意义，仅可断言口令形态，禁断言真实值与日志输出） */
+    /** 测试资产假凭证（仅具单测意义，password 原值侧断言载体，禁断言真实值与日志输出） */
     private static final String TEST_ACCESS_SECRET = "test-access-secret";
 
     /** 测试用 AMQP 参数：batchSize=2/interval=50ms 便于批确认断言；退避 10ms→30ms 毫秒级验证节奏 */
@@ -237,9 +237,9 @@ class IotAmqpTelemetryConsumerTest {
         when(staleContext.createQueue(QUEUE_ADDRESS)).thenReturn(staleQueue);
         when(staleContext.createConsumer(staleQueue)).thenReturn(jmsConsumer);
         doAnswer(invocation -> null).when(staleContext).setExceptionListener(any());
-        ArgumentCaptor<String> passwordCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> usernameCaptor = ArgumentCaptor.forClass(String.class);
         when(connectionFactory.createContext(
-                        eq(TEST_ACCESS_KEY), passwordCaptor.capture(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+                        usernameCaptor.capture(), eq(TEST_ACCESS_SECRET), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
                 .thenReturn(staleContext, jmsContext);
         // 首次 receive 即断链：supervisor 必须销毁旧连接并重建，恢复后可继续消费
         when(jmsConsumer.receive(anyLong()))
@@ -249,23 +249,29 @@ class IotAmqpTelemetryConsumerTest {
         consumer.start();
 
         verify(connectionFactory, timeout(AWAIT_MILLIS).times(2))
-                .createContext(eq(TEST_ACCESS_KEY), anyString(), anyInt());
+                .createContext(anyString(), eq(TEST_ACCESS_SECRET), anyInt());
         // 重建语义一：旧连接已销毁（close）——worker 在退避重建前先行关闭旧连接，await 建链两次后必然已发生
         verify(staleContext, timeout(AWAIT_MILLIS)).close();
-        // 重建语义二：新凭证含新时间戳（IoTDA 拒绝超 5 分钟旧时间戳，failover 透明重连不刷新时间戳）
-        assertThat(passwordCaptor.getAllValues()).hasSize(2);
-        String oldPassword = passwordCaptor.getAllValues().get(0);
-        String rebuiltPassword = passwordCaptor.getAllValues().get(1);
-        assertThat(oldPassword)
-                .as("口令 = accessSecret + 13 位毫秒时间戳")
-                .startsWith(TEST_ACCESS_SECRET)
-                .hasSize(TEST_ACCESS_SECRET.length() + 13);
-        assertThat(rebuiltPassword)
-                .as("重建口令同形态且时间戳严格更新（销毁重建而非透明重连）")
-                .startsWith(TEST_ACCESS_SECRET)
-                .hasSize(TEST_ACCESS_SECRET.length() + 13);
-        assertThat(Long.parseLong(rebuiltPassword.substring(TEST_ACCESS_SECRET.length())))
-                .isGreaterThan(Long.parseLong(oldPassword.substring(TEST_ACCESS_SECRET.length())));
+        // 重建语义二：username 为官方三段格式且 timestamp 段严格更新（IoTDA 拒绝超 5 分钟旧时间戳，
+        // failover 透明重连不刷新时间戳，销毁重建而非透明重连）；password 恒为 accessSecret 原值
+        // （stub 的 eq(TEST_ACCESS_SECRET) 即逐次精确匹配，任何拼接形态都无法通过）
+        assertThat(usernameCaptor.getAllValues()).hasSize(2);
+        String[] oldSegments = usernameCaptor.getAllValues().get(0).split("\\|", -1);
+        String[] rebuiltSegments = usernameCaptor.getAllValues().get(1).split("\\|", -1);
+        assertThat(oldSegments)
+                .as("官方三段 username：accessKey 段 + timestamp 段 + instanceId 空段（尾竖线保留）")
+                .hasSize(3);
+        assertThat(oldSegments[0])
+                .as("accessKey 段 = accessKey=<accessKey> 前缀形态")
+                .isEqualTo("accessKey=" + TEST_ACCESS_KEY);
+        assertThat(oldSegments[2]).as("instanceId 可选段：单实例留空段").isEmpty();
+        assertThat(rebuiltSegments)
+                .as("重建 username 同三段格式且 accessKey 段与 instanceId 空段同构")
+                .hasSize(3)
+                .contains("accessKey=" + TEST_ACCESS_KEY, "");
+        long oldTimestamp = timestampSegmentMillis(oldSegments[1]);
+        long rebuiltTimestamp = timestampSegmentMillis(rebuiltSegments[1]);
+        assertThat(rebuiltTimestamp).as("重建凭证 timestamp 严格更新（新时间戳凭证重建）").isGreaterThan(oldTimestamp);
         // 重建成功后 connected 载体恢复 1（断链起点清零）
         long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
         while (consumer.connectedFlag().get() != 1L && System.currentTimeMillis() < deadline) {
@@ -280,7 +286,7 @@ class IotAmqpTelemetryConsumerTest {
     @Test
     @DisplayName("退避节奏：连续断链按初始延迟起步指数退避至上限封顶（3s→30s 公式的毫秒级验证）")
     void backsOffExponentiallyUpToMaxDelayOnRepeatedFailures() {
-        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+        when(connectionFactory.createContext(anyString(), eq(TEST_ACCESS_SECRET), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
                 .thenThrow(new JMSRuntimeException("broker down"));
         consumer.start();
         long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
@@ -384,7 +390,7 @@ class IotAmqpTelemetryConsumerTest {
     void onExceptionMarksGlobalDisconnectAndClosesWorkerContextsWhileRunning() throws Exception {
         // 首建链成功、后续建链一律失败：钉住 onException 自身的断链标记效果（防 worker 立即重连把
         // connected 翻回 1 造成断言竞态），重连本身由 supervisor 既有用例覆盖
-        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+        when(connectionFactory.createContext(anyString(), eq(TEST_ACCESS_SECRET), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
                 .thenReturn(jmsContext)
                 .thenThrow(new JMSRuntimeException("rebuild blocked for assertion stability"));
         stubReceiveIdle();
@@ -433,7 +439,7 @@ class IotAmqpTelemetryConsumerTest {
 
         Message frame = bytesMessage(telemetryJson("it-dev-001", "vital.glucose", "5.6"));
         // 首建链返回第一代上下文，落库失败触发重建后返回第二代上下文（新会话 = 重投域语义的载体）
-        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+        when(connectionFactory.createContext(anyString(), eq(TEST_ACCESS_SECRET), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
                 .thenReturn(staleContext, jmsContext);
         // 第一代：仅投递一帧后空闲轮询（攒批落库即将失败）；第二代：模拟 broker 重投同帧后再空闲
         when(staleConsumer.receive(anyLong())).thenReturn(frame).thenAnswer(this::idleAnswer);
@@ -448,7 +454,7 @@ class IotAmqpTelemetryConsumerTest {
         // 断言 1：失败触发会话重建——旧会话销毁（未确认交付回归 broker 重投域）+ 建链两次（supervisor 介入）
         verify(staleContext, timeout(AWAIT_MILLIS)).close();
         verify(connectionFactory, timeout(AWAIT_MILLIS).times(2))
-                .createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE));
+                .createContext(anyString(), eq(TEST_ACCESS_SECRET), anyInt());
         // 断言 2：失败批零确认 + 重投批成功后确认（acknowledge 恰一次 = 重投域语义的消费者侧行为）
         assertThat(failureCountEventually()).as("攒批失败计数递增（落库失败真实发生）").isTrue();
         verify(ingestService, timeout(AWAIT_MILLIS).times(2)).ingest(anyList());
@@ -467,7 +473,7 @@ class IotAmqpTelemetryConsumerTest {
 
         Message statusFrame = bytesMessage(
                 "{\"deviceId\":\"it-dev-001\",\"status\":\"OFFLINE\",\"occurredAt\":\"2026-09-10T00:00:00Z\"}");
-        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+        when(connectionFactory.createContext(anyString(), eq(TEST_ACCESS_SECRET), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
                 .thenReturn(staleContext, jmsContext);
         // 第一代投递状态帧（apply 即将失败）；第二代重投同状态帧（broker 重投域语义）后空闲
         when(staleConsumer.receive(anyLong())).thenReturn(statusFrame).thenAnswer(this::idleAnswer);
@@ -482,7 +488,7 @@ class IotAmqpTelemetryConsumerTest {
         // 断言 1：业务失败触发会话重建——旧会话销毁 + 建链两次（走 supervisor 退避重建路径）
         verify(staleContext, timeout(AWAIT_MILLIS)).close();
         verify(connectionFactory, timeout(AWAIT_MILLIS).times(2))
-                .createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE));
+                .createContext(anyString(), eq(TEST_ACCESS_SECRET), anyInt());
         // 断言 2：重投状态帧在新会话成功——apply 恰两次（失败 + 重投成功），确认与事件发布仅成功侧执行
         verify(deviceStatusService, timeout(AWAIT_MILLIS).times(2)).apply(any(DeviceStatusEvent.class));
         verify(statusFrame, timeout(AWAIT_MILLIS)).acknowledge();
@@ -517,10 +523,21 @@ class IotAmqpTelemetryConsumerTest {
                 .isEqualTo(expected);
     }
 
-    /** 桩：建链工厂返回共享 JMS 上下文（口令 = accessSecret + 时间戳形态，单测不断言其值） */
+    /**
+     * 桩：建链工厂返回共享 JMS 上下文（password 侧精确匹配 accessSecret 原值 = 官方无拼接契约，
+     * username 三段形态仅在凭证专项用例断言）
+     */
     private void stubContextCreation() {
-        when(connectionFactory.createContext(eq(TEST_ACCESS_KEY), anyString(), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
+        when(connectionFactory.createContext(anyString(), eq(TEST_ACCESS_SECRET), eq(JMSContext.CLIENT_ACKNOWLEDGE)))
                 .thenReturn(jmsContext);
+    }
+
+    /** 解析官方三段 username 的 timestamp 段毫秒值（段形如 timestamp=1700000000000，13 位毫秒）。 */
+    private static long timestampSegmentMillis(String segment) {
+        assertThat(segment).as("timestamp 段以 timestamp= 前缀形态出现").startsWith("timestamp=");
+        String millis = segment.substring("timestamp=".length());
+        assertThat(millis).as("timestamp 为 13 位毫秒").hasSize(13);
+        return Long.parseLong(millis);
     }
 
     /** 空闲轮询 Answer：短暂休眠后返回 null（模拟 broker 无消息；中断时提前返回驱动停机） */

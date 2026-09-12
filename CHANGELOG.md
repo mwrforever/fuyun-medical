@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-12 · 缺陷修复：AMQP 凭证改华为云官方三段 username 与原值 password 格式（先记再改）
+
+- **缺陷实证（本地 compose 联调）**：启用 AMQP 对接真实华为云 IoTDA 后认证恒被拒，backend 日志 `Client failed to authenticate using SASL: PLAIN`（supervisor 退避重建 12s→24s→30s 封顶运转正常、simulator MQTT 链路正常）——排除重建机制问题后，经官方文档核对定位为凭证组装格式错误。
+- **官方核对结论（来源：《AMQP客户端接入说明》 support.huaweicloud.com/usermanual-iothub/iot_01_00100_2.html）**：username = `accessKey=${accessKey}|timestamp=${timestamp}|instanceId=${instanceId}` 三段竖线拼接（instanceId 可选，同一 Region 多个标准版实例才需设置，单实例留空段即可）；password = accessCode **原值、无任何拼接**；timestamp 为 13 位毫秒且服务端校验偏差超 5 分钟即拒绝（每次建链刷新机制保留）；连接串子参数 `amqp.vhost=default&amqp.idleTimeout=8000&amqp.saslMechanisms=PLAIN`（vhost 仅支持 default）。此前 PR-4 调研期「password = accessSecret + 13 位毫秒时间戳拼接」为**错误预判**，相关注释表述本次一并清除。
+- **修复面**：① `IotAmqpTelemetryConsumer.ensureConnected` 凭证组装改官方格式（username 三段、password 原值，javadoc 引用官方 URL）；② `IotAmqpConfig` 连接 URI 于 amqps（IoTDA 生产端点）子 URI 追加官方三子参数——vhost 仅支持 default 属 IoTDA 接入面参数，本地 amqp:// RabbitMQ（vhost 为 `/`）不追加，failover.* 三参数零改动，URI 装配契约以新增单测固化；③ 消费者单测凭证断言改新格式（username 三段解析 + 时间戳随 clock 进动递增 + password 原值）；④ fuyun-app 三个 AMQP IT 的 broker 建号（用户名/标签/权限三命令）与生产者凭证同步（固定时钟下 username 三段字面可预置，固定时钟机制保留）。
+
 ## 2026-09-12 · 缺陷修复：禁用 JMS 健康指标，消除无凭证探测致 backend 容器 unhealthy（先记再改）
 
 - **缺陷链（本地 compose 联调实证）**：启用 `FUYUN_IOT_AMQP_ENABLED=true` 对接华为云 IoTDA AMQP 后，Spring Boot actuator 的 JmsHealthIndicator 自动探测 classpath 上的 Qpid JMS ConnectionFactory 并发起**不带凭证**的连接——IoTDA 强制 SASL PLAIN 鉴权，探测恒失败（JMSSecuritySaslException）→ actuator/health 聚合 DOWN → compose healthcheck（探 actuator/health 要求 UP）判 backend 容器 unhealthy → iot-simulator（depends_on service_healthy）无法启动。
