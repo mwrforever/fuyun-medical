@@ -77,6 +77,14 @@ mybatis-plus:                  # MP 全局扩展（backend 宪法 A.4.3）
 server:
   shutdown: graceful           # 优雅停机（backend 宪法 A.5-15）
 management:
+  health:
+    # jms 健康指标禁用：Boot 自动装配的 JmsHealthIndicator 会对 classpath 上的 Qpid ConnectionFactory
+    # 发起不带凭证的探测连接，IoTDA AMQP 强制 SASL PLAIN 鉴权致探测恒失败，actuator/health 聚合 DOWN
+    # → compose healthcheck 判容器 unhealthy → iot-simulator 依赖 healthy 无法启动；
+    # 业务消费者带凭证连接正常，AMQP 链路真实状态由 iot.amqp.connected / disconnect.duration.seconds
+    # 等自研 Micrometer 指标承载；P1 完整化方向：自研 HealthIndicator 反映 iot.amqp.connected 真实状态。
+    jms:
+      enabled: false
   endpoints:
     web:
       exposure:

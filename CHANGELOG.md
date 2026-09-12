@@ -2,6 +2,12 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-12 · 缺陷修复：禁用 JMS 健康指标，消除无凭证探测致 backend 容器 unhealthy（先记再改）
+
+- **缺陷链（本地 compose 联调实证）**：启用 `FUYUN_IOT_AMQP_ENABLED=true` 对接华为云 IoTDA AMQP 后，Spring Boot actuator 的 JmsHealthIndicator 自动探测 classpath 上的 Qpid JMS ConnectionFactory 并发起**不带凭证**的连接——IoTDA 强制 SASL PLAIN 鉴权，探测恒失败（JMSSecuritySaslException）→ actuator/health 聚合 DOWN → compose healthcheck（探 actuator/health 要求 UP）判 backend 容器 unhealthy → iot-simulator（depends_on service_healthy）无法启动。
+- **修复裁决**：`application.yml` 增 `management.health.jms.enabled: false` 禁用 jms 健康指标。理由：实际业务消费者带凭证 `createContext(accessKey, password, CLIENT_ACK)` 工作正常，探测语义对本架构无意义且有害；AMQP 链路真实状态已由自研 Micrometer 指标（iot.amqp.connected / disconnect.duration.seconds / reconnect.total 等）承载。
+- **P1 完整化方向**：自研 HealthIndicator 反映 iot.amqp.connected 真实链路状态，纳入 readiness 聚合后再评估替代本禁用项。
+
 ## 2026-09-11 · PR-5 CI 门禁缺陷修复：移除骨架期 pom/webpkg 构建守卫，恢复后端/前端门禁触发（先记再改）
 
 - **缺陷实证（PR #8，CI run 34645973742）**：changes job 判定输出 `Filter backend = true`、`Filter pom = false`，backend job 双条件 `needs.changes.outputs.backend == 'true' && needs.changes.outputs.pom == 'true'` 为 false → `backend / verify` skipping——本 PR 明确含后端改动（fuyun-iot 鉴权迁移 + fuyun-app IT，9 个 java 文件）却未跑后端门禁，属于严格门禁模型（方案 B）下的门禁绕过缺陷。
