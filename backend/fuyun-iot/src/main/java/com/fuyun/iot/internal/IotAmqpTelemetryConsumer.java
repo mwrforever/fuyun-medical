@@ -1,5 +1,6 @@
 package com.fuyun.iot.internal;
 
+import com.fuyun.common.messaging.StandardTelemetryMessage;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.enums.ConsumeErrorStage;
 import com.fuyun.iot.internal.TelemetryFrameParser.ParsedFrame;
@@ -64,12 +65,17 @@ import org.springframework.context.SmartLifecycle;
  * 语义由 supervisor 承接，且每次重建均携带新时间戳凭证（透明重连不刷新时间戳的 IoTDA 语义对策）。
  *
  * <p><b>消费处理流程（四路同构）</b>：receive → 载体解码（字节/文本）→ TelemetryFrameParser 解析 →
- * 遥测帧入 {@link TelemetryBatchAssembler} 有界队列（满则阻塞等待背压）；状态帧即时交
- * {@link IDeviceStatusService}，返回档案 wardId（非 null）时以之补全事件载荷（P0 状态帧契约
- * 不含 wardId，档案行同数据源回填，恢复 /topic/iot/device-status/{wardId} 生产数据源）再经
- * 状态事件回调（构造期注入 {@link IotEventPublisher}#publishDeviceStatus，ObjectProvider 可选
+ * 遥测帧入 {@link TelemetryBatchAssembler} 有界队列（满则阻塞等待背压）；IoTDA 推送帧（顶层
+ * resource=device.property，TASK.md L-3 冻结映射）解析展开为 N 条标准遥测消息逐条入攒批——
+ * 客户端确认回调只挂尾条（其余挂空动作，见 {@link #dispatchTelemetryBatch} 挂尾安全性论证）；
+ * 状态帧即时交 {@link IDeviceStatusService}，返回档案 wardId（非 null）时以之补全事件载荷（P0
+ * 状态帧契约不含 wardId，档案行同数据源回填，恢复 /topic/iot/device-status/{wardId} 生产数据源）
+ * 再经状态事件回调（构造期注入 {@link IotEventPublisher}#publishDeviceStatus，ObjectProvider 可选
  * 解析）发布 iot.device.status-changed 至 fy.topic；解析失败帧落 iot_consume_error_log
- * （stage=PARSE）后确认抛弃（毒丸隔离，不阻塞队列）。
+ * （stage=PARSE）后确认抛弃（毒丸隔离，不阻塞队列）。留痕脱敏口径（TASK.md L-3 自带义务）：
+ * raw_payload 入库前经 {@link ConsumePayloadMasker} 脱敏——IoTDA 推送形态白名单提取（属性值
+ * 全打码，健康数据禁原文入库）、其余文本 SensitiveMasker 正则兜底；raw_digest 随之为脱敏后
+ * 文本的摘要（用途=排查锚点与重复帧对账，脱敏后同构报文摘要合并无害）。
  *
  * <p><b>连接数预算（宪法 A.5-9）</b>：连接数 = 实例数 × 每实例连接数（=配置队列数），上限
  * ≤32（IoTDA 单凭证上限）；P0 单实例 × ≤4 队列 = ≤4 连接，扩容上界 8 实例 × 4 队列 = 32。
@@ -531,10 +537,13 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             if (frame instanceof ParsedFrame.TelemetryFrame telemetryFrame) {
                 // 遥测帧入攒批（有界队列满则阻塞等待背压）；批末统一确认由攒批器落库成功后回调
                 assembler.put(telemetryFrame.message(), unifiedAcknowledgeAction(message));
+            } else if (frame instanceof ParsedFrame.TelemetryBatchFrame batchFrame) {
+                // IoTDA 推送帧展开产物：N 条消息逐条入攒批，确认回调只挂尾条（挂尾安全性论证见下）
+                dispatchTelemetryBatch(queueAddress, batchFrame.messages(), message, rawText);
             } else if (frame instanceof ParsedFrame.StatusFrame statusFrame) {
                 handleStatusFrame(statusFrame.event(), message);
             } else {
-                // sealed 双形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
+                // sealed 三形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
                 throw new IllegalStateException("未接线的帧解析形态：" + frame.getClass().getName());
             }
         } catch (InterruptedException e) {
@@ -550,6 +559,49 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             log.error("遥测帧处理失败（业务异常），触发会话重建令本帧回归重投域：queue={}，原因={}", queueAddress, e.getMessage(), e);
             triggerGlobalRebuildForRedelivery("状态帧业务处理失败");
             throw e;
+        }
+    }
+
+    /**
+     * IoTDA 推送帧展开产物投递：N 条标准遥测消息逐条入攒批，<b>客户端确认回调只挂尾条</b>，
+     * 其余条目挂空动作（TASK.md L-3 冻结映射的消费者侧语义）。
+     *
+     * <p><b>挂尾确认安全性论证（为何非尾条的空动作不丢确认、尾条确认不早于落库）</b>：
+     * JMS {@code Session.CLIENT_ACKNOWLEDGE} 为<b>会话级累计确认</b>——对任一消息 acknowledge()
+     * 即统一确认其会话内此前全部已消费交付，且 IoTDA 每队列建独立会话（每队列单消费线程）。
+     * 同一队列内：消费线程按 receive 序逐条 put（本方法循环序 = 展开序），攒批器单 flush 线程
+     * 按入队序刷批，批内先整批落库成功后执行尾条确认回调——因此任何会累计确认到本 JMS 消息的
+     * 确认回调（本帧尾条或其后任意批次的批末确认）必然在本帧尾条所属批次落库之后才可能执行，
+     * <b>不存在「确认先于落库」窗口</b>。落库失败路径零真实确认执行，会话销毁（攒批器失败回调
+     * 触发全局重建）令整条消息回归 broker 重投域，重投后由 iot_telemetry 唯一约束 ON CONFLICT
+     * DO NOTHING 幂等去重，at-least-once 语义保持。
+     *
+     * <p><b>防御分支</b>：messages 为空属解析器契约不可能态（解析器保证展开产物 ≥1 条，见
+     * {@code ParsedFrame.TelemetryBatchFrame} 契约），但仍必须收口为毒丸留痕抛弃——否则本 JMS
+     * 消息没有任何确认动作，broker 将无限重推。
+     *
+     * <p>包内可见为测试缝隙（既有惯例：全参构造器/载体访问器同口径）——空列表防御分支为解析器
+     * 契约不可达态，无法经公有消费流驱动，单测经本方法直注验证。
+     *
+     * @param queueAddress 来源队列地址（毒丸留痕溯源），非空
+     * @param messages     IoTDA 推送帧展开产物，非空；契约 ≥1 条（空列表走防御分支）
+     * @param message      来源 JMS 消息，非空；仅尾条挂其真实确认动作
+     * @param rawText      帧原文（仅防御分支毒丸留痕脱敏用），可空
+     * @throws InterruptedException 攒批背压等待被停机打断；已入队条目不确认，整条消息随重投域回归
+     */
+    void dispatchTelemetryBatch(
+            String queueAddress, List<StandardTelemetryMessage> messages, Message message, String rawText)
+            throws InterruptedException {
+        if (messages.isEmpty()) {
+            // 解析器契约不可能态的防御收口：无确认动作将致 broker 无限重推，按毒丸留痕抛弃
+            poisonAndAcknowledge(queueAddress, message, rawText, "IoTDA 推送帧展开产物为空（解析器契约违约，防御留痕抛弃）");
+            return;
+        }
+        for (int i = 0; i < messages.size(); i++) {
+            // 挂尾确认：仅尾条携带真实确认动作（会话级累计确认覆盖本 JMS 消息全部展开条目），
+            // 其余条目空动作（攒批器落库成功后仅执行批末条目回调，安全性论证见方法 javadoc）
+            Runnable ackAction = i == messages.size() - 1 ? unifiedAcknowledgeAction(message) : () -> {};
+            assembler.put(messages.get(i), ackAction);
         }
     }
 
@@ -584,8 +636,11 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     /**
      * 毒丸留痕并确认抛弃：落 iot_consume_error_log（stage=PARSE）→ acknowledge → info 留痕。
      *
-     * <p>留痕服务内部全吞落库失败（毒丸隔离优先于留痕），故本方法不因留痕失败中断；确认失败按
-     * 连接级异常上抛（毒丸将随重推再次隔离，无死循环风险：留痕幂等仅多行）。
+     * <p>留痕原文先经 {@link ConsumePayloadMasker#sanitize} 脱敏（TASK.md L-3 自带义务：真实
+     * 报文属性值为健康数据禁原文入库；IoTDA 推送形态白名单提取、其余文本正则兜底）；落库摘要
+     * raw_digest 相应为<b>脱敏后文本</b>的 SHA-256（口径变化：用途=排查锚点与重复帧对账，脱敏后
+     * 同构报文摘要合并无害）。留痕服务内部全吞落库失败（毒丸隔离优先于留痕），故本方法不因留痕
+     * 失败中断；确认失败按连接级异常上抛（毒丸将随重推再次隔离，无死循环风险：留痕幂等仅多行）。
      *
      * @param queueAddress 来源队列地址，非空
      * @param message      毒丸消息，非空
@@ -594,7 +649,10 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
      */
     private void poisonAndAcknowledge(String queueAddress, Message message, String rawText, String reason) {
         errorLogService.recordParseFailure(
-                queueAddress, rawText == null ? "" : rawText, ConsumeErrorStage.PARSE.getCode(), reason);
+                queueAddress,
+                ConsumePayloadMasker.sanitize(rawText == null ? "" : rawText),
+                ConsumeErrorStage.PARSE.getCode(),
+                reason);
         try {
             message.acknowledge();
         } catch (JMSException e) {
