@@ -2,6 +2,14 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-13 · L-3 冻结：真实 IoTDA 规则引擎报文映射（选项 B 代码映射）与毒丸留痕脱敏落地（先记再改）
+
+- **背景与批准结论（TASK.md L-3，用户 2026-09-13 批准选项 B）**：P0 线格式为 CF-7 JSON，但真实华为云 IoTDA AMQP 推送报文与 CF-7 不匹配，毒丸隔离机制已留痕 569 帧（iot_consume_error_log，stage=PARSE、确认抛弃）。真实报文结构已取证（raw_payload 原文）：顶层 `resource="device.property"` + `notify_data.header`（device_id/node_id/product_id）+ `notify_data.body.services[]`（service_id/properties/event_time）。选项 B 裁决：解析器新增「IoTDA AMQP 推送报文」第三形态，真实报文展开为 N 条 CF-7 标准遥测消息，下游攒批/落库/推送管道零改动。
+- **映射规格（冻结，禁再猜测性兼容）**：判别条件 = 顶层 `resource` 字段存在且精确等于 `"device.property"`（优先于既有遥测/状态判别；非该形态回退既有判别，CF-7 帧行为零变化）。字段映射：deviceId ← `notify_data.header.device_id`（必填非空白，缺失即毒丸）；occurredAt ← 顶层 `event_time_ms`（ISO-8601，复用既有 OffsetDateTime→Instant 双回退解析为 UTC Instant，缺失或不可解析即毒丸）；`notify_data.body.services` 必须为数组且 ≥1 元素、每个 service 的 `properties` 必须为非空对象，否则毒丸。值承载（StandardTelemetryMessage 契约）：每属性键一条消息，metricCode=属性名（如 heartRate/spo2，P1 建字典再规范化）；value 字符串承载——JSON 标量（文本/数值/布尔/null 字面量）`asText()` 转文本，对象/数组 `toString()` 紧凑 JSON 文本；unit 恒 null（IoTDA 属性上报不含单位）；quality 按既有 isNumeric 口径（数值→GOOD、非数值→BAD，标注不阻断，真实报文数值属性自然落 GOOD）；source=IOTDA。
+- **消费者确认回调挂尾设计与安全性论证**：批量帧展开的 N 条消息逐条入攒批器，客户端确认回调只挂尾条、其余挂空动作。安全性：JMS CLIENT_ACKNOWLEDGE 为会话级累计确认且每队列独立会话——同一队列单消费线程按序投递、攒批器单 flush 线程按序刷批，任何会累计确认到本 JMS 消息的确认回调必然在其尾条所属批次落库之后才可能执行（批次按序、批内先落库后确认），不存在「确认先于落库」窗口；落库失败路径零真实确认执行 → 会话销毁令整条消息回归重投域 → iot_telemetry 唯一约束 ON CONFLICT DO NOTHING 幂等去重，at-least-once 语义保持。防御分支：展开产物为空（解析器契约不可能）按毒丸留痕抛弃——否则该 JMS 消息无确认动作致 broker 无限重推。
+- **毒丸留痕脱敏落地（TASK.md L-3 行自带义务，终审 Minor 2026-09-11）**：现有 569 毒丸帧原文含生命体征数值（健康数据），禁止原文入库。新增 `ConsumePayloadMasker.sanitize`：IoTDA 推送形态（可解析为 JSON 对象且含 `notify_data` 对象字段，无论毒因）→ 白名单字段提取——保留 resource/event/event_time_ms、header 三标识与 services[].service_id 结构及 properties 键名，属性值一律替换 `"*"`（紧凑 JSON，白名单外字段如 services[].event_time 丢弃）；其余文本（非 JSON/其他形态）→ SensitiveMasker 正则兜底（先证后机组合约定）；null/空串原样。接线后 iot_consume_error_log.raw_payload 恒为脱敏文本；口径变化：raw_digest 随之为脱敏后文本的摘要（用途=排查锚点与重复帧对账，脱敏后同构报文摘要合并无害）。
+- **改动面**：`IotMessagingConstants` 新增 IoTDA 推送报文字段常量；`TelemetryFrameParser` sealed `ParsedFrame` 新增 `TelemetryBatchFrame` 第三变体与 `parseIotdaDeviceProperty` 解析（既有遥测/状态判别与解析零逻辑改动）；`IotAmqpTelemetryConsumer` 分派链新增批量帧分支与 `dispatchTelemetryBatch`（挂尾确认），毒丸留痕接脱敏；新增 `ConsumePayloadMasker`（internal/ 静态工具，对齐 SensitiveMasker 模式）；测试增量：解析器/消费者/脱敏器单测与 `IotTelemetryPipelineIT` 步骤⑨（真实取证报文经 fake broker → iot_telemetry 展开 2 行）。
+
 ## 2026-09-12 · 缺陷修复：AMQP 凭证改华为云官方三段 username 与原值 password 格式（先记再改）
 
 - **缺陷实证（本地 compose 联调）**：启用 AMQP 对接真实华为云 IoTDA 后认证恒被拒，backend 日志 `Client failed to authenticate using SASL: PLAIN`（supervisor 退避重建 12s→24s→30s 封顶运转正常、simulator MQTT 链路正常）——排除重建机制问题后，经官方文档核对定位为凭证组装格式错误。
