@@ -13,6 +13,7 @@
 | D-6 | 宪法 `enum/` 包目录命名与 Java 保留字冲突 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：枚举包目录改 `enums/`——B.1/C.3 正文随 PR-3 修宪提交更新，已建的 `enum/.gitkeep` 目录同步改名；若用户改判 enumeration/ 或其他，改动面=目录名+包名+宪法正文，一次替换可回收 | backend 全部 20 模块目录结构、PR-3 枚举类落位 |
 | D-7 | 幂等前置去重 NX 误判丢消息窗口的补救策略 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：消费范式改为「Redis NX 失败时回查 received_event 表（唯一索引查询），确认已处理才跳过」——彻底消除丢消息窗口、保持 at-least-once；代价为每条重复消息一次 DB 点查。若用户改判缩短 TTL 或维持现状，改动面=MessageIdempotencyServiceImpl 单类+单测 | M20 幂等构件消费范式、PR-3 起全部 @RabbitListener 消费者 |
 | D-8 | 宪法 A.5-9 failover 参数语法与实测落码的正文同步 | PR-4 B4.4 实测（IotAmqpReconnectIT 两次 RED 留证）：qpid-jms 2.11 官方语法要求 failover 参数带 `failover.` 前缀（宪法正文裸名写法不可被识别）；`failover.maxReconnectAttempts=-1`（简报预判值，非宪法条文）在 IoTDA 时间戳凭证语义下会永续透明重连，已改 3 次+supervisor 移交（无限重建语义上移消费者层）。代码与 CHANGELOG 已登记（2026-09-11 条目），**宪法正文修订待用户裁决后随 P1 执行**（先记再改流程，正文同步 = 三参数补前缀语法说明 + 有限重试移交语义 + CHANGELOG 该条目归源由"宪法文字"修正为"简报 §1.3 预判"）；若用户裁决不改正文，改动面=零（代码不动，正文保持概称） | backend/AGENTS.md A.5-9、CHANGELOG 2026-09-11 条目 |
+| D-9 | L-3 映射 quality 口径细化追认 | 冻结决策文本「映射时需 String.valueOf 并保持 quality=GOOD」的上下文为数值型真实报文（heartRate=78/spo2=100），实现（PR #12）对该场景产 GOOD，符合冻结文本；冻结文本未覆盖的非数值标量/布尔/null/对象/数组属性值，实现按 P0 既有 CF-7 口径补齐——value 非数值 → quality 强制 BAD 并保留原文（标注不阻断）；端到端等价：TelemetryIngestServiceImpl 仅对 value 可数值定型行入库，非数值属性无论 GOOD/BAD 均不入库，真实报文两口径产物完全一致。审核 S1 以「CHANGELOG 口径细化声明 + 待追认」路径收口（CHANGELOG 2026-09-13 条目第 4 点）；**若用户改判恒 GOOD，改动面 = TelemetryFrameParser 单行 + 断言翻转**，随修订登记回收 | TelemetryFrameParser.java、TelemetryFrameParserTest |
 
 ## 待调研项（检索不可得 / 需实测，回填后删除）
 
@@ -31,17 +32,6 @@
 | T-R5-1 | Testcontainers 官方无 GHA 专页（以 runner-images 预装 Docker 为依据），首跑 verify 实测 | R5 §5-1 | CI 首跑 |
 | T-R5-2 | palantir-java-format 在 spotless 3.4.0 的内置默认版本号 | R5 §5-2 | 本地首跑 spotless:check 确认 |
 | T-R5-3 | pre-commit-hooks 官方钩子具体 tag（当前 v6.0.0 已核实，后续 autoupdate 锁定） | R1 §5 | 实施期 `pre-commit autoupdate` |
-
-## 延后事项（IOTDA 联调时点回填，回填后删除）
-
-> 来源：PR-4 延后条款（计划 §1-PR-4 + BRIEF-PR4-01 §1.7/§10 附 8，B4.4 收口登记 2026-09-10）。前提 = 本地 `.env` 无 IOTDA_* 六变量（六变量就绪并完成 `--profile sim` 全链路演示时一并回填删除）；编号 L = 延后（Linkage 联调）。
-
-| 编号 | 事项 | 说明（来源） | 回填时点 |
-| --- | --- | --- | --- |
-| L-1 | `--profile sim` 全链路演示 | IOTDA_MQTT_HOST / IOTDA_DEVICE_ID / IOTDA_DEVICE_SECRET 三变量用户侧准备就绪后，以 iot-simulator 镜像（PR-4 B4.4 已交付，本地 `docker build -f backend/iot-simulator/Dockerfile -t fuyun/iot-simulator:dev backend`）走通 IoTDA→AMQP→库→WebSocket 演示链路并留演示记录；backend 侧需同步置 FUYUN_IOT_AMQP_ENABLED=true 且 FUYUN_IOT_AMQP_QUEUES 与 IoTDA 推送队列一致（AMQP 消费链默认关闭，终审修复 2026-09-11 已打通 env 透传） | IOTDA 六变量就绪后 |
-| L-2 | T-R3-3 真实 IoTDA 端点 10 分钟断链演示（回填结论：本地两级实测已完成） | 本地两级实测已于 PR-4 B4.2/B4.4 完成——supervisor 单测（fake ConnectionFactory 覆盖断链异常→退避重建→恢复续费）+ 本地 broker 断链恢复 IT（IotAmqpReconnectIT：stop_app 断链→connected=0/断链时长增长→退避不雪崩→start_app 重连→新锚点帧落库）全绿；真实端点 + 10 分钟断链窗口演示只能产生于联调时点（本地 broker 无法复现 IoTDA「凭证内嵌时间戳超 5 分钟拒绝建链」服务端语义，强行伪测违反验证纪律），原 T-R3-3 行按登记台规则回填删除 | 与 L-1 同一时点 |
-| L-3 | 真实 IoTDA 规则引擎报文映射冻结 | P0 线格式 = CF-7 JSON（AMQP 解析器与 HTTP 兜底同构）；真实 IoTDA 转发报文（messageId/properties/services 结构）到 CF-7 的字段映射随联调批次冻结（BRIEF-PR4-01 §1.3，禁猜测性兼容）；L-3 落地时 iot_consume_error_log.raw_payload 原文接 SensitiveMasker 脱敏或白名单字段提取（终审 Minor 2026-09-11：P0 靠 CF-7 线格式无 PHI 前提实质合规，真实报文映射后必须显式脱敏） | 与 L-1 同一时点 |
-| L-4 | 真实积压水位指标（IoTDA 侧最旧未消费消息年龄） | 本地不可测，P0 以断链时长 + 攒批队列填充率 + 消费/重建计数承载（iot.amqp.* 指标词表，B4.3 交付）；真实积压指标随 IOTDA 联调补全（BRIEF-PR4-01 §10 附 8） | 与 L-1 同一时点 |
 
 ## TODO 工单
 
