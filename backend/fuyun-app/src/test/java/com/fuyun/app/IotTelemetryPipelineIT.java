@@ -21,6 +21,7 @@ import jakarta.jms.BytesMessage;
 import jakarta.jms.JMSContext;
 import jakarta.jms.Queue;
 import java.lang.reflect.Type;
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -88,14 +89,16 @@ import org.testcontainers.utility.MountableFile;
  * 打通「AMQP 注入 → Qpid 消费 → 四路解析 → 绑定快照 → 批量冲突忽略落库 → 客户端确认」、
  * 「落库 → STOMP 遥测摘要推送」、「状态帧 → 档案状态机 → 档案 wardId 补全自事件 → fy.topic →
  * 治理队列 AUTO+幂等消费 → STOMP 设备状态推送」与「HTTP 兜底通道独立鉴权 + 双通道同键去重」
- * 全链路。八步断言（§6.2 原文序 + PR-5 Finding 1 迁移后新增步骤 8）：①种子；②AMQP 注入落库
- * 幂等（4 帧两两重复键 → 恰 2 行 + 快照值）；③STOMP 摘要断言（订阅 /topic/iot/telemetry/1001
- * → 发 1 帧新遥测 → 收摘要帧含 deviceId/metricCode）；④毒丸隔离（非 JSON + 缺字段落 PARSE
- * 错误日志 PENDING → 锚点帧证明消费未阻塞）；⑤状态扇出 AMQP 全链（OFFLINE 帧→档案更新→
- * received_event PROCESSED；消费者以设备档案 ward_id=1001 补全自事件 → /topic/iot/device-status/1001
- * 收状态帧）；⑥幂等重投（台账真实已消费 eventId 重发跳过，台账行数不变）；⑦HTTP 兜底（无/错
- * token 401 IOT-1001；对 token 同键载荷 202 且 iot_telemetry 行数不增）；⑧STOMP 帧级鉴权负路径
- * （无/错令牌 CONNECT 被拒——ERROR 帧后连接关闭，会话无法建立）。
+ * 全链路。九步断言（§6.2 原文序 + PR-5 Finding 1 迁移后新增步骤 8 + L-3 冻结新增步骤 9）：
+ * ①种子；②AMQP 注入落库幂等（4 帧两两重复键 → 恰 2 行 + 快照值）；③STOMP 摘要断言（订阅
+ * /topic/iot/telemetry/1001 → 发 1 帧新遥测 → 收摘要帧含 deviceId/metricCode）；④毒丸隔离
+ * （非 JSON + 缺字段落 PARSE 错误日志 PENDING → 锚点帧证明消费未阻塞）；⑤状态扇出 AMQP 全链
+ * （OFFLINE 帧→档案更新→received_event PROCESSED；消费者以设备档案 ward_id=1001 补全自事件 →
+ * /topic/iot/device-status/1001 收状态帧）；⑥幂等重投（台账真实已消费 eventId 重发跳过，台账
+ * 行数不变）；⑦HTTP 兜底（无/错 token 401 IOT-1001；对 token 同键载荷 202 且 iot_telemetry 行数
+ * 不增）；⑧STOMP 帧级鉴权负路径（无/错令牌 CONNECT 被拒——ERROR 帧后连接关闭，会话无法建立）；
+ * ⑨IoTDA 推送帧展开（TASK.md L-3 冻结映射：真实取证报文 resource=device.property → 解析展开
+ * 2 条 CF-7 标准遥测消息 → iot_telemetry 2 行 value 文本承载）。
  *
  * <p><b>STOMP 客户端与帧级鉴权方案（PR-5 Finding 1 迁移后）</b>：spring-websocket
  * WebSocketStompClient(StandardWebSocketClient) 连 ws://localhost:{port}/ws/iot；令牌承载于
@@ -177,6 +180,17 @@ class IotTelemetryPipelineIT {
      * address-v2 语法 /queues/{name}（address-v1 裸名被服务端拒绝 amqp_address_v1_not_permitted，
      * 2026-09-11 实测）；生产 IoTDA 侧配置为服务端裸队列名，消费者对配置值零加工直传 */
     private static final String QUEUE_ADDRESS = "/queues/it.iot.telemetry";
+
+    /** 步骤⑨真实 IoTDA 取证推送报文（iot_consume_error_log raw_payload 原文样例，569 帧同构；
+     * TASK.md L-3 冻结映射的端到端验证载体，逐字原样） */
+    private static final String IOTDA_PUSH_PAYLOAD = "{\"resource\":\"device.property\",\"event\":\"report\","
+            + "\"event_time_ms\":\"2026-09-12T17:30:41.632Z\",\"notify_data\":{\"header\":{"
+            + "\"device_id\":\"6aa570ac155456566827c784_fuyun-demo-001\",\"node_id\":\"fuyun-demo-001\","
+            + "\"product_id\":\"6aa570ac155456566827c784\"},\"body\":{\"services\":[{\"service_id\":\"Monitor\","
+            + "\"properties\":{\"heartRate\":78,\"spo2\":100},\"event_time\":\"20260912T173041Z\"}]}}}";
+
+    /** 步骤⑨取证报文设备号（iot_telemetry 落库行过滤锚点；演示设备号，与任何真实凭证无关） */
+    private static final String IOTDA_PUSH_DEVICE_ID = "6aa570ac155456566827c784_fuyun-demo-001";
 
     /** 队列声明的裸队列名（管理 API PUT /api/queues/{vhost}/{name} 路径段） */
     private static final String QUEUE_BARE_NAME = "it.iot.telemetry";
@@ -573,6 +587,35 @@ class IotTelemetryPipelineIT {
                 .hasCauseInstanceOf(ConnectionLostException.class);
     }
 
+    /**
+     * 步骤⑨：IoTDA 推送帧展开全链（TASK.md L-3 冻结映射端到端验证）——真实取证报文
+     * （resource=device.property）经 fake broker 投递，解析器展开为 2 条 CF-7 标准遥测消息
+     * （heartRate/spo2），断言 iot_telemetry 落 2 行且 value 数值定型、quality=GOOD、source=IOTDA。
+     * 该设备无绑定档案：患者/就诊列落 NULL 仍入库（"未关联仍入库"口径，14-iot §3.3）。
+     */
+    @Test
+    @Order(9)
+    @DisplayName("IoTDA 推送帧展开：真实取证报文经 AMQP 投递 → iot_telemetry 展开 2 行（value 文本承载定型）")
+    void ingestsRealIotdaPushPayloadExpandedToTwoTelemetryRows() {
+        sendFrames(List.of(IOTDA_PUSH_PAYLOAD));
+
+        awaitUntil("IoTDA 推送帧展开落库 2 行（heartRate/spo2）", () -> countIotdaExpandedRows() == 2);
+        List<IotdaRow> rows = jdbcTemplate.query(
+                "SELECT metric_code, value, quality, source FROM iot.iot_telemetry WHERE device_id = ?"
+                        + " ORDER BY metric_code",
+                (rs, rowNum) -> new IotdaRow(rs.getString(1), rs.getBigDecimal(2), rs.getString(3), rs.getString(4)),
+                IOTDA_PUSH_DEVICE_ID);
+        assertThat(rows).extracting(IotdaRow::metricCode).containsExactly("heartRate", "spo2");
+        assertThat(rows)
+                .as("属性值以文本承载并按数值定型入库（properties heartRate=78 / spo2=100）")
+                .extracting(IotdaRow::value)
+                .containsExactly(new BigDecimal("78"), new BigDecimal("100"));
+        assertThat(rows).allSatisfy(row -> {
+            assertThat(row.quality()).as("数值属性质量口径 GOOD").isEqualTo("GOOD");
+            assertThat(row.source()).as("IoTDA 推送帧来源标注 IOTDA").isEqualTo("IOTDA");
+        });
+    }
+
     /** 构造带 wardId 的设备状态自事件信封（步骤⑥幂等重投样本，eventId 取自台账真实已消费行） */
     private EventEnvelope wardEnvelope(String eventId, String traceId) {
         return new EventEnvelope(
@@ -722,6 +765,12 @@ class IotTelemetryPipelineIT {
                 "SELECT count(*) FROM iot.iot_consume_error_log WHERE queue_name = ?", Integer.class, QUEUE_ADDRESS);
     }
 
+    /** 步骤⑨探针：IoTDA 推送帧展开落库行数（按取证报文设备号过滤）。 */
+    private Integer countIotdaExpandedRows() {
+        return jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM iot.iot_telemetry WHERE device_id = ?", Integer.class, IOTDA_PUSH_DEVICE_ID);
+    }
+
     /** 步骤⑤探针：OFFLINE 状态已落档案且最近离线时刻非空的行数（单查询免多列类型映射）。 */
     private Integer countOfflineDeviceWithOfflineTime() {
         return jdbcTemplate.queryForObject(
@@ -760,6 +809,9 @@ class IotTelemetryPipelineIT {
 
     /** 错误日志行投影（stage/status/摘要） */
     private record ErrorRow(String errorStage, String status, String rawDigest) {}
+
+    /** IoTDA 推送帧展开落库行投影（metric/value/quality/source） */
+    private record IotdaRow(String metricCode, BigDecimal value, String quality, String source) {}
 
     /**
      * IT 专用固定时钟：以 {@code @Primary} 覆盖 IotAmqpConfig 的 iotAmqpClock Bean——IoTDA 官方
