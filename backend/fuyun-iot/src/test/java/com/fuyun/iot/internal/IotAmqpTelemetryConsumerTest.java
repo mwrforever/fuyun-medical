@@ -11,6 +11,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -71,6 +72,27 @@ class IotAmqpTelemetryConsumerTest {
 
     /** 测试资产假凭证（仅具单测意义，password 原值侧断言载体，禁断言真实值与日志输出） */
     private static final String TEST_ACCESS_SECRET = "test-access-secret";
+
+    /**
+     * 真实 IoTDA 取证推送报文（raw_payload 原文样例，iot_consume_error_log 569 帧同构；演示设备号，
+     * 与任何真实凭证无关）。
+     */
+    private static final String IOTDA_PUSH_JSON = """
+            {"resource":"device.property","event":"report","event_time_ms":"2026-09-12T17:30:41.632Z",
+             "notify_data":{"header":{"device_id":"6aa570ac155456566827c784_fuyun-demo-001",
+             "node_id":"fuyun-demo-001","product_id":"6aa570ac155456566827c784"},
+             "body":{"services":[{"service_id":"Monitor","properties":{"heartRate":78,"spo2":100},
+             "event_time":"20260912T173041Z"}]}}}""";
+
+    /**
+     * IoTDA 推送帧毒丸变体（device_id 缺失的真实取证报文变体：属性值留、头缺 device_id），解析
+     * 契约违约走真实解析失败毒丸路径，供消费者层脱敏接线的直接断言（审核 Q1）。
+     */
+    private static final String IOTDA_PUSH_JSON_MISSING_DEVICE_ID = """
+            {"resource":"device.property","event":"report","event_time_ms":"2026-09-12T17:30:41.632Z",
+             "notify_data":{"header":{"node_id":"fuyun-demo-001","product_id":"6aa570ac155456566827c784"},
+             "body":{"services":[{"service_id":"Monitor","properties":{"heartRate":78,"spo2":100},
+             "event_time":"20260912T173041Z"}]}}}""";
 
     /** 测试用 AMQP 参数：batchSize=2/interval=50ms 便于批确认断言；退避 10ms→30ms 毫秒级验证节奏 */
     private static final IotProperties.Amqp TEST_AMQP = new IotProperties.Amqp(
@@ -496,6 +518,93 @@ class IotAmqpTelemetryConsumerTest {
         assertThat(statusEventsPublished.get(0).wardId())
                 .as("重投成功事件携带档案 wardId")
                 .isEqualTo(1001L);
+    }
+
+    @Test
+    @DisplayName("IoTDA 推送帧批量展开：单 JMS 消息展开 2 条入攒批，落库成功后尾条真实确认恰一次")
+    void expandsIotdaPushFrameIntoBatchWithTailAcknowledgeOnly() throws Exception {
+        Message iotdaPushFrame = bytesMessage(IOTDA_PUSH_JSON);
+        stubContextCreation();
+        when(jmsConsumer.receive(anyLong())).thenReturn(iotdaPushFrame).thenAnswer(this::idleAnswer);
+
+        consumer.start();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<StandardTelemetryMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(ingestService, timeout(AWAIT_MILLIS)).ingest(captor.capture());
+        assertThat(captor.getValue()).as("推送帧两属性展开为两条消息整批落库").hasSize(2);
+        assertThat(captor.getValue())
+                .extracting(StandardTelemetryMessage::metricCode)
+                .containsExactly("heartRate", "spo2");
+        // 挂尾确认契约：仅尾条携带真实确认回调（CLIENT_ACKNOWLEDGE 会话级累计确认本 JMS 消息全部
+        // 展开条目），恰执行一次；前 N-1 条挂空动作永不触碰 JMS 消息
+        verify(iotdaPushFrame, timeout(AWAIT_MILLIS)).acknowledge();
+        verify(iotdaPushFrame, times(1)).acknowledge();
+    }
+
+    @Test
+    @DisplayName("IoTDA 推送帧单属性：展开 1 条且唯一条目挂真实确认")
+    void expandsSinglePropertyIotdaPushFrameWithSoleEntryAcknowledged() throws Exception {
+        Message singleEntryFrame =
+                bytesMessage("{\"resource\":\"device.property\",\"event_time_ms\":\"2026-09-12T18:00:00Z\","
+                        + "\"notify_data\":{\"header\":{\"device_id\":\"it-dev-001\"},\"body\":{\"services\":["
+                        + "{\"service_id\":\"Monitor\",\"properties\":{\"spo2\":98}}]}}}");
+        stubContextCreation();
+        when(jmsConsumer.receive(anyLong())).thenReturn(singleEntryFrame).thenAnswer(this::idleAnswer);
+
+        consumer.start();
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<StandardTelemetryMessage>> captor = ArgumentCaptor.forClass(List.class);
+        verify(ingestService, timeout(AWAIT_MILLIS)).ingest(captor.capture());
+        assertThat(captor.getValue()).as("单属性推送帧展开恰 1 条").hasSize(1);
+        assertThat(captor.getValue().get(0).metricCode()).isEqualTo("spo2");
+        verify(singleEntryFrame, timeout(AWAIT_MILLIS)).acknowledge();
+    }
+
+    @Test
+    @DisplayName("IoTDA 批量展开空列表防御：解析器契约不可能态按毒丸留痕抛弃并确认（防 broker 无限重推）")
+    void emptyTelemetryBatchFallsBackToPoisonIsolation() throws Exception {
+        Message emptyBatchFrame = bytesMessage(IOTDA_PUSH_JSON);
+        // 解析器契约保证展开产物非空（≥1 条），空列表属不可达态，仅可经包内测试缝隙直注验证防御分支——
+        // 该分支必须走毒丸收口：否则本 JMS 消息无确认动作，broker 将无限重推
+        consumer.dispatchTelemetryBatch(QUEUE_ADDRESS, List.of(), emptyBatchFrame, IOTDA_PUSH_JSON);
+
+        // 消费者层脱敏接线直接断言（审核 Q1）：留痕载荷必须经 ConsumePayloadMasker 白名单提取——
+        // 属性键名保留且值全打码，生命体征原值零泄漏
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(errorLogService)
+                .recordParseFailure(eq(QUEUE_ADDRESS), payloadCaptor.capture(), eq("PARSE"), anyString());
+        assertThat(payloadCaptor.getValue())
+                .as("防御分支留痕载荷属性值已白名单打码（健康数据禁原文入库）")
+                .contains("\"heartRate\":\"*\"")
+                .contains("\"spo2\":\"*\"")
+                .doesNotContain(":78");
+        verify(emptyBatchFrame).acknowledge();
+        verifyNoInteractions(ingestService);
+    }
+
+    @Test
+    @DisplayName("IoTDA 推送帧解析失败毒丸：留痕载荷经白名单脱敏（属性值打码、原值零泄漏）后确认抛弃")
+    void iotdaPushFramePoisonIsolationMasksPayloadBeforeErrorLog() throws Exception {
+        // device_id 缺失的真实取证报文变体（值留、头缺）：经 broker 流走真实解析失败毒丸路径
+        Message poisonedPushFrame = bytesMessage(IOTDA_PUSH_JSON_MISSING_DEVICE_ID);
+        stubContextCreation();
+        when(jmsConsumer.receive(anyLong())).thenReturn(poisonedPushFrame).thenAnswer(this::idleAnswer);
+
+        consumer.start();
+
+        // 脱敏接线直接断言（审核 Q1）：IoTDA 形态毒因的留痕载荷必须命中白名单提取路径
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(errorLogService, timeout(AWAIT_MILLIS))
+                .recordParseFailure(eq(QUEUE_ADDRESS), payloadCaptor.capture(), eq("PARSE"), anyString());
+        assertThat(payloadCaptor.getValue())
+                .as("解析失败留痕载荷属性值已白名单打码，生命体征原值零泄漏")
+                .contains("\"heartRate\":\"*\"")
+                .contains("\"spo2\":\"*\"")
+                .doesNotContain(":78");
+        verify(poisonedPushFrame, timeout(AWAIT_MILLIS)).acknowledge();
+        verifyNoInteractions(ingestService);
     }
 
     /** 轮询等待攒批失败计数达到 1（失败计数在 flush 线程异步链路递增，存在微小相位差）。 */
