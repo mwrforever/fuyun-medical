@@ -84,6 +84,16 @@ class IotAmqpTelemetryConsumerTest {
              "body":{"services":[{"service_id":"Monitor","properties":{"heartRate":78,"spo2":100},
              "event_time":"20260912T173041Z"}]}}}""";
 
+    /**
+     * IoTDA 推送帧毒丸变体（device_id 缺失的真实取证报文变体：属性值留、头缺 device_id），解析
+     * 契约违约走真实解析失败毒丸路径，供消费者层脱敏接线的直接断言（审核 Q1）。
+     */
+    private static final String IOTDA_PUSH_JSON_MISSING_DEVICE_ID = """
+            {"resource":"device.property","event":"report","event_time_ms":"2026-09-12T17:30:41.632Z",
+             "notify_data":{"header":{"node_id":"fuyun-demo-001","product_id":"6aa570ac155456566827c784"},
+             "body":{"services":[{"service_id":"Monitor","properties":{"heartRate":78,"spo2":100},
+             "event_time":"20260912T173041Z"}]}}}""";
+
     /** 测试用 AMQP 参数：batchSize=2/interval=50ms 便于批确认断言；退避 10ms→30ms 毫秒级验证节奏 */
     private static final IotProperties.Amqp TEST_AMQP = new IotProperties.Amqp(
             true,
@@ -560,8 +570,40 @@ class IotAmqpTelemetryConsumerTest {
         // 该分支必须走毒丸收口：否则本 JMS 消息无确认动作，broker 将无限重推
         consumer.dispatchTelemetryBatch(QUEUE_ADDRESS, List.of(), emptyBatchFrame, IOTDA_PUSH_JSON);
 
-        verify(errorLogService).recordParseFailure(eq(QUEUE_ADDRESS), anyString(), eq("PARSE"), anyString());
+        // 消费者层脱敏接线直接断言（审核 Q1）：留痕载荷必须经 ConsumePayloadMasker 白名单提取——
+        // 属性键名保留且值全打码，生命体征原值零泄漏
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(errorLogService)
+                .recordParseFailure(eq(QUEUE_ADDRESS), payloadCaptor.capture(), eq("PARSE"), anyString());
+        assertThat(payloadCaptor.getValue())
+                .as("防御分支留痕载荷属性值已白名单打码（健康数据禁原文入库）")
+                .contains("\"heartRate\":\"*\"")
+                .contains("\"spo2\":\"*\"")
+                .doesNotContain(":78");
         verify(emptyBatchFrame).acknowledge();
+        verifyNoInteractions(ingestService);
+    }
+
+    @Test
+    @DisplayName("IoTDA 推送帧解析失败毒丸：留痕载荷经白名单脱敏（属性值打码、原值零泄漏）后确认抛弃")
+    void iotdaPushFramePoisonIsolationMasksPayloadBeforeErrorLog() throws Exception {
+        // device_id 缺失的真实取证报文变体（值留、头缺）：经 broker 流走真实解析失败毒丸路径
+        Message poisonedPushFrame = bytesMessage(IOTDA_PUSH_JSON_MISSING_DEVICE_ID);
+        stubContextCreation();
+        when(jmsConsumer.receive(anyLong())).thenReturn(poisonedPushFrame).thenAnswer(this::idleAnswer);
+
+        consumer.start();
+
+        // 脱敏接线直接断言（审核 Q1）：IoTDA 形态毒因的留痕载荷必须命中白名单提取路径
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(errorLogService, timeout(AWAIT_MILLIS))
+                .recordParseFailure(eq(QUEUE_ADDRESS), payloadCaptor.capture(), eq("PARSE"), anyString());
+        assertThat(payloadCaptor.getValue())
+                .as("解析失败留痕载荷属性值已白名单打码，生命体征原值零泄漏")
+                .contains("\"heartRate\":\"*\"")
+                .contains("\"spo2\":\"*\"")
+                .doesNotContain(":78");
+        verify(poisonedPushFrame, timeout(AWAIT_MILLIS)).acknowledge();
         verifyNoInteractions(ingestService);
     }
 

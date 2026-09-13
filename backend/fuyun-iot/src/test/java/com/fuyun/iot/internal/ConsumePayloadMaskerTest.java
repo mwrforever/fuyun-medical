@@ -83,6 +83,34 @@ class ConsumePayloadMaskerTest {
     }
 
     @Test
+    @DisplayName("非对象 JSON 根：数组/标量根均无白名单门，落正则兜底且内嵌手机号掩码命中")
+    void nonObjectJsonRootFallsBackToRegexMasking() {
+        String jsonArray = "[\"帧样本13812345678\",\"extra\"]";
+        String jsonScalar = "13812345678";
+
+        assertThat(ConsumePayloadMasker.sanitize(jsonArray))
+                .as("JSON 数组根可解析但非对象，无 notify_data 白名单门，正则兜底掩码命中")
+                .contains("138****5678")
+                .doesNotContain("13812345678");
+        assertThat(ConsumePayloadMasker.sanitize(jsonScalar))
+                .as("JSON 数值标量根同走正则兜底（手机号保留前 3 后 4）")
+                .isEqualTo("138****5678");
+    }
+
+    @Test
+    @DisplayName("混合形态：resource=device.property 但无 notify_data，落正则兜底不改结构（白名单门钉住）")
+    void cf7ShapeWithResourceFieldFallsBackToRegexWithoutWhitelist() {
+        // 混合形态钉桩：resource 仅为 IoTDA 推送形态判别键，白名单门 = notify_data 对象字段存在——
+        // 缺 notify_data 的 resource 帧（如 CF-7 遥测帧附带 resource 字段）不得触发白名单提取
+        String raw = "{\"resource\":\"device.property\",\"deviceId\":\"dev-01\",\"metricCode\":\"vital.heart-rate\","
+                + "\"value\":\"72\",\"occurredAt\":\"2026-09-10T04:00:00Z\"}";
+
+        String sanitized = ConsumePayloadMasker.sanitize(raw);
+
+        assertThat(sanitized).as("无 notify_data 即正则兜底（无敏感命中原样返回），不得误走白名单提取丢字段").isEqualTo(raw);
+    }
+
+    @Test
     @DisplayName("null 与空串原样返回（无内容可脱敏）")
     void nullAndEmptyTextAreReturnedAsIs() {
         assertThat(ConsumePayloadMasker.sanitize(null)).isNull();
