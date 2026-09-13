@@ -2,6 +2,15 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-14 · IOTDA 联调收口：L-1 全链路演示、L-2 十分钟断链、L-4 积压水位实测与 TASK.md 延后登记回填（先记再改）
+
+- **前提**：PR #12（L-3 报文映射，合入点 dev@0584e1e）交付后重建 `fuyun/backend:dev` 镜像并 `--profile sim` 起栈，七服务全 healthy。本条目为 TASK.md「延后事项 L-1~L-4」的回填记录（回填后删除），全部证据产生于真实华为云 IoTDA 环境（dev 联调栈）。
+- **L-1 全链路演示（IoTDA→AMQP→TimescaleDB→WebSocket）**：①上行——iot-simulator MQTT/TLS（ssl://…iotda-device…:8883，deviceId=6aa570ac155456566827c784_fuyun-demo-001）5 秒周期 properties 上报；②消费与映射——backend AMQP 消费每 5 秒一批 2 条（batchSize=2/inserted=2，无 SASL 错误、无毒丸），`iot_consume_error_log` 起新毒丸为 0（历史 8740 行为映射落地前存量留痕），`iot.iot_telemetry` heartRate/spo2 行 quality=GOOD、source=IOTDA；③绑定归属——联调夹具 `iot_binding` id=900001（demo 设备→病区 1，dev 环境测试数据，P1 管理端点交付前的演示夹具）生效后落库行 patient_id/visit_id 富化为 1/1；④推送——admin 令牌经 nginx `/ws` 升级、STOMP CONNECT 帧鉴权（Authorization: Bearer）通过，订阅 `/topic/iot/telemetry/1` 收到摘要帧（count=2、items=heartRate/spo2、occurredAtUpperBound 与批次对齐，16 秒采样窗收 3 帧）。**口径注明**：设备状态帧链路（iot_device.status 更新与 /topic/iot/device-status/{wardId} 推送）真实栈不可演示——simulator 仅发 properties 上报无状态帧，该管道行为由 IotTelemetryPipelineIT 集成测试覆盖。
+- **L-2 真实端点 10 分钟断链演示**：方法 = `docker stop deploy-backend-1` 制造真实 AMQP 断链 10 分 26 秒（17:23:29Z→17:33:55Z），期间 simulator 持续上行（IoTDA 服务端积压）；`docker start` 后消费线程 4.5 秒以**新时间戳凭证**重建连接（日志「AMQP 连接已建立（新时间戳凭证）」，正对 IoTDA 凭证内嵌时间戳超 5 分钟拒绝建链的服务端语义——本地 broker 无法复现该语义，真实端点演示由此补全 T-R3-3 口径）；首批攒批一次追平积压 received=252/inserted=252（126 帧×2 属性，与断链窗口帧数分毫不差，零丢失），随后恢复 5 秒/2 条稳态。断链退避节奏（12s→24s→30s 封顶）已在 PR #11 联调期于真实 IoTDA 拒链场景实证。
+- **L-4 真实积压水位实测（应用侧代理口径）**：IoTDA 控制台指标不可达（无控制台访问），以应用侧实测代理——重连后积压帧最旧 occurred_at=17:23:32.508Z（断链后首个上报），距追平落库时刻 17:34:07Z 约 **10 分 35 秒**，即本次断链窗口的 IoTDA 侧最旧未消费消息年龄实测值；252 行时间边界连续（最旧 17:23:32.508Z/最新 17:34:05.121Z）无缺口无重复。持续水位观测由既有 iot.amqp 指标词表承载（iot.amqp.connected 实测 1.0、断链时长、攒批队列填充率、重建计数）。
+- **L-3**：已随 PR #12 落地（2026-09-13 条目），本次以「新毒丸归零 + 遥测落库」实证；其 quality 口径细化声明待用户追认（登记 TASK.md D-9）。
+- **登记收口**：TASK.md 延后事项 L-1~L-4 四行按「回填后删除」规则删除（该节清空）；新增 D-9 待决策项；台账补 PR #12 批次行。
+
 ## 2026-09-13 · L-3 冻结：真实 IoTDA 规则引擎报文映射（选项 B 代码映射）与毒丸留痕脱敏落地（先记再改）
 
 - **背景与批准结论（TASK.md L-3，用户 2026-09-13 批准选项 B）**：P0 线格式为 CF-7 JSON，但真实华为云 IoTDA AMQP 推送报文与 CF-7 不匹配，毒丸隔离机制已留痕 569 帧（iot_consume_error_log，stage=PARSE、确认抛弃）。真实报文结构已取证（raw_payload 原文）：顶层 `resource="device.property"` + `notify_data.header`（device_id/node_id/product_id）+ `notify_data.body.services[]`（service_id/properties/event_time）。选项 B 裁决：解析器新增「IoTDA AMQP 推送报文」第三形态，真实报文展开为 N 条 CF-7 标准遥测消息，下游攒批/落库/推送管道零改动。
