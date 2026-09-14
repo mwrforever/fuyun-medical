@@ -18,6 +18,13 @@
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- Modulith 注解（@NamedInterface api 接口面声明）：package-info 编译期可见，provided 不入运行产物；
+         版本 spring-modulith-bom 托管零声明（D-2 裁决，任务 9） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <!-- IoTDA AMQP 消费链数据访问：spring-boot3 后缀 starter（禁再引入 mybatis-spring 系，宪法 A.4.3-12） -->
     <dependency>
       <groupId>com.baomidou</groupId>
