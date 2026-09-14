@@ -30,10 +30,9 @@ public class SchedulingConfig {
      */
     @Bean
     LockProvider lockProvider(JdbcTemplate jdbcTemplate) {
-        return new JdbcTemplateLockProvider(
-                JdbcTemplateLockProvider.Configuration.builder()
-                        .withJdbcTemplate(jdbcTemplate)
-                        .usingDbTime()
-                        .build());
+        return new JdbcTemplateLockProvider(JdbcTemplateLockProvider.Configuration.builder()
+                .withJdbcTemplate(jdbcTemplate)
+                .usingDbTime()
+                .build());
     }
 }
