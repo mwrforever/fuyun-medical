@@ -58,6 +58,16 @@ spring:
       - classpath:db/migration/internet
       - classpath:db/migration/ops
       - classpath:db/migration/integration
+  modulith:
+    events:
+      # 重启不重发未完成事件：多实例下与其他在处理实例产生重复投递（仅单实例安全）；
+      # 未完成事件的重试统一走 EventOpsJob 定时重投（D-2 裁决设计，宪法 B.3-3）
+      republish-outstanding-events-on-restart: false
+      jdbc:
+        # 事件日志表只经 Flyway 建表（宪法 A.4.1，V6 迁移负责 event_publication）；
+        # 显式钉死防上游默认翻转
+        schema-initialization:
+          enabled: false
   rabbitmq:                    # 生产端 confirm/returns 与消费端 AUTO 语义定稿姿态（backend 宪法 A.5-4/A.5-5）
     publisher-confirm-type: correlated
     publisher-returns: true

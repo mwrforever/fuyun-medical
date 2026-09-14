@@ -67,6 +67,18 @@
       <groupId>org.apache.qpid</groupId>
       <artifactId>qpid-jms-client</artifactId>
     </dependency>
+    <!-- Spring Modulith：事件发布注册表 JDBC 持久化（D-2 裁决，宪法 B.2-6/B.3-3）；
+         events-jackson 提供 serialized_event 的 JSON 序列化（EventSerializer 自动装配）；
+         starter-jdbc 传递引入 spring-modulith-api/core，保证 @Modulithic/ApplicationModuleListener 编译期可见
+         （注：简报原列 spring-modulith 空聚合器不在 BOM 托管范围且不携带类，已移除，申报见 task-2-report） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-events-jackson</artifactId>
+    </dependency>
     <!-- 定时任务多实例互斥：ShedLock JDBC provider 复用业务 PG -->
     <dependency>
       <groupId>net.javacrumbs.shedlock</groupId>
@@ -129,6 +141,17 @@
     <dependency>
       <groupId>org.testcontainers</groupId>
       <artifactId>rabbitmq</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <!-- Modulith 边界校验（ApplicationModules/verify）与依赖图生成（Documenter） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-docs</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>

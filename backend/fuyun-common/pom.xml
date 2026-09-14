@@ -17,6 +17,13 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+    <!-- Modulith 注解（@ApplicationModule OPEN 声明）：package-info 模块边界声明编译期可见，
+         provided 不入运行产物；版本 spring-modulith-bom 托管零声明（D-2 裁决，任务 9） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <!-- Lombok（BOM 托管版本）：@Getter/@Slf4j 注解的编译期依赖，provided 不打进运行产物 -->
     <dependency>
       <groupId>org.projectlombok</groupId>
