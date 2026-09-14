@@ -163,13 +163,13 @@ fuyun-app ──装配──▶ fuyun-{domain}.impl ──实现──▶ fuyun-
 3. 出现循环依赖时**拆层切断**（交叉查询下沉为独立 service 或 common，双方只依赖下沉层），禁止用 @Lazy / ObjectProvider 延迟注入掩盖。
 4. 事务边界 = 业务用例（医嘱-计费-库存联动在同一事务内，总 Spec 强事务约束）。
 5. 模块边界由 ArchUnit 1.5.0 测试守护（CI 硬门禁）：slices 互斥（模块间不互相依赖）、分层访问方向、controller 不可被访问；违规即构建失败。
-6. Spring Modulith（1.4.13）为增量框架候选，是否引入属总 Spec 修订决策（见 TASK.md）；未引入前禁止任何 Modulith 依赖进父 POM。
+6. Spring Modulith 1.4.x（当前 1.4.13）**已引入定稿**（2026-09-14 D-2 裁决，CHANGELOG 同日条目）：`spring-modulith-bom` 父 POM 锁定（BOM 外依赖），starter-jdbc 事件持久化 + test 边界校验；`ApplicationModules.verify()` 进 fuyun-app 测试套纳入 verify 门禁，与 ArchUnit 1.5.0 并存分工（Modulith 管模块级边界、ArchUnit 管自定义分层规则）；事件日志表建表一律走 Flyway（A.4.1 红线不豁免，`events.jdbc.schema-initialization.enabled=false`）；跨模块监听一律 `@ApplicationModuleListener`（独立事务异步）且发布方必须在 Spring 事务代理内（防事件暂存后等不到提交信号）。
 
 ### B.3 运行时原则
 
 1. **事件边界**：同事务一致性诉求 → 同步方法调用或 Spring 应用事件（同步、运行在发布者事务上下文）；最终一致 / 跨 bounded context / 需重试与死信 → RabbitMQ 领域事件。事件对象定义在发布方 api 包（契约化）；@TransactionalEventListener 控制提交前后时机。
-2. 跨进程领域事件一律走 RabbitMQ（quorum 队列），Modulith @Externalized 桥接仅在引入 Modulith 后评估。
-3. 可靠事件投递（发布成功才投递 + 失败可重投）：未引入 Modulith 时需自行实现"事务后事件表 + 定时重投"，成本须在模块设计评审时评估。
+2. 跨进程领域事件一律走 RabbitMQ（quorum 队列）；in-JVM 可靠投递走 Spring Modulith 事件发布注册表（B.3-3）；`@Externalized` 桥接范围经设计评审定稿后再修订本条。
+3. 可靠事件投递（发布成功才投递 + 失败可重投）：由 Spring Modulith 事件发布注册表（JDBC 暂存）+ EventOpsJob 定时重试（卡住超 5 分钟重投）与完成记录定时清理（7 天，两任务挂 ShedLock，A.5-14）承载（2026-09-14 D-2 裁决，替代原自建"事务后事件表+定时重投"形态）。
 4. 定时任务遵循 A.5-14（ShedLock + 幂等）；后台线程池必须显式管理（有界、命名、随上下文关闭）。
 5. 多实例前提：全部服务无状态，会话入 Redis，`--scale backend=2` 必须可用（compose 验证项）。
 
@@ -211,6 +211,7 @@ Spring Boot 模块化单体（总 Spec D4），承载全部 20 个业务域的�
 | API 文档 | Springdoc OpenAPI | 2.8.17 | 禁升 3.x |
 | DTO 映射 | MapStruct | 1.6.3 | 配 lombok-mapstruct-binding |
 | 边界守护 | ArchUnit | 1.5.0 | test 依赖 |
+| 模块化治理 | Spring Modulith（spring-modulith-bom） | 1.4.13（父 POM 锁定） | starter-jdbc + test；边界校验 CI 强制；事件日志表 Flyway 建表（B.2-6） |
 | 测试 | JUnit Jupiter 5.12.2 / Mockito 5.17.0 / Testcontainers 1.21.4 | BOM 托管 | 容器 tag 与 compose 严格一致 |
 | Lombok | 1.18.46 | BOM 托管 | A.1-12 允许清单 |
 

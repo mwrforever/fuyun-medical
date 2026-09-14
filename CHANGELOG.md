@@ -2,6 +2,15 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-14 · P1 实施计划审批通过，D-2/D-9 用户裁决落地并修订宪法 Modulith 条款（先记再改）
+
+- **计划审批**：PLAN-P1-01（`docs/plans/2026-09-14-P1实施计划.md`）经用户裁决五项决策后批准；范围=总 Spec §9-P1 六模块 P0 优先级条目切片，PR 序列七支，交付验证物=门诊挂号→就诊→收费→发药全流程真栈演示。
+- **D-2 裁决（引入 Spring Modulith）**：版本锁 1.4.x（当前 1.4.13，父 POM 锁 spring-modulith-bom，BOM 外依赖）；starter-jdbc 事件持久化（非 JPA）+ test 边界校验；`republish-outstanding-events-on-restart=false`（多实例不安全）；EventOpsJob 编程式重试（卡住>5 分钟重投）与清理（7 天前完成记录）挂 ShedLock（A.5-14）；`ApplicationModules.verify()` 进 fuyun-app 测试套纳入 verify 门禁（与 ArchUnit 1.5.0 并存分工：Modulith 管模块级边界、ArchUnit 管自定义分层规则）+ CI 生成 PlantUML/C4 模块依赖图；跨模块监听一律 `@ApplicationModuleListener`（独立事务异步）且发布方必须在事务代理内。**偏差申报（对用户参考配置）**：`events.jdbc.schema-initialization.enabled=false`——事件日志表建表走 Flyway（integration 号段 V6+，官方 event_publication 结构），理由=宪法 A.4.1「Schema 唯一来源=Flyway、禁自动 DDL」红线不豁免 + `--scale backend=2` 多实例并发自动建表竞态；用户改判框架自动建表须同步修宪豁免。
+- **宪法修订范围（随本 PR）**：backend/AGENTS.md B.2-6（Modulith 引入定稿：版本锁定/边界校验 CI 强制/与 ArchUnit 分工/@ApplicationModuleListener 约定/日志表 Flyway 建表）、B.3-2（in-JVM 可靠投递走 Modulith 注册表，@Externalized 桥接范围经设计评审后再修订）、B.3-3（可靠事件投递形态由自建"事务后事件表+定时重投"改为 Modulith 事件发布注册表 + 定时重试/清理）、C.2 技术栈表增 Spring Modulith 行。
+- **D-9 裁决（非数值遥测入库）**：非数值且需要的数据像数值型一样提取转换入库存储——quality 维持既有 isNumeric 标注（BAD=非数值定型标注，语义不变）；入库不再丢弃：iot_telemetry 新增文本承载列（iot 号段新迁移，禁改已应用迁移），非数值标量以原文承载、对象/数组以紧凑 JSON 文本承载，skip_non_numeric 丢弃口径退役。实现登记 **TASK.md W-7**（P1 PR-1 开工前 fix PR 闭合），D-9 行就此回填删除。
+- **其余裁决**：M03 病历书写=临时纯文本文书能力过渡（M09 编辑器维持 P4）；医保基线接口=接口位+模拟适应器（真实联调环境用户侧后补）；portal 患者预约渠道纳入 P1（PR-5）。
+- **登记动作**：TASK.md 待决策项 D-2/D-9 行回填删除、TODO 工单新增 W-7。
+
 ## 2026-09-14 · IOTDA 联调收口：L-1 全链路演示、L-2 十分钟断链、L-4 积压水位实测与 TASK.md 延后登记回填（先记再改）
 
 - **前提**：PR #12（L-3 报文映射，合入点 dev@0584e1e）交付后重建 `fuyun/backend:dev` 镜像并 `--profile sim` 起栈，七服务全 healthy。本条目为 TASK.md「延后事项 L-1~L-4」的回填记录（回填后删除），全部证据产生于真实华为云 IoTDA 环境（dev 联调栈）。
