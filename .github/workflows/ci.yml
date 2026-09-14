@@ -61,6 +61,14 @@ jobs:
       - name: 后端全量门禁（格式/单测/集成测试/覆盖率）
         working-directory: backend
         run: mvn -B -ntp verify
+      # Modulith 文档测试产出的模块依赖图（components.puml 总图 + module-*.puml），作为架构评审依据留存（D-2 裁决）
+      - name: 上传 Modulith 模块依赖图（架构评审依据）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: modulith-docs
+          path: backend/fuyun-app/target/spring-modulith-docs/
+          if-no-files-found: ignore
 
   # ===== 前端全量门禁：ESLint 硬门禁 + Prettier + vue-tsc + Vitest + 三应用构建 + 高危依赖审计 =====
   frontend:
