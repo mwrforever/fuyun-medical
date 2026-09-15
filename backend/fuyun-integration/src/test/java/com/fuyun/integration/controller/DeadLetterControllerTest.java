@@ -6,6 +6,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fuyun.common.web.PageResult;
+import com.fuyun.integration.dto.DeadLetterCloseRequest;
 import com.fuyun.integration.dto.DeadLetterQuery;
 import com.fuyun.integration.service.IDeadLetterService;
 import com.fuyun.integration.vo.DeadLetterDetailVO;
@@ -80,5 +81,45 @@ class DeadLetterControllerTest {
         when(deadLetterService.detail(9L)).thenReturn(expected);
 
         assertThat(controller.detail(9L)).isSameAs(expected);
+    }
+
+    @Test
+    @DisplayName("重放端点：路径 id 原样透传服务层，出参直返")
+    void replayDelegatesPathId() {
+        DeadLetterDetailVO expected = replayDetail();
+        when(deadLetterService.replay(9L)).thenReturn(expected);
+
+        assertThat(controller.replay(9L)).isSameAs(expected);
+        verify(deadLetterService).replay(9L);
+    }
+
+    @Test
+    @DisplayName("关闭端点：路径 id 与请求对象原样透传服务层")
+    void closeDelegatesRequestAsIs() {
+        DeadLetterCloseRequest request = new DeadLetterCloseRequest("脏数据放弃");
+        DeadLetterDetailVO expected = replayDetail();
+        when(deadLetterService.close(9L, request)).thenReturn(expected);
+
+        assertThat(controller.close(9L, request)).isSameAs(expected);
+        verify(deadLetterService).close(9L, request);
+    }
+
+    /** 构造重放/关闭后的详情出参样本。 */
+    private DeadLetterDetailVO replayDetail() {
+        return new DeadLetterDetailVO(
+                9L,
+                "q.it.system.dict.published",
+                "system.dict.published",
+                "system.dict.published",
+                "b1f0a2c3-4d5e-4f60-8a71-9c2b3d4e5f60",
+                "{}",
+                "d",
+                "原因",
+                null,
+                "REPLAYED",
+                1,
+                "1",
+                null,
+                null);
     }
 }
