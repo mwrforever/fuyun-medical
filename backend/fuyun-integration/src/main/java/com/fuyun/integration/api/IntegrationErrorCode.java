@@ -32,7 +32,7 @@ public enum IntegrationErrorCode implements ErrorCode {
     /** 主数据订阅记录不存在（404；注销未命中台账） */
     MDM_SUBSCRIPTION_NOT_FOUND("INT-1011"),
 
-    /** 未知主数据主题（400；合法主题见 MdmConstants.MDM_TOPICS） */
+    /** 未知主数据主题（400；合法主题见 MdmConstants.TOPICS） */
     MDM_TOPIC_UNKNOWN("INT-1012");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */

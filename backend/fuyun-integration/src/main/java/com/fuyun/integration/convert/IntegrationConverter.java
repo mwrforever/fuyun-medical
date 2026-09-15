@@ -5,11 +5,13 @@ import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.integration.entity.DeadLetter;
 import com.fuyun.integration.entity.EventPublication;
 import com.fuyun.integration.entity.EventRegistry;
+import com.fuyun.integration.entity.MdmSubscription;
 import com.fuyun.integration.entity.ReceivedEvent;
 import com.fuyun.integration.vo.DeadLetterDetailVO;
 import com.fuyun.integration.vo.DeadLetterVO;
 import com.fuyun.integration.vo.EventPublicationVO;
 import com.fuyun.integration.vo.EventRegistryVO;
+import com.fuyun.integration.vo.MdmSubscriptionVO;
 import com.fuyun.integration.vo.ReceivedEventVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -110,6 +112,22 @@ public interface IntegrationConverter {
      * @return 行出参清单，非 null
      */
     List<EventRegistryVO> toEventRegistryVOs(List<EventRegistry> entities);
+
+    /**
+     * 主数据订阅实体 → 矩阵行出参。
+     *
+     * @param entity 订阅实体，非空
+     * @return 矩阵行出参，非空
+     */
+    MdmSubscriptionVO toMdmSubscriptionVO(MdmSubscription entity);
+
+    /**
+     * 主数据订阅实体清单 → 矩阵行出参清单。
+     *
+     * @param entities 实体清单，非空（可为空清单）
+     * @return 矩阵行出参清单，非 null
+     */
+    List<MdmSubscriptionVO> toMdmSubscriptionVOs(List<MdmSubscription> entities);
 
     /**
      * 完成态派生：completion_date 非空 = COMPLETED，为空 = INCOMPLETE（框架完成标记的唯一判据）。
