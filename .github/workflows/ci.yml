@@ -218,6 +218,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0      # 迁移治理乱序守卫需要基线 commit 可见（默认 depth=1 不可解析）
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -225,4 +227,8 @@ jobs:
         run: pip install pre-commit==4.6.2
       # --all-files 不依赖提交者是否安装本地钩子，实现 CI 兜底
       - name: 全量文件卫生校验
+        env:
+          # 乱序守卫基线：PR 事件取 base commit，push 事件取被推前一个 tip；
+          # 其余事件为空 → 脚本回退 HEAD（等价「相对最近提交的新增」语义）
+          MIGRATION_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: pre-commit run --all-files
