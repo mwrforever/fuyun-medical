@@ -135,9 +135,10 @@
 **REST（管理台，`/api/v1/integration/` 前缀）**：
 - `GET/POST/PUT /channels`、`POST /channels/{id}/enable|disable|test`（通道管理）
 - `GET /hl7-messages`、`POST /hl7-messages/{id}/replay`（报文日志与重放）
-- `GET /dead-letters`、`POST /dead-letters/{id}/replay|close`（死信管理）
+- `GET /dead-letters`、`POST /dead-letters/{id}/replay|close`（死信管理；重推上限每死信 3 次，超限拒绝返回错误码 INT-1003 / HTTP 409，计数载体 = dead_letter.replay_count）
 - `GET /received-events`（幂等/消费记录查询）
-- `GET/POST/DELETE /event-registry`、`GET/POST/DELETE /mdm-subscriptions`、`POST /mdm/redispatch`（事件契约与主数据分发治理）
+- `GET /event-publications`（Modulith 事件发布注册表只读投影，status 为 COMPLETED/INCOMPLETE 完成态派生——PR-1b 补登记）
+- `GET/POST/DELETE /event-registry`、`GET/POST/DELETE /mdm-subscriptions`、`POST /mdm/redispatch`（事件契约与主数据分发治理；分阶段交付：`POST/DELETE /event-registry` 本期未交付——写动词由队列声明治理构件自动化登记承接、无 P0 消费方故裁剪，`POST /mdm/redispatch` 本期未交付——跨模块前置依赖 M01 版本化回源/重发接口，见 TASK.md W-8 工单）
 - `GET/POST /push-tasks`、`POST /push-tasks/{id}/retry`（上报任务）
 - `GET /api-call-logs`、`GET /monitor/summary`（调用日志与监控汇总）
 - 入站业务端点：`POST /inbound/rest/{channelCode}`（REST 通道入站的统一承接点，按通道配置路由）

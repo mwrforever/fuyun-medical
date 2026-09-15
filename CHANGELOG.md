@@ -23,6 +23,24 @@
   （FU-M20-04 剩余条目，本 PR Task 9 新增登记）两行保留不动。
 - **影响范围**：仅 TASK.md 与本文件两文件，零代码变更。
 
+## 2026-09-15 · PR-1b 终审收口：M20 Spec §7 同步注记与 TASK.md W-9 工单登记（先记再改）
+
+- **背景**：PR-1b 全分支终审核断——已定义端点的实现不构成改契约（Spec 无需大改），但存在三处
+  「实现已交付 / Spec §7 未登记」面与一条遗留承诺未兑现，须补注记与工单登记后方可收口合入。
+- **M20 Spec §7 三处注记（docs/specs/modules/20-integration.md，改动最小化、不重写既有内容）**：
+  ①新增 `GET /event-publications` 行（Modulith 事件发布注册表只读投影，status 为 COMPLETED/INCOMPLETE
+  派生态——PR-1b 已交付而原清单缺登记）；②死信管理行补重推上限口径（每死信 3 次，超限错误码
+  INT-1003 / HTTP 409，计数载体 = dead_letter.replay_count——控制器拍板值首次入 Spec）；③
+  `POST/DELETE /event-registry` 与 `POST /mdm/redispatch` 加「分阶段交付」注记并指向 TASK.md W-8
+  工单（前者写动词由队列声明治理构件自动化登记承接、无 P0 消费方故裁剪；后者受 M01 版本化回源 /
+  重发接口跨模块前置阻塞）。
+- **TASK.md 新增 W-9 工单（终审建议 #4）**：DeadLetterListener 同一 eventId 重复落行收敛——V4 迁移
+  定案口径允许同一死信重复投递重复落行，DeadLetterListener javadoc 原承诺「P1 死信管理界面完整化时
+  收敛」在 PR-1b（即 P1 完整化）交付后仍未兑现；收敛动作归 FU-M20-06 死信告警完整化或后续工单。
+  DeadLetterListener 该句 javadoc 同步改为 W-9 现实口径（仅注释一处、零行为变更），编译验证通过。
+- **影响范围**：docs/specs/modules/20-integration.md、TASK.md、本文件三文档，外加 DeadLetterListener
+  一处 javadoc 注释，零行为变更。
+
 ## 2026-09-15 · D-8 裁决落地：宪法 A.5-9 failover 参数正文同步（先记再改）
 
 - **背景**：PR-4 B4.4 实测（`IotAmqpReconnectIT` 两次 RED 留证）证实 qpid-jms 2.11 的 failover 选项必须带

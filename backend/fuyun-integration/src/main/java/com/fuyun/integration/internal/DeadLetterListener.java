@@ -35,7 +35,8 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
  * 截断（TextTruncate，常量集中 constants/）——畸形帧超长字段不得使留痕落库失败。
  *
  * <p>同一死信重复投递会重复落行：dead_letter 无唯一约束（同一 eventId 可因不同消费者多次
- * 死信），P1 死信管理界面完整化时收敛——与 V4 迁移定案口径一致。
+ * 死信），与 V4 迁移定案口径一致；收敛动作登记 TASK.md W-9，归 FU-M20-06 死信告警完整化
+ * 或后续工单处置。
  *
  * <p>归 internal/ 包：容器驱动的模块内入口，禁止外部引用（backend 宪法 B.1）；Bean 注册点
  * 为 MessagingGovernanceConfig @Import（com.fuyun.integration 不在组件扫描范围）。
