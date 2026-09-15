@@ -1,5 +1,6 @@
 package com.fuyun.integration.constants;
 
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -39,6 +40,32 @@ public final class MdmConstants {
 
     /** 对账状态：待对账（登记初值；对账任务引入后追加其余取值） */
     public static final String RECON_STATUS_PENDING = "PENDING";
+
+    /** 主数据事件类型（M01 发布清单，M20 §7 订阅清单逐条对应；V5 种子已登记，订阅方经声明构件自动登记） */
+    public static final String EVENT_DICT_PUBLISHED = "system.dict.published";
+
+    /** 主数据事件类型：机构变更 */
+    public static final String EVENT_ORG_CHANGED = "system.org.changed";
+
+    /** 主数据事件类型：用户变更 */
+    public static final String EVENT_USER_CHANGED = "system.user.changed";
+
+    /** 主数据事件类型：参数变更 */
+    public static final String EVENT_PARAM_CHANGED = "system.param.changed";
+
+    /** 主数据事件类型：执业授权变更 */
+    public static final String EVENT_PRACTICE_CHANGED = "system.practice.changed";
+
+    /** 事件类型 → 主数据主题映射：分发流水登记的 topic 推导源（未登记事件不经本链路消费） */
+    public static final Map<String, String> TOPIC_BY_EVENT_TYPE = Map.of(
+            EVENT_DICT_PUBLISHED, TOPIC_DICT,
+            EVENT_ORG_CHANGED, TOPIC_ORG,
+            EVENT_USER_CHANGED, TOPIC_USER,
+            EVENT_PARAM_CHANGED, TOPIC_PARAM,
+            EVENT_PRACTICE_CHANGED, TOPIC_PRACTICE);
+
+    /** 分发模式：广播（M01 变更事件经 fy.topic 广播；FULL_REDISPATCH 待 M01 回源接口就绪后引入） */
+    public static final String DISPATCH_MODE_BROADCAST = "BROADCAST";
 
     /**
      * 私有构造器：常量类禁止实例化（backend 宪法 A.2-6）。

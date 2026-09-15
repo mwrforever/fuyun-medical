@@ -102,6 +102,9 @@ public final class MessagingConstants {
     /** handler 列宽防线：dead_letter.handler VARCHAR(64)（操作人标识超长收口，防整行写入失败） */
     public static final int HANDLER_MAX_LENGTH = 64;
 
+    /** target_modules 列宽防线：mdm_dispatch_log.target_modules VARCHAR(1000) */
+    public static final int MDM_TARGET_MODULES_MAX_LENGTH = 1000;
+
     /** 本模块消费者/生产者域标识：队列命名与 received_event.consumer_module 的第二要素 */
     public static final String MODULE = "integration";
 
