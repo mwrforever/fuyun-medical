@@ -2,6 +2,7 @@ package com.fuyun.system.properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -76,6 +77,18 @@ class SecurityPropertiesTest {
                     assertThat(context).hasFailed();
                     assertThat(context.getStartupFailure()).hasStackTraceContaining("refreshTokenTtl");
                 });
+    }
+
+    @Test
+    @DisplayName("toString 脱敏：HMAC 密钥打码不外泄，TTL 字段照常输出（W-5）")
+    void toStringMasksHmacSecret() {
+        SecurityProperties properties =
+                new SecurityProperties(TEST_SECRET_32, Duration.ofHours(2), Duration.ofHours(24));
+
+        String text = properties.toString();
+
+        assertThat(text).doesNotContain(TEST_SECRET_32);
+        assertThat(text).contains("tokenHmacSecret=***", "accessTokenTtl=PT2H", "refreshTokenTtl=PT24H");
     }
 
     /** 绑定载体：@Validated 激活 JSR-303 启动期校验（生产经 SystemWebConfig 同型注册，B3.2 装配） */

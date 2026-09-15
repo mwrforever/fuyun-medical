@@ -26,4 +26,21 @@ import org.springframework.validation.annotation.Validated;
 public record SecurityProperties(
         @NotBlank @Size(min = 32) String tokenHmacSecret,
         @DurationMin(nanos = 1) @DefaultValue("2h") Duration accessTokenTtl,
-        @DurationMin(nanos = 1) @DefaultValue("24h") Duration refreshTokenTtl) {}
+        @DurationMin(nanos = 1) @DefaultValue("24h") Duration refreshTokenTtl) {
+
+    /**
+     * 脱敏 toString（W-5，等保三级纵深防御）：HMAC 签名密钥固定打码，TTL 字段照常输出。
+     *
+     * <p>覆写原因：record 默认 toString 直出密钥值；密钥「禁明文入 yml/代码/文档/测试断言」属红线，
+     * 整对象日志打印必须不可能泄漏。
+     *
+     * @return 脱敏文本，非空；tokenHmacSecret 恒为 ***
+     */
+    @Override
+    public String toString() {
+        return "SecurityProperties[tokenHmacSecret=***"
+                + ", accessTokenTtl=" + accessTokenTtl
+                + ", refreshTokenTtl=" + refreshTokenTtl
+                + "]";
+    }
+}
