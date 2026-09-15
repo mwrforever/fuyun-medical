@@ -1,8 +1,10 @@
 package com.fuyun.integration.config;
 
 import com.fuyun.integration.controller.DeadLetterController;
+import com.fuyun.integration.controller.ReceivedEventController;
 import com.fuyun.integration.convert.IntegrationConverter;
 import com.fuyun.integration.service.impl.DeadLetterServiceImpl;
+import com.fuyun.integration.service.impl.ReceivedEventQueryServiceImpl;
 import org.mapstruct.factory.Mappers;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -16,7 +18,12 @@ import org.springframework.context.annotation.Import;
  * （交换机/队列声明、幂等、死信监听）仍归消息治理配置类，两者不重叠。
  */
 @Configuration
-@Import({DeadLetterServiceImpl.class, DeadLetterController.class})
+@Import({
+    DeadLetterServiceImpl.class,
+    ReceivedEventQueryServiceImpl.class,
+    DeadLetterController.class,
+    ReceivedEventController.class
+})
 public class IntegrationWebConfig {
 
     /**

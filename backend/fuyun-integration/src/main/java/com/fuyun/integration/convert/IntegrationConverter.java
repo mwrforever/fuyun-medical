@@ -3,8 +3,10 @@ package com.fuyun.integration.convert;
 import com.fuyun.common.utils.TextTruncate;
 import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.integration.entity.DeadLetter;
+import com.fuyun.integration.entity.ReceivedEvent;
 import com.fuyun.integration.vo.DeadLetterDetailVO;
 import com.fuyun.integration.vo.DeadLetterVO;
+import com.fuyun.integration.vo.ReceivedEventVO;
 import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -54,6 +56,22 @@ public interface IntegrationConverter {
      * @return 详情出参，非空
      */
     DeadLetterDetailVO toDeadLetterDetailVO(DeadLetter entity);
+
+    /**
+     * 消费台账实体 → 行出参。
+     *
+     * @param entity 消费台账实体（received_event），非空
+     * @return 行出参，非空
+     */
+    ReceivedEventVO toReceivedEventVO(ReceivedEvent entity);
+
+    /**
+     * 消费台账实体清单 → 行出参清单。
+     *
+     * @param entities 实体清单，非空（可为空清单）
+     * @return 行出参清单，非 null
+     */
+    List<ReceivedEventVO> toReceivedEventVOs(List<ReceivedEvent> entities);
 
     /**
      * 载荷预览：截取原文头部固定长度（列表页防大字段刷屏与最小暴露）。
