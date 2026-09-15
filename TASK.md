@@ -11,7 +11,6 @@
 | D-5 | 方案 C 二期演进（CodeQL / Trivy / dependency-review / Renovate/Dependabot / SonarQube） | R1 §3.3/§4：用户已定方案 B 上线基线、C 为二期；SonarQube 若引入需 CI 双 JDK（17 构建 + 21 扫描）；Renovate vs Dependabot 二选一（倾向 Renovate 的 monorepo 分组能力） | security.yml 扩展、仓库设置 |
 | D-6 | 宪法 `enum/` 包目录命名与 Java 保留字冲突 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：枚举包目录改 `enums/`——B.1/C.3 正文随 PR-3 修宪提交更新，已建的 `enum/.gitkeep` 目录同步改名；若用户改判 enumeration/ 或其他，改动面=目录名+包名+宪法正文，一次替换可回收 | backend 全部 20 模块目录结构、PR-3 枚举类落位 |
 | D-7 | 幂等前置去重 NX 误判丢消息窗口的补救策略 | **已按默认裁决执行（2026-09-09，用户未响应 ask_question，取推荐项，可推翻）**：消费范式改为「Redis NX 失败时回查 received_event 表（唯一索引查询），确认已处理才跳过」——彻底消除丢消息窗口、保持 at-least-once；代价为每条重复消息一次 DB 点查。若用户改判缩短 TTL 或维持现状，改动面=MessageIdempotencyServiceImpl 单类+单测 | M20 幂等构件消费范式、PR-3 起全部 @RabbitListener 消费者 |
-| D-8 | 宪法 A.5-9 failover 参数语法与实测落码的正文同步 | PR-4 B4.4 实测（IotAmqpReconnectIT 两次 RED 留证）：qpid-jms 2.11 官方语法要求 failover 参数带 `failover.` 前缀（宪法正文裸名写法不可被识别）；`failover.maxReconnectAttempts=-1`（简报预判值，非宪法条文）在 IoTDA 时间戳凭证语义下会永续透明重连，已改 3 次+supervisor 移交（无限重建语义上移消费者层）。代码与 CHANGELOG 已登记（2026-09-11 条目），**宪法正文修订待用户裁决后随 P1 执行**（先记再改流程，正文同步 = 三参数补前缀语法说明 + 有限重试移交语义 + CHANGELOG 该条目归源由"宪法文字"修正为"简报 §1.3 预判"）；若用户裁决不改正文，改动面=零（代码不动，正文保持概称） | backend/AGENTS.md A.5-9、CHANGELOG 2026-09-11 条目 |
 
 ## 待调研项（检索不可得 / 需实测，回填后删除）
 

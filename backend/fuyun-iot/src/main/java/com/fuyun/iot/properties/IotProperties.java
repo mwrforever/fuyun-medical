@@ -59,8 +59,10 @@ public record IotProperties(
      * @param batchFlushInterval   攒批时间窗触发间隔，默认 2s（距上次落库超时即刷批）
      * @param batchQueueCapacity   攒批有界内存队列容量，默认 5000（满则消费侧等待背压，
      *                             prefetch 自然限流）
-     * @param reconnectInitialDelay 断链重连初始退避，默认 3s（宪法 A.5-9 failover 参数原文值）
-     * @param reconnectMaxDelay    断链重连最大退避，默认 30s（指数退避上限，宪法 A.5-9 原文值）
+     * @param reconnectInitialDelay 断链重连初始退避，默认 3s（宪法 A.5-9 `failover.initialReconnectDelay`
+     *                              / `failover.reconnectDelay` 取值）
+     * @param reconnectMaxDelay    断链重连最大退避，默认 30s（指数退避上限，宪法 A.5-9
+     *                              `failover.maxReconnectDelay` 取值）
      */
     public record Amqp(
             @DefaultValue("false") boolean enabled,
