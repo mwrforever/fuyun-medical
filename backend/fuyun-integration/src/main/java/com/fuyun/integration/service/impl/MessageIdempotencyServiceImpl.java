@@ -186,20 +186,31 @@ public class MessageIdempotencyServiceImpl implements MessageIdempotencyService 
         try {
             receivedEventMapper.insert(entity);
         } catch (DuplicateKeyException e) {
-            // 同一帧重试再次失败：行内原子累加计数（读-改-写会丢更新，禁用）
-            receivedEventMapper.update(
+            // 同一帧重试再次失败：行内原子累加计数（读-改-写会丢更新，禁用）。status=FAILED 守卫防
+            // 竞态回退：冲突行若已被并发实例处理成功升级为 PROCESSED，本失败留痕迟到，不得把已处理
+            // 行打回 FAILED（否则 D-7 回查将误放行重投造成业务重复执行）
+            int accumulated = receivedEventMapper.update(
                     null,
                     Wrappers.lambdaUpdate(ReceivedEvent.class)
                             .eq(ReceivedEvent::getEventId, entity.getEventId())
                             .eq(ReceivedEvent::getConsumerModule, entity.getConsumerModule())
+                            .eq(ReceivedEvent::getStatus, MessagingConstants.RECEIVED_STATUS_FAILED)
                             .set(ReceivedEvent::getStatus, MessagingConstants.RECEIVED_STATUS_FAILED)
                             .set(ReceivedEvent::getFailReason, truncatedReason)
                             .setSql("retry_count = retry_count + 1"));
-            log.info(
-                    "消费失败留痕累加：consumer_module={}，event_id={}，原因={}",
-                    record.consumerModule(),
-                    record.eventId(),
-                    truncatedReason);
+            if (accumulated > 0) {
+                log.info(
+                        "消费失败留痕累加：consumer_module={}，event_id={}，原因={}",
+                        record.consumerModule(),
+                        record.eventId(),
+                        truncatedReason);
+            } else {
+                // 守卫 0 行命中 = 已处理事实成立（失败留痕迟到）：跳过留痕保住台账的 PROCESSED 状态
+                log.warn(
+                        "消费失败留痕守卫未命中（行已升级为已处理），跳过留痕不回退状态：consumer_module={}，event_id={}",
+                        record.consumerModule(),
+                        record.eventId());
+            }
             return;
         }
         log.info(

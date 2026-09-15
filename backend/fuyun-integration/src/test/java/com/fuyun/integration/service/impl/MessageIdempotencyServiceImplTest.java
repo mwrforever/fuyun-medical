@@ -255,12 +255,36 @@ class MessageIdempotencyServiceImplTest {
     void settleFailureAccumulatesRetryCountOnRepeatedFailure() {
         when(receivedEventMapper.insert(any(ReceivedEvent.class)))
                 .thenThrow(new DuplicateKeyException("uk_received_event_event_consumer"));
+        // 守卫命中（行仍为 FAILED）：1 行累加成功
+        when(receivedEventMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
         ArgumentCaptor<Wrapper<ReceivedEvent>> captor = ArgumentCaptor.forClass(Wrapper.class);
 
         service.settleFailure(sampleRecord(), new IllegalStateException("再次失败"));
 
         verify(receivedEventMapper).update(isNull(), captor.capture());
         LambdaUpdateWrapper<ReceivedEvent> wrapper = (LambdaUpdateWrapper<ReceivedEvent>) captor.getValue();
+        assertThat(wrapper.getSqlSet()).contains("retry_count = retry_count + 1");
+    }
+
+    @Test
+    @DisplayName("失败留痕迟到不回退：冲突行已被并发升级为 PROCESSED 时守卫 0 行命中，跳过留痕不回退状态")
+    void settleFailureSkipsFailureLedgerWhenRowAlreadyProcessed() {
+        when(receivedEventMapper.insert(any(ReceivedEvent.class)))
+                .thenThrow(new DuplicateKeyException("uk_received_event_event_consumer"));
+        // 0 行命中 = status=FAILED 守卫不满足（行已被并发处理成功升级 PROCESSED），失败留痕迟到
+        when(receivedEventMapper.update(isNull(), any(Wrapper.class))).thenReturn(0);
+        ArgumentCaptor<Wrapper<ReceivedEvent>> captor = ArgumentCaptor.forClass(Wrapper.class);
+
+        service.settleFailure(sampleRecord(), new IllegalStateException("迟到失败"));
+
+        verify(receivedEventMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<ReceivedEvent> wrapper = (LambdaUpdateWrapper<ReceivedEvent>) captor.getValue();
+        // 先渲染 SQL 片段触发条件参数惰性求值（3.5.17 实测）：WHERE 必须同时含
+        // event_id / consumer_module / status=FAILED 守卫，禁 PROCESSED→FAILED 非法回退
+        String sqlSegment = wrapper.getSqlSegment();
+        assertThat(sqlSegment).contains("status =");
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(UUID.fromString(EVENT_ID), MODULE, MessagingConstants.RECEIVED_STATUS_FAILED);
         assertThat(wrapper.getSqlSet()).contains("retry_count = retry_count + 1");
     }
 
