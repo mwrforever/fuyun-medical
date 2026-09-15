@@ -48,6 +48,18 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-validation</artifactId>
     </dependency>
+    <!-- DTO/VO 映射（A.7-4）：IntegrationConverter，版本父 POM 托管，处理器路径父 compiler 插件已配置 -->
+    <dependency>
+      <groupId>org.mapstruct</groupId>
+      <artifactId>mapstruct</artifactId>
+    </dependency>
+    <!-- Web 层显式声明（本模块新增 @RestController 后按模块显式声明风格落盘，二选一取显式）：
+         此前经 fuyun-common 传递可得（fuyun-common pom 声明 starter-web），显式声明使本模块 Web 依赖自洽、
+         不依赖传递路径稳定性；版本 Boot BOM 托管，禁写版本号 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
     <!-- Lombok（BOM 托管版本）：@Getter/@Setter/@Slf4j 编译期依赖，provided 不打进运行产物 -->
     <dependency>
       <groupId>org.projectlombok</groupId>
