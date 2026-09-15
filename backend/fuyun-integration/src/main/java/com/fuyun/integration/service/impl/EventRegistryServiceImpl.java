@@ -1,11 +1,18 @@
 package com.fuyun.integration.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.fuyun.common.web.PageResult;
 import com.fuyun.integration.constants.MessagingConstants;
+import com.fuyun.integration.convert.IntegrationConverter;
+import com.fuyun.integration.dto.EventRegistryQuery;
 import com.fuyun.integration.entity.EventRegistry;
 import com.fuyun.integration.mapper.EventRegistryMapper;
 import com.fuyun.integration.service.EventRegistrationSpec;
 import com.fuyun.integration.service.IEventRegistryService;
+import com.fuyun.integration.vo.EventRegistryVO;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -17,7 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 事件契约台账服务实现：event_registry 表的唯一业务写入口（M20 治理约定的执行点）。
  *
  * <p>写语义：登记幂等（同 event_type 已存在时 warn 跳过，不覆盖已冻结契约）；订阅登记追加式
- * （重复追加幂等跳过），事件缺失或 DEPRECATED 时抛 IllegalStateException 阻断订阅方启动。
+ * （重复追加幂等跳过），事件缺失或 DEPRECATED 时抛 IllegalStateException 阻断订阅方启动；
+ * broadcast 标记行拒订（零订阅广播不承载订阅清单，W-6②）；并发追加以「旧清单」为 CAS 条件
+ * 单语句条件更新，自旋重试上界 3 次、耗尽 fail-fast（禁静默丢订阅，多实例安全零新增锁）。
  * 单表操作走 ServiceImpl 内置 lambda 链式（宪法 A.4.3-13），select 精确投影（A.4.3-14），
  * 写操作方法级事务最小边界（A.4.2-7）。
  *
@@ -30,6 +39,20 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
 
     /** 订阅清单分隔符：subscriber_modules 列以逗号分隔存储多个模块标识 */
     private static final String SUBSCRIBER_SEPARATOR = ",";
+
+    /** 订阅清单 CAS 最大尝试次数：并发追加竞争窗口内的自旋上界（超限 fail-fast） */
+    private static final int SUBSCRIBER_CAS_MAX_ATTEMPTS = 3;
+
+    private final IntegrationConverter converter;
+
+    /**
+     * 全参构造器（装配归 MessagingGovernanceConfig @Import）。
+     *
+     * @param converter 治理域转换器，非空；来源：IntegrationWebConfig @Bean
+     */
+    public EventRegistryServiceImpl(IntegrationConverter converter) {
+        this.converter = converter;
+    }
 
     @Override
     @Transactional
@@ -72,34 +95,51 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
     @Override
     @Transactional
     public void registerSubscriber(String eventType, String consumerModule) {
-        EventRegistry registry = this.lambdaQuery()
-                .eq(EventRegistry::getEventType, eventType)
-                .select(EventRegistry::getId, EventRegistry::getStatus, EventRegistry::getSubscriberModules)
-                .one();
-        // 事件先登记后订阅：未登记事件拒绝订阅，阻断消费队列声明（M20 治理约定）
-        if (registry == null) {
-            throw new IllegalStateException("事件类型 " + eventType + " 未在 event_registry 登记，禁止订阅（事件先登记后订阅）");
+        for (int attempt = 1; attempt <= SUBSCRIBER_CAS_MAX_ATTEMPTS; attempt++) {
+            EventRegistry registry = this.lambdaQuery()
+                    .eq(EventRegistry::getEventType, eventType)
+                    .select(EventRegistry::getId, EventRegistry::getStatus, EventRegistry::getSubscriberModules)
+                    .one();
+            // 事件先登记后订阅：未登记事件拒绝订阅，阻断消费队列声明（M20 治理约定）
+            if (registry == null) {
+                throw new IllegalStateException("事件类型 " + eventType + " 未在 event_registry 登记，禁止订阅（事件先登记后订阅）");
+            }
+            if (MessagingConstants.REGISTRY_STATUS_DEPRECATED.equals(registry.getStatus())) {
+                throw new IllegalStateException("事件类型 " + eventType + " 已废止（DEPRECATED），禁止订阅");
+            }
+            String currentModules = registry.getSubscriberModules() == null ? "" : registry.getSubscriberModules();
+            // broadcast 拒订守卫（W-6②）：零订阅广播标记行不承载订阅清单，追加会破坏 R6-13 语义
+            if (MessagingConstants.SUBSCRIBER_BROADCAST.equals(currentModules.trim())) {
+                throw new IllegalStateException("事件类型 " + eventType
+                        + " 为零订阅广播标记行（subscriber_modules=broadcast），不承载订阅清单——"
+                        + "如需订阅制治理，请由发布方先修正契约行后再订阅");
+            }
+            List<String> modules = new ArrayList<>();
+            if (!currentModules.isBlank()) {
+                modules.addAll(Arrays.asList(currentModules.split(SUBSCRIBER_SEPARATOR)));
+            }
+            // 重复订阅幂等：清单中已存在该模块时跳过，避免声明重放产生冗余写
+            if (modules.contains(consumerModule)) {
+                log.info("订阅模块 {} 已在事件 {} 的订阅清单中，幂等跳过", consumerModule, eventType);
+                return;
+            }
+            modules.add(consumerModule);
+            String merged = String.join(SUBSCRIBER_SEPARATOR, modules);
+            // 并发守卫（W-6②）：条件更新以「读取到的旧清单」为 CAS 条件——多实例并发追加时
+            // 后到者影响 0 行（丢更新防线），自旋重读重算；上界耗尽即 fail-fast 禁静默丢订阅
+            boolean updated = this.lambdaUpdate()
+                    .eq(EventRegistry::getId, registry.getId())
+                    .eq(EventRegistry::getSubscriberModules, currentModules)
+                    .set(EventRegistry::getSubscriberModules, merged)
+                    .update();
+            if (updated) {
+                log.info("订阅登记完成：event_type={}，新增订阅模块={}，subscriber_modules={}", eventType, consumerModule, merged);
+                return;
+            }
+            log.warn("订阅清单并发变更，重读重算重试：event_type={}，consumer_module={}，attempt={}", eventType, consumerModule, attempt);
         }
-        if (MessagingConstants.REGISTRY_STATUS_DEPRECATED.equals(registry.getStatus())) {
-            throw new IllegalStateException("事件类型 " + eventType + " 已废止（DEPRECATED），禁止订阅");
-        }
-        List<String> modules = new ArrayList<>();
-        if (registry.getSubscriberModules() != null
-                && !registry.getSubscriberModules().isBlank()) {
-            modules.addAll(Arrays.asList(registry.getSubscriberModules().split(SUBSCRIBER_SEPARATOR)));
-        }
-        // 重复订阅幂等：清单中已存在该模块时跳过，避免声明重放产生冗余写
-        if (modules.contains(consumerModule)) {
-            log.info("订阅模块 {} 已在事件 {} 的订阅清单中，幂等跳过", consumerModule, eventType);
-            return;
-        }
-        modules.add(consumerModule);
-        String merged = String.join(SUBSCRIBER_SEPARATOR, modules);
-        this.lambdaUpdate()
-                .eq(EventRegistry::getId, registry.getId())
-                .set(EventRegistry::getSubscriberModules, merged)
-                .update();
-        log.info("订阅登记完成：event_type={}，新增订阅模块={}，subscriber_modules={}", eventType, consumerModule, merged);
+        throw new IllegalStateException(
+                "事件类型 " + eventType + " 订阅登记并发竞争超过 " + SUBSCRIBER_CAS_MAX_ATTEMPTS + " 次重试，拒绝静默丢订阅（请重启装配进程重试）");
     }
 
     @Override
@@ -109,5 +149,23 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                 .eq(EventRegistry::getEventType, eventType)
                 .select(EventRegistry::getId)
                 .exists();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResult<EventRegistryVO> query(EventRegistryQuery query) {
+        LambdaQueryWrapper<EventRegistry> wrapper = Wrappers.lambdaQuery(EventRegistry.class)
+                .eq(query.eventType() != null, EventRegistry::getEventType, query.eventType())
+                .eq(query.producerModule() != null, EventRegistry::getProducerModule, query.producerModule())
+                .eq(query.status() != null, EventRegistry::getStatus, query.status())
+                // 排序唯一性约束（A.4.3-17）：类型名 + 主键
+                .orderByAsc(EventRegistry::getEventType)
+                .orderByAsc(EventRegistry::getId);
+        Page<EventRegistry> page = this.page(new Page<>(query.page() + 1L, query.size()), wrapper);
+        return PageResult.of(
+                converter.toEventRegistryVOs(page.getRecords()),
+                page.getCurrent() - 1,
+                page.getSize(),
+                page.getTotal());
     }
 }

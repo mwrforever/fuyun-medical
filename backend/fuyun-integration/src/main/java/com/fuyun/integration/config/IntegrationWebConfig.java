@@ -2,6 +2,7 @@ package com.fuyun.integration.config;
 
 import com.fuyun.integration.controller.DeadLetterController;
 import com.fuyun.integration.controller.EventPublicationController;
+import com.fuyun.integration.controller.EventRegistryController;
 import com.fuyun.integration.controller.ReceivedEventController;
 import com.fuyun.integration.convert.IntegrationConverter;
 import com.fuyun.integration.service.impl.DeadLetterServiceImpl;
@@ -26,7 +27,9 @@ import org.springframework.context.annotation.Import;
     EventPublicationQueryServiceImpl.class,
     DeadLetterController.class,
     ReceivedEventController.class,
-    EventPublicationController.class
+    EventPublicationController.class,
+    // 契约台账只读端点：服务本体 EventRegistryServiceImpl 已由 MessagingGovernanceConfig @Import，此处不得重复注册
+    EventRegistryController.class
 })
 public class IntegrationWebConfig {
 

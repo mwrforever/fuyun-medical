@@ -7,10 +7,13 @@ import static org.mockito.Mockito.when;
 
 import com.fuyun.common.web.PageResult;
 import com.fuyun.integration.dto.EventPublicationQuery;
+import com.fuyun.integration.dto.EventRegistryQuery;
 import com.fuyun.integration.dto.ReceivedEventQuery;
 import com.fuyun.integration.service.IEventPublicationQueryService;
+import com.fuyun.integration.service.IEventRegistryService;
 import com.fuyun.integration.service.IReceivedEventQueryService;
 import com.fuyun.integration.vo.EventPublicationVO;
+import com.fuyun.integration.vo.EventRegistryVO;
 import com.fuyun.integration.vo.ReceivedEventVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -37,20 +40,29 @@ class IntegrationQueryControllersTest {
     @Mock
     private IEventPublicationQueryService eventPublicationQueryService;
 
+    @Mock
+    private IEventRegistryService eventRegistryService;
+
     @Captor
     private ArgumentCaptor<ReceivedEventQuery> queryCaptor;
 
     @Captor
     private ArgumentCaptor<EventPublicationQuery> publicationQueryCaptor;
 
+    @Captor
+    private ArgumentCaptor<EventRegistryQuery> registryQueryCaptor;
+
     private ReceivedEventController receivedEventController;
 
     private EventPublicationController eventPublicationController;
+
+    private EventRegistryController eventRegistryController;
 
     @BeforeEach
     void setUp() {
         receivedEventController = new ReceivedEventController(receivedEventQueryService);
         eventPublicationController = new EventPublicationController(eventPublicationQueryService);
+        eventRegistryController = new EventRegistryController(eventRegistryService);
     }
 
     @Test
@@ -95,5 +107,24 @@ class IntegrationQueryControllersTest {
         verify(eventPublicationQueryService).query(publicationQueryCaptor.capture());
         assertThat(publicationQueryCaptor.getValue().status()).isEqualTo("INCOMPLETE");
         assertThat(publicationQueryCaptor.getValue().eventType()).isEqualTo("com.fuyun.app.LifecycleProbeEvent");
+    }
+
+    @Test
+    @DisplayName("契约台账端点：五个请求参数装配为查询对象，服务出参直返")
+    void eventRegistryListDelegatesQueryParameters() {
+        PageResult<EventRegistryVO> expected = PageResult.of(List.of(), 0L, 20L, 0L);
+        when(eventRegistryService.query(any())).thenReturn(expected);
+
+        PageResult<EventRegistryVO> actual =
+                eventRegistryController.list("system.dict.published", "system", "ACTIVE", 2, 100);
+
+        assertThat(actual).isSameAs(expected);
+        verify(eventRegistryService).query(registryQueryCaptor.capture());
+        EventRegistryQuery query = registryQueryCaptor.getValue();
+        assertThat(query.eventType()).isEqualTo("system.dict.published");
+        assertThat(query.producerModule()).isEqualTo("system");
+        assertThat(query.status()).isEqualTo("ACTIVE");
+        assertThat(query.page()).isEqualTo(2);
+        assertThat(query.size()).isEqualTo(100);
     }
 }

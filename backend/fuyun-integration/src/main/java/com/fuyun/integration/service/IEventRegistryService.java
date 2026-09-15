@@ -1,7 +1,10 @@
 package com.fuyun.integration.service;
 
 import com.baomidou.mybatisplus.spring.service.IService;
+import com.fuyun.common.web.PageResult;
+import com.fuyun.integration.dto.EventRegistryQuery;
 import com.fuyun.integration.entity.EventRegistry;
+import com.fuyun.integration.vo.EventRegistryVO;
 
 /**
  * 事件契约台账服务：event_registry 表的业务写入口（M20"新增/变更事件类型须先登记"治理约定）。
@@ -37,4 +40,12 @@ public interface IEventRegistryService extends IService<EventRegistry> {
      * @return true=已登记（任意状态）；false=未登记
      */
     boolean isRegistered(String eventType);
+
+    /**
+     * 分页查询事件契约台账（管理面只读：主题 × 订阅方 × 状态）。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200
+     * @return 分页出参（0 基页码），非空
+     */
+    PageResult<EventRegistryVO> query(EventRegistryQuery query);
 }
