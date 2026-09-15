@@ -2,6 +2,69 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-15 · PR-1b 收尾：TASK.md W-4/W-5/W-6 工程债回填删除
+
+- **背景**：PR-1b（M20 事件总线治理完整化）实现期内三项 TODO 工单已随各 Task 清偿，按登记台「条目回填后删除」
+  规则收口；本条目为先记再改登记，TASK.md 三行删除随本条目同批落盘。
+- **W-4（Flyway 迁移号段归属与版本唯一的 CI 自动校验）清偿**：`scripts/check-migration-governance.py`（号段归属 +
+  版本唯一 + 相对基线乱序三重守卫，乱序守卫正对 PR-1a 实证的「号段内合法仍判 out-of-order」缺口），接线
+  pre-commit local hook（`.pre-commit-config.yaml`）与 CI hygiene job（`.github/workflows/ci.yml`，fetch-depth 0 +
+  MIGRATION_BASE_REF 基线注入）；既有 15 个迁移全绿，随本 PR Task 9/10 新增 V502/V503 后 17 个全绿（2026-09-15
+  号段登记条目预告的「TASK.md W-4 回填依据」就此兑现）。
+- **W-5（配置 properties record 的 toString 脱敏覆写兜底）清偿**：IotProperties.Amqp（11 字段全清单覆写，
+  accessSecret/tokenHmacSecret 两凭据打码）与 IotProperties.Fallback、SecurityProperties toString 脱敏覆写 + 单测
+  （明文泄露断言改脱敏断言），等保三级纵深防御补齐。
+- **W-6（PR-2 /code-review 三项 Minor 处置）清偿**：①死信留痕列宽钳长——DeadLetterListener 五列 TextTruncate
+  钳长 + 单测（防畸形帧超 VARCHAR 列宽致「不合规信封拒收留痕」红线落库失败）；②订阅登记并发守卫——
+  EventRegistryServiceImpl 单语句 CAS 自旋 3 次 fail-fast + broadcast 标记行拒订守卫 + 用例（消除多实例并发丢更新）；
+  ③消费范式 release 异常遮蔽——MessageIdempotencyServiceImpl.settleFailure addSuppressed 双保留 + 三处消费方同步 +
+  MessagingGovernanceIT 回归（原始业务异常不再被 Redis release 异常顶掉）。
+- **登记收口**：TASK.md W-4/W-5/W-6 三行随本条目回填删除；W-7（非数值遥测入库，用户指示暂缓实现）与 W-8
+  （FU-M20-04 剩余条目，本 PR Task 9 新增登记）两行保留不动。
+- **影响范围**：仅 TASK.md 与本文件两文件，零代码变更。
+
+## 2026-09-15 · PR-1b 终审收口：M20 Spec §7 同步注记与 TASK.md W-9 工单登记（先记再改）
+
+- **背景**：PR-1b 全分支终审核断——已定义端点的实现不构成改契约（Spec 无需大改），但存在三处
+  「实现已交付 / Spec §7 未登记」面与一条遗留承诺未兑现，须补注记与工单登记后方可收口合入。
+- **M20 Spec §7 三处注记（docs/specs/modules/20-integration.md，改动最小化、不重写既有内容）**：
+  ①新增 `GET /event-publications` 行（Modulith 事件发布注册表只读投影，status 为 COMPLETED/INCOMPLETE
+  派生态——PR-1b 已交付而原清单缺登记）；②死信管理行补重推上限口径（每死信 3 次，超限错误码
+  INT-1003 / HTTP 409，计数载体 = dead_letter.replay_count——控制器拍板值首次入 Spec）；③
+  `POST/DELETE /event-registry` 与 `POST /mdm/redispatch` 加「分阶段交付」注记并指向 TASK.md W-8
+  工单（前者写动词由队列声明治理构件自动化登记承接、无 P0 消费方故裁剪；后者受 M01 版本化回源 /
+  重发接口跨模块前置阻塞）。
+- **TASK.md 新增 W-9 工单（终审建议 #4）**：DeadLetterListener 同一 eventId 重复落行收敛——V4 迁移
+  定案口径允许同一死信重复投递重复落行，DeadLetterListener javadoc 原承诺「P1 死信管理界面完整化时
+  收敛」在 PR-1b（即 P1 完整化）交付后仍未兑现；收敛动作归 FU-M20-06 死信告警完整化或后续工单。
+  DeadLetterListener 该句 javadoc 同步改为 W-9 现实口径（仅注释一处、零行为变更），编译验证通过。
+- **影响范围**：docs/specs/modules/20-integration.md、TASK.md、本文件三文档，外加 DeadLetterListener
+  一处 javadoc 注释，零行为变更。
+
+## 2026-09-15 · D-8 裁决落地：宪法 A.5-9 failover 参数正文同步（先记再改）
+
+- **背景**：PR-4 B4.4 实测（`IotAmqpReconnectIT` 两次 RED 留证）证实 qpid-jms 2.11 的 failover 选项必须带
+  `failover.` 前缀（裸名形态不被 failover 层识别，语义等同未配置）；官方选项表无 timeout 类移交参数，
+  唯一移交机制为有限 `failover.maxReconnectAttempts`（由 -1 改 3 后交 supervisor 以新时间戳凭证无限重建）。
+  代码与 CHANGELOG 2026-09-11 条目已登记，宪法正文未同步（TASK.md D-8 待决策行）。
+- **裁决**：按 TASK.md D-8 默认建议执行——**修订正文**（用户 2026-09-15 裁决，PR-1b 随本次交付）。
+- **宪法修订范围**：backend/AGENTS.md A.5-9 正文——三参数补 `failover.` 前缀语法说明与取值；补
+  `failover.maxReconnectAttempts=3` 的有限重试移交 supervisor 语义（「无限重连」语义上移到凭证刷新层，
+  正对 IoTDA 拒绝超 5 分钟旧时间戳的服务端语义）；条款措辞与 IotAmqpConfig 装配实现逐字对齐。
+- **归源更正（追记）**：CHANGELOG 2026-09-11 条目中「此为宪法 A.5-9『failover.maxReconnectAttempts=-1（无限次）』
+  文字的实测修正」表述**归源错误**——A.5-9 正文从未写入 maxReconnectAttempts（见修订前正文），
+  `-1` 实为**简报 §1.3 预判值**；该条目就地更正为「简报 §1.3 预判值的实测修正」（历史事实保留，仅纠正归源）。
+- **登记收口**：TASK.md D-8 待决策行随本条目回填删除。
+- **代码影响面**：零行为变更（仅 IotProperties javadoc 引用措辞同步；IotAmqpConfig 装配与 IotAmqpConfigTest
+  URI 断言不动）。
+
+## 2026-09-15 · P1 PR-1b M20 事件总线治理完整化：号段登记与实施落盘（先记再改）
+
+- **号段登记（V500 起「先登记先占」，登记载体 = 本文件）**：本次占用 **V502**（`integration.mdm_subscription` 主数据分发订阅台账）、**V503**（`integration.mdm_dispatch_log` 主数据分发流水）；两者均在 integration 号段（V1-V99 与 V500+ 通用段）内，且版本号大于真库历史最大值 V501（Flyway `outOfOrder=false` 硬约束，PR-1a 真栈实证）。
+- **落盘依据**：M20 Spec §4 两张治理表（mdm_subscription / mdm_dispatch_log）+ FU-M20-04 主数据分发（订阅登记、广播链路分发流水、矩阵查询）。
+- **跨模块前置（登记）**：FU-M20-04 的全量初始化、每日版本对账、落后自动全量重发与 `POST /mdm/redispatch` 端点依赖 M01 版本化回源/重发接口（当前仅字典有版本化读接口），未随本次交付，登记 TASK.md 待办与 PR 描述。
+- **CI 联动**：新增 `scripts/check-migration-governance.py`（号段归属 + 版本唯一 + 乱序守卫）随 PR-1b 落盘，本批两条迁移为其守护对象（TASK.md W-4 回填依据）。
+
 ## 2026-09-15 · PR-1a 收尾 D-10/D-11 用户裁决落地并修订宪法（先记再改）
 
 - **背景**：PR-1a（Spring Modulith 事件基础设施，PR #16 合入 dev@1d998d5）执行期实证三项收尾事项登记 TASK.md D-10~D-12，用户 2026-09-15 裁决全部修正；本条目记 D-10/D-11 修宪（D-12 flaky 修复为代码变更，随修复 PR 合入，不涉宪法）。
@@ -91,7 +154,7 @@
 ## 2026-09-11 · PR-4 B4.4：T-R3-3 本地实测重要发现——Qpid failover 透明恢复屏蔽 supervisor，AMQP URI 补正官方选项语法并改有限重试移交（先记再改）
 
 - **实测发现（IotAmqpReconnectIT 首跑 RED 留证，2026-09-11）**：`rabbitmqctl stop_app` 优雅断链下，Qpid failover 传输层做纯透明恢复——ExceptionListener 不触发、阻塞中的 receive() 持续等待重连、消费者 supervisor 全程未介入（`iot.amqp.connected` 恒 1、`iot.amqp.reconnect.total` 恒 0，断链时长指标恒 0）。推演生产语义：IoTDA 真实断链超 5 分钟后，failover 仍以连接建立时捕获的旧时间戳凭证无限重试（`failover.maxReconnectAttempts=-1`），被服务端拒绝后永续循环且消费链路无感知——supervisor 的「新时间戳凭证重建」被完全屏蔽，宪法 A.5-9 的 supervisor 语义落空。
-- **对策（AMQP 连接 URI 修正为官方 failover 选项语法 + maxReconnectAttempts 改有限值移交 supervisor）**：① 选项前缀修正——qpid-jms 官方文档「Client configuration」明确 failover 选项语法为 `failover.` 前缀形态（failover.initialReconnectDelay / failover.reconnectDelay / failover.maxReconnectDelay），B4.2 起的裸名形态不会被 failover 层识别为选项（语义等同未配置，三值 3s/3s/30s 从未真实生效），本次按官方语法补正前缀、取值零变化。② 移交机制——qpid-jms 2.11 官方选项表核对（来源 qpid.apache.org/releases/qpid-jms-2.11.0/docs）**无 timeout 类移交参数**（`failover.timeout` 属 ActiveMQ failover 词表，Qpid 下装配即报「Failed to create JMS Provider instance for: failover」，第二次 RED 实测留证）；官方选项表内唯一移交机制为有限 `failover.maxReconnectAttempts`——由宪法/简报锁定的 -1 改为 3：provider 连续重试 3 次放弃后连接失败（ExceptionListener 触发 / receive 失败上抛），控制权移交 supervisor 以新时间戳凭证无限重建，「无限重连」语义上移到凭证刷新层（每次重建刷新 13 位时间戳，正对 IoTDA 5 分钟拒绝语义）；瞬时抖动（≤3 次重试约 9s 内）仍走透明恢复。**偏差申报**：此为宪法 A.5-9「failover.maxReconnectAttempts=-1（无限次）」文字的实测修正——无限重连语义在 supervisor 层完整保留，总重连次数不设上限，仅传输层透明重试限 3 次；真实 IoTDA 端点的等价行为验证随 TASK.md L-2 联调演示回填。
+- **对策（AMQP 连接 URI 修正为官方 failover 选项语法 + maxReconnectAttempts 改有限值移交 supervisor）**：① 选项前缀修正——qpid-jms 官方文档「Client configuration」明确 failover 选项语法为 `failover.` 前缀形态（failover.initialReconnectDelay / failover.reconnectDelay / failover.maxReconnectDelay），B4.2 起的裸名形态不会被 failover 层识别为选项（语义等同未配置，三值 3s/3s/30s 从未真实生效），本次按官方语法补正前缀、取值零变化。② 移交机制——qpid-jms 2.11 官方选项表核对（来源 qpid.apache.org/releases/qpid-jms-2.11.0/docs）**无 timeout 类移交参数**（`failover.timeout` 属 ActiveMQ failover 词表，Qpid 下装配即报「Failed to create JMS Provider instance for: failover」，第二次 RED 实测留证）；官方选项表内唯一移交机制为有限 `failover.maxReconnectAttempts`——由宪法/简报锁定的 -1 改为 3：provider 连续重试 3 次放弃后连接失败（ExceptionListener 触发 / receive 失败上抛），控制权移交 supervisor 以新时间戳凭证无限重建，「无限重连」语义上移到凭证刷新层（每次重建刷新 13 位时间戳，正对 IoTDA 5 分钟拒绝语义）；瞬时抖动（≤3 次重试约 9s 内）仍走透明恢复。**偏差申报**：此为**简报 §1.3 预判值**（-1，非宪法条文）的实测修正（归源更正见 2026-09-15 D-8 条目）——无限重连语义在 supervisor 层完整保留，总重连次数不设上限，仅传输层透明重试限 3 次；真实 IoTDA 端点的等价行为验证随 TASK.md L-2 联调演示回填。
 
 ## 2026-09-10 · PR-4 B4.4：iot-simulator 子模块、表外依赖核实与一机一密算法官方核对（先记再改）
 

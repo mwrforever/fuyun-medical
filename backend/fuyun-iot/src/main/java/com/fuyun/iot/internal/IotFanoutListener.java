@@ -25,14 +25,15 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
  * received_event 唯一索引兜底）；AMQP 主链路明细幂等由 iot_telemetry 唯一约束 ON CONFLICT DO
  * NOTHING 承担，两域不得混用。
  *
- * <p>标准幂等范式（含 D-7 回查语义，MessageIdempotencyService javadoc）：tryAcquire false
- * （回查确认已处理）→ return 跳过即 AUTO 确认；业务执行 + recordProcessed 成功登记；业务失败
- * release 释放前置键后重抛（交容器有界重试，耗尽进 fy.dlx）。DictPublishedListener 同构先例。
+ * <p>标准幂等范式（含 D-7 回查语义与失败链留痕，MessageIdempotencyService javadoc）：tryAcquire
+ * false（回查仅认 PROCESSED 行）→ return 跳过即 AUTO 确认；业务执行 + recordProcessed 成功登记；
+ * 业务失败 settleFailure 失败收尾（释放前置键 + FAILED 留痕，双保留不遮蔽）后重抛（交容器有界
+ * 重试，耗尽进 fy.dlx）。DictPublishedListener 同构先例。
  *
  * <p>消费后动作（P0，B4.3-b 已接线）：载荷契约解析 + info 日志留痕（deviceId/status/wardId）
  * + <b>STOMP 设备状态主题推送</b>（经 {@link ITelemetryPushService#pushDeviceStatus} 推
  * /topic/iot/device-status/{wardId}，载荷 wardId 为空时推送静默降级）——推送失败按业务失败
- * 处置（释放前置键重抛走有界重试），推送成功后才登记 PROCESSED。
+ * 处置（settleFailure 失败收尾重抛走有界重试），推送成功后才登记 PROCESSED。
  *
  * <p>归 internal/ 包：容器驱动的模块内入口，禁止外部引用（backend 宪法 B.1）；Bean 注册点
  * 为 IotMessagingConfig @Import。
@@ -87,18 +88,20 @@ public class IotFanoutListener {
                     envelope.eventType());
             return;
         }
+        // 信封五要素在业务前构造一次：成功登记与失败留痕共用（两处字段映射不漂移）
+        ReceivedEventRecord record = new ReceivedEventRecord(
+                envelope.eventId(),
+                envelope.eventType(),
+                envelope.producer(),
+                envelope.occurredAt(),
+                IotMessagingConstants.MODULE);
         try {
             doBusiness(envelope);
-            // 标准范式②：成功登记 received_event（唯一索引兜底并发重复投递）
-            idempotencyService.recordProcessed(new ReceivedEventRecord(
-                    envelope.eventId(),
-                    envelope.eventType(),
-                    envelope.producer(),
-                    envelope.occurredAt(),
-                    IotMessagingConstants.MODULE));
+            // 标准范式②：成功登记 received_event（唯一索引兜底并发，前次失败行升级为已处理）
+            idempotencyService.recordProcessed(record);
         } catch (RuntimeException e) {
-            // 标准范式③：失败释放前置键允许重试/重投重新抢占，上抛交容器有界重试耗尽进 fy.dlx
-            idempotencyService.release(envelope.eventId(), IotMessagingConstants.MODULE);
+            // 标准范式③：释放前置键 + FAILED 留痕（W-6③ 双保留，异常链不遮蔽 e），上抛走有界重试进 fy.dlx
+            idempotencyService.settleFailure(record, e);
             throw e;
         }
     }
@@ -109,18 +112,19 @@ public class IotFanoutListener {
      * <p>推送语义：经 {@link ITelemetryPushService#pushDeviceStatus} 推
      * /topic/iot/device-status/{wardId}——载荷 wardId 为空时推送静默降级（简报 §1.5"wardId
      * 空则 info 跳过推送"，P0 状态帧契约不含 wardId 属预期场景）；推送失败按业务失败处置
-     * （异常上抛由调用方释放前置键重抛交有界重试），推送成功后才执行 recordProcessed 登记。
+     * （异常上抛由范式③失败收尾 FAILED 留痕后重抛交有界重试），推送成功后才执行 recordProcessed
+     * 登记。
      *
      * @param envelope 已解析的合规信封，非空
      * @throws IllegalStateException 载荷与 DeviceStatusEvent 契约不符（字段缺失或类型错误）——
-     *                               按消费失败处置（释放前置键后重抛走死信），禁止静默吞错
+     *                               按消费失败处置（settleFailure 失败收尾后重抛走死信），禁止静默吞错
      */
     private void doBusiness(EventEnvelope envelope) {
         DeviceStatusEvent event;
         try {
             event = objectMapper.treeToValue(envelope.payload(), DeviceStatusEvent.class);
         } catch (JsonProcessingException e) {
-            // 载荷不合规（缺字段/类型错）等同业务失败：上抛由调用方释放前置键，最终转死信留痕
+            // 载荷不合规（缺字段/类型错）等同业务失败：上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
             throw new IllegalStateException("设备状态事件载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(

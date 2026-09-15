@@ -122,6 +122,27 @@ class DeadLetterListenerTest {
         assertThat(deadLetterCaptor.getValue().getFailReason()).contains("rejected");
     }
 
+    @Test
+    @DisplayName("超长帧钳长：x-death 队列名/路由键与超长异常消息截断至列宽，留痕仍落库成功（W-6①）")
+    void truncatesOverlongFieldsToColumnWidth() {
+        String overlongQueue = "q." + "x".repeat(300);
+        String overlongRoutingKey = "system." + "y".repeat(300);
+        String overlongReason = "事件信封不合规：" + "z".repeat(2000);
+        Map<String, Object> xDeath =
+                Map.of("queue", overlongQueue, "reason", "rejected", "routing-keys", List.of(overlongRoutingKey));
+        when(eventEnvelopeCodec.fromJson(BODY)).thenThrow(new IllegalArgumentException(overlongReason));
+
+        listener.onDeadLetter(deadLetterMessage(BODY, xDeath));
+
+        verify(deadLetterMapper).insert(deadLetterCaptor.capture());
+        DeadLetter saved = deadLetterCaptor.getValue();
+        assertThat(saved.getSourceQueue()).hasSize(MessagingConstants.DEAD_LETTER_SOURCE_QUEUE_MAX_LENGTH);
+        assertThat(saved.getRoutingKey()).hasSize(MessagingConstants.DEAD_LETTER_ROUTING_KEY_MAX_LENGTH);
+        assertThat(saved.getFailReason()).hasSize(MessagingConstants.FAIL_REASON_MAX_LENGTH);
+        // 截断保留头部：不合规标注在前部，仍可识别违规类型（M20 红线 1 留痕语义不被截断削弱）
+        assertThat(saved.getFailReason()).startsWith("事件信封不合规");
+    }
+
     /**
      * 构造带 x-death 死信轨迹的原始 MQ 消息。
      *

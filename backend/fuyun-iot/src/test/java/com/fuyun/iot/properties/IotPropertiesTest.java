@@ -209,6 +209,23 @@ class IotPropertiesTest {
                 });
     }
 
+    @Test
+    @DisplayName("toString 脱敏：accessKey/accessSecret 打码不外泄，非敏感字段照常输出（W-5）")
+    void amqpToStringMasksCredentials() {
+        String text = ENABLED_AMQP.toString();
+
+        assertThat(text).doesNotContain("test-access-key").doesNotContain("test-access-secret");
+        assertThat(text).contains("accessKey=***", "accessSecret=***", "amqp://127.0.0.1:5672");
+    }
+
+    @Test
+    @DisplayName("Fallback toString 脱敏：兜底通道共享密钥打码（W-5）")
+    void fallbackToStringMasksToken() {
+        String text = new IotProperties.Fallback("test-fallback-token").toString();
+
+        assertThat(text).doesNotContain("test-fallback-token").contains("token=***");
+    }
+
     /** 绑定载体：@EnableConfigurationProperties 生产同型注册（B4.2 任务 B IotConfig 承接） */
     @Configuration
     @Validated

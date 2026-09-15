@@ -22,9 +22,10 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
  * MessagingGovernanceIT）→ UTF-8 解码 → {@link EventEnvelopeCodec#fromJson} 消费侧合规校验
  * （不合规抛 IllegalArgumentException → 有界重试耗尽进 fy.dlx 留痕）。
  *
- * <p>标准幂等范式（含 D-7 回查语义，MessageIdempotencyService javadoc）：
- * tryAcquire false（回查确认已处理）→ return 跳过即 AUTO 确认；业务执行 + recordProcessed
- * 成功登记；业务失败 release 释放前置键后重抛（交容器有界重试，耗尽进 fy.dlx）。
+ * <p>标准幂等范式（含 D-7 回查语义与失败链留痕，MessageIdempotencyService javadoc）：
+ * tryAcquire false（回查仅认 PROCESSED 行）→ return 跳过即 AUTO 确认；业务执行 + recordProcessed
+ * 成功登记；业务失败 settleFailure 失败收尾（释放前置键 + FAILED 留痕，双保留不遮蔽）后重抛
+ * （交容器有界重试，耗尽进 fy.dlx）。
  *
  * <p>消费后动作（P0 占位）：字典类型/版本日志留痕；字典本地缓存失效随 P1 字典缓存实现接入
  * （P0 无缓存实体可失效，禁止为占位引入死代码）。
@@ -73,18 +74,20 @@ public class DictPublishedListener {
                     envelope.eventType());
             return;
         }
+        // 信封五要素在业务前构造一次：成功登记与失败留痕共用（两处字段映射不漂移）
+        ReceivedEventRecord record = new ReceivedEventRecord(
+                envelope.eventId(),
+                envelope.eventType(),
+                envelope.producer(),
+                envelope.occurredAt(),
+                SystemMessagingConstants.MODULE);
         try {
             doBusiness(envelope);
-            // 标准范式②：成功登记 received_event（唯一索引兜底并发重复投递）
-            idempotencyService.recordProcessed(new ReceivedEventRecord(
-                    envelope.eventId(),
-                    envelope.eventType(),
-                    envelope.producer(),
-                    envelope.occurredAt(),
-                    SystemMessagingConstants.MODULE));
+            // 标准范式②：成功登记 received_event（唯一索引兜底并发，前次失败行升级为已处理）
+            idempotencyService.recordProcessed(record);
         } catch (RuntimeException e) {
-            // 标准范式③：失败释放前置键允许重试/重投重新抢占，上抛交容器有界重试耗尽进 fy.dlx
-            idempotencyService.release(envelope.eventId(), SystemMessagingConstants.MODULE);
+            // 标准范式③：释放前置键 + FAILED 留痕（W-6③ 双保留，异常链不遮蔽 e），上抛走有界重试进 fy.dlx
+            idempotencyService.settleFailure(record, e);
             throw e;
         }
     }
@@ -97,14 +100,14 @@ public class DictPublishedListener {
      *
      * @param envelope 已解析的合规信封，非空
      * @throws IllegalStateException 载荷与契约不符（dictType/version 缺失或类型错误）——按消费
-     *                               失败处置（释放前置键后重抛走死信），禁止静默吞错
+     *                               失败处置（settleFailure 失败收尾后重抛走死信），禁止静默吞错
      */
     private void doBusiness(EventEnvelope envelope) {
         DictPublishedPayload payload;
         try {
             payload = objectMapper.treeToValue(envelope.payload(), DictPublishedPayload.class);
         } catch (JsonProcessingException e) {
-            // 载荷不合规（缺字段/类型错）等同业务失败：释放前置键后上抛，最终转死信留痕
+            // 载荷不合规（缺字段/类型错）等同业务失败：上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
             throw new IllegalStateException("字典发布载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(

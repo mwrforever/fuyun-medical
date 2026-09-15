@@ -59,8 +59,10 @@ public record IotProperties(
      * @param batchFlushInterval   攒批时间窗触发间隔，默认 2s（距上次落库超时即刷批）
      * @param batchQueueCapacity   攒批有界内存队列容量，默认 5000（满则消费侧等待背压，
      *                             prefetch 自然限流）
-     * @param reconnectInitialDelay 断链重连初始退避，默认 3s（宪法 A.5-9 failover 参数原文值）
-     * @param reconnectMaxDelay    断链重连最大退避，默认 30s（指数退避上限，宪法 A.5-9 原文值）
+     * @param reconnectInitialDelay 断链重连初始退避，默认 3s（宪法 A.5-9 `failover.initialReconnectDelay`
+     *                              / `failover.reconnectDelay` 取值）
+     * @param reconnectMaxDelay    断链重连最大退避，默认 30s（指数退避上限，宪法 A.5-9
+     *                              `failover.maxReconnectDelay` 取值）
      */
     public record Amqp(
             @DefaultValue("false") boolean enabled,
@@ -135,6 +137,32 @@ public record IotProperties(
                         "fuyun.iot.amqp.queues 含空白队列名（FUYUN_IOT_AMQP_QUEUES 为逗号分隔清单，" + "禁止空段与空白项，请与 IoTDA 推送队列逐一对齐）");
             }
         }
+
+        /**
+         * 脱敏 toString（W-5，等保三级纵深防御）：accessKey/accessSecret 固定打码，其余字段照常输出。
+         *
+         * <p>覆写原因：record 默认 toString 会直出全部字段值（含凭证），而「凭证禁入日志」是红线——
+         * 不能依赖每个调用方自觉避开整对象打印（如日志模板误用 {} 直出对象）。endpoint 按配置约定
+         * 不含用户信息（凭证经 SASL 三段 username 传入，见 IotAmqpTelemetryConsumer#ensureConnected），
+         * 故照常输出供排障定位。
+         *
+         * @return 脱敏文本，非空；凭证字段恒为 ***
+         */
+        @Override
+        public String toString() {
+            return "Amqp[enabled=" + enabled
+                    + ", endpoint=" + endpoint
+                    + ", accessKey=***"
+                    + ", accessSecret=***"
+                    + ", queues=" + queues
+                    + ", queuePrefetch=" + queuePrefetch
+                    + ", batchSize=" + batchSize
+                    + ", batchFlushInterval=" + batchFlushInterval
+                    + ", batchQueueCapacity=" + batchQueueCapacity
+                    + ", reconnectInitialDelay=" + reconnectInitialDelay
+                    + ", reconnectMaxDelay=" + reconnectMaxDelay
+                    + "]";
+        }
     }
 
     /**
@@ -144,5 +172,16 @@ public record IotProperties(
      *              null（yml 空占位解析为空串，两态同义=未配置，比对侧 fail-closed 一律拒绝）；
      *              来源：FUYUN_IOT_FALLBACK_TOKEN 环境变量映射；禁入日志
      */
-    public record Fallback(String token) {}
+    public record Fallback(String token) {
+
+        /**
+         * 脱敏 toString（W-5）：共享密钥固定打码——record 默认形态直出密钥值，属日志红线风险。
+         *
+         * @return 脱敏文本，非空；token 恒为 ***
+         */
+        @Override
+        public String toString() {
+            return "Fallback[token=***]";
+        }
+    }
 }

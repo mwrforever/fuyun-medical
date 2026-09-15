@@ -6,17 +6,24 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fuyun.common.web.PageResult;
 import com.fuyun.integration.constants.MessagingConstants;
+import com.fuyun.integration.convert.IntegrationConverter;
+import com.fuyun.integration.dto.EventRegistryQuery;
 import com.fuyun.integration.entity.EventRegistry;
 import com.fuyun.integration.mapper.EventRegistryMapper;
 import com.fuyun.integration.service.EventRegistrationSpec;
+import com.fuyun.integration.vo.EventRegistryVO;
+import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -59,7 +66,7 @@ class EventRegistryServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new EventRegistryServiceImpl();
+        service = new EventRegistryServiceImpl(IntegrationConverter.INSTANCE);
         // ServiceImpl 的 baseMapper 为 protected 字段，单测经反射注入 mock（等价 Spring 容器 @Autowired 装配）；
         // MP 3.5.17 getEntityClass() 默认从 MyBatis mapper 代理反推实体类，mock 代理不可得，
         // 须直接预置 entityClass 字段短路该解析路径
@@ -153,6 +160,8 @@ class EventRegistryServiceImplTest {
     @DisplayName("registerSubscriber 新订阅模块：追加至订阅清单并写回台账")
     void registerSubscriberAppendsNewModuleToSubscriberList() {
         when(eventRegistryMapper.selectOne(any())).thenReturn(activeRow("it"));
+        // CAS 条件更新（BaseMapper.update 返回 int 影响行数）：首次命中写回 1 行
+        when(eventRegistryMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
 
         service.registerSubscriber("system.dict.published", "lab");
 
@@ -170,6 +179,68 @@ class EventRegistryServiceImplTest {
         service.registerSubscriber("system.dict.published", "lab");
 
         verify(eventRegistryMapper, never()).update(isNull(), any(Wrapper.class));
+    }
+
+    @Test
+    @DisplayName("broadcast 拒订守卫：订阅清单为 broadcast 标记行时抛异常（零订阅广播不承载订阅清单）")
+    void registerSubscriberRejectsBroadcastMarkedRow() {
+        EventRegistry broadcastRow = activeRow("broadcast");
+        when(eventRegistryMapper.selectOne(any())).thenReturn(broadcastRow);
+
+        assertThatThrownBy(() -> service.registerSubscriber("integration.convention.event-envelope", "it"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("broadcast");
+        verify(eventRegistryMapper, never()).update(isNull(), any(Wrapper.class));
+    }
+
+    @Test
+    @DisplayName("并发守卫：CAS 影响 0 行时重读重算重试，第二次命中后写入含两模块的清单")
+    void registerSubscriberRetriesOnCasMiss() {
+        EventRegistry firstRead = activeRow("it");
+        EventRegistry secondRead = activeRow("it,lab");
+        when(eventRegistryMapper.selectOne(any())).thenReturn(firstRead, secondRead);
+        // 首次 CAS 未命中（他实例已并发改写），第二次命中
+        when(eventRegistryMapper.update(isNull(), any(Wrapper.class))).thenReturn(0, 1);
+
+        service.registerSubscriber("system.dict.published", "pharmacy");
+
+        ArgumentCaptor<Wrapper<EventRegistry>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(eventRegistryMapper, times(2)).update(isNull(), captor.capture());
+        assertThat(((LambdaUpdateWrapper<EventRegistry>) captor.getAllValues().get(1))
+                        .getParamNameValuePairs()
+                        .values())
+                .contains("it,lab,pharmacy");
+    }
+
+    @Test
+    @DisplayName("并发守卫上界：CAS 连续 3 次未命中即 fail-fast（禁静默丢订阅）")
+    void registerSubscriberFailsFastAfterCasAttemptsExhausted() {
+        when(eventRegistryMapper.selectOne(any())).thenReturn(activeRow("it"));
+        when(eventRegistryMapper.update(isNull(), any(Wrapper.class))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.registerSubscriber("system.dict.published", "pharmacy"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("并发");
+        verify(eventRegistryMapper, times(3)).update(isNull(), any(Wrapper.class));
+    }
+
+    @Test
+    @DisplayName("契约台账查询：0 基分页契约与订阅读数出参")
+    void queryReturnsPagedRegistryRows() {
+        EventRegistry row = activeRow("it,lab");
+        when(eventRegistryMapper.selectPage(any(IPage.class), any(Wrapper.class)))
+                .thenAnswer(invocation -> {
+                    IPage<EventRegistry> page = invocation.getArgument(0);
+                    page.setRecords(List.of(row));
+                    page.setTotal(1L);
+                    return page;
+                });
+
+        PageResult<EventRegistryVO> result = service.query(new EventRegistryQuery(null, "system", "ACTIVE", 0, 20));
+
+        assertThat(result.page()).isZero();
+        assertThat(result.content().get(0).subscriberModules()).isEqualTo("it,lab");
+        assertThat(result.content().get(0).eventType()).isEqualTo("system.dict.published");
     }
 
     @Test

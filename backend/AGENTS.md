@@ -94,7 +94,7 @@
 6. **消费幂等**：幂等键在业务表建唯一索引（最终保证）+ Redis SET NX 前置去重（加速），两者都必须有。
 7. **延迟消息**：`fy.delay` 队列级 TTL + DLX 死信转发（一条队列一个延迟档位），不引入 delayed-message 插件。
 8. **监听器**：并发与 prefetch 按队列分级（遥测高吞吐 4-8 / 250；关键业务 2-4 / 10-50），压测校准。
-9. **IoTDA AMQP（Qpid JMS 2.11.0）**：与 Spring AMQP 完全连接隔离（自建 ConnectionFactory + 专用容器工厂 + 独立 `iot.amqp.*` 配置前缀）；URI 显式写全 failover 参数（initialReconnectDelay=3000 / reconnectDelay=3000 / maxReconnectDelay=30000）；消费者包装为 SmartLifecycle，连接数预算"实例数 × 每实例连接数 ≤ 32"（单凭证上限）；凭证经 env 注入；部署机 NTP 同步为前置检查。
+9. **IoTDA AMQP（Qpid JMS 2.11.0）**：与 Spring AMQP 完全连接隔离（自建 ConnectionFactory + 专用容器工厂 + 独立 `iot.amqp.*` 配置前缀）；URI 的 failover 参数一律用官方 `failover.` 前缀语法（`failover.initialReconnectDelay=3000` / `failover.reconnectDelay=3000` / `failover.maxReconnectDelay=30000`，裸名形态不被 failover 层识别、语义等同未配置，B4.4 实测留证）+ 有限重试移交 `failover.maxReconnectAttempts=3`（传输层透明重试上限 3 次后连接失败、控制权移交消费者 supervisor 以新时间戳凭证无限重建——「无限重连」语义上移到凭证刷新层，正对 IoTDA 拒绝超 5 分钟旧时间戳的服务端语义；官方选项表无 timeout 类移交参数）；消费者包装为 SmartLifecycle，连接数预算"实例数 × 每实例连接数 ≤ 32"（单凭证上限）；凭证经 env 注入；部署机 NTP 同步为前置检查。
 10. **IoTDA 消费硬约束**：服务端仅缓存 24h/1GB 积压——消费侧必须高可用 + 快速落库 + 批量化，监控"积压水位 + 断链时长"双指标；关键告警保留 IoTDA 联动规则 HTTP 兜底双通道。
 11. **对象存储**：统一 AWS SDK for Java v2（2.54.13，父 POM 锁版本），`forcePathStyle + endpointOverride` 配置化切换 MinIO/OBS；禁用 minio-java SDK（上游已归档停维）；≥100MB 走 TransferManager 分片，读取流式返回禁全量入内存；dev 桶由应用启动检查创建，prod OBS 桶运维预建、应用只校验可访问性 fail-fast。
 12. **HL7 MLLP（HAPI 2.6.0）**：HapiContext 生命周期随 Spring（SmartLifecycle）；解析链"原始字节 → 显式字符集（与对接方联调定）→ PipeParser → 必填段校验"；解析失败原样落库待人工处理，禁止静默丢弃；MLLP 网络线程与业务线程隔离。

@@ -2,8 +2,10 @@ package com.fuyun.iot.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -36,11 +38,12 @@ import org.springframework.amqp.core.MessageProperties;
  * 设备状态自事件消费者单元测试（标准幂等范式三分支与不合规信封处置，BRIEF-PR4-01 §1.5，
  * DictPublishedListenerTest 同构）。
  *
- * <p>覆盖：重复投递（tryAcquire=false，D-7 回查确认已处理）跳过即 AUTO 确认、成功消费落
- * received_event 登记（信封五要素完整，consumerModule=iot）、业务失败释放前置键后重抛（交容器
- * 有界重试）、不合规信封上抛（不触达幂等构件）、载荷契约不符按消费失败处置、B4.3-b 接线——
- * 载荷含 wardId 推 STOMP 设备状态主题、wardId null 跳过推送、推送失败按业务失败释放重抛。
- * 真实 broker 链路（含幂等重投与 STOMP 收帧）归 IotTelemetryPipelineIT 步骤 5/6。
+ * <p>覆盖：重复投递（tryAcquire=false，D-7 回查仅认 PROCESSED 行）跳过即 AUTO 确认、成功消费落
+ * received_event 登记（信封五要素完整，consumerModule=iot）、业务失败 settleFailure 失败收尾
+ * （释放前置键 + FAILED 留痕）后原样重抛（交容器有界重试）、不合规信封上抛（不触达幂等构件）、
+ * 载荷契约不符按消费失败处置、B4.3-b 接线——载荷含 wardId 推 STOMP 设备状态主题、wardId null
+ * 跳过推送、推送失败按业务失败收尾重抛。真实 broker 链路（含幂等重投与 STOMP 收帧）归
+ * IotTelemetryPipelineIT 步骤 5/6。
  */
 @ExtendWith(MockitoExtension.class)
 class IotFanoutListenerTest {
@@ -87,7 +90,7 @@ class IotFanoutListenerTest {
         listener.onDeviceStatusChanged(message(toJson(compliantEnvelope())));
 
         verify(idempotencyService, never()).recordProcessed(any());
-        verify(idempotencyService, never()).release(anyString(), anyString());
+        verify(idempotencyService, never()).settleFailure(any(), any());
         verifyNoInteractions(pushService);
     }
 
@@ -133,8 +136,8 @@ class IotFanoutListenerTest {
     }
 
     @Test
-    @DisplayName("推送失败按业务失败处置：释放前置键后重抛（交容器有界重试，不落 PROCESSED）")
-    void releasesIdempotencyKeyAndRethrowsWhenPushFails() {
+    @DisplayName("推送失败按业务失败处置：settleFailure 失败收尾后重抛（交容器有界重试，不落 PROCESSED）")
+    void settlesFailureAndRethrowsWhenPushFails() {
         DeviceStatusEvent wardEvent = new DeviceStatusEvent("it-dev-001", DeviceStatus.OFFLINE, OCCURRED_AT, WARD_ID);
         when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
                 .thenReturn(true);
@@ -151,13 +154,13 @@ class IotFanoutListenerTest {
 
         assertThatThrownBy(() -> listener.onDeviceStatusChanged(message(toJson(envelope))))
                 .isSameAs(failure);
-        verify(idempotencyService).release(EVENT_ID, IotMessagingConstants.MODULE);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq(failure));
         verify(idempotencyService, never()).recordProcessed(any());
     }
 
     @Test
-    @DisplayName("业务失败释放重抛：recordProcessed 异常时释放前置键并原样上抛（交有界重试）")
-    void releasesIdempotencyKeyAndRethrowsOnBusinessFailure() {
+    @DisplayName("业务失败收尾重抛：recordProcessed 异常时 settleFailure 承接并原样上抛（交有界重试）")
+    void settlesFailureAndRethrowsOnBusinessFailure() {
         when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
                 .thenReturn(true);
         IllegalStateException failure = new IllegalStateException("登记失败");
@@ -165,7 +168,7 @@ class IotFanoutListenerTest {
 
         assertThatThrownBy(() -> listener.onDeviceStatusChanged(message(toJson(compliantEnvelope()))))
                 .isSameAs(failure);
-        verify(idempotencyService).release(EVENT_ID, IotMessagingConstants.MODULE);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq(failure));
     }
 
     @Test
@@ -182,8 +185,8 @@ class IotFanoutListenerTest {
     }
 
     @Test
-    @DisplayName("载荷契约不符：payload 非契约对象按业务失败处置（释放前置键后重抛走死信）")
-    void releasesAndRethrowsWhenPayloadViolatesContract() {
+    @DisplayName("载荷契约不符：payload 非契约对象按业务失败处置（失败收尾留痕后重抛走死信）")
+    void settlesFailureAndRethrowsWhenPayloadViolatesContract() {
         // payload 为标量字符串：fromJson 合规（payload 非空）但与 DeviceStatusEvent 契约不符
         EventEnvelope violating = new EventEnvelope(
                 EVENT_ID,
@@ -197,9 +200,10 @@ class IotFanoutListenerTest {
         when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
                 .thenReturn(true);
 
-        assertThatThrownBy(() -> listener.onDeviceStatusChanged(message(toJson(violating))))
-                .isInstanceOf(IllegalStateException.class);
-        verify(idempotencyService).release(EVENT_ID, IotMessagingConstants.MODULE);
+        // 捕获监听器抛出的业务异常：断言 settleFailure 以同一异常承接（W-6③ 主异常语义的衔接点）
+        Throwable thrown = catchThrowable(() -> listener.onDeviceStatusChanged(message(toJson(violating))));
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq((RuntimeException) thrown));
         verify(idempotencyService, never()).recordProcessed(any());
     }
 

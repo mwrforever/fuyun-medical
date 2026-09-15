@@ -63,6 +63,51 @@ public final class MessagingConstants {
     /** dead_letter 状态：待处理（P0 死信落库初始值；B2.2 启用） */
     public static final String DEAD_LETTER_STATUS_PENDING = "PENDING";
 
+    /** dead_letter 状态：已重放（重放投递成功，M20 §5 状态机 PENDING → REPLAYED） */
+    public static final String DEAD_LETTER_STATUS_REPLAYED = "REPLAYED";
+
+    /** dead_letter 状态：已关闭（终态，必须填写关闭原因；不得再重放） */
+    public static final String DEAD_LETTER_STATUS_CLOSED = "CLOSED";
+
+    /** received_event 状态：消费失败（D-7 回查必须过滤 status=PROCESSED，FAILED 行不得误判为已处理） */
+    public static final String RECEIVED_STATUS_FAILED = "FAILED";
+
+    /** event_publication 完成态派生值：completion_date 非空 = 投递完成（框架已标记） */
+    public static final String PUBLICATION_STATUS_COMPLETED = "COMPLETED";
+
+    /** event_publication 完成态派生值：completion_date 为空 = 未完成（监听器失败/实例宕机，待 EventOpsJob 重投） */
+    public static final String PUBLICATION_STATUS_INCOMPLETE = "INCOMPLETE";
+
+    /** 死信重推上限（次）：达到后重推接口拒绝（Spec 未定义，控制器 2026-09-15 拍板口径） */
+    public static final int DEAD_LETTER_REPLAY_MAX_COUNT = 3;
+
+    /** fail_reason 列宽防线：dead_letter.fail_reason 与 received_event.fail_reason 同为 VARCHAR(1000) */
+    public static final int FAIL_REASON_MAX_LENGTH = 1000;
+
+    /** source_queue 列宽防线：dead_letter.source_queue VARCHAR(128)（x-death 队列名理论可超） */
+    public static final int DEAD_LETTER_SOURCE_QUEUE_MAX_LENGTH = 128;
+
+    /** routing_key 列宽防线：dead_letter.routing_key VARCHAR(128) */
+    public static final int DEAD_LETTER_ROUTING_KEY_MAX_LENGTH = 128;
+
+    /** event_id 列宽防线：dead_letter.event_id VARCHAR(64)（信封 eventId 为 UUID 字符串，理论超长面） */
+    public static final int DEAD_LETTER_EVENT_ID_MAX_LENGTH = 64;
+
+    /** event_type 列宽防线：dead_letter.event_type VARCHAR(128) */
+    public static final int DEAD_LETTER_EVENT_TYPE_MAX_LENGTH = 128;
+
+    /** 载荷预览长度（字符）：列表页仅出头部预览，全文只经详情端点（诊断看载荷） */
+    public static final int DEAD_LETTER_PAYLOAD_PREVIEW_LENGTH = 200;
+
+    /** handler 列宽防线：dead_letter.handler VARCHAR(64)（操作人标识超长收口，防整行写入失败） */
+    public static final int HANDLER_MAX_LENGTH = 64;
+
+    /** target_modules 列宽防线：mdm_dispatch_log.target_modules VARCHAR(1000) */
+    public static final int MDM_TARGET_MODULES_MAX_LENGTH = 1000;
+
+    /** 本模块消费者/生产者域标识：队列命名与 received_event.consumer_module 的第二要素 */
+    public static final String MODULE = "integration";
+
     /** subscriber_modules 广播标记：broadcast=true 时订阅清单记为此值（零订阅广播，R6-13） */
     public static final String SUBSCRIBER_BROADCAST = "broadcast";
 

@@ -205,7 +205,7 @@ class MessagingGovernanceIT {
     }
 
     /**
-     * 测试消费者：严格按幂等构件标准消费范式实现（跳过 / 业务 / 成功登记 / 失败释放重抛），
+     * 测试消费者：严格按幂等构件标准消费范式实现（跳过 / 业务 / 成功登记 / 失败收尾重抛），
      * 业务结果落在并发安全字段供断言线程读取。
      */
     static class ItDictPublishedConsumer {
@@ -257,20 +257,22 @@ class MessagingGovernanceIT {
             if (!idempotencyService.tryAcquire(envelope.eventId(), CONSUMER_MODULE)) {
                 return;
             }
+            // 信封五要素在业务前构造一次：成功登记与失败留痕共用（两处字段映射不漂移）
+            ReceivedEventRecord record = new ReceivedEventRecord(
+                    envelope.eventId(),
+                    envelope.eventType(),
+                    envelope.producer(),
+                    envelope.occurredAt(),
+                    CONSUMER_MODULE);
             try {
                 doBusiness(envelope);
-                // 标准消费范式②：成功登记 received_event（唯一索引兜底并发重复投递）
-                idempotencyService.recordProcessed(new ReceivedEventRecord(
-                        envelope.eventId(),
-                        envelope.eventType(),
-                        envelope.producer(),
-                        envelope.occurredAt(),
-                        CONSUMER_MODULE));
+                // 标准消费范式②：成功登记 received_event（唯一索引兜底并发，前次失败行升级为已处理）
+                idempotencyService.recordProcessed(record);
                 // 登记完成后放行：断言侧看到放行时台账行已提交
                 firstConsumed.countDown();
             } catch (RuntimeException e) {
-                // 标准消费范式③：失败释放前置键允许重试/重投重新抢占，上抛交容器有界重试耗尽进 fy.dlx
-                idempotencyService.release(envelope.eventId(), CONSUMER_MODULE);
+                // 标准消费范式③：释放前置键 + FAILED 留痕（W-6③ 双保留，异常链不遮蔽 e），上抛走有界重试进 fy.dlx
+                idempotencyService.settleFailure(record, e);
                 throw e;
             }
         }

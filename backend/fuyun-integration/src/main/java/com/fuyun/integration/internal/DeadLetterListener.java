@@ -2,6 +2,7 @@ package com.fuyun.integration.internal;
 
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
+import com.fuyun.common.utils.TextTruncate;
 import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.integration.entity.DeadLetter;
 import com.fuyun.integration.mapper.DeadLetterMapper;
@@ -30,8 +31,12 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
  * 敏感信息入日志）；⑤ 落库失败（含一切运行时异常）catch 后 error 告警且不抛——AUTO 确认
  * 放弃该帧，防毒丸消息在死信队列无限循环（M20 §10"留痕写入失败必须告警"口径）。
  *
+ * <p>W-6① 列宽防线：source_queue/routing_key/event_id/event_type/fail_reason 五列落库前按 V4 列宽
+ * 截断（TextTruncate，常量集中 constants/）——畸形帧超长字段不得使留痕落库失败。
+ *
  * <p>同一死信重复投递会重复落行：dead_letter 无唯一约束（同一 eventId 可因不同消费者多次
- * 死信），P1 死信管理界面完整化时收敛——与 V4 迁移定案口径一致。
+ * 死信），与 V4 迁移定案口径一致；收敛动作登记 TASK.md W-9，归 FU-M20-06 死信告警完整化
+ * 或后续工单处置。
  *
  * <p>归 internal/ 包：容器驱动的模块内入口，禁止外部引用（backend 宪法 B.1）；Bean 注册点
  * 为 MessagingGovernanceConfig @Import（com.fuyun.integration 不在组件扫描范围）。
@@ -94,13 +99,17 @@ public class DeadLetterListener {
         }
 
         DeadLetter deadLetter = new DeadLetter();
-        deadLetter.setSourceQueue(death.sourceQueue());
-        deadLetter.setRoutingKey(death.routingKey());
-        deadLetter.setEventId(eventId);
-        deadLetter.setEventType(eventType);
+        // 列宽防线（W-6①）：畸形帧的来源队列/路由键与超长异常消息一律截断后落库，
+        // 否则整行写入失败 → 留痕静默丢失，违背「不合规信封拒收留痕」红线
+        deadLetter.setSourceQueue(
+                TextTruncate.truncate(death.sourceQueue(), MessagingConstants.DEAD_LETTER_SOURCE_QUEUE_MAX_LENGTH));
+        deadLetter.setRoutingKey(
+                TextTruncate.truncate(death.routingKey(), MessagingConstants.DEAD_LETTER_ROUTING_KEY_MAX_LENGTH));
+        deadLetter.setEventId(TextTruncate.truncate(eventId, MessagingConstants.DEAD_LETTER_EVENT_ID_MAX_LENGTH));
+        deadLetter.setEventType(TextTruncate.truncate(eventType, MessagingConstants.DEAD_LETTER_EVENT_TYPE_MAX_LENGTH));
         deadLetter.setPayloadBody(body);
         deadLetter.setPayloadDigest(digest);
-        deadLetter.setFailReason(failReason);
+        deadLetter.setFailReason(TextTruncate.truncate(failReason, MessagingConstants.FAIL_REASON_MAX_LENGTH));
         deadLetter.setStatus(MessagingConstants.DEAD_LETTER_STATUS_PENDING);
         try {
             deadLetterMapper.insert(deadLetter);

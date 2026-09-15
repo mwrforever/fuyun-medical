@@ -6,11 +6,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.integration.constants.MessagingConstants;
@@ -38,13 +42,16 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 /**
- * received_event 幂等构件单元测试：验证两层去重语义（backend 宪法 A.5-6）与 D-7 回查裁决。
+ * received_event 幂等构件单元测试：验证两层去重语义（backend 宪法 A.5-6）、D-7 回查裁决与
+ * 失败链状态机（Spec §3.2 步骤②④⑤）。
  *
  * <p>核心断言（M20 §4 + BRIEF-PR3-01 §3.2 D-7）：Redis SET NX 前置去重的键名/TTL 约定与故障降级
- * 放行；NX 失败时回查 received_event 台账——已有已处理行才跳过（D-7：消除 TTL 窗口误判丢消息）、
- * 无行放行重新处理（前置键残留/上次中断）；成功登记落库 PROCESSED；唯一索引冲突吞为已处理（并发兜底）；
- * DB 真故障原样上抛交容器重试；失败释放前置键。Redis 与 mapper 以 Mockito 模拟（单元测试不起容器，
- * 端到端链路归集成测试）。
+ * 放行；NX 失败时回查 received_event 台账且仅认 status=PROCESSED 行——已处理才跳过（D-7：消除
+ * TTL 窗口误判丢消息）、无 PROCESSED 行（含仅 FAILED 行）放行重新处理；成功登记落库 PROCESSED；
+ * 唯一索引冲突按既有行状态分流（FAILED 升级为 PROCESSED / 已是 PROCESSED 幂等跳过）；
+ * settleFailure 失败收尾——释放前置键 + FAILED 留痕（重试再失败原子累加 retry_count），
+ * 双保留语义（W-6③）：释放/留痕异常一律挂 suppressed，业务异常保持主异常；DB 真故障原样上抛
+ * 交容器重试。Redis 与 mapper 以 Mockito 模拟（单元测试不起容器，端到端链路归集成测试）。
  */
 @ExtendWith(MockitoExtension.class)
 class MessageIdempotencyServiceImplTest {
@@ -123,6 +130,26 @@ class MessageIdempotencyServiceImplTest {
     }
 
     @Test
+    @DisplayName("D-7 回查带已处理状态过滤：NX 失败且台账仅有 FAILED 行时放行重新处理（不丢消息）")
+    void tryAcquireFiltersProcessedStatusOnLedgerLookup() {
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.setIfAbsent(anyString(), anyString(), any(Duration.class)))
+                .thenReturn(false);
+        when(receivedEventMapper.exists(any())).thenReturn(false);
+
+        assertThat(service.tryAcquire(EVENT_ID, MODULE)).isTrue();
+
+        ArgumentCaptor<Wrapper<ReceivedEvent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(receivedEventMapper).exists(wrapperCaptor.capture());
+        LambdaQueryWrapper<ReceivedEvent> wrapper = (LambdaQueryWrapper<ReceivedEvent>) wrapperCaptor.getValue();
+        // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（3.5.17 实测）
+        String sqlSegment = wrapper.getSqlSegment();
+        // 回查条件必须含 status=PROCESSED 等值参数（FAILED 行不得被认作已处理）
+        assertThat(sqlSegment).contains("status =");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(MessagingConstants.RECEIVED_STATUS_PROCESSED);
+    }
+
+    @Test
     @DisplayName("Redis 故障降级放行：setIfAbsent 抛 DataAccessException 时返回 true 不上抛（唯一索引兜底，不触达回查）")
     void tryAcquireDegradesToAllowOnRedisFailure() {
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -161,10 +188,11 @@ class MessageIdempotencyServiceImplTest {
     @Test
     @DisplayName("并发重复投递兜底：insert 命中唯一索引抛 DuplicateKeyException 时吞为已处理不抛出")
     void recordProcessedSwallowsDuplicateKeyConflict() {
-        // 并发重复投递已被他实例处理：捕获唯一索引冲突后正常返回，消费方 AUTO 确认跳过
+        // 已是 PROCESSED 行（并发重复投递被他所实例处理）：升级条件不命中（影响 0 行）→ 幂等跳过
         when(receivedEventMapper.insert(any(ReceivedEvent.class)))
                 .thenThrow(new DuplicateKeyException(
                         "duplicate key value violates unique constraint \"uk_received_event_event_consumer\""));
+        when(receivedEventMapper.update(isNull(), any(Wrapper.class))).thenReturn(0);
 
         assertThatCode(() -> service.recordProcessed(sampleRecord())).doesNotThrowAnyException();
         verify(receivedEventMapper).insert(any(ReceivedEvent.class));
@@ -181,11 +209,111 @@ class MessageIdempotencyServiceImplTest {
     }
 
     @Test
-    @DisplayName("失败释放前置键：删除约定键名，保证重投可重新抢占")
-    void releaseDeletesPrefixedKeyForRedelivery() {
-        service.release(EVENT_ID, MODULE);
+    @DisplayName("失败收尾：释放前置键 + 登记 FAILED 行（含原因与重试计数 1），本方法不抛出")
+    void settleFailureReleasesKeyAndRegistersFailedRow() {
+        IllegalStateException businessFailure = new IllegalStateException("业务失败：字典版本缺失");
+
+        service.settleFailure(sampleRecord(), businessFailure);
 
         verify(stringRedisTemplate).delete("fy:integration:idempotency:it:" + EVENT_ID);
+        verify(receivedEventMapper).insert(insertEntityCaptor.capture());
+        ReceivedEvent saved = insertEntityCaptor.getValue();
+        assertThat(saved.getStatus()).isEqualTo(MessagingConstants.RECEIVED_STATUS_FAILED);
+        assertThat(saved.getFailReason()).isEqualTo("业务失败：字典版本缺失");
+        assertThat(saved.getRetryCount()).isEqualTo(1);
+        assertThat(saved.getProcessedAt()).isNull();
+        assertThat(businessFailure.getSuppressed()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("W-6③ 双保留：release 的 Redis 异常挂 suppressed 不遮蔽业务异常，FAILED 留痕照常写入")
+    void settleFailureKeepsBusinessExceptionAsPrimaryWhenReleaseFails() {
+        DataAccessResourceFailureException releaseFailure = new DataAccessResourceFailureException("redis 连接不可用");
+        when(stringRedisTemplate.delete(anyString())).thenThrow(releaseFailure);
+        IllegalStateException businessFailure = new IllegalStateException("业务失败");
+
+        service.settleFailure(sampleRecord(), businessFailure);
+
+        assertThat(businessFailure.getSuppressed()).containsExactly(releaseFailure);
+        verify(receivedEventMapper).insert(any(ReceivedEvent.class));
+    }
+
+    @Test
+    @DisplayName("失败留痕失败同样不遮蔽：DB 异常挂 suppressed，业务异常保持主异常")
+    void settleFailureKeepsBusinessExceptionWhenFailureLedgerWriteFails() {
+        DataAccessResourceFailureException ledgerFailure = new DataAccessResourceFailureException("数据库连接不可用");
+        when(receivedEventMapper.insert(any(ReceivedEvent.class))).thenThrow(ledgerFailure);
+        IllegalStateException businessFailure = new IllegalStateException("业务失败");
+
+        service.settleFailure(sampleRecord(), businessFailure);
+
+        assertThat(businessFailure.getSuppressed()).containsExactly(ledgerFailure);
+    }
+
+    @Test
+    @DisplayName("重试再失败：FAILED 行冲突时原子累加 retry_count 并刷新原因（禁读-改-写）")
+    void settleFailureAccumulatesRetryCountOnRepeatedFailure() {
+        when(receivedEventMapper.insert(any(ReceivedEvent.class)))
+                .thenThrow(new DuplicateKeyException("uk_received_event_event_consumer"));
+        // 守卫命中（行仍为 FAILED）：1 行累加成功
+        when(receivedEventMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        ArgumentCaptor<Wrapper<ReceivedEvent>> captor = ArgumentCaptor.forClass(Wrapper.class);
+
+        service.settleFailure(sampleRecord(), new IllegalStateException("再次失败"));
+
+        verify(receivedEventMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<ReceivedEvent> wrapper = (LambdaUpdateWrapper<ReceivedEvent>) captor.getValue();
+        assertThat(wrapper.getSqlSet()).contains("retry_count = retry_count + 1");
+    }
+
+    @Test
+    @DisplayName("失败留痕迟到不回退：冲突行已被并发升级为 PROCESSED 时守卫 0 行命中，跳过留痕不回退状态")
+    void settleFailureSkipsFailureLedgerWhenRowAlreadyProcessed() {
+        when(receivedEventMapper.insert(any(ReceivedEvent.class)))
+                .thenThrow(new DuplicateKeyException("uk_received_event_event_consumer"));
+        // 0 行命中 = status=FAILED 守卫不满足（行已被并发处理成功升级 PROCESSED），失败留痕迟到
+        when(receivedEventMapper.update(isNull(), any(Wrapper.class))).thenReturn(0);
+        ArgumentCaptor<Wrapper<ReceivedEvent>> captor = ArgumentCaptor.forClass(Wrapper.class);
+
+        service.settleFailure(sampleRecord(), new IllegalStateException("迟到失败"));
+
+        verify(receivedEventMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<ReceivedEvent> wrapper = (LambdaUpdateWrapper<ReceivedEvent>) captor.getValue();
+        // 先渲染 SQL 片段触发条件参数惰性求值（3.5.17 实测）：WHERE 必须同时含
+        // event_id / consumer_module / status=FAILED 守卫，禁 PROCESSED→FAILED 非法回退
+        String sqlSegment = wrapper.getSqlSegment();
+        assertThat(sqlSegment).contains("status =");
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(UUID.fromString(EVENT_ID), MODULE, MessagingConstants.RECEIVED_STATUS_FAILED);
+        assertThat(wrapper.getSqlSet()).contains("retry_count = retry_count + 1");
+    }
+
+    @Test
+    @DisplayName("失败后重试成功：唯一索引冲突时按 status=FAILED 条件升级为 PROCESSED 并清失败原因")
+    void recordProcessedUpgradesFailedRow() {
+        when(receivedEventMapper.insert(any(ReceivedEvent.class)))
+                .thenThrow(new DuplicateKeyException("uk_received_event_event_consumer"));
+        when(receivedEventMapper.update(isNull(), any(Wrapper.class))).thenReturn(1);
+        ArgumentCaptor<Wrapper<ReceivedEvent>> captor = ArgumentCaptor.forClass(Wrapper.class);
+
+        service.recordProcessed(sampleRecord());
+
+        verify(receivedEventMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<ReceivedEvent> wrapper = (LambdaUpdateWrapper<ReceivedEvent>) captor.getValue();
+        // 先渲染 SQL 片段：MP 等值条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（3.5.17 实测）
+        wrapper.getSqlSegment();
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(MessagingConstants.RECEIVED_STATUS_FAILED, MessagingConstants.RECEIVED_STATUS_PROCESSED);
+        assertThat(wrapper.getSqlSet()).contains("fail_reason = NULL");
+    }
+
+    @Test
+    @DisplayName("失败原因超列宽：留痕按 1000 字符截断后落库（W-6① 同款列宽防线）")
+    void settleFailureTruncatesOverlongReason() {
+        service.settleFailure(sampleRecord(), new IllegalStateException("原".repeat(3000)));
+
+        verify(receivedEventMapper).insert(insertEntityCaptor.capture());
+        assertThat(insertEntityCaptor.getValue().getFailReason()).hasSize(MessagingConstants.FAIL_REASON_MAX_LENGTH);
     }
 
     /**

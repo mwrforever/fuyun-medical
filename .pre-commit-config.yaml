@@ -32,3 +32,9 @@ repos:
         files: \.java$
         pass_filenames: false
         stages: [pre-push]           # 重型校验放 pre-push，避免拖慢每次提交的本地体验
+      - id: check-migration-governance
+        name: 校验 Flyway 迁移号段/唯一/乱序（宪法 A.4.1-2/A.4.1-3，脚本 scripts/check-migration-governance.py）
+        entry: python scripts/check-migration-governance.py
+        language: python
+        files: ^backend/.*/src/main/resources/db/migration/.*\.sql$
+        pass_filenames: false   # 全局校验语义（号段与唯一性跨目录判定），不按文件传参
