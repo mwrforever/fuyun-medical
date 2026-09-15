@@ -163,7 +163,7 @@ fuyun-app ──装配──▶ fuyun-{domain}.impl ──实现──▶ fuyun-
 3. 出现循环依赖时**拆层切断**（交叉查询下沉为独立 service 或 common，双方只依赖下沉层），禁止用 @Lazy / ObjectProvider 延迟注入掩盖。
 4. 事务边界 = 业务用例（医嘱-计费-库存联动在同一事务内，总 Spec 强事务约束）。
 5. 模块边界由 ArchUnit 1.5.0 测试守护（CI 硬门禁）：slices 互斥（模块间不互相依赖）、分层访问方向、controller 不可被访问；违规即构建失败。
-6. Spring Modulith 1.4.x（当前 1.4.13）**已引入定稿**（2026-09-14 D-2 裁决，CHANGELOG 同日条目）：`spring-modulith-bom` 父 POM 锁定（BOM 外依赖），starter-jdbc 事件持久化 + test 边界校验；`ApplicationModules.verify()` 进 fuyun-app 测试套纳入 verify 门禁，与 ArchUnit 1.5.0 并存分工（Modulith 管模块级边界、ArchUnit 管自定义分层规则）；事件日志表建表一律走 Flyway（A.4.1 红线不豁免，`events.jdbc.schema-initialization.enabled=false`）；跨模块监听一律 `@ApplicationModuleListener`（独立事务异步）且发布方必须在 Spring 事务代理内（防事件暂存后等不到提交信号）。
+6. Spring Modulith 1.4.x（当前 1.4.13）**已引入定稿**（2026-09-14 D-2 裁决，CHANGELOG 同日条目）：`spring-modulith-bom` 父 POM 锁定（BOM 外依赖），starter-jdbc 事件持久化 + test 边界校验；`ApplicationModules.verify()` 进 fuyun-app 测试套纳入 verify 门禁，与 ArchUnit 1.5.0 并存分工（Modulith 管模块级边界、ArchUnit 管自定义分层规则）；事件日志表建表一律走 Flyway（A.4.1 红线不豁免，`events.jdbc.schema-initialization.enabled=false`）；跨模块监听一律 `@ApplicationModuleListener`（独立事务异步；**注解取 `org.springframework.modulith.events` 包路径**——spring-modulith-api 包同名注解自 1.1 起废弃 forRemoval，禁新代码引用，2026-09-15 D-10 裁决）且发布方必须在 Spring 事务代理内（防事件暂存后等不到提交信号）。
 
 ### B.3 运行时原则
 
@@ -256,6 +256,8 @@ mvn -B -ntp verify
 mvn -B test
 
 # 指定模块门禁（含依赖模块；模块名 = fuyun-<域>）
+# -am 必须携带：不带时依赖模块从本地仓库解析已安装 jar（非反应堆最新构建），
+# 会出现迁移缺失/边界假违规等假故障（2026-09-15 D-11 裁决，PR-1a 实证）
 mvn -B -pl fuyun-{domain} -am verify
 
 # 调试单个集成测试类（-Dtest=NoSuchTest 使 surefire 空跑不报错）

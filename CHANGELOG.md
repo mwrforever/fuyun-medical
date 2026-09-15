@@ -2,6 +2,14 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-15 · PR-1a 收尾 D-10/D-11 用户裁决落地并修订宪法（先记再改）
+
+- **背景**：PR-1a（Spring Modulith 事件基础设施，PR #16 合入 dev@1d998d5）执行期实证三项收尾事项登记 TASK.md D-10~D-12，用户 2026-09-15 裁决全部修正；本条目记 D-10/D-11 修宪（D-12 flaky 修复为代码变更，随修复 PR 合入，不涉宪法）。
+- **D-10 裁决（跨模块监听注解包路径修宪明确）**：`org.springframework.modulith.ApplicationModuleListener`（spring-modulith-api 包）在 1.4.13 标记 @Deprecated(since="1.1", forRemoval=true)，官方 javadoc 指定替代为 `org.springframework.modulith.events.ApplicationModuleListener`（同名注解迁移至 spring-modulith-events-api，组合语义一致：@Async + @Transactional(REQUIRES_NEW) + @TransactionalEventListener；PR-1a 代码已用该路径）。**宪法修订**：B.2-6 跨模块监听条款注明注解取 `org.springframework.modulith.events` 包路径（api 包同名注解禁新代码引用）。
+- **D-11 裁决（C.4 补单模块构建 -am 风险提示）**：多模块反应堆中 `mvn -pl fuyun-{domain}` 不带 `-am` 会从本地仓库解析依赖模块的已安装 jar（而非反应堆内最新构建），PR-1a 实证两类假故障：集成测试报 Flyway「迁移缺失」（旧 integration jar 无新迁移）、边界测试假违规（旧模块 class）。**宪法修订**：C.4「指定模块门禁」命令注释补不带 `-am` 的风险提示。
+- **登记收口**：TASK.md D-10/D-11 两行随本条目回填删除（D-12 行随修复 PR 回填删除）。
+- **修订范围（随本 PR）**：backend/AGENTS.md B.2-6（补注解包路径约定）、C.4（补 -am 提示）。
+
 ## 2026-09-14 · P1 实施计划审批通过，D-2/D-9 用户裁决落地并修订宪法 Modulith 条款（先记再改）
 
 - **计划审批**：PLAN-P1-01（`docs/plans/2026-09-14-P1实施计划.md`）经用户裁决五项决策后批准；范围=总 Spec §9-P1 六模块 P0 优先级条目切片，PR 序列七支，交付验证物=门诊挂号→就诊→收费→发药全流程真栈演示。
