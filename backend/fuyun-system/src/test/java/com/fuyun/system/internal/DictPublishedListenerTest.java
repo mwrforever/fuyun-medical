@@ -2,8 +2,10 @@ package com.fuyun.system.internal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -33,10 +35,10 @@ import org.springframework.amqp.core.MessageProperties;
 /**
  * 字典发布广播消费者单元测试（标准幂等范式三分支与不合规信封处置，BRIEF-PR3-01 §3.2）。
  *
- * <p>覆盖：重复投递（tryAcquire=false，D-7 回查确认已处理）跳过即 AUTO 确认、成功消费
- * 落 received_event 登记（信封五要素完整）、业务失败释放前置键后重抛（交容器有界重试）、
- * 不合规信封上抛（不触达幂等构件）、载荷契约不符按消费失败处置。真实 broker 链路归
- * B3.3 DictBroadcastIT。
+ * <p>覆盖：重复投递（tryAcquire=false，D-7 回查仅认 PROCESSED 行）跳过即 AUTO 确认、成功消费
+ * 落 received_event 登记（信封五要素完整）、业务失败 settleFailure 失败收尾（释放前置键 + FAILED
+ * 留痕）后原样重抛（交容器有界重试）、不合规信封上抛（不触达幂等构件）、载荷契约不符按消费失败
+ * 处置。真实 broker 链路归 B3.3 DictBroadcastIT。
  */
 @ExtendWith(MockitoExtension.class)
 class DictPublishedListenerTest {
@@ -73,7 +75,7 @@ class DictPublishedListenerTest {
         listener.onDictPublished(message(toJson(compliantEnvelope())));
 
         verify(idempotencyService, never()).recordProcessed(any());
-        verify(idempotencyService, never()).release(anyString(), anyString());
+        verify(idempotencyService, never()).settleFailure(any(), any());
     }
 
     @Test
@@ -94,8 +96,8 @@ class DictPublishedListenerTest {
     }
 
     @Test
-    @DisplayName("业务失败释放重抛：recordProcessed 异常时释放前置键并原样上抛（交有界重试）")
-    void releasesIdempotencyKeyAndRethrowsOnBusinessFailure() {
+    @DisplayName("业务失败收尾重抛：recordProcessed 异常时 settleFailure 承接并原样上抛（交有界重试）")
+    void settlesFailureAndRethrowsOnBusinessFailure() {
         when(idempotencyService.tryAcquire(EVENT_ID, SystemMessagingConstants.MODULE))
                 .thenReturn(true);
         IllegalStateException failure = new IllegalStateException("登记失败");
@@ -103,7 +105,7 @@ class DictPublishedListenerTest {
 
         assertThatThrownBy(() -> listener.onDictPublished(message(toJson(compliantEnvelope()))))
                 .isSameAs(failure);
-        verify(idempotencyService).release(EVENT_ID, SystemMessagingConstants.MODULE);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq(failure));
     }
 
     @Test
@@ -119,8 +121,8 @@ class DictPublishedListenerTest {
     }
 
     @Test
-    @DisplayName("载荷契约不符：payload 非契约对象按业务失败处置（释放前置键后重抛走死信）")
-    void releasesAndRethrowsWhenPayloadViolatesContract() {
+    @DisplayName("载荷契约不符：payload 非契约对象按业务失败处置（失败收尾留痕后重抛走死信）")
+    void settlesFailureAndRethrowsWhenPayloadViolatesContract() {
         // payload 为标量字符串：fromJson 合规（payload 非空）但与 DictPublishedPayload 契约不符
         EventEnvelope violating = new EventEnvelope(
                 EVENT_ID,
@@ -133,9 +135,10 @@ class DictPublishedListenerTest {
         when(idempotencyService.tryAcquire(EVENT_ID, SystemMessagingConstants.MODULE))
                 .thenReturn(true);
 
-        assertThatThrownBy(() -> listener.onDictPublished(message(toJson(violating))))
-                .isInstanceOf(IllegalStateException.class);
-        verify(idempotencyService).release(EVENT_ID, SystemMessagingConstants.MODULE);
+        // 捕获监听器抛出的业务异常：断言 settleFailure 以同一异常承接（W-6③ 主异常语义的衔接点）
+        Throwable thrown = catchThrowable(() -> listener.onDictPublished(message(toJson(violating))));
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq((RuntimeException) thrown));
         verify(idempotencyService, never()).recordProcessed(any());
     }
 
