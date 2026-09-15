@@ -2,6 +2,27 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-15 · PR-1b 收尾：TASK.md W-4/W-5/W-6 工程债回填删除
+
+- **背景**：PR-1b（M20 事件总线治理完整化）实现期内三项 TODO 工单已随各 Task 清偿，按登记台「条目回填后删除」
+  规则收口；本条目为先记再改登记，TASK.md 三行删除随本条目同批落盘。
+- **W-4（Flyway 迁移号段归属与版本唯一的 CI 自动校验）清偿**：`scripts/check-migration-governance.py`（号段归属 +
+  版本唯一 + 相对基线乱序三重守卫，乱序守卫正对 PR-1a 实证的「号段内合法仍判 out-of-order」缺口），接线
+  pre-commit local hook（`.pre-commit-config.yaml`）与 CI hygiene job（`.github/workflows/ci.yml`，fetch-depth 0 +
+  MIGRATION_BASE_REF 基线注入）；既有 15 个迁移全绿，随本 PR Task 9/10 新增 V502/V503 后 17 个全绿（2026-09-15
+  号段登记条目预告的「TASK.md W-4 回填依据」就此兑现）。
+- **W-5（配置 properties record 的 toString 脱敏覆写兜底）清偿**：IotProperties.Amqp（11 字段全清单覆写，
+  accessSecret/tokenHmacSecret 两凭据打码）与 IotProperties.Fallback、SecurityProperties toString 脱敏覆写 + 单测
+  （明文泄露断言改脱敏断言），等保三级纵深防御补齐。
+- **W-6（PR-2 /code-review 三项 Minor 处置）清偿**：①死信留痕列宽钳长——DeadLetterListener 五列 TextTruncate
+  钳长 + 单测（防畸形帧超 VARCHAR 列宽致「不合规信封拒收留痕」红线落库失败）；②订阅登记并发守卫——
+  EventRegistryServiceImpl 单语句 CAS 自旋 3 次 fail-fast + broadcast 标记行拒订守卫 + 用例（消除多实例并发丢更新）；
+  ③消费范式 release 异常遮蔽——MessageIdempotencyServiceImpl.settleFailure addSuppressed 双保留 + 三处消费方同步 +
+  MessagingGovernanceIT 回归（原始业务异常不再被 Redis release 异常顶掉）。
+- **登记收口**：TASK.md W-4/W-5/W-6 三行随本条目回填删除；W-7（非数值遥测入库，用户指示暂缓实现）与 W-8
+  （FU-M20-04 剩余条目，本 PR Task 9 新增登记）两行保留不动。
+- **影响范围**：仅 TASK.md 与本文件两文件，零代码变更。
+
 ## 2026-09-15 · D-8 裁决落地：宪法 A.5-9 failover 参数正文同步（先记再改）
 
 - **背景**：PR-4 B4.4 实测（`IotAmqpReconnectIT` 两次 RED 留证）证实 qpid-jms 2.11 的 failover 选项必须带
