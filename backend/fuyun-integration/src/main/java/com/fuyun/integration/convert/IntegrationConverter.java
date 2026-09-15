@@ -3,10 +3,13 @@ package com.fuyun.integration.convert;
 import com.fuyun.common.utils.TextTruncate;
 import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.integration.entity.DeadLetter;
+import com.fuyun.integration.entity.EventPublication;
 import com.fuyun.integration.entity.ReceivedEvent;
 import com.fuyun.integration.vo.DeadLetterDetailVO;
 import com.fuyun.integration.vo.DeadLetterVO;
+import com.fuyun.integration.vo.EventPublicationVO;
 import com.fuyun.integration.vo.ReceivedEventVO;
+import java.time.OffsetDateTime;
 import java.util.List;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -72,6 +75,35 @@ public interface IntegrationConverter {
      * @return 行出参清单，非 null
      */
     List<ReceivedEventVO> toReceivedEventVOs(List<ReceivedEvent> entities);
+
+    /**
+     * 投递记录实体 → 行出参（完成态由 completion_date 空/非空派生）。
+     *
+     * @param entity 投递记录实体，非空
+     * @return 行出参（status=COMPLETED/INCOMPLETE），非空
+     */
+    @Mapping(target = "status", source = "completionDate")
+    EventPublicationVO toEventPublicationVO(EventPublication entity);
+
+    /**
+     * 投递记录实体清单 → 行出参清单。
+     *
+     * @param entities 实体清单，非空（可为空清单）
+     * @return 行出参清单，非 null
+     */
+    List<EventPublicationVO> toEventPublicationVOs(List<EventPublication> entities);
+
+    /**
+     * 完成态派生：completion_date 非空 = COMPLETED，为空 = INCOMPLETE（框架完成标记的唯一判据）。
+     *
+     * @param completionDate 完成时刻，可空
+     * @return COMPLETED 或 INCOMPLETE，非空
+     */
+    default String mapPublicationStatus(OffsetDateTime completionDate) {
+        return completionDate == null
+                ? MessagingConstants.PUBLICATION_STATUS_INCOMPLETE
+                : MessagingConstants.PUBLICATION_STATUS_COMPLETED;
+    }
 
     /**
      * 载荷预览：截取原文头部固定长度（列表页防大字段刷屏与最小暴露）。

@@ -1,9 +1,11 @@
 package com.fuyun.integration.config;
 
 import com.fuyun.integration.controller.DeadLetterController;
+import com.fuyun.integration.controller.EventPublicationController;
 import com.fuyun.integration.controller.ReceivedEventController;
 import com.fuyun.integration.convert.IntegrationConverter;
 import com.fuyun.integration.service.impl.DeadLetterServiceImpl;
+import com.fuyun.integration.service.impl.EventPublicationQueryServiceImpl;
 import com.fuyun.integration.service.impl.ReceivedEventQueryServiceImpl;
 import org.mapstruct.factory.Mappers;
 import org.springframework.context.annotation.Bean;
@@ -21,8 +23,10 @@ import org.springframework.context.annotation.Import;
 @Import({
     DeadLetterServiceImpl.class,
     ReceivedEventQueryServiceImpl.class,
+    EventPublicationQueryServiceImpl.class,
     DeadLetterController.class,
-    ReceivedEventController.class
+    ReceivedEventController.class,
+    EventPublicationController.class
 })
 public class IntegrationWebConfig {
 

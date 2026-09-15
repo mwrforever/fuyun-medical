@@ -6,8 +6,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fuyun.common.web.PageResult;
+import com.fuyun.integration.dto.EventPublicationQuery;
 import com.fuyun.integration.dto.ReceivedEventQuery;
+import com.fuyun.integration.service.IEventPublicationQueryService;
 import com.fuyun.integration.service.IReceivedEventQueryService;
+import com.fuyun.integration.vo.EventPublicationVO;
 import com.fuyun.integration.vo.ReceivedEventVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -31,14 +34,23 @@ class IntegrationQueryControllersTest {
     @Mock
     private IReceivedEventQueryService receivedEventQueryService;
 
+    @Mock
+    private IEventPublicationQueryService eventPublicationQueryService;
+
     @Captor
     private ArgumentCaptor<ReceivedEventQuery> queryCaptor;
 
+    @Captor
+    private ArgumentCaptor<EventPublicationQuery> publicationQueryCaptor;
+
     private ReceivedEventController receivedEventController;
+
+    private EventPublicationController eventPublicationController;
 
     @BeforeEach
     void setUp() {
         receivedEventController = new ReceivedEventController(receivedEventQueryService);
+        eventPublicationController = new EventPublicationController(eventPublicationQueryService);
     }
 
     @Test
@@ -68,5 +80,20 @@ class IntegrationQueryControllersTest {
         assertThat(query.receivedFrom()).isEqualTo(OffsetDateTime.parse("2026-09-14T00:00:00Z"));
         assertThat(query.page()).isEqualTo(1);
         assertThat(query.size()).isEqualTo(50);
+    }
+
+    @Test
+    @DisplayName("投递台账端点：六个请求参数装配为查询对象，含 INCOMPLETE 完成态过滤")
+    void eventPublicationListDelegatesQueryParameters() {
+        PageResult<EventPublicationVO> expected = PageResult.of(List.of(), 0L, 20L, 0L);
+        when(eventPublicationQueryService.query(any())).thenReturn(expected);
+
+        PageResult<EventPublicationVO> actual =
+                eventPublicationController.list("com.fuyun.app.LifecycleProbeEvent", "INCOMPLETE", null, null, 0, 20);
+
+        assertThat(actual).isSameAs(expected);
+        verify(eventPublicationQueryService).query(publicationQueryCaptor.capture());
+        assertThat(publicationQueryCaptor.getValue().status()).isEqualTo("INCOMPLETE");
+        assertThat(publicationQueryCaptor.getValue().eventType()).isEqualTo("com.fuyun.app.LifecycleProbeEvent");
     }
 }

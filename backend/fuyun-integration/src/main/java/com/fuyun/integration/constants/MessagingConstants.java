@@ -72,6 +72,12 @@ public final class MessagingConstants {
     /** received_event 状态：消费失败（D-7 回查必须过滤 status=PROCESSED，FAILED 行不得误判为已处理） */
     public static final String RECEIVED_STATUS_FAILED = "FAILED";
 
+    /** event_publication 完成态派生值：completion_date 非空 = 投递完成（框架已标记） */
+    public static final String PUBLICATION_STATUS_COMPLETED = "COMPLETED";
+
+    /** event_publication 完成态派生值：completion_date 为空 = 未完成（监听器失败/实例宕机，待 EventOpsJob 重投） */
+    public static final String PUBLICATION_STATUS_INCOMPLETE = "INCOMPLETE";
+
     /** 死信重推上限（次）：达到后重推接口拒绝（Spec 未定义，控制器 2026-09-15 拍板口径） */
     public static final int DEAD_LETTER_REPLAY_MAX_COUNT = 3;
 
