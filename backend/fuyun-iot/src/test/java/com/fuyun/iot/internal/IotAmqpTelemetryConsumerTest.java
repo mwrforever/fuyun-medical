@@ -39,6 +39,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -341,7 +342,18 @@ class IotAmqpTelemetryConsumerTest {
                 16,
                 Duration.ofMillis(10),
                 Duration.ofMillis(30));
-        TelemetryBatchAssembler holdingAssembler = new TelemetryBatchAssembler(ingestService, propsOf(holdAll));
+        // 在途帧计数（记录型替身，D-12 确定性同步点）：真实入队（put 返回）后才递增，计数达标 = 在途
+        // 窗口闭合。不读 pendingQueueSize——flush 线程按小时级时间窗即时取走入队条目至线程本地批，
+        // 队列深度采样观测为 0（瞬时态，非不变量），「深度 == 2」不可达
+        AtomicInteger enqueuedFrames = new AtomicInteger(0);
+        TelemetryBatchAssembler holdingAssembler = new TelemetryBatchAssembler(ingestService, propsOf(holdAll)) {
+
+            @Override
+            public void put(StandardTelemetryMessage message, Runnable ackAction) throws InterruptedException {
+                super.put(message, ackAction);
+                enqueuedFrames.incrementAndGet();
+            }
+        };
         holdingAssembler.start();
         IotAmqpTelemetryConsumer holdingConsumer = new IotAmqpTelemetryConsumer(
                 propsOf(holdAll),
@@ -366,9 +378,16 @@ class IotAmqpTelemetryConsumerTest {
             verify(secondFrame, timeout(AWAIT_MILLIS)).getBody(byte[].class);
             verify(secondFrame, timeout(300).times(0)).acknowledge();
 
+            // D-12 修复：原实现仅等「帧已读取」时点即停机，CI 慢机上 stop 落在「已读取未入队」窗口
+            // （在途帧被中断丢弃，断言偶发实收 1/2 帧）；改为等两帧全部入队后停机（确定性同步）
+            awaitInFlightFramesEnqueued(enqueuedFrames, 2);
+
             // 优雅停机：按 Spring 真实停止顺序编排——消费者（phase=1）先停拉取，攒批器（phase=0）后停排空
             // 在途批；此序保证排空时不再有新帧入队（宪法 A.5-15）
             holdingConsumer.stop();
+            // D-12 补强：停机中断前等两帧全部转入 flush 线程本地批（put 已停止 ⟹ 深度 0 即该状态），
+            // 消除「仅取走第一帧时中断」的分裂批残余窗口（中止批只剩 1 帧 → 首帧被确认，断言失败）
+            awaitPendingQueueDrained(holdingAssembler);
             holdingAssembler.stop();
 
             @SuppressWarnings("unchecked")
@@ -605,6 +624,49 @@ class IotAmqpTelemetryConsumerTest {
                 .doesNotContain(":78");
         verify(poisonedPushFrame, timeout(AWAIT_MILLIS)).acknowledge();
         verifyNoInteractions(ingestService);
+    }
+
+    /**
+     * 轮询等待在途帧全部交付攒批器（停机排空前置条件：帧已读取但尚未入队时停机必丢帧）。
+     *
+     * <p>D-12 修复（用户 2026-09-15 裁决，确定性同步替代时序假定）：在途计数取<b>真实入队返回后</b>
+     * 自增的记录值（put 返回 = 帧已入攒批器域，此后停机排空必然覆盖该帧）。不以攒批器
+     * {@code pendingQueueSize()} 作同步点：flush 线程按小时级时间窗即时取走入队条目至线程本地批，
+     * 队列深度采样观测为 0（瞬时态，非不变量），「深度 == 2」不可达。
+     *
+     * @param enqueuedFrames 在途帧入队计数载体（消费线程递增、只增不减），非空
+     * @param expected       期望已入队的在途帧数（本用例 2 帧），正整数
+     * @throws InterruptedException 等待被中断（停机信号）
+     */
+    private void awaitInFlightFramesEnqueued(AtomicInteger enqueuedFrames, int expected) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
+        while (enqueuedFrames.get() < expected && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5L);
+        }
+        assertThat(enqueuedFrames.get())
+                .as("在途帧未全部入队（期望 " + expected + " 帧已交付攒批器，未入队帧将随停机丢失）")
+                .isGreaterThanOrEqualTo(expected);
+    }
+
+    /**
+     * 轮询等待攒批待处理队列清空（post-stop 排空同步：两帧均已转入 flush 线程本地批）。
+     *
+     * <p>D-12 补强（分裂批残余窗口）：消费者已停 ⟹ 不再有新帧入队，且攒批时间窗未到期 ⟹ 无提前刷批，
+     * 故此深度 0 为<b>稳定态</b>而非瞬时态，其唯一含义是两帧均已进入 flush 线程本地批，随后的停机
+     * 中断路径一次整批刷出（单次 ingest + 仅批末确认）；否则中断可落在「仅取走第一帧」窗口，中止批
+     * 只含 1 帧，两帧分裂为两次 ingest（首帧被确认）触发断言失败。
+     *
+     * @param targetAssembler 被测攒批器（待处理队列深度读数载体），非空
+     * @throws InterruptedException 等待被中断（停机信号）
+     */
+    private void awaitPendingQueueDrained(TelemetryBatchAssembler targetAssembler) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + AWAIT_MILLIS;
+        while (targetAssembler.pendingQueueSize() != 0 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(5L);
+        }
+        assertThat(targetAssembler.pendingQueueSize())
+                .as("停机后待处理队列未清空（在途帧未全部转入 flush 本地批，中断排空将分裂为多批）")
+                .isZero();
     }
 
     /** 轮询等待攒批失败计数达到 1（失败计数在 flush 线程异步链路递增，存在微小相位差）。 */
