@@ -117,6 +117,12 @@
       <artifactId>fuyun-iot</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M02 患者主索引（P1 PR-2）：模块装配经本模块 PatientConfig @Import（装配归 app，B.1） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-patient</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
