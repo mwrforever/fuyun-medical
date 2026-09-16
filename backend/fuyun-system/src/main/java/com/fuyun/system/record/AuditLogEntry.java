@@ -1,6 +1,6 @@
 package com.fuyun.system.record;
 
-import com.fuyun.system.enums.AuditActionType;
+import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.enums.AuditResult;
 import java.time.OffsetDateTime;
 

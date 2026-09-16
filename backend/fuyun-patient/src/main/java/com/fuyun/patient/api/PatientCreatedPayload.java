@@ -1,7 +1,7 @@
 package com.fuyun.patient.api;
 
 /**
- * patient.created 载荷（V105 id=9 冻结契约）：新档建立广播。敏感红线：不含姓名/证件号/手机号。
+ * patient.patient.created 载荷（V105 id=9 冻结契约）：新档建立广播。敏感红线：不含姓名/证件号/手机号。
  *
  * @param patientId       新档患者 id；来源：本模块发号（雪花）
  * @param sex             性别字典 code；来源：建档录入

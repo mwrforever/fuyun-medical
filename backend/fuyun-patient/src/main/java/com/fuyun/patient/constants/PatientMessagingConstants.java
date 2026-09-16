@@ -15,22 +15,22 @@ public final class PatientMessagingConstants {
     public static final String TOPIC_EXCHANGE = "fy.topic";
 
     /** 事件类型：患者建档（含未实名标记） */
-    public static final String EVENT_CREATED = "patient.created";
+    public static final String EVENT_CREATED = "patient.patient.created";
 
     /** 事件类型：患者主数据变更 */
-    public static final String EVENT_UPDATED = "patient.updated";
+    public static final String EVENT_UPDATED = "patient.patient.updated";
 
-    /** 事件类型：合并完成（与 patient.split 成对，M-25） */
-    public static final String EVENT_MERGED = "patient.merged";
+    /** 事件类型：合并完成（与 patient.patient.split 成对，M-25） */
+    public static final String EVENT_MERGED = "patient.patient.merged";
 
-    /** 事件类型：拆分恢复（与 patient.merged 成对，M-25） */
-    public static final String EVENT_SPLIT = "patient.split";
+    /** 事件类型：拆分恢复（与 patient.patient.merged 成对，M-25） */
+    public static final String EVENT_SPLIT = "patient.patient.split";
 
-    /** 事件类型：冻结（与 patient.unfrozen 成对，M-25） */
-    public static final String EVENT_FROZEN = "patient.frozen";
+    /** 事件类型：冻结（与 patient.patient.unfrozen 成对，M-25） */
+    public static final String EVENT_FROZEN = "patient.patient.frozen";
 
-    /** 事件类型：解冻（与 patient.frozen 成对，M-25） */
-    public static final String EVENT_UNFROZEN = "patient.unfrozen";
+    /** 事件类型：解冻（与 patient.patient.frozen 成对，M-25） */
+    public static final String EVENT_UNFROZEN = "patient.patient.unfrozen";
 
     /** 事件类型：标识变更（解析缓存失效依据） */
     public static final String EVENT_IDENTIFIER_CHANGED = "patient.identifier.changed";

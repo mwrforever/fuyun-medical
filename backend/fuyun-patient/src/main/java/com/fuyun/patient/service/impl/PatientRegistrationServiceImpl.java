@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 患者建档实现（FU-M02-01/02 主流程时序 1）：
  * ①介质核验（统一适配器，手工兜底）→ ②匹配预检 → ③AUTO_MATCH 归一补挂标识（不新建）/
  *   新建档案（SUSPECT 同样新建+生成疑似重复，不自动合并）→ ④标识注册 → ⑤知情同意落痕 →
- *   ⑤.5 疑似重复待审行生成（SUSPECT 结论回填）→ ⑥patient.created 应用事件（事务内发布，发布器 AFTER_COMMIT 出 MQ）。
+ *   ⑤.5 疑似重复待审行生成（SUSPECT 结论回填）→ ⑥patient.patient.created 应用事件（事务内发布，发布器 AFTER_COMMIT 出 MQ）。
  *
  * <p>敏感红线：日志只落 patientId 与结论词，证件号/手机号/住址明文禁入日志与事件载荷。
  */
@@ -139,7 +139,7 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
         if ("SUSPECT".equals(check.outcome()) && check.candidatePatientId() != null) {
             duplicateService.recordSuspect(patientId, check.candidatePatientId(), check);
         }
-        // ⑥patient.created 应用事件（事务内发布；发布器 AFTER_COMMIT 转 fy.topic）
+        // ⑥patient.patient.created 应用事件（事务内发布；发布器 AFTER_COMMIT 转 fy.topic）
         eventPublisher.publishEvent(new PatientDomainEvent(
                 PatientMessagingConstants.EVENT_CREATED,
                 new PatientCreatedPayload(

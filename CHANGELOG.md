@@ -2,6 +2,34 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-2 Task 14 门禁驱动的两项契约修复（先记再改）
+
+- **背景**：Task 14（装配与边界）真栈冒烟暴露两处上游契约缺陷，均由门禁 fail-fast 定位：
+  Modulith 边界校验拒绝 patient 引用 system 未导出类型；fuyun-app 真栈启动时 M20 消息治理构件
+  拒绝 patient 六个 2 段式事件名（`QueueGovernorImpl` ≥3 段审查，代码 + `QueueGovernorImplTest`
+  两段拒绝用例 + FU-M20-06 三重锁定）。
+- **修复一（审计契约枚举归位）**：`AuditActionType` 从 `com.fuyun.system.enums` 迁入
+  `com.fuyun.system.api`——它是 api 包 `@AuditLog` 注解的成员类型，跨模块标注即引用，按宪法 B.1
+  「api/ 对外契约唯一出口」随注解同住 api 显式导出；不放宽 Modulith 边界、不开 enums 包第二出口。
+- **修复二（患者事件名对齐三段命名治理）**：六个 2 段式事件名改为 `patient.patient.<动作>`
+  （created/updated/merged/split/frozen/unfrozen），依据 = M02 Spec §11 自审自己声明的
+  「事件命名 `<模块>.<实体>.<动作>`」约定（spec §7 六个字面量与 §11 约定自相矛盾，本次以 §11
+  为准）；M-25 成对语义不变；`patient.identifier.changed` / `patient.health-summary.updated`
+  两个 3 段名不变。同步面：`PatientMessagingConstants` 六常量、V105 种子六行 event_type（迁移
+  本 PR 未合入、无任何已应用基线，内容修订合法且为唯一窗口——一旦合入即冻结）、api payload 六
+  record 与服务接口 javadoc、`docs/specs/modules/02-patient.md` §7。**Task 15（EmpiGovernanceIT）
+  与后续订阅方一律以新名为准**。
+- **修复三（发布确认回调归属纠偏）**：`PatientEventPublisher` 移除 `RabbitTemplate.Confirm/Returns
+  Callback` 实现与构造期注册，复用 SystemEventPublisher 统一持有的共享回调告警通道——Spring AMQP
+  共享模板单回调槽位为硬断言（设第二实例即启动失败，真栈冒烟实证；Task 13 审查 I4「后注册者覆盖
+  前者」的记载有误，IotEventPublisher B4.3 偏差申报的「单一槽位统一持有」才是既定范式）。同步删除
+  失效测试两例、新增「不注册回调」契约断言（IotEventPublisherTest 同款）；回调整合归 P1
+  RabbitTemplateCustomizer（TASK.md W-11 评审项）收口，届时各发布器零改动。
+- **裁决说明**：曾评估放宽 M20 pattern 至 ≥2 段——否决：须删除治理构件专门的两段拒绝测试用例、
+  修订 FU-M20-06 与三处 javadoc，削弱已定稿治理规则且 M01/M14 事件全部合规，属反向迁就。
+- **探针密钥勘误**：task-14 简报给的数据密钥为 48 位 hex，构件 fail-fast 校验要求 64 位 hex
+  （32 字节 AES-256，`PatientCryptoProperties`），冒烟以 64 位探针值执行（仅影响冒烟 env，无代码影响）。
+
 ## 2026-09-16 · P1 PR-2 M02 患者 EMPI：patient 号段登记与门禁修订（先记再改）
 
 - **号段登记（V500 起先登记先占惯例的号段制对齐条目）**：patient 域本次占用 **V100–V105**

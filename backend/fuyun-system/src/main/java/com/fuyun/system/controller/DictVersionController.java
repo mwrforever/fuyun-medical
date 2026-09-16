@@ -1,8 +1,8 @@
 package com.fuyun.system.controller;
 
+import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
 import com.fuyun.system.dto.DictItemCreateRequest;
-import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.service.IDictItemService;
 import com.fuyun.system.service.IDictVersionService;
 import com.fuyun.system.vo.DictItemVO;

@@ -231,7 +231,7 @@ class MergeRecordServiceImplTest {
         assertThat(patients.get(2L).getMergedIntoPatientId()).isNull();
         assertThat(service.records.get(record.getId()).getReversedAt()).isNotNull();
         assertThat(service.records.get(record.getId()).getReverseReason()).isEqualTo("误合并纠正");
-        // approve(merged) + split(split) 共两次应用事件，第二次为 patient.split（载荷：恢复档+主档）
+        // approve(merged) + split(split) 共两次应用事件，第二次为 patient.patient.split（载荷：恢复档+主档）
         ArgumentCaptor<PatientDomainEvent> captor = ArgumentCaptor.forClass(PatientDomainEvent.class);
         verify(eventPublisher, times(2)).publishEvent(captor.capture());
         List<PatientDomainEvent> events = captor.getAllValues();

@@ -22,7 +22,7 @@ public interface IMergeRecordService extends IService<MergeRecord> {
 
     /**
      * 审批并执行合并（双人角色：与发起人不得同人；SPI 在途检查 → 快照 → 补齐 → 重挂 → MERGED →
-     * COMPLETED → 缓存失效 → patient.merged；FAILED 记录可重试回 PROCESSING 再执行）。
+     * COMPLETED → 缓存失效 → patient.patient.merged；FAILED 记录可重试回 PROCESSING 再执行）。
      *
      * @param id       合并记录 id，非空
      * @param operator 审批操作人（OperatorContextHolder 当前操作人），非空
@@ -32,7 +32,7 @@ public interface IMergeRecordService extends IService<MergeRecord> {
     MergeRecordVO approve(long id, String operator);
 
     /**
-     * 拆分恢复（COMPLETED→REVERSED 终态；从档 NORMAL、标识按快照回挂、patient.split、缓存失效）。
+     * 拆分恢复（COMPLETED→REVERSED 终态；从档 NORMAL、标识按快照回挂、patient.patient.split、缓存失效）。
      *
      * @param id     合并记录 id，非空
      * @param reason 拆分原因，非空

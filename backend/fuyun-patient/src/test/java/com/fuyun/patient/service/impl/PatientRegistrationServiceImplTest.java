@@ -130,7 +130,7 @@ class PatientRegistrationServiceImplTest {
     }
 
     @Test
-    @DisplayName("NO_MATCH 新建：保存主索引、落知情同意、发布 patient.created 应用事件（载荷无敏感明文）")
+    @DisplayName("NO_MATCH 新建：保存主索引、落知情同意、发布 patient.patient.created 应用事件（载荷无敏感明文）")
     void noMatchCreatesArchiveAndPublishesCreatedEvent() {
         when(matchingService.preCheck(any())).thenReturn(new PatientMatchCheckVO("NO_MATCH", null, null, List.of()));
         when(patientService.save(any(Patient.class))).thenAnswer(inv -> {

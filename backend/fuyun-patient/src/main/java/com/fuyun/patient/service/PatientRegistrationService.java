@@ -5,7 +5,7 @@ import com.fuyun.patient.vo.PatientMatchCheckVO;
 
 /**
  * 患者建档主用例（FU-M02-01）：匹配预检 → 归一或新建 → 标识挂接 → 知情同意落痕 →
- * 疑似重复生成 → patient.created 事件（事务内应用事件，AFTER_COMMIT 出 MQ）。
+ * 疑似重复生成 → patient.patient.created 事件（事务内应用事件，AFTER_COMMIT 出 MQ）。
  */
 public interface PatientRegistrationService {
 

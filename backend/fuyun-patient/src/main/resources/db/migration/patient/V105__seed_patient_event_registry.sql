@@ -9,40 +9,40 @@
 -- 幂等形态：INSERT ... WHERE NOT EXISTS（V5/V403 先例）；id=9–16 接续 V5 的 1–7 + V403 的 8。
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
-SELECT 9, 'patient.created', 'patient',
+SELECT 9, 'patient.patient.created', 'patient',
        '患者建档：patientId/sex/birthDate/realNameFlag/registerChannel/archiveSource；含未实名标记场景；敏感字段禁入载荷（CF-3 冻结载体）',
        '', 'ACTIVE'
-WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.created');
+WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.patient.created');
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
-SELECT 10, 'patient.updated', 'patient',
+SELECT 10, 'patient.patient.updated', 'patient',
        '患者主数据变更：patientId/changedFields(变更字段名清单)；敏感字段禁入载荷；P1 计划六事件外的补齐项（PUT 端点发布来源）',
        '', 'ACTIVE'
-WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.updated');
+WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.patient.updated');
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
-SELECT 11, 'patient.merged', 'patient',
-       '合并完成：survivorPatientId/mergedPatientId(指针映射)；成对语义(M-25)——凡订阅本事件的模块必须成对登记订阅 patient.split；订阅方幂等消费（eventId 去重）',
+SELECT 11, 'patient.patient.merged', 'patient',
+       '合并完成：survivorPatientId/mergedPatientId(指针映射)；成对语义(M-25)——凡订阅本事件的模块必须成对登记订阅 patient.patient.split；订阅方幂等消费（eventId 去重）',
        '', 'ACTIVE'
-WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.merged');
+WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.patient.merged');
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
-SELECT 12, 'patient.split', 'patient',
-       '拆分恢复：restoredPatientId(从档恢复 NORMAL，标识按快照回挂)；patient.merged 的逆操作事件，与之一一成对(M-25)',
+SELECT 12, 'patient.patient.split', 'patient',
+       '拆分恢复：restoredPatientId(从档恢复 NORMAL，标识按快照回挂)；patient.patient.merged 的逆操作事件，与之一一成对(M-25)',
        '', 'ACTIVE'
-WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.split');
+WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.patient.split');
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
-SELECT 13, 'patient.frozen', 'patient',
-       '冻结：patientId/reason；冻结期间解析服务返回拦截标记（业务模块拒绝新就诊）；成对语义(M-25)——凡订阅本事件的模块必须成对登记订阅 patient.unfrozen',
+SELECT 13, 'patient.patient.frozen', 'patient',
+       '冻结：patientId/reason；冻结期间解析服务返回拦截标记（业务模块拒绝新就诊）；成对语义(M-25)——凡订阅本事件的模块必须成对登记订阅 patient.patient.unfrozen',
        '', 'ACTIVE'
-WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.frozen');
+WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.patient.frozen');
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
-SELECT 14, 'patient.unfrozen', 'patient',
-       '解冻：patientId；patient.frozen 的逆操作事件，与之一一成对(M-25)；P1 计划六事件外的补齐项（M-25 成对裁决）',
+SELECT 14, 'patient.patient.unfrozen', 'patient',
+       '解冻：patientId；patient.patient.frozen 的逆操作事件，与之一一成对(M-25)；P1 计划六事件外的补齐项（M-25 成对裁决）',
        '', 'ACTIVE'
-WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.unfrozen');
+WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE event_type = 'patient.patient.unfrozen');
 
 INSERT INTO integration.event_registry (id, event_type, producer_module, payload_desc, subscriber_modules, status)
 SELECT 15, 'patient.identifier.changed', 'patient',
