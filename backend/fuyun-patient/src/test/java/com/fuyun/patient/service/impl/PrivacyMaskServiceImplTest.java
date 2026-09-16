@@ -1,25 +1,46 @@
 package com.fuyun.patient.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
 import com.fuyun.patient.entity.PrivacyMaskRule;
 import com.fuyun.patient.mapper.PrivacyMaskRuleMapper;
 import com.fuyun.patient.vo.PatientVO;
+import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
-/** 脱敏引擎单测（Spec §10 安全项）：五类规则掩码形态、停用规则透传、豁免角色判定三类。 */
+/** 脱敏引擎单测（Spec §10 安全项）：五类规则掩码形态、停用规则透传、豁免角色判定、规则清单与维护。 */
 class PrivacyMaskServiceImplTest {
 
     private PrivacyMaskRuleMapper ruleMapper;
 
     private PrivacyMaskServiceImpl maskService;
+
+    @BeforeAll
+    static void initTableInfo() {
+        // updateRule 的 wrapper eq 列解析依赖实体表信息（模块内既有单测同款）
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), PrivacyMaskRule.class);
+    }
 
     @BeforeEach
     void setUp() {
@@ -126,5 +147,71 @@ class PrivacyMaskServiceImplTest {
         assertThat(maskService.isExempt(List.of("ADMIN"), "nonExistField")).isFalse();
         // 空角色清单（未认证请求语义）：恒不豁免
         assertThat(maskService.isExempt(List.of(), "idCardNo")).isFalse();
+    }
+
+    @Test
+    @DisplayName("规则清单 VO 化：exemptRoles 拆分清单输出，空串豁免为空清单")
+    void listRulesSplitsExemptRolesToList() {
+        when(ruleMapper.selectList(null))
+                .thenReturn(List.of(
+                        rule("MASK_NAME", "name", "ADMIN, DOCTOR", true),
+                        rule("MASK_BIRTH_DATE", "birthDate", "", true)));
+
+        List<PrivacyMaskRuleVO> rules = maskService.listRules();
+
+        assertThat(rules).hasSize(2);
+        assertThat(rules.get(0).ruleCode()).isEqualTo("MASK_NAME");
+        assertThat(rules.get(0).exemptRoles()).containsExactly("ADMIN", "DOCTOR");
+        // 空串=无人豁免（种子默认口径），输出空清单而非含空元素
+        assertThat(rules.get(1).exemptRoles()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("规则维护：未知规则编码 PAT-1021 404 拒绝且不落更新")
+    void updateRuleWithUnknownCodeRejected() {
+        when(ruleMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() ->
+                        maskService.updateRule("MASK_UNKNOWN", new PrivacyMaskRuleUpdateRequest(null, null, null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getErrorCode())
+                .isEqualTo(PatientErrorCode.PRIVACY_RULE_NOT_FOUND);
+
+        verify(ruleMapper, never()).updateById(any(PrivacyMaskRule.class));
+    }
+
+    @Test
+    @DisplayName("规则维护全量入参：三字段覆盖库值（保留策略/豁免扩容/停用），wrapper 锁 rule_code 等值")
+    void updateRuleCoversAllProvidedFields() {
+        when(ruleMapper.selectOne(any())).thenReturn(rule("MASK_MOBILE", "mobile", "ADMIN", true));
+
+        PrivacyMaskRuleVO out = maskService.updateRule(
+                "MASK_MOBILE", new PrivacyMaskRuleUpdateRequest("KEEP_3_4", "ADMIN,DOCTOR", false));
+
+        assertThat(out.maskPattern()).isEqualTo("KEEP_3_4");
+        assertThat(out.exemptRoles()).containsExactly("ADMIN", "DOCTOR");
+        assertThat(out.enabled()).isFalse();
+        ArgumentCaptor<PrivacyMaskRule> captor = ArgumentCaptor.forClass(PrivacyMaskRule.class);
+        verify(ruleMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getMaskPattern()).isEqualTo("KEEP_3_4");
+        ArgumentCaptor<Wrapper<PrivacyMaskRule>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(ruleMapper).selectOne(wrapperCaptor.capture());
+        // MP 3.5.17 wrapper 断言子串 contains：业务键等值条件锁定，禁绑定 SQL 全文
+        assertThat(wrapperCaptor.getValue().getSqlSegment()).contains("rule_code");
+    }
+
+    @Test
+    @DisplayName("规则维护部分更新：空入参字段保留库值（null 语义=不变更）")
+    void updateRuleKeepsStoredValuesWhenFieldsAbsent() {
+        PrivacyMaskRule stored = rule("MASK_MOBILE", "mobile", "ADMIN", true);
+        when(ruleMapper.selectOne(any())).thenReturn(stored);
+
+        PrivacyMaskRuleVO out =
+                maskService.updateRule("MASK_MOBILE", new PrivacyMaskRuleUpdateRequest(null, null, null));
+
+        assertThat(out.maskPattern()).isEqualTo("KEEP");
+        assertThat(out.exemptRoles()).containsExactly("ADMIN");
+        assertThat(out.enabled()).isTrue();
+        verify(ruleMapper).updateById(any(PrivacyMaskRule.class));
     }
 }

@@ -6,6 +6,7 @@ import com.fuyun.patient.controller.CardController;
 import com.fuyun.patient.controller.DuplicateMergeController;
 import com.fuyun.patient.controller.HealthController;
 import com.fuyun.patient.controller.PatientIdentifierController;
+import com.fuyun.patient.controller.PrivacyController;
 import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.gateway.ManualMediaAdapter;
@@ -22,6 +23,7 @@ import com.fuyun.patient.service.impl.PatientServiceImpl;
 import com.fuyun.patient.service.impl.PossibleDuplicateServiceImpl;
 import com.fuyun.patient.service.impl.PrivacyAuthServiceImpl;
 import com.fuyun.patient.service.impl.PrivacyMaskServiceImpl;
+import com.fuyun.patient.service.impl.PrivacyServiceImpl;
 import com.fuyun.patient.service.impl.VisitCardServiceImpl;
 import org.mapstruct.factory.Mappers;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -54,7 +56,9 @@ import org.springframework.context.annotation.Import;
     DuplicateMergeController.class,
     CardAccountController.class,
     CardController.class,
-    HealthController.class
+    HealthController.class,
+    PrivacyServiceImpl.class,
+    PrivacyController.class
 })
 public class PatientWebConfig {
 

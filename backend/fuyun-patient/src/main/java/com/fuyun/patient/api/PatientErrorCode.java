@@ -72,6 +72,9 @@ public enum PatientErrorCode implements ErrorCode {
     /** visit_id 结构非法（400；CF-3 结构校验，供签发方自查与本模块入口校验） */
     VISIT_ID_MALFORMED("PAT-1020"),
 
+    /** 脱敏规则不存在（404；rule_code 无命中，PUT /privacy-mask-rules/{ruleCode} 守卫） */
+    PRIVACY_RULE_NOT_FOUND("PAT-1021"),
+
     /** 记账金额非法（400；金额必须为正数、方向由 txn_type 表达——审查 I5 记账契约收口） */
     CARD_TXN_AMOUNT_INVALID("PAT-1022");
 
