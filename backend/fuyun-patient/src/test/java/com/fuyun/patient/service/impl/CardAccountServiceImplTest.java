@@ -257,6 +257,39 @@ class CardAccountServiceImplTest {
     }
 
     @Test
+    @DisplayName("按患者挂失联动冻结：命中 ACTIVE 账户置 FROZEN（Task 10 就诊卡挂失联动入口）")
+    void freezeByPatientSetsFrozenOnActiveAccount() {
+        when(cardAccountMapper.selectOne(any())).thenReturn(accountRow(66L, 100L, "ACTIVE"));
+        when(cardAccountMapper.updateById(any(CardAccount.class))).thenReturn(1);
+
+        cardAccountService.freezeByPatient(5L);
+
+        ArgumentCaptor<CardAccount> captor = ArgumentCaptor.forClass(CardAccount.class);
+        verify(cardAccountMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo("FROZEN");
+    }
+
+    @Test
+    @DisplayName("按患者挂失联动遇已销户账户：CLOSED 终态静默跳过不触发写操作")
+    void freezeByPatientSkipsClosedAccountSilently() {
+        when(cardAccountMapper.selectOne(any())).thenReturn(accountRow(66L, 0L, "CLOSED"));
+
+        cardAccountService.freezeByPatient(5L);
+
+        verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
+    }
+
+    @Test
+    @DisplayName("按患者挂失联动遇无账户：PAT-1013（404，由调用方决定吞咽口径）")
+    void freezeByPatientWithoutAccountFailsAsPat1013() {
+        when(cardAccountMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> cardAccountService.freezeByPatient(5L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PatientErrorCode.CARD_ACCOUNT_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("冻结 FROZEN 账户：双向切回 ACTIVE（解挂联动）")
     void freezeTogglesFrozenBackToActive() {
         when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 100L, "FROZEN"));

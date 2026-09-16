@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  * 患者标识注册表 IService（A.4.3-20）：attach 与解析/清单/identifier.changed 事件发布本任务交付；
- * 挂失/补卡/解绑（标识状态机写侧）随 Task 10 扩充。
+ * 按卡号查询（标识状态机写侧守卫入口，任何状态可查）由 Task 10 卡生命周期扩充。
  */
 public interface IPatientIdentifierService extends IService<PatientIdentifier> {
 
@@ -42,6 +42,15 @@ public interface IPatientIdentifierService extends IService<PatientIdentifier> {
      * @return 标识行清单（无则空清单，非 null）
      */
     List<PatientIdentifier> listByPatient(long patientId);
+
+    /**
+     * 按卡面号查标识行（任何状态可查；Task 10 卡操作状态机前置守卫入口——挂失/补卡需触达
+     * 非 ACTIVE 行，ACTIVE 等值解析请用 {@link #resolveActive}）。
+     *
+     * @param cardNo 卡面号，非空
+     * @return 命中的标识行（任意状态）；无命中返回 null
+     */
+    PatientIdentifier findByCardNo(String cardNo);
 
     /**
      * 发布 patient.identifier.changed 应用事件（Spring 应用事件，载荷只携 valueHash；解析缓存失效依据）。

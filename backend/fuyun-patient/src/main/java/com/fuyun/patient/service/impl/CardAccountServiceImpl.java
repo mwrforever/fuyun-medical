@@ -195,6 +195,33 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
                 .toVO(account);
     }
 
+    /**
+     * 按患者冻结账户（就诊卡挂失联动入口）：无账户 PAT-1013 由调用方决定吞咽、
+     * CLOSED 终态静默跳过、其余状态一律置 FROZEN。
+     *
+     * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
+     *
+     * @param patientId 患者主索引，非空
+     * @throws BizException PAT-1013（404）无账户
+     */
+    @Override
+    @Transactional
+    public void freezeByPatient(long patientId) {
+        // 一人一账户（uk 兜底），等值 patient_id 单行查
+        CardAccount account =
+                lambdaQuery().eq(CardAccount::getPatientId, patientId).one();
+        if (account == null) {
+            throw new BizException(PatientErrorCode.CARD_ACCOUNT_NOT_FOUND, HttpStatus.NOT_FOUND, "一卡通账户不存在");
+        }
+        if ("CLOSED".equals(account.getStatus())) {
+            // 已销户为终态：挂失联动静默跳过，不复活不改写（M02 §5 账户状态机）
+            return;
+        }
+        account.setStatus("FROZEN");
+        updateById(account);
+        log.info("一卡通账户挂失联动冻结：patientId={}，accountId={}", patientId, account.getId());
+    }
+
     /** 账户存在且非 CLOSED 守卫 */
     private CardAccount requireActiveOrFrozen(long id) {
         CardAccount account = getById(id);

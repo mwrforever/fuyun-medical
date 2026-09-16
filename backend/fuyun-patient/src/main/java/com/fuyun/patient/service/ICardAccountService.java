@@ -28,6 +28,15 @@ public interface ICardAccountService extends IService<CardAccount>, com.fuyun.pa
     void freeze(long id);
 
     /**
+     * 按患者冻结账户（Task 10 就诊卡挂失联动入口）：无账户抛 PAT-1013（由调用方决定吞咽）、
+     * CLOSED 终态静默跳过、其余状态一律置 FROZEN。
+     *
+     * @param patientId 患者主索引，非空
+     * @throws com.fuyun.common.exception.BizException PAT-1013（404）无账户时触发
+     */
+    void freezeByPatient(long patientId);
+
+    /**
      * 销户（余额必须为零，未结清拒绝——M02 §5 card_account 状态机）。
      *
      * @param id 账户 id，非空

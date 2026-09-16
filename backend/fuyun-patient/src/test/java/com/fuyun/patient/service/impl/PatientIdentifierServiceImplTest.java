@@ -178,6 +178,24 @@ class PatientIdentifierServiceImplTest {
     }
 
     @Test
+    @DisplayName("按卡号查标识行：任何状态可查（卡操作状态机守卫入口，等值 card_no 列锁定）")
+    void findByCardNoQueriesByCardNoRegardlessOfStatus() {
+        PatientIdentifier lost = row("LOST");
+        lost.setCardNo("C-0001");
+        when(identifierMapper.selectOne(any())).thenReturn(lost);
+
+        PatientIdentifier hit = identifierService.findByCardNo("C-0001");
+
+        assertThat(hit.getCardNo()).isEqualTo("C-0001");
+        assertThat(hit.getStatus()).isEqualTo("LOST");
+        // 列分派零回归保护：捕获 wrapper 断言等值列为 card_no（与盲索引解析路径区分）
+        ArgumentCaptor<Wrapper<PatientIdentifier>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(identifierMapper).selectOne(captor.capture());
+        assertThat(((LambdaQueryWrapper<PatientIdentifier>) captor.getValue()).getSqlSegment())
+                .contains("card_no");
+    }
+
+    @Test
     @DisplayName("publishChanged 事件载荷只携 valueHash 不携标识值明文")
     void changedEventCarriesHashOnly() {
         String plaintext = "110101199003077890";

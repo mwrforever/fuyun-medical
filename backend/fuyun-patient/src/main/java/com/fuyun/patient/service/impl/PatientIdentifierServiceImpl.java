@@ -126,6 +126,20 @@ public class PatientIdentifierServiceImpl extends ServiceImpl<PatientIdentifierM
                 .list();
     }
 
+    /**
+     * 按卡面号查标识行（任何状态可查，Task 10 卡操作状态机前置守卫入口；
+     * 挂失/补卡需触达 LOST/REPLACED 行，与 ACTIVE 等值解析 {@link #resolveActive} 分流）。
+     *
+     * @param cardNo 卡面号，非空
+     * @return 命中的标识行（任意状态）；无命中返回 null
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PatientIdentifier findByCardNo(String cardNo) {
+        // 卡面号等值直查（卡面号本就明文落列，非密文标识值）；一行一号，多行命中按 MP one() 语义抛错显式暴露脏数据
+        return lambdaQuery().eq(PatientIdentifier::getCardNo, cardNo).one();
+    }
+
     /** identifier.changed 应用事件发布（载荷只携 valueHash 不携明文） */
     @Override
     public void publishChanged(long patientId, String identifierType, String identifierValue, String changeType) {

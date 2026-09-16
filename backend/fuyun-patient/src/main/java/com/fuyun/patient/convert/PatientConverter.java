@@ -8,12 +8,14 @@ import com.fuyun.patient.entity.PatientIdentifier;
 import com.fuyun.patient.entity.PossibleDuplicate;
 import com.fuyun.patient.vo.CardAccountVO;
 import com.fuyun.patient.vo.CardTxnVO;
+import com.fuyun.patient.vo.CardVO;
 import com.fuyun.patient.vo.IdentifierVO;
 import com.fuyun.patient.vo.MergeRecordVO;
 import com.fuyun.patient.vo.PatientVO;
 import com.fuyun.patient.vo.PossibleDuplicateVO;
 import java.util.List;
 import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 
 /**
  * 患者域 MapStruct 转换器（A.7-4）：实体→出参 VO 映射集中点；Task 6 起按需追加映射方法
@@ -30,6 +32,17 @@ public interface PatientConverter {
 
     /** 标识实体→出参（identifierValue 密文/盲索引两列不映射——值禁出接口层） */
     IdentifierVO toVO(PatientIdentifier entity);
+
+    /**
+     * 标识实体→就诊卡出参（FU-M02-04；标识值密文/盲索引两列不映射——值禁出接口层）。
+     *
+     * <p>与 {@link #toVO(PatientIdentifier)} 同源实体双出参，按方法名区分（禁同名重载混淆）。
+     *
+     * @param entity 标识行实体，非空
+     * @return 就诊卡出参（id 映 identifierId）
+     */
+    @Mapping(source = "id", target = "identifierId")
+    CardVO toCardVO(PatientIdentifier entity);
 
     /** 疑似重复实体→出参直映（审核人/时刻/备注直映，双 id 对无敏感列） */
     PossibleDuplicateVO toVO(PossibleDuplicate entity);
