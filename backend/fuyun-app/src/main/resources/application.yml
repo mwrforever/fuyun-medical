@@ -125,6 +125,8 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       suspect-threshold: ${FUYUN_PATIENT_EMPI_SUSPECT_THRESHOLD:85}
       # 疑似重复批量增量扫描错峰调度（M02 §4 双渠道之二；每日 02:30，@Scheduled+ShedLock 多实例互斥）
       scan-cron: ${FUYUN_PATIENT_EMPI_SCAN_CRON:0 30 2 * * *}
+    card:                          # 一卡通（M02 §4：可选启用默认关闭；资金动作在 M13，本模块仅台账）
+      account-enabled: ${FUYUN_PATIENT_CARD_ACCOUNT_ENABLED:false}
   iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
     amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
                                   #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）

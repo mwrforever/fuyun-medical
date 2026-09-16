@@ -1,9 +1,13 @@
 package com.fuyun.patient.convert;
 
+import com.fuyun.patient.entity.CardAccount;
+import com.fuyun.patient.entity.CardTxn;
 import com.fuyun.patient.entity.MergeRecord;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PatientIdentifier;
 import com.fuyun.patient.entity.PossibleDuplicate;
+import com.fuyun.patient.vo.CardAccountVO;
+import com.fuyun.patient.vo.CardTxnVO;
 import com.fuyun.patient.vo.IdentifierVO;
 import com.fuyun.patient.vo.MergeRecordVO;
 import com.fuyun.patient.vo.PatientVO;
@@ -32,4 +36,10 @@ public interface PatientConverter {
 
     /** 合并记录实体→出参（preSnapshot 快照全文不映射——审计经库内查询，禁出接口层） */
     MergeRecordVO toVO(MergeRecord entity);
+
+    /** 一卡通账户实体→出参直映（balance 分值直出，审计五列不映射） */
+    CardAccountVO toVO(CardAccount entity);
+
+    /** 一卡通流水实体→出参直映（balance_after 对账锚点直出，createdAt 不映射） */
+    CardTxnVO toVO(CardTxn entity);
 }

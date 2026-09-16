@@ -1,12 +1,16 @@
 package com.fuyun.patient.config;
 
 import com.fuyun.patient.cache.PatientCacheService;
+import com.fuyun.patient.controller.CardAccountController;
 import com.fuyun.patient.controller.DuplicateMergeController;
 import com.fuyun.patient.controller.PatientIdentifierController;
 import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.gateway.ManualMediaAdapter;
+import com.fuyun.patient.properties.PatientCardProperties;
+import com.fuyun.patient.properties.PatientCryptoProperties;
 import com.fuyun.patient.properties.PatientEmpiProperties;
+import com.fuyun.patient.service.impl.CardAccountServiceImpl;
 import com.fuyun.patient.service.impl.MergeRecordServiceImpl;
 import com.fuyun.patient.service.impl.PatientIdentifierServiceImpl;
 import com.fuyun.patient.service.impl.PatientMatchingServiceImpl;
@@ -26,7 +30,8 @@ import org.springframework.context.annotation.Import;
  * 组件扫描范围，本类由 fuyun-app PatientConfig @Import 生效；加密构件经 PatientCryptoConfig 引入）。
  */
 @Configuration
-@EnableConfigurationProperties(PatientEmpiProperties.class)
+@EnableConfigurationProperties({PatientCryptoProperties.class, PatientEmpiProperties.class, PatientCardProperties.class
+})
 @Import({
     PatientCryptoConfig.class,
     PatientServiceImpl.class,
@@ -38,8 +43,10 @@ import org.springframework.context.annotation.Import;
     MergeRecordServiceImpl.class,
     PatientCacheService.class,
     PrivacyMaskServiceImpl.class,
+    CardAccountServiceImpl.class,
     PatientIdentifierController.class,
-    DuplicateMergeController.class
+    DuplicateMergeController.class,
+    CardAccountController.class
 })
 public class PatientWebConfig {
 
