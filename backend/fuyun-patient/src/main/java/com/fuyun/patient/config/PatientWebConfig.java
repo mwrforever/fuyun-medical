@@ -1,5 +1,7 @@
 package com.fuyun.patient.config;
 
+import com.fuyun.patient.cache.PatientCacheService;
+import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.gateway.ManualMediaAdapter;
 import com.fuyun.patient.properties.PatientEmpiProperties;
@@ -8,6 +10,8 @@ import com.fuyun.patient.service.impl.PatientMatchingServiceImpl;
 import com.fuyun.patient.service.impl.PatientRegistrationServiceImpl;
 import com.fuyun.patient.service.impl.PatientServiceImpl;
 import com.fuyun.patient.service.impl.PrivacyAuthServiceImpl;
+import com.fuyun.patient.service.impl.PrivacyMaskServiceImpl;
+import org.mapstruct.factory.Mappers;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,7 +29,9 @@ import org.springframework.context.annotation.Import;
     PatientIdentifierServiceImpl.class,
     PrivacyAuthServiceImpl.class,
     PatientMatchingServiceImpl.class,
-    PatientRegistrationServiceImpl.class
+    PatientRegistrationServiceImpl.class,
+    PatientCacheService.class,
+    PrivacyMaskServiceImpl.class
 })
 public class PatientWebConfig {
 
@@ -37,5 +43,15 @@ public class PatientWebConfig {
     @Bean
     public IdentityMediaGateway manualMediaAdapter() {
         return new ManualMediaAdapter();
+    }
+
+    /**
+     * 患者域 MapStruct 转换器 Bean（接口不可经 @Import 注册，Mappers.getMapper 装配，IntegrationWebConfig 同款）。
+     *
+     * @return 患者域转换器
+     */
+    @Bean
+    public PatientConverter patientConverter() {
+        return Mappers.getMapper(PatientConverter.class);
     }
 }

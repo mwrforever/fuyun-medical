@@ -1,5 +1,8 @@
 package com.fuyun.patient.convert;
 
+import com.fuyun.patient.entity.Patient;
+import com.fuyun.patient.vo.PatientVO;
+import java.util.List;
 import org.mapstruct.Mapper;
 
 /**
@@ -7,4 +10,11 @@ import org.mapstruct.Mapper;
  * （金额/状态等关键业务字段映射必须手写或单测全覆盖——本域出参均为直映字段）。
  */
 @Mapper
-public interface PatientConverter {}
+public interface PatientConverter {
+
+    /** 实体→档案出参直映（敏感三列不映射——明文只在 service 内解密后经脱敏引擎回填） */
+    PatientVO toVO(Patient entity);
+
+    /** 实体清单→出参清单 */
+    List<PatientVO> toVOList(List<Patient> entities);
+}
