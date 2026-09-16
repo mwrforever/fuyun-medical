@@ -117,6 +117,10 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
     # D-2 令牌 HMAC 密钥：仅经 FUYUN_SECURITY_TOKEN_HMAC_SECRET 环境变量注入，任何 profile 均不放默认密钥——
     # 空占位表示"未设 env 即启动 fail-fast 报缺失"，属预期安全姿态（BRIEF-PR3-01 §3.1；TTL 默认值见 SecurityProperties @DefaultValue）
     token-hmac-secret: ${FUYUN_SECURITY_TOKEN_HMAC_SECRET:}
+  patient:                       # M02 患者域（字段加密密钥 A.4.2-10：仅 env 注入，空占位=未设即启动 fail-fast）
+    crypto:
+      data-key: ${FUYUN_PATIENT_CRYPTO_DATA_KEY:}
+      mac-key: ${FUYUN_PATIENT_CRYPTO_MAC_KEY:}
   iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
     amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
                                   #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）
