@@ -38,7 +38,7 @@ public class PatientIdentifierServiceImpl extends ServiceImpl<PatientIdentifierM
     // TODO(card-ops): 患者主索引服务依赖，供 Task 10 卡操作（挂失/补卡/解绑）解析收敛视图复用
     private final IPatientService patientService;
 
-    /** 应用事件发布（identifier.changed 出 MQ 依赖调用方活动事务与 Task 13 中继，见接口 javadoc），构造器注入 */
+    /** 应用事件发布（MQ 出场由 PatientEventPublisher 中继承载：有事务 AFTER_COMMIT、无事务 D-8 fallbackExecution 兜底），构造器注入 */
     private final ApplicationEventPublisher eventPublisher;
 
     /**
