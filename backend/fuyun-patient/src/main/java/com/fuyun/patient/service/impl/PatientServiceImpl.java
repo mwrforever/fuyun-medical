@@ -98,13 +98,17 @@ public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient> impl
     @Transactional(readOnly = true)
     public PageResult<PatientVO> search(PatientSearchQuery query) {
         String keyword = query.keyword() == null ? "" : query.keyword().trim();
+        // 空/空白关键词短路空数据页：不触库（防无 WHERE 全表分页与全表 COUNT——端点 javadoc「防全表拉取」承诺的实现落点）
+        if (keyword.isEmpty()) {
+            return PageResult.of(List.of(), query.page(), query.size(), 0);
+        }
         boolean byIdCard = keyword.matches("\\d{15}|\\d{17}[0-9Xx]");
         boolean byMobile = keyword.matches("1\\d{10}");
         Page<Patient> page = new Page<>(query.page() + 1, query.size());
         Page<Patient> result = lambdaQuery()
                 .eq(byIdCard, Patient::getIdCardNoHash, crypto.hash(keyword))
                 .eq(byMobile, Patient::getMobileHash, crypto.hash(keyword))
-                .like(!keyword.isEmpty() && !byIdCard && !byMobile, Patient::getName, keyword)
+                .like(!byIdCard && !byMobile, Patient::getName, keyword)
                 .orderByDesc(Patient::getPatientId)
                 .page(page);
         // maskOne 内部已经过脱敏引擎（审查 M3：去掉外层二次 applyAll——掩码函数幂等无正确性问题，但双重调用冗余易误导）

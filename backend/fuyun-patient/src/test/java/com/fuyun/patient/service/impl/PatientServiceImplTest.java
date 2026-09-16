@@ -5,10 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -27,6 +32,8 @@ import com.fuyun.patient.vo.PatientVO;
 import java.io.Serializable;
 import java.time.LocalDate;
 import java.util.List;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,6 +68,12 @@ class PatientServiceImplTest {
 
     /** 被测服务（覆写三个 DB/链式触点） */
     private TestablePatientServiceImpl service;
+
+    @BeforeAll
+    static void initTableInfo() {
+        // 检索 wrapper 的 lambda 条件列名解析依赖 TableInfo（容器外单测需手动初始化一次，PatientMatchingServiceImplTest 同款）
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Patient.class);
+    }
 
     /** 测试替身：仅覆写 getById/updateById/getBaseMapper，其余继承能力原样 */
     static class TestablePatientServiceImpl extends PatientServiceImpl {
@@ -272,35 +285,62 @@ class PatientServiceImplTest {
     }
 
     @Test
-    @DisplayName("检索按 keyword 形态分派：证件号/手机号/姓名/空词均可执行并回传脱敏分页")
+    @DisplayName("检索按 keyword 形态分派（wrapper 断言）：证件号/手机号盲索引等值、姓名模糊，列与参数值逐形态锁定")
     void searchDispatchesKeywordForms() {
-        // 检索链式查询触达 selectPage：替身回填单页单行（断言只针对业务分页结果，不绑定 SQL 细节）
+        // 检索链式查询触达 selectPage：替身回填单页单行（断言只针对业务分页结果与 wrapper 列分派，禁绑定 SQL 全文）
         when(patientMapper.selectPage(any(), any())).thenAnswer(inv -> {
             Page<Patient> page = inv.getArgument(0);
             page.setRecords(List.of(service.stored));
             page.setTotal(1);
             return page;
         });
+        // 盲索引参数可追溯：hash 按入参派生（setUp 统一 stub 会让参数值断言失去业务区分度）
+        when(crypto.hash(anyString())).thenAnswer(inv -> "h_" + inv.getArgument(0));
         service.useChainMapper(patientMapper);
-        // 18 位证件号（数字校验位）→ idCard 盲索引等值
+        // 证件号三形态（18 位数字/15 位老号/18 位 X 校验位）→ idCardNoHash 盲索引等值
         PageResult<PatientVO> byIdCard = service.search(new PatientSearchQuery("110101199003077890", 0, 20));
-        // 15 位老号形态 → idCard 盲索引等值
         service.search(new PatientSearchQuery("110101900307789", 0, 20));
-        // 18 位含 X 校验位形态 → idCard 盲索引等值
         service.search(new PatientSearchQuery("11010119900307789X", 0, 20));
-        // 手机号形态 → mobile 盲索引等值
+        // 手机号形态 → mobileHash 盲索引等值
         service.search(new PatientSearchQuery("13800001234", 0, 20));
         // 姓名形态 → name 模糊
         PageResult<PatientVO> byName = service.search(new PatientSearchQuery("张", 0, 20));
-        // 空白关键词与 null 关键词 → like 条件关闭的空数据页
-        PageResult<PatientVO> blank = service.search(new PatientSearchQuery("  ", 0, 20));
-        PageResult<PatientVO> absent = service.search(new PatientSearchQuery(null, 0, 20));
         assertThat(byIdCard.content()).hasSize(1);
         assertThat(byIdCard.total()).isEqualTo(1);
         assertThat(byIdCard.page()).isZero();
         assertThat(byName.content()).hasSize(1);
-        assertThat(blank.content()).hasSize(1);
-        assertThat(absent.content()).hasSize(1);
+        // 列分派零回归保护：捕获五次 wrapper，按形态断言命中列与盲索引参数值（Task 5 wrapper 断言口径）
+        ArgumentCaptor<Wrapper<Patient>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(patientMapper, times(5)).selectPage(any(), wrapperCaptor.capture());
+        List<Wrapper<Patient>> captured = wrapperCaptor.getAllValues();
+        List<String> idCardForms = List.of("110101199003077890", "110101900307789", "11010119900307789X");
+        for (int i = 0; i < idCardForms.size(); i++) {
+            LambdaQueryWrapper<Patient> wrapper = (LambdaQueryWrapper<Patient>) captured.get(i);
+            // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（3.5.17 实测）
+            assertThat(wrapper.getSqlSegment()).contains("id_card_no_hash").doesNotContain("mobile_hash", "name");
+            assertThat(wrapper.getParamNameValuePairs().values()).contains("h_" + idCardForms.get(i));
+        }
+        LambdaQueryWrapper<Patient> mobileWrapper = (LambdaQueryWrapper<Patient>) captured.get(3);
+        assertThat(mobileWrapper.getSqlSegment()).contains("mobile_hash").doesNotContain("id_card_no_hash", "name");
+        assertThat(mobileWrapper.getParamNameValuePairs().values()).contains("h_13800001234");
+        LambdaQueryWrapper<Patient> nameWrapper = (LambdaQueryWrapper<Patient>) captured.get(4);
+        assertThat(nameWrapper.getSqlSegment()).contains("name").doesNotContain("id_card_no_hash", "mobile_hash");
+        assertThat(nameWrapper.getParamNameValuePairs().values()).contains("%张%");
+    }
+
+    @Test
+    @DisplayName("空/空白/null 关键词短路空数据页：不触库（防无 WHERE 全表分页与全表 COUNT）")
+    void blankKeywordShortCircuitsToEmptyPageWithoutDb() {
+        service.useChainMapper(patientMapper);
+        PageResult<PatientVO> blank = service.search(new PatientSearchQuery("   ", 0, 20));
+        PageResult<PatientVO> absent = service.search(new PatientSearchQuery(null, 0, 20));
+        assertThat(blank.content()).isEmpty();
+        assertThat(blank.total()).isZero();
+        assertThat(blank.page()).isZero();
+        assertThat(absent.content()).isEmpty();
+        assertThat(absent.total()).isZero();
+        // 短路承诺不触库：检索链从未建立（selectPage 零交互）
+        verifyNoInteractions(patientMapper);
     }
 
     /** 无档案替身服务（stored=null：getById 恒空，覆盖 PAT-1001 守卫） */
