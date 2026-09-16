@@ -215,11 +215,16 @@ class PossibleDuplicateServiceImplTest {
                 .doesNotThrowAnyException();
     }
 
+    /** 扫描用例患者 id（生产雪花同量级 17 位，落在 Long 缓存区 [-128,127] 之外——防引用比较掩护性绿灯） */
+    private static final long SCAN_PATIENT_A = 1700000000000000043L;
+
+    private static final long SCAN_PATIENT_B = 1700000000000000044L;
+
     @Test
     @DisplayName("批量增量扫描：SUSPECT 命中生成待审并以 PENDING 行数增量计数（返回新增数）")
     void scanBatchCountsNewlyCreatedSuspects() {
         Patient recent = new Patient();
-        recent.setPatientId(43L);
+        recent.setPatientId(SCAN_PATIENT_A);
         recent.setName("李四");
         recent.setSex("1");
         recent.setBirthDate(LocalDate.of(1991, 1, 2));
@@ -227,7 +232,8 @@ class PossibleDuplicateServiceImplTest {
         when(patientService.lambdaQuery()).thenReturn(new LambdaQueryChainWrapper<>(patientMapper));
         when(patientMapper.selectList(any())).thenReturn(List.of(recent));
         when(matchingService.preCheck(any()))
-                .thenReturn(new PatientMatchCheckVO("SUSPECT", 42L, new BigDecimal("95"), List.of("NAME_SEX_BIRTH")));
+                .thenReturn(new PatientMatchCheckVO(
+                        "SUSPECT", 1700000000000000042L, new BigDecimal("95"), List.of("NAME_SEX_BIRTH")));
         // 计数锚点：recordSuspect 前该患者 PENDING 行数 0 → 写入后 1（增量=1）
         when(duplicateMapper.selectCount(any())).thenReturn(0L, 1L);
         when(duplicateMapper.insert(any(PossibleDuplicate.class))).thenReturn(1);
@@ -243,25 +249,27 @@ class PossibleDuplicateServiceImplTest {
     }
 
     @Test
-    @DisplayName("批量增量扫描：NO_MATCH 与候选为自身的 SUSPECT 均跳过（返回 0 不误记）")
+    @DisplayName("批量增量扫描：NO_MATCH 与候选为自身的 SUSPECT 均跳过（大数 id 下守卫真实触发）")
     void scanBatchSkipsNoMatchAndSelfCandidate() {
         Patient noMatchOne = new Patient();
-        noMatchOne.setPatientId(43L);
+        noMatchOne.setPatientId(SCAN_PATIENT_A);
         noMatchOne.setName("李四");
         noMatchOne.setSex("1");
         noMatchOne.setBirthDate(LocalDate.of(1991, 1, 2));
         noMatchOne.setCreatedAt(OffsetDateTime.now());
         Patient selfCandidate = new Patient();
-        selfCandidate.setPatientId(44L);
+        selfCandidate.setPatientId(SCAN_PATIENT_B);
         selfCandidate.setName("王五");
         selfCandidate.setSex("2");
         selfCandidate.setCreatedAt(OffsetDateTime.now());
         when(patientService.lambdaQuery()).thenReturn(new LambdaQueryChainWrapper<>(patientMapper));
         when(patientMapper.selectList(any())).thenReturn(List.of(noMatchOne, selfCandidate));
+        // 候选=自身（同一 Long 实例都不同——值相等引用不等，引用比较会误放行，值比较语义下守卫触发跳过）
         when(matchingService.preCheck(any()))
                 .thenReturn(
                         new PatientMatchCheckVO("NO_MATCH", null, null, List.of()),
-                        new PatientMatchCheckVO("SUSPECT", 44L, new BigDecimal("100"), List.of("ID_CARD_CONFLICT")));
+                        new PatientMatchCheckVO(
+                                "SUSPECT", SCAN_PATIENT_B, new BigDecimal("100"), List.of("ID_CARD_CONFLICT")));
         int created = service.scanBatch();
         assertThat(created).isZero();
         verify(duplicateMapper, org.mockito.Mockito.times(0)).insert(any(PossibleDuplicate.class));

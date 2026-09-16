@@ -160,10 +160,13 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
                             : candidate.getBirthDate().toString(),
                     null,
                     null));
-            // 仅 SUSPECT 且候选非自身时生成待审行（候选=自身为引擎矛盾兜底，跳过防自合并）
+            // 仅 SUSPECT 且候选非自身时生成待审行（候选=自身为引擎矛盾兜底，跳过防自配对）。
+            // 值比较语义（审查 I1 修正）：candidatePatientId 与 patientId 均为 Long 包装类型，引用比较
+            // 在雪花 id 量级（远超 [-128,127] 缓存区）恒不等会导致守卫失效落自配对待审行；
+            // equals 左值经前置条件判非空（null 安全），右值为档案主键生产恒非空。
             if ("SUSPECT".equals(check.outcome())
                     && check.candidatePatientId() != null
-                    && check.candidatePatientId() != candidate.getPatientId()) {
+                    && !check.candidatePatientId().equals(candidate.getPatientId())) {
                 long before = countPendingOf(candidate.getPatientId());
                 recordSuspect(candidate.getPatientId(), check.candidatePatientId(), check);
                 // 以 PENDING 行数增量为新增判据：重复命中幂等静默（行数不变）不计入
