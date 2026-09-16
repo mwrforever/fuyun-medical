@@ -12,7 +12,7 @@ spring:
       minimum-idle: 10         # 固定大小池（minimumIdle=maximumPoolSize），起步值压测校准（backend 宪法 A.4.2-6）
       maximum-pool-size: 10
   flyway:
-    out-of-order: false        # 从零建库，禁乱序迁移（backend 宪法 A.4.1-3）
+    out-of-order: ${FUYUN_FLYWAY_OUT_OF_ORDER:false}   # 默认 false 红线不变；仅存量库一次性承接号段初始化批次时经临时容器注入 true（审查 C5 路径 A，步骤/验证/还原防呆见 Task 16 Step 3）
     baseline-on-migrate: false
     default-schema: public     # 公共 schema（PG 默认 public）承载 flyway_schema_history（backend 宪法 A.4.1-4）
     schemas:                   # 全量声明，Flyway 自动创建缺失 schema

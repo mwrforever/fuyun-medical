@@ -2,6 +2,30 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-16 · P1 PR-2 M02 患者 EMPI：patient 号段登记与门禁修订（先记再改）
+
+- **号段登记（V500 起先登记先占惯例的号段制对齐条目）**：patient 域本次占用 **V100–V105**
+  （V100 patient/patient_identifier、V101 possible_duplicate/merge_record、V102 health_summary/health_item、
+  V103 隐私三表+脱敏规则种子、V104 card_account/card_txn、V105 患者八事件 event_registry 种子），
+  均在 patient 登记号段（V100–V199）内；scripts/check-migration-governance.py `_SEGMENTS` 既有登记无需改动。
+- **乱序守卫豁免修订（宪法 C.5 门禁工具修订）**：`check_out_of_order` 增「号段初始化豁免」——
+  schema 在基线中零迁移时其首个批次放行（全新库升序应用为 Flyway 唯一事实；追加场景全局规则不变）。
+- **JaCoCo 名单修订（宪法 C.5-2 门禁配置修订）**：父 POM 规则二核心包名单增
+  `com.fuyun.patient.service.impl`（EMPI 归一/合并/冻结属核心业务状态机转换路径，
+  对齐 P1 DoD「新增 M02 核心包覆盖率按 JaCoCo 双阈值」；代价 = 该包全部 impl 单测 100% 行覆盖）。
+- **存量环境承接说明（审查 C5 双路径，待计划审批确认）**：全新库（CI/Testcontainers/compose 新卷）按版本
+  升序一次应用 V100–V105；存量 dev 卷（最大已应用 V503）启动时 Flyway validate 将报
+  「detected resolved migration not applied to database」并 fail-fast。承接路径 A（默认，非破坏）=
+  application.yml `out-of-order` 键 env 化为 `${FUYUN_FLYWAY_OUT_OF_ORDER:false}`（默认 false 红线不变），
+  以一次性临时容器注入 true 应用本批次后即毁（步骤/验证/还原防呆见 Task 16 Step 3），不触碰任何数据、
+  兼容拍板 7「iot 夹具不动」；路径 B（备选，破坏性）= `docker compose down -v` 重建 + iot 演示夹具行
+  （id=900001）留档原值重注入（重置即丢该行，与拍板 7 有张力、须经拍板）。两路径均随本条目登记。
+- **号段批次后果（审查 I6）**：号段初始化豁免仅承载 schema 基线零迁移的首个批次——本批 V100–V105 合入后
+  patient 后续迁移（V106+）将被乱序守卫全局规则拦截，patient 后续迁移一律走 V500+ 通用段
+  （TASK.md W-12 同步登记）。
+- **CF-3 冻结载体落点**：V105 八事件种子（id 9–16）+ Task 3 的 VisitIdValidator/OngoingVisitQuery
+  契约 + Task 15 的 EmpiGovernanceIT（isRegistered 与 fy.topic 可消费断言）。
+
 ## 2026-09-15 · PR-1b 收尾：TASK.md W-4/W-5/W-6 工程债回填删除
 
 - **背景**：PR-1b（M20 事件总线治理完整化）实现期内三项 TODO 工单已随各 Task 清偿，按登记台「条目回填后删除」

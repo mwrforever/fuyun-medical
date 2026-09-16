@@ -269,6 +269,9 @@
                   <!-- iot 消费落库链核心包（B4.2 起随首个 service.impl 实装生效，BRIEF-PR4-01 §7；
                        CHANGELOG 2026-09-10 条目先记再改，PR 描述申报） -->
                   <include>com.fuyun.iot.service.impl</include>
+                  <!-- patient 域核心包（P1 PR-2 起随首个 impl 实装生效；EMPI 归一/合并/冻结属核心
+                       业务状态机路径，P1 DoD 双阈值口径；CHANGELOG 2026-09-16 条目先记再改） -->
+                  <include>com.fuyun.patient.service.impl</include>
                 </includes>
                 <limits>
                   <limit>
