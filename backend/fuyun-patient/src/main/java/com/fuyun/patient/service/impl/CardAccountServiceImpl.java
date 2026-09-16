@@ -71,6 +71,8 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
     /**
      * 冻结账户（ACTIVE ⇄ FROZEN 双向切换）。
      *
+     * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
+     *
      * @param id 账户 id，非空
      * @throws BizException PAT-1013/PAT-1014
      */
@@ -85,6 +87,8 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
 
     /**
      * 销户（余额必须为零）。
+     *
+     * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
      *
      * @param id 账户 id，非空
      * @throws BizException PAT-1013/PAT-1014/PAT-1015
