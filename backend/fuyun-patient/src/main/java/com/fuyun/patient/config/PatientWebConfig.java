@@ -4,6 +4,7 @@ import com.fuyun.patient.cache.PatientCacheService;
 import com.fuyun.patient.controller.CardAccountController;
 import com.fuyun.patient.controller.CardController;
 import com.fuyun.patient.controller.DuplicateMergeController;
+import com.fuyun.patient.controller.HealthController;
 import com.fuyun.patient.controller.PatientIdentifierController;
 import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.gateway.IdentityMediaGateway;
@@ -12,6 +13,7 @@ import com.fuyun.patient.properties.PatientCardProperties;
 import com.fuyun.patient.properties.PatientCryptoProperties;
 import com.fuyun.patient.properties.PatientEmpiProperties;
 import com.fuyun.patient.service.impl.CardAccountServiceImpl;
+import com.fuyun.patient.service.impl.HealthSummaryServiceImpl;
 import com.fuyun.patient.service.impl.MergeRecordServiceImpl;
 import com.fuyun.patient.service.impl.PatientIdentifierServiceImpl;
 import com.fuyun.patient.service.impl.PatientMatchingServiceImpl;
@@ -47,10 +49,12 @@ import org.springframework.context.annotation.Import;
     PrivacyMaskServiceImpl.class,
     CardAccountServiceImpl.class,
     VisitCardServiceImpl.class,
+    HealthSummaryServiceImpl.class,
     PatientIdentifierController.class,
     DuplicateMergeController.class,
     CardAccountController.class,
-    CardController.class
+    CardController.class,
+    HealthController.class
 })
 public class PatientWebConfig {
 

@@ -2,6 +2,8 @@ package com.fuyun.patient.convert;
 
 import com.fuyun.patient.entity.CardAccount;
 import com.fuyun.patient.entity.CardTxn;
+import com.fuyun.patient.entity.HealthItem;
+import com.fuyun.patient.entity.HealthSummary;
 import com.fuyun.patient.entity.MergeRecord;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PatientIdentifier;
@@ -9,6 +11,8 @@ import com.fuyun.patient.entity.PossibleDuplicate;
 import com.fuyun.patient.vo.CardAccountVO;
 import com.fuyun.patient.vo.CardTxnVO;
 import com.fuyun.patient.vo.CardVO;
+import com.fuyun.patient.vo.HealthItemVO;
+import com.fuyun.patient.vo.HealthSummaryVO;
 import com.fuyun.patient.vo.IdentifierVO;
 import com.fuyun.patient.vo.MergeRecordVO;
 import com.fuyun.patient.vo.PatientVO;
@@ -55,4 +59,10 @@ public interface PatientConverter {
 
     /** 一卡通流水实体→出参直映（balance_after 对账锚点直出，createdAt 不映射） */
     CardTxnVO toVO(CardTxn entity);
+
+    /** 健康档案聚合实体→摘要出参直映（items 清单调用方回填——record 不可变） */
+    HealthSummaryVO toVO(HealthSummary entity);
+
+    /** 健康档案明细实体→出参直映（纠错链 correctOfItemId 直出，留痕展示依据） */
+    HealthItemVO toVO(HealthItem entity);
 }
