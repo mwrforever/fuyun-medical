@@ -266,6 +266,9 @@ public class HealthSummaryServiceImpl extends ServiceImpl<HealthSummaryMapper, H
     /**
      * 发生日期解析（DTO 契约：ISO 文本可空；空文本按无发生日期处理）。
      *
+     * <p>非空非法 ISO 文本（如 2026-13-40）抛 DateTimeParseException 走全局 500——契约缺口，
+     * 错误码与校验策略待裁决（TASK.md D-15）。
+     *
      * @param onsetDate ISO-8601 日期文本，可空
      * @return 解析后日期；空文本返回 null
      */
