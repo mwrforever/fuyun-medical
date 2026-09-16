@@ -1,6 +1,8 @@
 package com.fuyun.patient.convert;
 
 import com.fuyun.patient.entity.Patient;
+import com.fuyun.patient.entity.PatientIdentifier;
+import com.fuyun.patient.vo.IdentifierVO;
 import com.fuyun.patient.vo.PatientVO;
 import java.util.List;
 import org.mapstruct.Mapper;
@@ -17,4 +19,7 @@ public interface PatientConverter {
 
     /** 实体清单→出参清单 */
     List<PatientVO> toVOList(List<Patient> entities);
+
+    /** 标识实体→出参（identifierValue 密文/盲索引两列不映射——值禁出接口层） */
+    IdentifierVO toVO(PatientIdentifier entity);
 }

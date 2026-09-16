@@ -1,6 +1,7 @@
 package com.fuyun.patient.config;
 
 import com.fuyun.patient.cache.PatientCacheService;
+import com.fuyun.patient.controller.PatientIdentifierController;
 import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.gateway.ManualMediaAdapter;
@@ -31,7 +32,8 @@ import org.springframework.context.annotation.Import;
     PatientMatchingServiceImpl.class,
     PatientRegistrationServiceImpl.class,
     PatientCacheService.class,
-    PrivacyMaskServiceImpl.class
+    PrivacyMaskServiceImpl.class,
+    PatientIdentifierController.class
 })
 public class PatientWebConfig {
 

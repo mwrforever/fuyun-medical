@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.api.PatientContextResolver;
+import com.fuyun.patient.api.PatientContextView;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.api.PatientFrozenPayload;
 import com.fuyun.patient.api.PatientUnfrozenPayload;
@@ -31,14 +33,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 患者主索引服务实现（patient.patient 主表）：档案详情/检索（脱敏出口）、主数据部分更新、
- * 冻结/解冻状态机（NORMAL/FROZEN/MERGED）承载于此；api PatientContextResolver 实现（读侧归一
- * 解析 + 两级缓存消费）随 Task 7 在本类扩充。
+ * 冻结/解冻状态机（NORMAL/FROZEN/MERGED）承载于此；并实现 api {@link PatientContextResolver}
+ * 解析契约（读侧归一解析 + 两级缓存消费，全院唯一解析入口的服务端落点）。
  *
  * <p>敏感红线：证件号/手机号/住址明文仅在本类更新比对与解密回填生命周期内存活，禁入日志；
  * 出参一律经 PrivacyMaskService 脱敏（M02 红线 3）。
  */
 @Slf4j
-public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient> implements IPatientService {
+public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient>
+        implements IPatientService, PatientContextResolver {
 
     /** 加密构件（更新路径敏感字段重加密与检索盲索引），构造器注入 */
     private final PatientFieldCrypto crypto;
@@ -69,6 +72,51 @@ public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient> impl
         this.privacyMaskService = privacyMaskService;
         this.cacheService = cacheService;
         this.eventPublisher = eventPublisher;
+    }
+
+    /**
+     * 患者上下文解析（api 契约实现；两级缓存优先，缓存未命中回源 DB 后回填）。
+     *
+     * <p>缓存边界（审查 M11）：两级缓存仅覆盖 patientId→视图；「标识→档案」路径每次盲索引等值
+     * 直查（单行点查，P95 < 100ms 预算内；标识级缓存随热点演进另立迁移，不提前建）。
+     *
+     * <p>MERGED 链收敛：从档沿 merged_into_patient_id 逐跳到主档（环路/超链守卫 5 跳，防脏指针死循环）；
+     * 主档为 FROZEN 时返回拦截标记（业务模块拒绝新就诊）；从档解析到的主档 NORMAL 不拦截。
+     *
+     * @param patientId 入参患者 id（可为从档），非空
+     * @return 归一视图，非空
+     * @throws BizException PAT-1001（404）档案不存在
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public PatientContextView resolve(long patientId) {
+        return cacheService.getView(patientId).orElseGet(() -> loadAndCache(patientId));
+    }
+
+    /** 回源解析并回填缓存（MERGED 链收敛 + 拦截标记组装） */
+    private PatientContextView loadAndCache(long patientId) {
+        long current = patientId;
+        Patient entity = null;
+        // 链式收敛守卫：至多 5 跳（正常合并链深 1；超限视为指针脏数据报错防死循环）
+        for (int hop = 0; hop < 5; hop++) {
+            entity = getById(current);
+            if (entity == null) {
+                throw new BizException(PatientErrorCode.PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "患者档案不存在");
+            }
+            if (!"MERGED".equals(entity.getStatus()) || entity.getMergedIntoPatientId() == null) {
+                break;
+            }
+            current = entity.getMergedIntoPatientId();
+        }
+        if (entity == null || ("MERGED".equals(entity.getStatus()) && entity.getMergedIntoPatientId() != null)) {
+            throw new BizException(PatientErrorCode.PATIENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "合并指针链异常，请联系管理员");
+        }
+        boolean blocked = "FROZEN".equals(entity.getStatus());
+        PatientContextView view = new PatientContextView(
+                patientId, entity.getPatientId(), entity.getStatus(), blocked, blocked ? "患者档案已冻结" : "");
+        cacheService.putView(patientId, view);
+        log.info("解析归一完成：patientId={}，resolvedPatientId={}，blocked={}", patientId, view.resolvedPatientId(), blocked);
+        return view;
     }
 
     /**
