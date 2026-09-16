@@ -23,11 +23,12 @@ public interface VisitCardService {
     CardVO issue(CardIssueRequest request);
 
     /**
-     * 绑定既有无主卡到档案（按卡号查任意状态行改挂；卡已挂接他档时拒绝）。
+     * 绑定既有无主卡到档案（按卡号查任意状态行改挂；仅未挂接的无主卡可绑定，有主卡一律拒绝——
+     * 防 LOST/DISABLED 卡经 bind 复活绕过挂失状态机，LOST 找回路径见 TASK.md D-14）。
      *
      * @param request 绑定请求，非空
      * @return 卡出参，非空
-     * @throws BizException PAT-1011（404）卡号无命中 / PAT-1012（409）卡已挂接其他档案
+     * @throws BizException PAT-1011（404）卡号无命中 / PAT-1012（409）卡已挂接档案（含同档）
      */
     CardVO bind(CardBindRequest request);
 

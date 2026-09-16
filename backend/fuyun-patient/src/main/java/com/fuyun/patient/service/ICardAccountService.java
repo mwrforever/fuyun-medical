@@ -31,6 +31,11 @@ public interface ICardAccountService extends IService<CardAccount>, com.fuyun.pa
      * 按患者冻结账户（Task 10 就诊卡挂失联动入口）：无账户抛 PAT-1013（由调用方决定吞咽）、
      * CLOSED 终态静默跳过、其余状态一律置 FROZEN。
      *
+     * <p>事务语义（Task 10 审查 Important 1）：实现不带事务，须在调用方事务内执行
+     * （当前唯一调用方 VisitCardServiceImpl.loss；独立调用方自行开事务）——
+     * 内层 REQUIRED 事务遇 PAT-1013 会把共享事务标记 rollback-only，吞咽后提交即
+     * UnexpectedRollbackException。
+     *
      * @param patientId 患者主索引，非空
      * @throws com.fuyun.common.exception.BizException PAT-1013（404）无账户时触发
      */

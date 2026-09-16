@@ -199,13 +199,17 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
      * 按患者冻结账户（就诊卡挂失联动入口）：无账户 PAT-1013 由调用方决定吞咽、
      * CLOSED 终态静默跳过、其余状态一律置 FROZEN。
      *
+     * <p>事务语义（Task 10 修复轮次审查 Important 1）：本方法不带 @Transactional——单行读改写，
+     * 须在调用方事务内执行（当前唯一调用方 VisitCardServiceImpl.loss）；若挂 REQUIRED 事务代理，
+     * 账户不存在抛 BizException 时内层拦截器会把共享事务标记 rollback-only，调用方吞咽 PAT-1013
+     * 后外层提交必抛 UnexpectedRollbackException（默认配置下每次挂失都 500 回滚）。独立调用方须自行开事务。
+     *
      * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
      *
      * @param patientId 患者主索引，非空
      * @throws BizException PAT-1013（404）无账户
      */
     @Override
-    @Transactional
     public void freezeByPatient(long patientId) {
         // 一人一账户（uk 兜底），等值 patient_id 单行查
         CardAccount account =

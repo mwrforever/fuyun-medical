@@ -82,21 +82,22 @@ public class VisitCardServiceImpl implements VisitCardService {
     }
 
     /**
-     * 绑定既有无主卡到档案（卡已挂接他档时拒绝）。
+     * 绑定既有无主卡到档案（仅未挂接的无主卡可绑定，有主卡一律拒绝）。
      *
      * @param request 绑定请求，非空
      * @return 卡出参，非空
-     * @throws BizException PAT-1011/PAT-1012
+     * @throws BizException PAT-1011（404 卡号无命中）/ PAT-1012（409 卡已挂接档案）
      */
     @Override
     @Transactional
     public CardVO bind(CardBindRequest request) {
         PatientIdentifier card = requireCard(request.cardNo());
-        // 无主卡口径：未挂接（patientId 空）或历史零值占位；挂接他档一律拒绝（0L 为原始值比较，规避装箱陷阱）
-        if (card.getPatientId() != null
-                && card.getPatientId() != 0L
-                && !card.getPatientId().equals(request.patientId())) {
-            throw new BizException(PatientErrorCode.CARD_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "卡已绑定其他档案");
+        // 无主卡口径收口（审查 Important 2）：仅未挂接（patientId 空）或零值占位的卡可绑定，
+        // 有主卡一律拒绝（含挂接同档）——防 LOST/DISABLED 卡经 bind 复活绕过挂失状态机；
+        // 0L 为原始值比较规避装箱陷阱；错误码取最近似既有值 PAT-1012（卡状态不允许该操作），
+        // LOST 找回合法转移缺失已登记 TASK.md D-14 待 Spec 裁决
+        if (card.getPatientId() != null && card.getPatientId() != 0L) {
+            throw new BizException(PatientErrorCode.CARD_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "卡已挂接档案");
         }
         // 无主卡改挂档案（标识值密文与盲索引不动，仅换挂接）
         card.setPatientId(request.patientId());

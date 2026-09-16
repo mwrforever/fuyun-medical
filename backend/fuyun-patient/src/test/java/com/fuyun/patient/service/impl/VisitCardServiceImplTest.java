@@ -129,13 +129,44 @@ class VisitCardServiceImplTest {
     }
 
     @Test
-    @DisplayName("绑定他档卡：PAT-1012 拒绝（409 卡已绑定其他档案），不改挂不发布事件")
+    @DisplayName("零值占位无主卡绑定成功：patientId=0 视同未挂接（历史占位口径）")
+    void bindAcceptsZeroPlaceholderUnownedCard() {
+        PatientIdentifier placeholder = cardRow(11L, 0L, "C-0001", "DISABLED");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(placeholder);
+
+        CardVO vo = visitCardService.bind(new CardBindRequest("C-0001", 5L));
+
+        assertThat(placeholder.getPatientId()).isEqualTo(5L);
+        assertThat(placeholder.getStatus()).isEqualTo("ACTIVE");
+        verify(identifierService).updateById(placeholder);
+        verify(identifierService).publishChanged(5L, "VISIT_CARD", "C-0001", "BOUND");
+        assertThat(vo.patientId()).isEqualTo(5L);
+    }
+
+    @Test
+    @DisplayName("绑定他档卡：PAT-1012 拒绝（409 卡已挂接档案），不改挂不发布事件")
     void bindRejectsCardOwnedByAnotherPatient() {
         when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
 
         assertThatThrownBy(() -> visitCardService.bind(new CardBindRequest("C-0001", 9L)))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED));
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("LOST 有主卡绑定同档亦拒：PAT-1012（堵挂失卡经 bind 复活绕过挂失状态机）")
+    void bindRejectsLostOwnedCardEvenForSamePatient() {
+        PatientIdentifier lostOwned = cardRow(11L, 5L, "C-0001", "LOST");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(lostOwned);
+
+        assertThatThrownBy(() -> visitCardService.bind(new CardBindRequest("C-0001", 5L)))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED));
+        // 状态机不可旁路：卡行不改写、无 BOUND 事件（LOST 找回合法转移待 TASK.md D-14 裁决）
+        assertThat(lostOwned.getStatus()).isEqualTo("LOST");
+        assertThat(lostOwned.getPatientId()).isEqualTo(5L);
         verify(identifierService, never()).updateById(any(PatientIdentifier.class));
         verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
     }
