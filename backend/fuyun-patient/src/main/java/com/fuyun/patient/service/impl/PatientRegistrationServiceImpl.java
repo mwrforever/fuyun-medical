@@ -10,6 +10,7 @@ import com.fuyun.patient.internal.PatientDomainEvent;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.service.IPatientService;
+import com.fuyun.patient.service.IPossibleDuplicateService;
 import com.fuyun.patient.service.IPrivacyAuthService;
 import com.fuyun.patient.service.PatientMatchingService;
 import com.fuyun.patient.service.PatientRegistrationService;
@@ -23,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 患者建档实现（FU-M02-01/02 主流程时序 1）：
  * ①介质核验（统一适配器，手工兜底）→ ②匹配预检 → ③AUTO_MATCH 归一补挂标识（不新建）/
  *   新建档案（SUSPECT 同样新建+生成疑似重复，不自动合并）→ ④标识注册 → ⑤知情同意落痕 →
- * ⑥patient.created 应用事件（事务内发布，发布器 AFTER_COMMIT 出 MQ）。
+ *   ⑤.5 疑似重复待审行生成（SUSPECT 结论回填）→ ⑥patient.created 应用事件（事务内发布，发布器 AFTER_COMMIT 出 MQ）。
  *
  * <p>敏感红线：日志只落 patientId 与结论词，证件号/手机号/住址明文禁入日志与事件载荷。
  */
@@ -38,6 +39,8 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
 
     private final IPrivacyAuthService privacyAuthService;
 
+    private final IPossibleDuplicateService duplicateService;
+
     private final PatientFieldCrypto crypto;
 
     private final IdentityMediaGateway mediaGateway;
@@ -51,6 +54,7 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
      * @param patientService      患者主表 IService（新建档案落库），非空
      * @param identifierService   标识注册表服务（介质挂接），非空
      * @param privacyAuthService  隐私授权服务（知情同意落痕），非空
+     * @param duplicateService    疑似重复治理服务（SUSPECT 待审行生成），非空
      * @param crypto              加密构件（敏感列密文与盲索引），非空
      * @param mediaGateway        介质核验适配器（接口型 Bean，按类型注入），非空
      * @param eventPublisher      Spring 应用事件发布器（事务内发布），非空
@@ -60,6 +64,7 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
             IPatientService patientService,
             IPatientIdentifierService identifierService,
             IPrivacyAuthService privacyAuthService,
+            IPossibleDuplicateService duplicateService,
             PatientFieldCrypto crypto,
             IdentityMediaGateway mediaGateway,
             ApplicationEventPublisher eventPublisher) {
@@ -67,6 +72,7 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
         this.patientService = patientService;
         this.identifierService = identifierService;
         this.privacyAuthService = privacyAuthService;
+        this.duplicateService = duplicateService;
         this.crypto = crypto;
         this.mediaGateway = mediaGateway;
         this.eventPublisher = eventPublisher;
@@ -129,6 +135,10 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
         attachMediaIdentifier(patientId, request);
         // ⑤知情同意授权落痕（建档强制，FU-M02-01/06）
         privacyAuthService.recordInformedConsent(patientId, request.informedConsentRef());
+        // ⑤.5 疑似重复生成（SUSPECT 且候选存在时；a<b 规范化 + 唯一兜底幂等，Task 8 回填点）
+        if ("SUSPECT".equals(check.outcome()) && check.candidatePatientId() != null) {
+            duplicateService.recordSuspect(patientId, check.candidatePatientId(), check);
+        }
         // ⑥patient.created 应用事件（事务内发布；发布器 AFTER_COMMIT 转 fy.topic）
         eventPublisher.publishEvent(new PatientDomainEvent(
                 PatientMessagingConstants.EVENT_CREATED,

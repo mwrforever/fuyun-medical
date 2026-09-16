@@ -123,6 +123,8 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       mac-key: ${FUYUN_PATIENT_CRYPTO_MAC_KEY:}
     empi:                          # EMPI 分层匹配（M02 FU-M02-02：阈值参数化可调）
       suspect-threshold: ${FUYUN_PATIENT_EMPI_SUSPECT_THRESHOLD:85}
+      # 疑似重复批量增量扫描错峰调度（M02 §4 双渠道之二；每日 02:30，@Scheduled+ShedLock 多实例互斥）
+      scan-cron: ${FUYUN_PATIENT_EMPI_SCAN_CRON:0 30 2 * * *}
   iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
     amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
                                   #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）

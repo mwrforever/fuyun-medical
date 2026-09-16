@@ -1,9 +1,13 @@
 package com.fuyun.patient.convert;
 
+import com.fuyun.patient.entity.MergeRecord;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PatientIdentifier;
+import com.fuyun.patient.entity.PossibleDuplicate;
 import com.fuyun.patient.vo.IdentifierVO;
+import com.fuyun.patient.vo.MergeRecordVO;
 import com.fuyun.patient.vo.PatientVO;
+import com.fuyun.patient.vo.PossibleDuplicateVO;
 import java.util.List;
 import org.mapstruct.Mapper;
 
@@ -22,4 +26,10 @@ public interface PatientConverter {
 
     /** 标识实体→出参（identifierValue 密文/盲索引两列不映射——值禁出接口层） */
     IdentifierVO toVO(PatientIdentifier entity);
+
+    /** 疑似重复实体→出参直映（审核人/时刻/备注直映，双 id 对无敏感列） */
+    PossibleDuplicateVO toVO(PossibleDuplicate entity);
+
+    /** 合并记录实体→出参（preSnapshot 快照全文不映射——审计经库内查询，禁出接口层） */
+    MergeRecordVO toVO(MergeRecord entity);
 }

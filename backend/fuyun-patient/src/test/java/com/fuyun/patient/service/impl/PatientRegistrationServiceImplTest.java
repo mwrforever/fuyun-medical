@@ -23,6 +23,7 @@ import com.fuyun.patient.internal.PatientDomainEvent;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.service.IPatientService;
+import com.fuyun.patient.service.IPossibleDuplicateService;
 import com.fuyun.patient.service.IPrivacyAuthService;
 import com.fuyun.patient.service.PatientMatchingService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
@@ -58,6 +59,9 @@ class PatientRegistrationServiceImplTest {
     private IPrivacyAuthService privacyAuthService;
 
     @Mock
+    private IPossibleDuplicateService duplicateService;
+
+    @Mock
     private PatientFieldCrypto crypto;
 
     @Mock
@@ -75,6 +79,7 @@ class PatientRegistrationServiceImplTest {
                 patientService,
                 identifierService,
                 privacyAuthService,
+                duplicateService,
                 crypto,
                 mediaGateway,
                 eventPublisher);
@@ -257,6 +262,24 @@ class PatientRegistrationServiceImplTest {
         registrationService.register(req);
         // 非卡介质：cardNo 恒为 null（请求误录卡面号亦被忽略）
         verify(identifierService).attach(eq(779L), eq("PASSPORT"), eq("E12345678"), eq(null), eq(false));
+    }
+
+    @Test
+    @DisplayName("SUSPECT 新建建档：生成疑似重复待审行（建档实时检测渠道，Task 8 回填配套）")
+    void suspectRegistrationRecordsDuplicate() {
+        when(matchingService.preCheck(any()))
+                .thenReturn(new PatientMatchCheckVO(
+                        "SUSPECT", 42L, new java.math.BigDecimal("95"), List.of("NAME_SEX_BIRTH")));
+        when(patientService.save(any(Patient.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Patient.class).setPatientId(43L);
+            return true;
+        });
+        registrationService.register(request());
+        verify(duplicateService)
+                .recordSuspect(
+                        org.mockito.ArgumentMatchers.eq(43L),
+                        org.mockito.ArgumentMatchers.eq(42L),
+                        any(PatientMatchCheckVO.class));
     }
 
     @Test

@@ -1,15 +1,18 @@
 package com.fuyun.patient.config;
 
 import com.fuyun.patient.cache.PatientCacheService;
+import com.fuyun.patient.controller.DuplicateMergeController;
 import com.fuyun.patient.controller.PatientIdentifierController;
 import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.gateway.ManualMediaAdapter;
 import com.fuyun.patient.properties.PatientEmpiProperties;
+import com.fuyun.patient.service.impl.MergeRecordServiceImpl;
 import com.fuyun.patient.service.impl.PatientIdentifierServiceImpl;
 import com.fuyun.patient.service.impl.PatientMatchingServiceImpl;
 import com.fuyun.patient.service.impl.PatientRegistrationServiceImpl;
 import com.fuyun.patient.service.impl.PatientServiceImpl;
+import com.fuyun.patient.service.impl.PossibleDuplicateServiceImpl;
 import com.fuyun.patient.service.impl.PrivacyAuthServiceImpl;
 import com.fuyun.patient.service.impl.PrivacyMaskServiceImpl;
 import org.mapstruct.factory.Mappers;
@@ -31,9 +34,12 @@ import org.springframework.context.annotation.Import;
     PrivacyAuthServiceImpl.class,
     PatientMatchingServiceImpl.class,
     PatientRegistrationServiceImpl.class,
+    PossibleDuplicateServiceImpl.class,
+    MergeRecordServiceImpl.class,
     PatientCacheService.class,
     PrivacyMaskServiceImpl.class,
-    PatientIdentifierController.class
+    PatientIdentifierController.class,
+    DuplicateMergeController.class
 })
 public class PatientWebConfig {
 
