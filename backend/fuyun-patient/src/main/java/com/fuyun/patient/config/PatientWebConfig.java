@@ -1,0 +1,41 @@
+package com.fuyun.patient.config;
+
+import com.fuyun.patient.gateway.IdentityMediaGateway;
+import com.fuyun.patient.gateway.ManualMediaAdapter;
+import com.fuyun.patient.properties.PatientEmpiProperties;
+import com.fuyun.patient.service.impl.PatientIdentifierServiceImpl;
+import com.fuyun.patient.service.impl.PatientMatchingServiceImpl;
+import com.fuyun.patient.service.impl.PatientRegistrationServiceImpl;
+import com.fuyun.patient.service.impl.PatientServiceImpl;
+import com.fuyun.patient.service.impl.PrivacyAuthServiceImpl;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
+
+/**
+ * M02 患者域 Web/服务装配集中点（backend 宪法 B.1 装配归 app：com.fuyun.patient 不在
+ * 组件扫描范围，本类由 fuyun-app PatientConfig @Import 生效；加密构件经 PatientCryptoConfig 引入）。
+ */
+@Configuration
+@EnableConfigurationProperties(PatientEmpiProperties.class)
+@Import({
+    PatientCryptoConfig.class,
+    PatientServiceImpl.class,
+    PatientIdentifierServiceImpl.class,
+    PrivacyAuthServiceImpl.class,
+    PatientMatchingServiceImpl.class,
+    PatientRegistrationServiceImpl.class
+})
+public class PatientWebConfig {
+
+    /**
+     * 介质核验适配器 Bean：以接口类型暴露（调用方禁注入实现类，B.2-2；审查 M4 返回类型修正）。
+     *
+     * @return 手工兜底适配器（IdentityMediaGateway 当前唯一实现）
+     */
+    @Bean
+    public IdentityMediaGateway manualMediaAdapter() {
+        return new ManualMediaAdapter();
+    }
+}
