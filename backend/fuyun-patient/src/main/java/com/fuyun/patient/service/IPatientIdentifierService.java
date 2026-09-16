@@ -44,7 +44,13 @@ public interface IPatientIdentifierService extends IService<PatientIdentifier> {
     List<PatientIdentifier> listByPatient(long patientId);
 
     /**
-     * 发布 patient.identifier.changed 应用事件（事务内发布，AFTER_COMMIT 出 MQ；缓存失效依据）。
+     * 发布 patient.identifier.changed 应用事件（Spring 应用事件，载荷只携 valueHash；解析缓存失效依据）。
+     *
+     * <p>事务语义（Task 7 审查 I1 措辞修正，与事实对齐）：本方法自身不开事务；Task 13 中继
+     * （PatientEventPublisher，沿用 SystemEventPublisher 的 {@code @TransactionalEventListener(AFTER_COMMIT)}
+     * 范式）仅在调用方存在活动事务且提交后才出 MQ——有事务调用方（如 Task 10 卡操作写方法）可直接调用；
+     * 当前补挂端点为 controller 无事务编排，在 Task 13 按 TASK.md D-8 裁决兜底（fallbackExecution=true）
+     * 或编排下沉为 service 写方法之前，本发布点不保证 identifier.changed 出 MQ（仅进程内监听可收）。
      *
      * @param patientId       患者主索引，非空
      * @param identifierType  标识类型，非空
