@@ -35,10 +35,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 押金服务（billing.deposit_account/deposit_txn，FU-M13-04 住院预交金）。
  *
  * <p>红线：余额唯一写点为 {@link DepositAccountMapper#mutateBalance} 单语句原子 UPDATE RETURNING
- * 回读（并发缴存/抵扣串行化，欠费判定以回读值为准，应用层禁散改 balance）；欠费阈值判定
- * NORMAL⇄ARREARS（有效余额=回读余额−已确认未结算费用）；billing.deposit.changed 在事务提交后发
- * （AFTER_COMMIT，M01 通知/M04 欠费提醒与出院放行校验消费）；门诊预交金按 2025-03 国家政策取消
- * 不设账户（Spec §12 澄清①），就诊号守卫仅受理住院 I 前缀。
+ * 回读（并发缴存/抵扣串行化，欠费判定以回读值为准，应用层禁散改 balance）；状态迁移（欠费阈值
+ * NORMAL⇄ARREARS，有效余额=回读余额−已确认未结算费用）走仅 SET status 的 lambdaUpdate 条件更新——
+ * 全实体 updateById 会把步骤读的 stale balance 覆写回库（D-13 同款收口，测试 SET 列守卫钉死）；
+ * billing.deposit.changed 在事务提交后发（AFTER_COMMIT，M01 通知/M04 欠费提醒与出院放行校验消费）；
+ * 门诊预交金按 2025-03 国家政策取消不设账户（Spec §12 澄清①），就诊号守卫仅受理住院 I 前缀。
  */
 @Slf4j
 public class DepositServiceImpl extends ServiceImpl<DepositAccountMapper, DepositAccount> implements IDepositService {
@@ -162,9 +163,13 @@ public class DepositServiceImpl extends ServiceImpl<DepositAccountMapper, Deposi
         DepositStatus evaluated =
                 balance - confirmedSum < account.getWarningThreshold() ? DepositStatus.ARREARS : DepositStatus.NORMAL;
         if (account.getStatus() != evaluated) {
-            // 数据库写操作：状态迁移落库（首次建户默认 NORMAL，此处覆盖开户即欠费与回升两类迁移）
-            account.setStatus(evaluated);
-            updateById(account);
+            // 数据库写操作：状态迁移仅 SET status 的条件更新（D-13 同款收口）——account 实体携带步骤读
+            //   的 stale balance（开户实体则带 0），全实体 updateById 会把 mutateBalance 刚写入的余额
+            //   覆写回旧值，违反「余额唯一写点 = mutateBalance」红线
+            lambdaUpdate()
+                    .set(DepositAccount::getStatus, evaluated)
+                    .eq(DepositAccount::getId, account.getId())
+                    .update();
             log.warn("押金账户状态切换：visit={}，account={}，status={}", req.visitId(), account.getId(), evaluated.getCode());
         }
         // 数据库写操作：缴存流水落库——金额恒正、方向由 txn_type 表达（DEPOSIT 缴入）
