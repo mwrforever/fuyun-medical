@@ -8,13 +8,84 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M02 患者主索引与档案（EMPI））：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M02 患者主索引与档案 EMPI）：P1 PR-2 实装（CF-3 冻结载体）。
+       版本全部 BOM/父 POM 托管零声明（PR 描述申报）；web/redis/amqp 经 fuyun-common 传递，按 pnpm 严格式
+       显式声明编译直接依赖（Maven 无幽灵依赖拦截，显式化防上游裁剪传导） -->
   <artifactId>fuyun-patient</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- 审计切面注解契约（@AuditLog/AuditActionType）：仅消费 fuyun-system api 包（B.2-2） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 自事件消费队列声明（MessagingGovernance/ConsumerQueueSpec）：仅消费 fuyun-integration api 包 -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- Modulith 注解（@NamedInterface api 出口声明）：provided 不入运行产物（fuyun-system 同款） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <!-- REST 面与请求校验（@RestController/@Valid，A.3-5 声明式校验） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <!-- 事件发布器/缓存失效消费者（RabbitTemplate/@RabbitListener，BOM 托管） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <!-- 两级缓存 Redis 层（StringRedisTemplate，A.5-1 String+JSON 序列化口径） -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <!-- 患者域实体/mapper 数据访问（spring-boot3 后缀 starter，禁再引入 mybatis-spring 系，A.4.3-12） -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <!-- 敏感字段 AES-GCM 列加密（A.4.2-10 点名 BOM 托管单 jar，非 spring-security 全家桶） -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
+    <!-- DTO/VO 映射（A.7-4）：PatientConverter，版本父 POM 托管，处理器路径已在父 compiler 插件配置 -->
+    <dependency>
+      <groupId>org.mapstruct</groupId>
+      <artifactId>mapstruct</artifactId>
+    </dependency>
+    <!-- 批量增量扫描任务守护（A.5-14 多实例 @Scheduled 强制，父 POM 锁版本） -->
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-spring</artifactId>
+    </dependency>
+    <!-- 实体 @Getter/@Setter 编译期依赖（A.1-12 允许清单），provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <!-- 患者域单测（VisitIdValidator/加密构件/匹配引擎等），BOM 托管版本 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

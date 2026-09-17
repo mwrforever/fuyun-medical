@@ -19,3 +19,5 @@ Thumbs.db
 # unplugin 按需引入构建期生成物（web 简报 §5.6：不入库；首个真实使用按需 API 的 PR 再评估改为入库）
 auto-imports.d.ts
 components.d.ts
+# openapi 类型契约生成中间物（PR-2 Task 16 定稿：容器内导出不入库；入库生成物为 packages/shared/src/api.d.ts）
+web/api-docs.json

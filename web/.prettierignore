@@ -6,5 +6,9 @@ auto-imports.d.ts
 components.d.ts
 # lockfile 内容经哈希校验（--frozen-lockfile），格式化无意义
 pnpm-lock.yaml
+# openapi 契约生成物与生成中间产物：格式以生成端（openapi-typescript）输出为准，
+# 一旦 Prettier 重排入库，下次 gen:api 重新生成必然产生 diff，反而击穿 C.5-3 新鲜度校验
+packages/shared/src/api.d.ts
+api-docs.json
 # 维护型文档（宪法 AGENTS.md 等）为手工维护，排除格式门禁避免重排 churn；格式门禁只管代码
 *.md

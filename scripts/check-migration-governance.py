@@ -5,7 +5,10 @@
   ① 号段归属——每个迁移文件所在 schema 目录须落在其登记号段内（含 V500+「先登记先占」通用段）；
   ② 版本唯一——全部 locations（各模块 db/migration/<schema>/）内版本号不得重复；
   ③ 乱序守卫——相对基线版本新增的迁移文件，版本号必须大于基线中全部 locations 已有最大版本号
-     （真库已应用 500 段后，低版本号新文件会被 Flyway 以 outOfOrder=false 拒绝，2026-09-14 真栈实证）。
+     （真库已应用 500 段后，低版本号新文件会被 Flyway 以 outOfOrder=false 拒绝，2026-09-14 真栈实证）；
+     例外：schema 在基线中零迁移时视为「号段初始化」，其首个批次放行——全新库按版本升序一次应用
+     是 Flyway 唯一事实（PR-2 patient 号段 V100–V105 先例，CHANGELOG 2026-09-16 条目）；豁免仅承载
+     初始化批次——批次合入后该 schema 后续迁移一律走 V500+ 通用段（全局规则恢复约束，TASK.md W-12）。
 
 只读校验、不修改文件：任一违规即退出码 1，逐条打印中文报错（文件路径 + 违规类型）。
 """
@@ -127,7 +130,7 @@ def _base_migration_versions(root: Path, base_ref: str) -> list[tuple[str, int, 
 def check_out_of_order(
     root: Path, files: list[tuple[str, int, str]], base_ref: str
 ) -> list[str]:
-    """校验三：乱序守卫——新增迁移版本号必须大于基线中已有最大版本号。"""
+    """校验三：乱序守卫——新增迁移版本号必须大于基线中已有最大版本号；号段初始化豁免。"""
     base_files = _base_migration_versions(root, base_ref)
     if base_files is None:
         return [
@@ -135,10 +138,15 @@ def check_out_of_order(
             f"MIGRATION_BASE_REF 注入，见 .github/workflows/ci.yml hygiene job）"
         ]
     base_paths = {path for _schema, _version, path in base_files}
+    # 号段初始化判定依据：基线中该 schema 已有迁移清单（零迁移 = 首个批次放行）
+    base_schemas = {schema for schema, _version, _path in base_files}
     max_base_version = max((version for _schema, version, _path in base_files), default=0)
     problems: list[str] = []
-    for _schema, version, path in files:
+    for schema, version, path in files:
         if path in base_paths or version < 0:
+            continue
+        # 号段初始化豁免：全新库升序应用合法；存量环境经 CHANGELOG 登记的一次性重置承接
+        if schema not in base_schemas:
             continue
         if version <= max_base_version:
             problems.append(

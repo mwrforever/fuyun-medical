@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./api": "./src/api.d.ts"
   },
   "scripts": {
     "type-check": "tsc --noEmit -p tsconfig.json"

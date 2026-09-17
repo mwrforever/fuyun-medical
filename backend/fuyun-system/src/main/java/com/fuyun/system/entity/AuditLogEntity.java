@@ -3,7 +3,7 @@ package com.fuyun.system.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.fuyun.system.enums.AuditActionType;
+import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.enums.AuditResult;
 import java.time.OffsetDateTime;
 import lombok.Getter;

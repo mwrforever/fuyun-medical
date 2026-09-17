@@ -1,4 +1,4 @@
-package com.fuyun.system.enums;
+package com.fuyun.system.api;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
@@ -6,9 +6,12 @@ import com.fasterxml.jackson.annotation.JsonValue;
 /**
  * 审计动作类型枚举（system.audit_log.action_type 列值域，M01 Spec §4）。
  *
- * <p>P0 注解落点：LOGIN（登录/登出）与 WRITE（字典写端点）；SENSITIVE_QUERY 留痕随 P1。
- * 枚举规范（backend 宪法 A.2-7）：code 字段 + {@code @EnumValue}（MP DB 列映射）+
- * {@code @JsonValue}（JSON 输出 code）+ {@code fromCode} 双向映射；禁止常量类/整型模拟枚举。
+ * <p>落 api 包为跨模块契约（backend 宪法 B.1 对外契约唯一出口）：本枚举是 {@link AuditLog}
+ * 注解的成员类型，其他业务模块标注 @AuditLog 时须直接引用，故随注解同住 api 显式导出
+ * （Modulith 边界门禁：未导出类型的跨模块引用即构建失败）。P0 注解落点：LOGIN（登录/登出）
+ * 与 WRITE（字典写端点）；SENSITIVE_QUERY 留痕随 P1。枚举规范（backend 宪法 A.2-7）：code 字段 +
+ * {@code @EnumValue}（MP DB 列映射）+ {@code @JsonValue}（JSON 输出 code）+ {@code fromCode}
+ * 双向映射；禁止常量类/整型模拟枚举。
  */
 public enum AuditActionType {
 

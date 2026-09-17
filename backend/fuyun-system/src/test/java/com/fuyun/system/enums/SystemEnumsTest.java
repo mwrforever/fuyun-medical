@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.system.api.AuditActionType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;

@@ -88,6 +88,13 @@
       <groupId>net.javacrumbs.shedlock</groupId>
       <artifactId>shedlock-provider-jdbc-template</artifactId>
     </dependency>
+    <!-- API 文档（宪法 A.3-7/C.2：Springdoc 2.8.17 禁升 3.x；契约=DTO 注解推导生成；
+         Swagger UI 仅 dev/test 默认姿态，prod 两键已在 application-prod.yml 兜底） -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+      <version>2.8.17</version>
+    </dependency>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
@@ -115,6 +122,12 @@
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-iot</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- M02 患者主索引（P1 PR-2）：模块装配经本模块 PatientConfig @Import（装配归 app，B.1） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-patient</artifactId>
       <version>${project.version}</version>
     </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->

@@ -2,6 +2,7 @@ package com.fuyun.system.internal;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
 import com.fuyun.system.constants.SecurityConstants;
@@ -73,6 +74,8 @@ public class AuthTokenInterceptor implements HandlerInterceptor {
             SessionData session = tokenService.verify(rawToken, SecurityConstants.TOKEN_TYPE_ACCESS);
             // 校验通过注入操作人上下文（十进制字符串化 userId；审计切面与 created_by 注入读取，收尾必清）
             OperatorContextHolder.set(String.valueOf(session.userId()));
+            // 角色清单同源注入：脱敏豁免（M02 PrivacyMaskService）与 P1 鉴权拦截的统一数据源（SessionData.roles 非 null）
+            RoleContextHolder.set(session.roles());
             return true;
         } catch (BizException ex) {
             // 校验链失败（SYS-1003/1004）：按异常自带错误码原样转写 401
@@ -82,12 +85,13 @@ public class AuthTokenInterceptor implements HandlerInterceptor {
     }
 
     /**
-     * 请求收尾：finally 语义清理操作人上下文，防线程复用残留串号（OperatorContextHolder 契约）。
+     * 请求收尾：finally 语义清理操作人与角色上下文，防线程复用残留串号（两上下文类契约）。
      */
     @Override
     public void afterCompletion(
             HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         OperatorContextHolder.clear();
+        RoleContextHolder.clear();
     }
 
     /**

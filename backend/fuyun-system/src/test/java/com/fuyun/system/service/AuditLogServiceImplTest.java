@@ -3,8 +3,8 @@ package com.fuyun.system.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 
+import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.entity.AuditLogEntity;
-import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.enums.AuditResult;
 import com.fuyun.system.mapper.AuditLogMapper;
 import com.fuyun.system.record.AuditLogEntry;

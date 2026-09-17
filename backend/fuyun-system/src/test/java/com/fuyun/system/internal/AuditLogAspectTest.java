@@ -8,11 +8,11 @@ import static org.mockito.Mockito.verify;
 
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
+import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
 import com.fuyun.system.api.SystemErrorCode;
 import com.fuyun.system.dto.LoginRequest;
 import com.fuyun.system.dto.RefreshRequest;
-import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.enums.AuditResult;
 import com.fuyun.system.record.AuditLogEntry;
 import com.fuyun.system.service.IAuditLogService;

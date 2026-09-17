@@ -10,6 +10,8 @@ declare module 'vue-router' {
   interface RouteMeta {
     /** 免认证公开路由：true 无需登录即可访问；缺省（undefined）= 受保护 */
     public?: boolean;
+    /** 权限点语义（医疗系统"路由 = 权限点清单"审计形态；鉴权拦截随 P1 接入，先登记语义） */
+    permission?: string;
   }
 }
 
@@ -36,6 +38,24 @@ export const router = createRouter({
           component: () => import('@/views/home/HomeView.vue'),
           // meta 预留权限语义：P1 鉴权拦截接入后补 permission 权限点字段
           meta: {},
+        },
+        {
+          path: 'patient/create',
+          name: 'patient-create',
+          component: () => import('@/views/patient/PatientCreateView.vue'),
+          meta: { permission: 'patient:archive:create' },
+        },
+        {
+          path: 'patients',
+          name: 'patient-search',
+          component: () => import('@/views/patient/PatientSearchView.vue'),
+          meta: { permission: 'patient:archive:search' },
+        },
+        {
+          path: 'patients/:patientId',
+          name: 'patient-detail',
+          component: () => import('@/views/patient/PatientDetailView.vue'),
+          meta: { permission: 'patient:archive:search' },
         },
       ],
     },

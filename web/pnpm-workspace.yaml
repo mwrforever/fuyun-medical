@@ -28,3 +28,5 @@ catalog:
   '@vitejs/plugin-vue': 6.0.8
   # 表外申报（简报 §5.3 tsconfig.node.json types:["node"] 的必需类型包）：24.x 线对齐 Node 24 运行时
   '@types/node': 24.13.3
+  # openapi 类型契约生成（Task 16 / T-R4-3 实证：对 Springdoc 2.8.17 产出端点生成 api.d.ts，版本锁死）
+  openapi-typescript: 7.13.0

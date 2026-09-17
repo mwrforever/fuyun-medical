@@ -1,10 +1,10 @@
 package com.fuyun.system.controller;
 
+import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.dto.LoginRequest;
 import com.fuyun.system.dto.RefreshRequest;
-import com.fuyun.system.enums.AuditActionType;
 import com.fuyun.system.service.IAuthService;
 import com.fuyun.system.vo.LoginResponse;
 import jakarta.validation.Valid;

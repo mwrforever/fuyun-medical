@@ -63,9 +63,9 @@
 | 方案 | 说明 | 评估 |
 | --- | --- | --- |
 | 物理迁移 | 合并时把从档的全部历史就诊/医嘱/费用记录 UPDATE 为主档 patient_id | 读侧简单；但跨全模块百万行级 UPDATE，事务重、锁冲突、与门诊高峰互斥；**拆分几乎不可恢复**（原归属信息丢失）；违反"医疗记录不可篡改"精神（调研依据 8）；总 Spec FU-M02-03 要求合并与拆分并存，物理迁移与可拆分天然矛盾 |
-| **指针映射（选定）** | 从档置 `MERGED` 状态并登记 `merged_into_patient_id` 指向主档；历史业务行**一律不动**；归一由本模块解析服务在读侧完成（任何 patient_id 解析均收敛到主档），并以 `patient.merged` 事件广播，各业务模块幂等消费刷新本地映射/宽表；主档补齐从档的主数据字段（联系方式等按字段级择优，双方原值留快照）与从档全部标识 | 合并操作轻量原子（仅主索引层变更），不与业务表争锁；**拆分=逆映射，可恢复**（调研依据 4：合并、拆分是 EMPI 并存标配）；协和实践"存在未完成就诊禁止合并+双方有效信息相互复制"直接落在本方案上（调研依据 3）；代价是读侧必须强制经归一服务——以"全院唯一解析入口 + 事件广播 + 红线约束"保证无旁路 |
+| **指针映射（选定）** | 从档置 `MERGED` 状态并登记 `merged_into_patient_id` 指向主档；历史业务行**一律不动**；归一由本模块解析服务在读侧完成（任何 patient_id 解析均收敛到主档），并以 `patient.patient.merged` 事件广播，各业务模块幂等消费刷新本地映射/宽表；主档补齐从档的主数据字段（联系方式等按字段级择优，双方原值留快照）与从档全部标识 | 合并操作轻量原子（仅主索引层变更），不与业务表争锁；**拆分=逆映射，可恢复**（调研依据 4：合并、拆分是 EMPI 并存标配）；协和实践"存在未完成就诊禁止合并+双方有效信息相互复制"直接落在本方案上（调研依据 3）；代价是读侧必须强制经归一服务——以"全院唯一解析入口 + 事件广播 + 红线约束"保证无旁路 |
 
-**结论**：主记录指针映射 + 事件广播。合并记录保存从档字段与标识的完整快照（merge_record），支撑审计与拆分回滚；各模块对 `patient.merged` 的消费一律幂等（M20 received_event 去重），事件重放不产生二次合并。
+**结论**：主记录指针映射 + 事件广播。合并记录保存从档字段与标识的完整快照（merge_record），支撑审计与拆分回滚；各模块对 `patient.patient.merged` 的消费一律幂等（M20 received_event 去重），事件重放不产生二次合并。
 
 ### 3.4 visit_id 结构规范：纯雪花号 vs 结构化业务号
 
@@ -107,14 +107,14 @@
 
 - **patient**：`NORMAL ⇄ FROZEN`（冻结：身份存疑/风控要求，冻结期间解析服务返回拦截标记，挂号/入院等新就诊由业务模块拒绝）；`NORMAL → MERGED`（作为被合并方，登记 merged_into 指向）；`MERGED → NORMAL`（拆分恢复，仅能由 merge_record 置 REVERSED 触发）。MERGED 档案不可发起任何新就诊。
 - **possible_duplicate**：`PENDING → MERGED(按合并处理) / EXCLUDED(排除，必填理由)`；PENDING 超时未处理经延迟消息提醒登记组长，不自动处置。
-- **merge_record**：`PROCESSING → COMPLETED(广播 patient.merged 成功后) / FAILED(前置检查失败或广播异常，可重试回 PROCESSING)`；`COMPLETED → REVERSED(拆分)`。REVERSED 为终态。
+- **merge_record**：`PROCESSING → COMPLETED(广播 patient.patient.merged 成功后) / FAILED(前置检查失败或广播异常，可重试回 PROCESSING)`；`COMPLETED → REVERSED(拆分)`。REVERSED 为终态。
 - **patient_identifier**：`ACTIVE ⇄ LOST(挂失，解析立即失效)`；`LOST → REPLACED(补卡转移，旧标识终态)`；`ACTIVE → DISABLED(解绑/注销)`。
 - **card_account**：`ACTIVE ⇄ FROZEN(挂失联动)`；`ACTIVE/FROZEN → CLOSED(销户，余额必须为零，未结清拒绝)`。
 - **privacy_auth**：`EFFECTIVE → EXPIRED(到期自动) / REVOKED(撤回)`。
 
 主流程时序：
-1. **建档与归一**：渠道（窗口读卡器/自助机/线上实人绑卡/住院登记）提交建档 → 介质核验适配器完成实名验证（读卡/健康卡注册系统/医保码）→ 匹配预检：强标识查标识注册表——唯一命中且姓名/性别/出生日期一致 → **归一返回既有 patient_id 并补挂新标识**，不新建；强标识命中但属性矛盾，或弱标识评分达阈值 → 提示疑似重复，操作员人工核对后决定"挂既有档"或"确认非同一人新建"；无命中且低于阈值 → 发号新建（无证件走授权建档，标记未实名，发 `patient.created`）。
-2. **重复审核与合并**：疑似重复待审列表 → 审核界面双档对照 → 经扩展点检查双方是否存在在途就诊（有则阻断，提示先完结——对齐协和"未完成就诊禁止合并"实践）→ 审批通过执行合并：主数据字段择优补齐、从档标识全部重挂、从档置 MERGED、快照入 merge_record、失效解析缓存 → 发 `patient.merged`，各业务模块幂等消费刷新映射。
+1. **建档与归一**：渠道（窗口读卡器/自助机/线上实人绑卡/住院登记）提交建档 → 介质核验适配器完成实名验证（读卡/健康卡注册系统/医保码）→ 匹配预检：强标识查标识注册表——唯一命中且姓名/性别/出生日期一致 → **归一返回既有 patient_id 并补挂新标识**，不新建；强标识命中但属性矛盾，或弱标识评分达阈值 → 提示疑似重复，操作员人工核对后决定"挂既有档"或"确认非同一人新建"；无命中且低于阈值 → 发号新建（无证件走授权建档，标记未实名，发 `patient.patient.created`）。
+2. **重复审核与合并**：疑似重复待审列表 → 审核界面双档对照 → 经扩展点检查双方是否存在在途就诊（有则阻断，提示先完结——对齐协和"未完成就诊禁止合并"实践）→ 审批通过执行合并：主数据字段择优补齐、从档标识全部重挂、从档置 MERGED、快照入 merge_record、失效解析缓存 → 发 `patient.patient.merged`，各业务模块幂等消费刷新映射。
 3. **就诊身份解析**：患者出示任一介质（卡/码/证件）→ 业务模块调解析服务 → 返回 patient_id + 档案状态（FROZEN/MERGED 拒绝并提示原因）→ 业务模块以 patient_id 签发 visit（visit_id 结构见方案 3.4）开展诊疗。
 
 ## 6. 功能实现设计（逐 FU）
@@ -123,7 +123,7 @@
 | --- | --- |
 | FU-M02-01 患者建档（P0） | 统一建档 API 供窗口（身份证读卡器即刷即录）、自助机、公众号/小程序（实人绑卡组件人脸核验）、住院登记（M04 调用）多渠道调用；介质核验统一走适配器层（方案 3.5）：身份证读卡直读、电子健康卡对接注册系统核验、医保电子凭证经 M13 医保通道提取身份；无证件患者走"授权建档"（权限控制+未实名标记+后续补实名转正式）；急诊无名氏/新生儿建临时档案（新生儿可关联母亲档案），取得身份信息后转正式并保留关联留痕；建档必填项与实名制要求对齐（姓名/性别/出生日期/证件/联系方式）；建档即触发实时重复检测（FU-M02-03） |
 | FU-M02-02 患者主索引 EMPI（P0） | 匹配引擎按方案 3.1 分层执行；解析服务为全院唯一入口（标识值→patient_id+状态），两级缓存（进程内+Redis，事件失效）；发号器按雪花位预分配独立发号；"标识→档案"归一结果同时供 M20 对外服务（FHIR Patient 门面映射源、区域上报患者主数据源）；匹配规则（字段权重、阈值、强标识清单）系统参数化可调 |
-| FU-M02-03 重复识别与合并拆分（P0） | 双渠道发现：建档实时检测 + 周期性批量增量扫描（新档/变更档与存量比对，延迟任务调度）；疑似重复工作台（并排双档对照、命中字段高亮、评分与规则解释）；合并前置检查（在途就诊经 SPI 扩展点查询，任一方存在则阻断）；合并执行按方案 3.3 指针映射，双人角色（经办+审批）可配置；拆分：从 REVERSED 链路恢复从档 NORMAL、标识按快照回挂、广播 `patient.split`，全过程留痕；合并/拆分仅限指定权限角色 |
+| FU-M02-03 重复识别与合并拆分（P0） | 双渠道发现：建档实时检测 + 周期性批量增量扫描（新档/变更档与存量比对，延迟任务调度）；疑似重复工作台（并排双档对照、命中字段高亮、评分与规则解释）；合并前置检查（在途就诊经 SPI 扩展点查询，任一方存在则阻断）；合并执行按方案 3.3 指针映射，双人角色（经办+审批）可配置；拆分：从 REVERSED 链路恢复从档 NORMAL、标识按快照回挂、广播 `patient.patient.split`，全过程留痕；合并/拆分仅限指定权限角色 |
 | FU-M02-04 就诊卡管理（P0） | 就诊卡全生命周期：发卡（卡库存管理：入库/领用/退回）、绑定档案、挂失（校验本人有效证件，解析立即失效）、补卡（新卡发号、旧卡信息与账户余额按快照转移至新标识，旧卡 REPLACED）、解绑/注销；一卡通余额为可选项（系统参数默认关闭，启用时金额以 BIGINT 存分）：充值/消费/退款动作由 M13 收费通道执行，本模块仅记账户台账与流水并支持与 M13 按日对账；卡介质自助机发卡与窗口发卡共用同一 API |
 | FU-M02-05 患者健康档案视图（P0） | 基础健康档案项：过敏史、慢病史、手术史、免疫接种史、既往史、家族史、血型（对齐区域平台"基本健康信息"与基本公卫规范口径，调研依据 9）；数据来源：临床医生站经本模块 API 维护（就诊中强制提示完善过敏史）、历史数据导入工具；纠错留痕（旧值置已纠错不删除）；变更广播 `patient.health-summary.updated`（M06 处方审核、M05 护理执行、M03/M04 开单场景订阅做过敏与禁忌提示）；诊疗明细（检验/检查/用药记录）不在本模块聚合，由 M09 患者全景经各模块数据组装 |
 | FU-M02-06 患者授权与隐私管理（P0） | 授权侧：建档强制采集知情同意（纸质凭证登记或电子签署引用 M01 CA），敏感信息二次利用（如科研/外送）须单独同意留痕（privacy_auth）；展示侧：脱敏规则集中配置（姓名保留姓氏、证件号/手机号中间打码、地址保留省市），按角色豁免（挂号收费等业务必需场景可见必要字段）；明文查阅走独立 API：校验功能权限+诊疗关系，写 privacy_access_log；日志与事件载荷禁带完整敏感明文；导出必审批并留痕 |
@@ -132,10 +132,10 @@
 ## 7. 对外接口
 
 **REST（`/api/v1/patient/` 前缀）**：
-- 建档与查询：`POST /patients`（建档，含匹配预检结果）、`GET /patients/{patientId}`、`PUT /patients/{patientId}`、`POST /patients/match-check`（建档前预检）、`GET /patients/search`（按标识/姓名/拼音检索，脱敏输出）
+- 建档与查询：`POST /patients`（建档，含匹配预检结果）、`GET /patients/{patientId}`、`PUT /patients/{patientId}`、`POST /patients/match-check`（建档前预检）、`GET /patients/search`（按标识/姓名/拼音检索，脱敏输出）、`POST /patients/{patientId}/freeze|unfreeze`（P1 PR-2 拍板 2 新增端点，本节原清单外：冻结/解冻成对最小 API，状态机见 §5 patient，事件成对见 §11 M-25）
 - 标识与解析：`POST /identifiers/resolve`（标识→patient_id+状态，全院高频入口）、`POST /patients/{patientId}/identifiers`（补挂标识）、`GET /patients/{patientId}/identifiers`
 - 重复与合并：`GET /possible-duplicates`、`POST /possible-duplicates/{id}/exclude`、`POST /merges`（发起合并）、`POST /merges/{id}/approve`、`POST /merges/{id}/split`（拆分）
-- 就诊卡：`POST /cards/issue|bind|loss|replace|unbind`、`GET /cards/{cardNo}`；`POST /card-accounts/{id}/freeze|close`、`GET /card-accounts/{id}/txns`（充值/消费记账由 M13 调内部接口）
+- 就诊卡：`POST /cards/issue|bind|replace`、`POST /cards/loss/{cardNo}`、`POST /cards/unbind/{cardNo}`（挂失/解绑以卡号路径承载、无请求体——A.3-1 收敛，P1 PR-2 实现注记）、`GET /cards/{cardNo}`；`POST /card-accounts/{id}/freeze|close`、`GET /card-accounts/{id}/txns`（充值/消费记账由 M13 调内部接口）
 - 健康档案：`GET /patients/{patientId}/health-summary`、`POST /patients/{patientId}/health-items`、`POST /health-items/{id}/correct`
 - 隐私：`GET/POST /privacy-auths`、`GET/PUT /privacy-mask-rules`、`POST /privacy/unmask`（明文查阅，留痕）、`GET /privacy-access-logs`
 - 标签：`GET/POST/PUT /tags`、`POST /tags/{tagCode}/assign`（圈选打标）、`GET /patients/{patientId}/tags`、`POST /tag-circles/preview`（人群圈选试算）
@@ -143,11 +143,11 @@
 **内部服务接口（进程内，供各模块调用）**：患者上下文解析（patient_id → 归一主档视图）、健康档案过敏项快速校验（供 M06 审方/开单嵌查）、一卡通记账登记（M13 资金动作后调用）、visit_id 结构校验规则下发；本模块经 SPI 扩展点调用业务模块注册的"在途就诊查询"实现（见第 8 节）。
 
 **MQ 事件（发布，经 `fy.topic`，信封遵循 M20 治理约定）**：
-- `patient.created`（新档建立，含未实名标记）
-- `patient.updated`（主数据变更）
-- `patient.merged`（合并完成：主档/从档 ID 与映射，订阅方幂等刷新；**成对语义**——凡订阅本事件的模块必须成对登记订阅 `patient.split`，成对关系由本模块在 event_registry 登记时统一标注）
-- `patient.split`（拆分恢复：从档恢复正常；`patient.merged` 的逆操作事件，与之一一成对）
-- `patient.frozen` / `patient.unfrozen`（冻结状态变更；**成对语义**——凡订阅 `patient.frozen` 的模块必须成对登记订阅 `patient.unfrozen`，成对关系由本模块在 event_registry 登记时统一标注）
+- `patient.patient.created`（新档建立，含未实名标记）
+- `patient.patient.updated`（主数据变更）
+- `patient.patient.merged`（合并完成：主档/从档 ID 与映射，订阅方幂等刷新；**成对语义**——凡订阅本事件的模块必须成对登记订阅 `patient.patient.split`，成对关系由本模块在 event_registry 登记时统一标注）
+- `patient.patient.split`（拆分恢复：从档恢复正常；`patient.patient.merged` 的逆操作事件，与之一一成对）
+- `patient.patient.frozen` / `patient.patient.unfrozen`（冻结状态变更；**成对语义**——凡订阅 `patient.patient.frozen` 的模块必须成对登记订阅 `patient.patient.unfrozen`，成对关系由本模块在 event_registry 登记时统一标注）
 - `patient.identifier.changed`（绑卡/挂失/补卡/解绑，解析缓存失效依据）
 - `patient.health-summary.updated`（健康档案变更，含过敏项摘要）
 - `patient.tag.changed`（打标/失效）
@@ -169,14 +169,14 @@
 - 性能：门诊高峰 2000 人次/小时叠加自助机/PDA 高频解析，标识解析接口 P95 < 100ms（两级缓存，缓存命中率 > 99%，事件驱动失效）；建档（含匹配预检）P95 < 500ms；解析服务无状态可多实例。
 - 容量：1000 床位医院累计档案按 200 万患者、500 万标识规划（普通索引即可，无需分区）；批量扫描任务错峰执行不影响在线业务。
 - 安全：证件号/健康卡卡号等敏感字段存储加密并附 HMAC 检索列（密钥环境变量管理）；传输 TLS 1.2+；日志与事件载荷禁带完整敏感明文；明文查阅与导出双重留痕（M01 审计 + privacy_access_log）；对齐等保三级与个保法"敏感个人信息单独同意+最小必要"要求（调研依据 8）。
-- 一致性与可靠性：合并/拆分/冻结经状态机服务并留迁移日志；`patient.merged` 等事件先 outbox 后投递（M20 治理约定），订阅方以 eventId 幂等；解析缓存失效与事件广播双保险（缓存兜底短 TTL）；发号器雪花位冲突零容忍（位图配置化）。
+- 一致性与可靠性：合并/拆分/冻结经状态机服务并留迁移日志；`patient.patient.merged` 等事件先 outbox 后投递（M20 治理约定），订阅方以 eventId 幂等；解析缓存失效与事件广播双保险（缓存兜底短 TTL）；发号器雪花位冲突零容忍（位图配置化）。
 - 合规映射：实名制就医（WS/T 840—2025 身份核对要素）；电子健康卡一卡（码）通主索引统一对接（调研依据 5）；病历查阅限制（调研依据 8）；健康档案项对齐国家基本公卫规范与区域平台口径（调研依据 9）。
 
 ## 10. 测试要点
 
-- 正常：身份证读卡建档 → 发号建新档并发 `patient.created`；已建档患者再持就诊卡就诊 → 解析归一返回既有 patient_id；疑似重复审核合并 → 从档在途检查通过、合并后从档历史就诊经解析服务在主档全景可见；就诊卡挂失后解析立即失效、补卡后余额与标识完整转移；健康档案过敏项变更 → M06 审方侧收到更新提示。
+- 正常：身份证读卡建档 → 发号建新档并发 `patient.patient.created`；已建档患者再持就诊卡就诊 → 解析归一返回既有 patient_id；疑似重复审核合并 → 从档在途检查通过、合并后从档历史就诊经解析服务在主档全景可见；就诊卡挂失后解析立即失效、补卡后余额与标识完整转移；健康档案过敏项变更 → M06 审方侧收到更新提示。
 - 边界：同名同性别同出生日期但证件不同 → 进疑似重复待审（不自动合并）；同一证件号首次建双档（属性矛盾）→ 待审而非自动归一；合并时从档存在在途就诊 → 阻断并提示；被合并从档发起建档请求 → 解析返回主档且补挂标识；一卡通并发充值与消费 → 余额按串行化台账不超扣；拆分后从档标识与字段按快照完整恢复；拆分后同一从档再次发起合并 → 合并可正常执行（部分唯一约束仅对 PROCESSING/COMPLETED 生效，REVERSED 历史记录不阻断再次合并，拆分-再合并可循环）；冻结患者挂号请求被业务模块拒绝且提示原因。
-- 异常：电子健康卡注册系统不可用 → 适配器降级为人工证件核实建档（标记未实名）并补传队列；`patient.merged` 订阅方消费失败 → 死信重放后业务仍只生效一次（幂等）；合并广播中断 → merge_record 置 FAILED 可重试且不产生半合并状态；批量扫描任务失败 → 可重跑且同一对患者不重复生成待审。
+- 异常：电子健康卡注册系统不可用 → 适配器降级为人工证件核实建档（标记未实名）并补传队列；`patient.patient.merged` 订阅方消费失败 → 死信重放后业务仍只生效一次（幂等）；合并广播中断 → merge_record 置 FAILED 可重试且不产生半合并状态；批量扫描任务失败 → 可重跑且同一对患者不重复生成待审。
 - 安全：无豁免角色查询患者列表仅见脱敏字段；无权限调明文查阅接口 403 且留审计；有权限明文查阅写入 privacy_access_log；事件与日志中证件号/手机号脱敏抽验；越权合并（无合并角色）403。
 
 ## 11. 自审记录
@@ -200,5 +200,5 @@
 | ID | 修订点 | 裁决依据 |
 | --- | --- | --- |
 | M-1 / R1-03 | §4 merge_record 的 (merged_patient_id) 唯一约束改为**部分唯一约束**（仅 status 为 PROCESSING/COMPLETED 时生效）；§10 边界补"拆分后再次合并"测试用例 | 90 号文档 M-1：原全量唯一约束使从档拆分后无法再次合并，永久阻断"合并→拆分→再合并"循环；裁决二选一中采用部分唯一方案（无需引入合并序号） |
-| M-25 | §7 `patient.merged` / `patient.frozen` 发布登记补**成对语义**注记：订阅方模块必须成对登记 `patient.split` / `patient.unfrozen`，成对关系由本模块在 event_registry 登记时统一标注 | 90 号文档 M-25：`patient.split` 与 `patient.unfrozen` 曾零订阅（拆分逆映射与冻结解除无人消费），裁决"成对登记" |
+| M-25 | §7 `patient.patient.merged` / `patient.patient.frozen` 发布登记补**成对语义**注记：订阅方模块必须成对登记 `patient.patient.split` / `patient.patient.unfrozen`，成对关系由本模块在 event_registry 登记时统一标注 | 90 号文档 M-25：`patient.patient.split` 与 `patient.patient.unfrozen` 曾零订阅（拆分逆映射与冻结解除无人消费），裁决"成对登记" |
 | （备案确认） | §12 首段"合并细化为读侧归一"澄清已经统一审查终审采纳（90 号文档第 4 节备案终审 #26，与 B-2 修复一致），本模块维持该口径 | 90 号文档第 4 节 #26 |

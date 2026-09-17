@@ -2,6 +2,109 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-2 Task 18 全量门禁暴露的装配完整性缺口修复（先记再改）
+
+- **问题一（上下文启动前置缺键）**：Task 14 将 `PatientConfig` @Import 接入 fuyun-app 后，
+  `PatientCryptoProperties`（prefix=`fuyun.patient.crypto`，@NotBlank fail-fast）成为 fuyun-app 全部
+  app 层 Spring 上下文启动前置；test profile 无该组键 → 绑定失败 → context refresh 取消 → 同 JVM 内
+  后续 IT 级联失败（仅自带 @DynamicPropertySource 的 EmpiGovernanceIT 独活）。
+- **修复一**：`fuyun-app/src/main/resources/application-test.yml` 追加 `fuyun.patient.crypto.data-key` /
+  `mac-key` 兜底合成值（随机 64 位 hex，仅供测试上下文启动，与 EmpiGovernanceIT 常量互异，
+  **非生产密钥、不触碰「禁提交真实凭据」红线**；@DynamicPropertySource 优先级更高可继续覆写）。
+- **问题二（冻结总量口径漂移）**：V105 患者域八事件种子（id 9–16）随 Task 14 装配进入 fuyun-app IT 库，
+  `event_registry` 总量 8→16，`MessagingGovernanceIT.seedRegistryRowsAreFrozenAndActive` 旧总量断言失效。
+- **修复二**：该断言总量口径更新为 16（V5 七条 + V403 一条 + V105 八条，注释同步）；属本次改动导致的
+  旧测试失效，按全局规范 §四 同步更新而非删除或跳过。
+
+## 2026-09-17 · P1 PR-2 Task 17 配套：openapi 契约生成物 Prettier 排除清单（机制修订）
+
+- **问题**：Task 16（2671324）gen:api 首跑后，生成物 `web/packages/shared/src/api.d.ts`（openapi-typescript
+  输出 4 空格缩进）与本地生成中间产物 `web/api-docs.json`（已 gitignore）被 `pnpm format:check` 判格式偏差，
+  web 五连门禁 format 环节自 Task 16 合入后不可过（属门禁配套缺口，非 Task 17 引入）。
+- **裁决**：`web/.prettierignore` 增补两条排除，而非以 Prettier 重排生成物入库——生成物格式以生成端输出为准，
+  一旦 Prettier 版式入库，下次 `pnpm gen:api` 重新生成必然产生 diff，反而击穿 web C.5-3
+  「生成物新鲜度校验（重新生成 diff 为空才可合入）」门禁。
+
+## 2026-09-16 · P1 PR-2：openapi 类型契约生成链路首跑（T-R4-3/T-R4-4 兑现）
+
+- **Springdoc 首次引入**：fuyun-app 增 springdoc-openapi-starter-webmvc-ui 2.8.17（显式锁版，禁升 3.x）。
+- **T-R4-3 实证结论**：绿：Springdoc 2.8.17 产出与 openapi-typescript 7.13.0 端到端兼容，生成物
+  packages/shared/src/api.d.ts 入库，workstation type-check 全绿。
+- **T-R4-4 实证结论**：Element Plus 2.14.5 + dayjs 1.11.23 显式依赖已满足最小集，回填删除。
+- **遗留登记（PR 描述同步）**：CI 新鲜度自动校验（重新生成 diff 为空）需 backend job 产出 api-docs
+  artifact → frontend job 消费的跨 job 通道，随 CI 演进接线；本 PR 以收口任务本地重生成核对兜底。
+
+## 2026-09-17 · P1 PR-2 Task 15 验收 IT 暴露两处真栈缺陷修复（先记再改）
+
+- **缺陷一（装配遗漏）**：Task 15（EmpiGovernanceIT 端到端验收）真栈首跑实证 `POST /api/v1/patient/patients`
+  404（No static resource）——`PatientWebConfig` 的 `@Import` 清单漏登记 `PatientController.class`
+  （其余六个 patient 控制器均已装配），建档/详情/更新/检索/冻结/解冻七端点全部未进 MVC 映射；
+  单测（MockMvc standalone 直连 controller 构造器）与 Modulith verify 均无法暴露此缺陷，真栈 IT
+  验收门禁首跑即抓住。修复：`@Import` 补 `PatientController.class`（与其余六个控制器同模式）。
+- **缺陷二（迁移约束与状态机矛盾）**：IT 二跑实证 `POST /merges` 500——`merge_record.pre_snapshot`
+  被声明为 NOT NULL，但快照在 approve 执行合并时才产生（`executeMerge` 写入），发起合并（PROCESSING）
+  的合法 INSERT 必然违反约束。修复：V101 修订 `pre_snapshot` 为可空并补列注释（拆分守卫仅放行
+  COMPLETED，快照必在，可空性与状态机一致）。修订合法窗口 = 本 PR 未合入、无任何已应用基线
+  （存量 dev 卷最大 v503 不含 patient 段，Task 14 同口径）。
+- **缺陷三（拆分遗留悬空合并指针）**：IT 三跑实证 `POST /merges/{id}/split` 后从档详情仍带
+  `merged_into_patient_id`——`split()` 以 `updateById` 落恢复状态，MyBatis-Plus 默认忽略 null 字段，
+  指针置空从未生效（单测内存表断言掩盖）。修复：改 `LambdaUpdateWrapper` 显式 SET
+  status=NORMAL + merged_into_patient_id=NULL；同步改写 `splitRestoresMergedArchiveAndPublishes`
+  断言（捕获 wrapper 校验 SET 列与 NULL 值）。
+- **验收**：EmpiGovernanceIT 七用例全绿为本次三处修复的验收依据。
+
+## 2026-09-17 · P1 PR-2 Task 14 门禁驱动的两项契约修复（先记再改）
+
+- **背景**：Task 14（装配与边界）真栈冒烟暴露两处上游契约缺陷，均由门禁 fail-fast 定位：
+  Modulith 边界校验拒绝 patient 引用 system 未导出类型；fuyun-app 真栈启动时 M20 消息治理构件
+  拒绝 patient 六个 2 段式事件名（`QueueGovernorImpl` ≥3 段审查，代码 + `QueueGovernorImplTest`
+  两段拒绝用例 + FU-M20-06 三重锁定）。
+- **修复一（审计契约枚举归位）**：`AuditActionType` 从 `com.fuyun.system.enums` 迁入
+  `com.fuyun.system.api`——它是 api 包 `@AuditLog` 注解的成员类型，跨模块标注即引用，按宪法 B.1
+  「api/ 对外契约唯一出口」随注解同住 api 显式导出；不放宽 Modulith 边界、不开 enums 包第二出口。
+- **修复二（患者事件名对齐三段命名治理）**：六个 2 段式事件名改为 `patient.patient.<动作>`
+  （created/updated/merged/split/frozen/unfrozen），依据 = M02 Spec §11 自审自己声明的
+  「事件命名 `<模块>.<实体>.<动作>`」约定（spec §7 六个字面量与 §11 约定自相矛盾，本次以 §11
+  为准）；M-25 成对语义不变；`patient.identifier.changed` / `patient.health-summary.updated`
+  两个 3 段名不变。同步面：`PatientMessagingConstants` 六常量、V105 种子六行 event_type（迁移
+  本 PR 未合入、无任何已应用基线，内容修订合法且为唯一窗口——一旦合入即冻结）、api payload 六
+  record 与服务接口 javadoc、`docs/specs/modules/02-patient.md` §7。**Task 15（EmpiGovernanceIT）
+  与后续订阅方一律以新名为准**。
+- **修复三（发布确认回调归属纠偏）**：`PatientEventPublisher` 移除 `RabbitTemplate.Confirm/Returns
+  Callback` 实现与构造期注册，复用 SystemEventPublisher 统一持有的共享回调告警通道——Spring AMQP
+  共享模板单回调槽位为硬断言（设第二实例即启动失败，真栈冒烟实证；Task 13 审查 I4「后注册者覆盖
+  前者」的记载有误，IotEventPublisher B4.3 偏差申报的「单一槽位统一持有」才是既定范式）。同步删除
+  失效测试两例、新增「不注册回调」契约断言（IotEventPublisherTest 同款）；回调整合归 P1
+  RabbitTemplateCustomizer（TASK.md W-11 评审项）收口，届时各发布器零改动。
+- **裁决说明**：曾评估放宽 M20 pattern 至 ≥2 段——否决：须删除治理构件专门的两段拒绝测试用例、
+  修订 FU-M20-06 与三处 javadoc，削弱已定稿治理规则且 M01/M14 事件全部合规，属反向迁就。
+- **探针密钥勘误**：task-14 简报给的数据密钥为 48 位 hex，构件 fail-fast 校验要求 64 位 hex
+  （32 字节 AES-256，`PatientCryptoProperties`），冒烟以 64 位探针值执行（仅影响冒烟 env，无代码影响）。
+
+## 2026-09-16 · P1 PR-2 M02 患者 EMPI：patient 号段登记与门禁修订（先记再改）
+
+- **号段登记（V500 起先登记先占惯例的号段制对齐条目）**：patient 域本次占用 **V100–V105**
+  （V100 patient/patient_identifier、V101 possible_duplicate/merge_record、V102 health_summary/health_item、
+  V103 隐私三表+脱敏规则种子、V104 card_account/card_txn、V105 患者八事件 event_registry 种子），
+  均在 patient 登记号段（V100–V199）内；scripts/check-migration-governance.py `_SEGMENTS` 既有登记无需改动。
+- **乱序守卫豁免修订（宪法 C.5 门禁工具修订）**：`check_out_of_order` 增「号段初始化豁免」——
+  schema 在基线中零迁移时其首个批次放行（全新库升序应用为 Flyway 唯一事实；追加场景全局规则不变）。
+- **JaCoCo 名单修订（宪法 C.5-2 门禁配置修订）**：父 POM 规则二核心包名单增
+  `com.fuyun.patient.service.impl`（EMPI 归一/合并/冻结属核心业务状态机转换路径，
+  对齐 P1 DoD「新增 M02 核心包覆盖率按 JaCoCo 双阈值」；代价 = 该包全部 impl 单测 100% 行覆盖）。
+- **存量环境承接说明（审查 C5 双路径，待计划审批确认）**：全新库（CI/Testcontainers/compose 新卷）按版本
+  升序一次应用 V100–V105；存量 dev 卷（最大已应用 V503）启动时 Flyway validate 将报
+  「detected resolved migration not applied to database」并 fail-fast。承接路径 A（默认，非破坏）=
+  application.yml `out-of-order` 键 env 化为 `${FUYUN_FLYWAY_OUT_OF_ORDER:false}`（默认 false 红线不变），
+  以一次性临时容器注入 true 应用本批次后即毁（步骤/验证/还原防呆见 Task 16 Step 3），不触碰任何数据、
+  兼容拍板 7「iot 夹具不动」；路径 B（备选，破坏性）= `docker compose down -v` 重建 + iot 演示夹具行
+  （id=900001）留档原值重注入（重置即丢该行，与拍板 7 有张力、须经拍板）。两路径均随本条目登记。
+- **号段批次后果（审查 I6）**：号段初始化豁免仅承载 schema 基线零迁移的首个批次——本批 V100–V105 合入后
+  patient 后续迁移（V106+）将被乱序守卫全局规则拦截，patient 后续迁移一律走 V500+ 通用段
+  （TASK.md W-12 同步登记）。
+- **CF-3 冻结载体落点**：V105 八事件种子（id 9–16）+ Task 3 的 VisitIdValidator/OngoingVisitQuery
+  契约 + Task 15 的 EmpiGovernanceIT（isRegistered 与 fy.topic 可消费断言）。
+
 ## 2026-09-15 · PR-1b 收尾：TASK.md W-4/W-5/W-6 工程债回填删除
 
 - **背景**：PR-1b（M20 事件总线治理完整化）实现期内三项 TODO 工单已随各 Task 清偿，按登记台「条目回填后删除」

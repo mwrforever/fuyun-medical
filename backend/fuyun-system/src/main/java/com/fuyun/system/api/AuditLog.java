@@ -1,6 +1,5 @@
 package com.fuyun.system.api;
 
-import com.fuyun.system.enums.AuditActionType;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;

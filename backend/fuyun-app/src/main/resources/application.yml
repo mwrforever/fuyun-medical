@@ -12,7 +12,7 @@ spring:
       minimum-idle: 10         # 固定大小池（minimumIdle=maximumPoolSize），起步值压测校准（backend 宪法 A.4.2-6）
       maximum-pool-size: 10
   flyway:
-    out-of-order: false        # 从零建库，禁乱序迁移（backend 宪法 A.4.1-3）
+    out-of-order: ${FUYUN_FLYWAY_OUT_OF_ORDER:false}   # 默认 false 红线不变；仅存量库一次性承接号段初始化批次时经临时容器注入 true（审查 C5 路径 A，步骤/验证/还原防呆见 Task 16 Step 3）
     baseline-on-migrate: false
     default-schema: public     # 公共 schema（PG 默认 public）承载 flyway_schema_history（backend 宪法 A.4.1-4）
     schemas:                   # 全量声明，Flyway 自动创建缺失 schema
@@ -117,6 +117,16 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
     # D-2 令牌 HMAC 密钥：仅经 FUYUN_SECURITY_TOKEN_HMAC_SECRET 环境变量注入，任何 profile 均不放默认密钥——
     # 空占位表示"未设 env 即启动 fail-fast 报缺失"，属预期安全姿态（BRIEF-PR3-01 §3.1；TTL 默认值见 SecurityProperties @DefaultValue）
     token-hmac-secret: ${FUYUN_SECURITY_TOKEN_HMAC_SECRET:}
+  patient:                       # M02 患者域（字段加密密钥 A.4.2-10：仅 env 注入，空占位=未设即启动 fail-fast）
+    crypto:
+      data-key: ${FUYUN_PATIENT_CRYPTO_DATA_KEY:}
+      mac-key: ${FUYUN_PATIENT_CRYPTO_MAC_KEY:}
+    empi:                          # EMPI 分层匹配（M02 FU-M02-02：阈值参数化可调）
+      suspect-threshold: ${FUYUN_PATIENT_EMPI_SUSPECT_THRESHOLD:85}
+      # 疑似重复批量增量扫描错峰调度（M02 §4 双渠道之二；每日 02:30，@Scheduled+ShedLock 多实例互斥）
+      scan-cron: ${FUYUN_PATIENT_EMPI_SCAN_CRON:0 30 2 * * *}
+    card:                          # 一卡通（M02 §4：可选启用默认关闭；资金动作在 M13，本模块仅台账）
+      account-enabled: ${FUYUN_PATIENT_CARD_ACCOUNT_ENABLED:false}
   iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
     amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
                                   #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）
