@@ -7,6 +7,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fuyun.common.web.GlobalExceptionHandler;
@@ -68,6 +69,34 @@ class PrivacyControllerTest {
                         .content("{\"patientId\":5,\"fields\":[\"name\"]}"))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(privacyService);
+    }
+
+    @Test
+    @DisplayName("脱敏规则词表外 maskPattern 更新：@Valid 契约 400（终审 Minor 收口，不落库不生效）")
+    void updateRuleRejectsUnknownMaskPatternViaContractValidation() throws Exception {
+        mockMvc.perform(put("/api/v1/patient/privacy-mask-rules/MOBILE")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"maskPattern\":\"DROP_ALL\"}"))
+                .andExpect(status().isBadRequest());
+        // 词表外值在 @Valid 前置即拒：不触达服务（不落库、引擎不会被未知策略污染）
+        verifyNoInteractions(privacyMaskService);
+    }
+
+    @Test
+    @DisplayName("授权登记 signedAtIso 非 ISO 时刻：400 PAT-1023（D-15 收口，不走全局 500）")
+    void createAuthWithMalformedSignedAtIsoRejectedAsPat1023() throws Exception {
+        String body = mockMvc.perform(post("/api/v1/patient/privacy-auths")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"patientId\":5,\"authType\":\"SENSITIVE_USE\",\"authBasis\":\"凭据-001\","
+                                + "\"signedAtIso\":\"2026-13-40 08:00\"}"))
+                .andExpect(status().isBadRequest())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        // ProblemDetail 契约：errorCode 扩展属性承载业务错误码（与生产行为一致）
+        assertThat(body).contains("PAT-1023");
+        verifyNoInteractions(privacyAuthService);
     }
 
     @Test

@@ -21,6 +21,7 @@ import com.fuyun.patient.vo.HealthItemVO;
 import com.fuyun.patient.vo.HealthSummaryVO;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.factory.Mappers;
@@ -264,16 +265,24 @@ public class HealthSummaryServiceImpl extends ServiceImpl<HealthSummaryMapper, H
     }
 
     /**
-     * 发生日期解析（DTO 契约：ISO 文本可空；空文本按无发生日期处理）。
+     * onsetDate 解析（D-15 收口）：合法格式非法日期（2026-02-30）与非 ISO 文本统一转
+     * 400 PAT-1023——用户输入错误不再走全局 500（「ProblemDetail + PAT-xxxx」契约红线）。
      *
-     * <p>非空非法 ISO 文本（如 2026-13-40）抛 DateTimeParseException 走全局 500——契约缺口，
-     * 错误码与校验策略待裁决（TASK.md D-15）。
-     *
-     * @param onsetDate ISO-8601 日期文本，可空
-     * @return 解析后日期；空文本返回 null
+     * @param onsetDate 发病日期 ISO 文本（yyyy-MM-dd），可空（空 → Optional.empty 语义由调用方承载）
+     * @return 解析结果；入参为 null 时返回 null
+     * @throws BizException PAT-1023（400）文本非合法 ISO 日期
      */
     private LocalDate parseOnsetDate(String onsetDate) {
-        return onsetDate == null || onsetDate.isBlank() ? null : LocalDate.parse(onsetDate);
+        if (onsetDate == null || onsetDate.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(onsetDate);
+        } catch (DateTimeParseException e) {
+            log.warn("健康档案 onsetDate 非法：value={}", onsetDate);
+            throw new BizException(
+                    PatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "发病日期须为合法 ISO 日期（yyyy-MM-dd）");
+        }
     }
 
     /**

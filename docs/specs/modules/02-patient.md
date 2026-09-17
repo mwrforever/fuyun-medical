@@ -134,10 +134,10 @@
 **REST（`/api/v1/patient/` 前缀）**：
 - 建档与查询：`POST /patients`（建档，含匹配预检结果）、`GET /patients/{patientId}`、`PUT /patients/{patientId}`、`POST /patients/match-check`（建档前预检）、`GET /patients/search`（按标识/姓名/拼音检索，脱敏输出）、`POST /patients/{patientId}/freeze|unfreeze`（P1 PR-2 拍板 2 新增端点，本节原清单外：冻结/解冻成对最小 API，状态机见 §5 patient，事件成对见 §11 M-25）
 - 标识与解析：`POST /identifiers/resolve`（标识→patient_id+状态，全院高频入口）、`POST /patients/{patientId}/identifiers`（补挂标识）、`GET /patients/{patientId}/identifiers`
-- 重复与合并：`GET /possible-duplicates`、`POST /possible-duplicates/{id}/exclude`、`POST /merges`（发起合并）、`POST /merges/{id}/approve`、`POST /merges/{id}/split`（拆分）
+- 重复与合并：`GET /possible-duplicates`（出参 `matchedRules` 为规则名数组——库值 JSON 数组文本读侧归一，终审 Minor 口径统一注记 2026-09-17）、`POST /possible-duplicates/{id}/exclude`、`POST /merges`（发起合并）、`POST /merges/{id}/approve`、`POST /merges/{id}/split`（拆分）
 - 就诊卡：`POST /cards/issue|bind|replace`、`POST /cards/loss/{cardNo}`、`POST /cards/unbind/{cardNo}`（挂失/解绑以卡号路径承载、无请求体——A.3-1 收敛，P1 PR-2 实现注记）、`GET /cards/{cardNo}`；`POST /card-accounts/{id}/freeze|close`、`GET /card-accounts/{id}/txns`（充值/消费记账由 M13 调内部接口）
-- 健康档案：`GET /patients/{patientId}/health-summary`、`POST /patients/{patientId}/health-items`、`POST /health-items/{id}/correct`
-- 隐私：`GET/POST /privacy-auths`、`GET/PUT /privacy-mask-rules`、`POST /privacy/unmask`（明文查阅，留痕）、`GET /privacy-access-logs`
+- 健康档案：`GET /patients/{patientId}/health-summary`、`POST /patients/{patientId}/health-items`、`POST /health-items/{id}/correct`（健康项新增/纠错的 `onsetDate` 日期入参非法 → 400 `PAT-1023`，D-15 收口注记 2026-09-17）
+- 隐私：`GET/POST /privacy-auths`（`signedAtIso`/`validToIso` 时刻入参非法 → 400 `PAT-1023`，D-15 收口注记 2026-09-17）、`GET/PUT /privacy-mask-rules`（`maskPattern` 词表外值 400 拒改，终审 Minor 注记）、`POST /privacy/unmask`（明文查阅，留痕）、`GET /privacy-access-logs`
 - 标签：`GET/POST/PUT /tags`、`POST /tags/{tagCode}/assign`（圈选打标）、`GET /patients/{patientId}/tags`、`POST /tag-circles/preview`（人群圈选试算）
 
 **内部服务接口（进程内，供各模块调用）**：患者上下文解析（patient_id → 归一主档视图）、健康档案过敏项快速校验（供 M06 审方/开单嵌查）、一卡通记账登记（M13 资金动作后调用）、visit_id 结构校验规则下发；本模块经 SPI 扩展点调用业务模块注册的"在途就诊查询"实现（见第 8 节）。

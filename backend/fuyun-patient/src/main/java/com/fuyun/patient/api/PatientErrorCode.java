@@ -76,7 +76,10 @@ public enum PatientErrorCode implements ErrorCode {
     PRIVACY_RULE_NOT_FOUND("PAT-1021"),
 
     /** 记账金额非法（400；金额必须为正数、方向由 txn_type 表达——审查 I5 记账契约收口） */
-    CARD_TXN_AMOUNT_INVALID("PAT-1022");
+    CARD_TXN_AMOUNT_INVALID("PAT-1022"),
+
+    /** 入参日期/时刻格式非法（400；onsetDate 与授权 signedAtIso/validToIso 解析失败统一口径，D-15） */
+    PARAM_FORMAT_INVALID("PAT-1023");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

@@ -18,6 +18,7 @@ import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.dto.PatientMatchCheckRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PossibleDuplicate;
+import com.fuyun.patient.enums.MatchOutcome;
 import com.fuyun.patient.mapper.PatientMapper;
 import com.fuyun.patient.mapper.PossibleDuplicateMapper;
 import com.fuyun.patient.service.IPatientService;
@@ -273,5 +274,53 @@ class PossibleDuplicateServiceImplTest {
         int created = service.scanBatch();
         assertThat(created).isZero();
         verify(duplicateMapper, org.mockito.Mockito.times(0)).insert(any(PossibleDuplicate.class));
+    }
+
+    @Test
+    @DisplayName("疑似重复落库：matched_rules 为 JSON 数组文本（终审 Minor 口径统一，禁 Java toString 形态）")
+    void suspectPersistsMatchedRulesAsJsonArrayText() {
+        when(duplicateMapper.insert(any(PossibleDuplicate.class))).thenReturn(1);
+        service.recordSuspect(
+                100L,
+                200L,
+                new PatientMatchCheckVO(
+                        MatchOutcome.SUSPECT.name(),
+                        200L,
+                        new BigDecimal("0.82"),
+                        List.of("NAME_MOBILE", "NAME_SEX_BIRTH")));
+
+        ArgumentCaptor<PossibleDuplicate> captor = ArgumentCaptor.forClass(PossibleDuplicate.class);
+        verify(duplicateMapper).insert(captor.capture());
+        assertThat(captor.getValue().getMatchedRules()).isEqualTo("[\"NAME_MOBILE\",\"NAME_SEX_BIRTH\"]");
+    }
+
+    @Test
+    @DisplayName("疑似重复落库：命中规则清单为空时 matched_rules 落空数组文本「[]」（词表边界）")
+    void suspectPersistsEmptyRulesAsEmptyArrayText() {
+        when(duplicateMapper.insert(any(PossibleDuplicate.class))).thenReturn(1);
+        service.recordSuspect(
+                100L,
+                200L,
+                new PatientMatchCheckVO(MatchOutcome.SUSPECT.name(), 200L, new BigDecimal("0.82"), List.of()));
+
+        ArgumentCaptor<PossibleDuplicate> captor = ArgumentCaptor.forClass(PossibleDuplicate.class);
+        verify(duplicateMapper).insert(captor.capture());
+        assertThat(captor.getValue().getMatchedRules()).isEqualTo("[]");
+    }
+
+    @Test
+    @DisplayName("matched_rules 读侧归一：历史 toString 形态与 JSON 形态都还原为规则名清单（兼容存量 dev 行，不迁移）")
+    void legacyBracketListAndJsonBothParseToRuleNames() {
+        PossibleDuplicate legacy = new PossibleDuplicate();
+        legacy.setMatchedRules("[NAME_MOBILE, NAME_SEX_BIRTH]"); // String.valueOf(List) 历史形态
+        PossibleDuplicate modern = new PossibleDuplicate();
+        modern.setMatchedRules("[\"NAME_MOBILE\",\"NAME_SEX_BIRTH\"]");
+
+        assertThat(PossibleDuplicateServiceImpl.parseMatchedRules(legacy.getMatchedRules()))
+                .containsExactly("NAME_MOBILE", "NAME_SEX_BIRTH");
+        assertThat(PossibleDuplicateServiceImpl.parseMatchedRules(modern.getMatchedRules()))
+                .containsExactly("NAME_MOBILE", "NAME_SEX_BIRTH");
+        assertThat(PossibleDuplicateServiceImpl.parseMatchedRules(null)).isEmpty();
+        assertThat(PossibleDuplicateServiceImpl.parseMatchedRules("[]")).isEmpty();
     }
 }

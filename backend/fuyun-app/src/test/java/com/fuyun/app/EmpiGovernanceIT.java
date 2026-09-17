@@ -319,6 +319,16 @@ class EmpiGovernanceIT {
         assertThat(approved.path("status").asText()).isEqualTo("COMPLETED");
         assertThat(approved.path("approvedBy").asText()).isEqualTo("2");
 
+        // 终审 Minor 补强：合并执行后 pre_snapshot 内容断言（此前仅断存在性——快照是拆分回挂唯一依据）
+        String preSnapshot = jdbc.queryForObject(
+                "SELECT pre_snapshot FROM patient.merge_record WHERE id = ?", String.class, mergeId);
+        JsonNode snapshot = objectMapper.readTree(preSnapshot);
+        assertThat(snapshot.path("name").asText()).isEqualTo(DUPLICATE_NAME);
+        assertThat(snapshot.path("sex").asText()).isEqualTo(DUPLICATE_SEX);
+        assertThat(snapshot.path("mobile").asText()).hasSize(64); // 盲索引 hex 入快照（禁明文，M02 红线 3）
+        assertThat(snapshot.path("identifiers").isArray()).isTrue();
+        assertThat(snapshot.path("identifiers").size()).isGreaterThanOrEqualTo(1);
+
         // ⑥ 归一解析：A 证件号解析收敛 A；B 证件号（合并后标识随重挂/指针链）同样收敛 A
         JsonNode resolveA = postForJson(
                 "/api/v1/patient/identifiers/resolve", ADMIN_TOKEN.get(), resolveBody("ID_CARD", ID_CARD_A));
