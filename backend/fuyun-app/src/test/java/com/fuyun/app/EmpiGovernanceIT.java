@@ -402,34 +402,44 @@ class EmpiGovernanceIT {
 
         // merged 信封（用例 2 两次合并均入队，取首帧）：信封七字段冻结形态断言
         JsonNode merged = receiveEnvelope(MERGED_QUEUE);
-        assertThat(UUID.fromString(merged.path("eventId").asText())).isNotNull();
-        assertThat(merged.path("producer").asText()).isEqualTo("patient");
-        assertThat(merged.path("eventType").asText()).isEqualTo(PatientMessagingConstants.EVENT_MERGED);
-        assertThat(merged.path("occurredAt").asText()).isNotBlank();
-        assertThat(merged.path("payloadVersion").asText()).isEqualTo("1");
+        assertCommonEnvelopeFields(merged, PatientMessagingConstants.EVENT_MERGED);
         assertThat(merged.path("payload").path("survivorPatientId").asLong()).isEqualTo(patientA);
         assertThat(merged.path("payload").path("mergedPatientId").asLong()).isEqualTo(patientB);
-        assertThat(merged.has("traceId")
-                        && (merged.path("traceId").isTextual()
-                                || merged.path("traceId").isNull()))
-                .as("traceId 字段可空（HTTP 线程发布取 MDC 值）")
-                .isTrue();
 
         // frozen 信封（用例 3 冻结动作）：载荷单 id + 冻结原因，成对语义的 captured 侧
         JsonNode frozen = receiveEnvelope(FROZEN_QUEUE);
-        assertThat(frozen.path("producer").asText()).isEqualTo("patient");
-        assertThat(frozen.path("eventType").asText()).isEqualTo(PatientMessagingConstants.EVENT_FROZEN);
-        assertThat(frozen.path("payloadVersion").asText()).isEqualTo("1");
+        assertCommonEnvelopeFields(frozen, PatientMessagingConstants.EVENT_FROZEN);
         assertThat(frozen.path("payload").path("patientId").asLong()).isEqualTo(patientA);
         assertThat(frozen.path("payload").path("reason").asText()).isNotBlank();
 
         // created 信封（建档动作，IT 队列无声明方竞争）：created 不在自消费六事件集，仅 IT 队列可消费
         JsonNode created = receiveEnvelope(IT_CREATED_QUEUE);
-        assertThat(created.path("producer").asText()).isEqualTo("patient");
-        assertThat(created.path("eventType").asText()).isEqualTo(PatientMessagingConstants.EVENT_CREATED);
-        assertThat(created.path("payloadVersion").asText()).isEqualTo("1");
+        assertCommonEnvelopeFields(created, PatientMessagingConstants.EVENT_CREATED);
         assertThat(created.path("payload").path("patientId").asLong()).isEqualTo(patientA);
         assertThat(created.path("payload").path("realNameFlag").asBoolean()).isTrue();
+    }
+
+    /**
+     * 信封公共字段七字段口径断言（简报场景 4 写死口径，merged/frozen/created 三帧同款复用）：
+     * eventId 可解析 UUID、producer=patient、eventType 与消息常量逐字一致、occurredAt 非空、
+     * payloadVersion="1"、traceId 字段可空；payload 内容因事件而异由调用方按帧补充断言。
+     *
+     * @param envelope          捕获的信封 JSON 节点，非空；来源：receiveEnvelope 队列捕获帧
+     * @param expectedEventType 期望事件类型；来源：PatientMessagingConstants 常量（三段化字面量）
+     */
+    private void assertCommonEnvelopeFields(JsonNode envelope, String expectedEventType) {
+        assertThat(UUID.fromString(envelope.path("eventId").asText()))
+                .as("eventId 应为可解析 UUID")
+                .isNotNull();
+        assertThat(envelope.path("producer").asText()).isEqualTo("patient");
+        assertThat(envelope.path("eventType").asText()).isEqualTo(expectedEventType);
+        assertThat(envelope.path("occurredAt").asText()).isNotBlank();
+        assertThat(envelope.path("payloadVersion").asText()).isEqualTo("1");
+        assertThat(envelope.has("traceId")
+                        && (envelope.path("traceId").isTextual()
+                                || envelope.path("traceId").isNull()))
+                .as("traceId 字段可空（HTTP 线程发布取 MDC 值）")
+                .isTrue();
     }
 
     @Test
