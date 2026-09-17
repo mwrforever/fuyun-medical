@@ -2,6 +2,15 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-2 Task 17 配套：openapi 契约生成物 Prettier 排除清单（机制修订）
+
+- **问题**：Task 16（2671324）gen:api 首跑后，生成物 `web/packages/shared/src/api.d.ts`（openapi-typescript
+  输出 4 空格缩进）与本地生成中间产物 `web/api-docs.json`（已 gitignore）被 `pnpm format:check` 判格式偏差，
+  web 五连门禁 format 环节自 Task 16 合入后不可过（属门禁配套缺口，非 Task 17 引入）。
+- **裁决**：`web/.prettierignore` 增补两条排除，而非以 Prettier 重排生成物入库——生成物格式以生成端输出为准，
+  一旦 Prettier 版式入库，下次 `pnpm gen:api` 重新生成必然产生 diff，反而击穿 web C.5-3
+  「生成物新鲜度校验（重新生成 diff 为空才可合入）」门禁。
+
 ## 2026-09-16 · P1 PR-2：openapi 类型契约生成链路首跑（T-R4-3/T-R4-4 兑现）
 
 - **Springdoc 首次引入**：fuyun-app 增 springdoc-openapi-starter-webmvc-ui 2.8.17（显式锁版，禁升 3.x）。
