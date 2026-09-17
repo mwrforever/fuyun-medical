@@ -17,6 +17,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-web</artifactId>
     </dependency>
+    <!-- 事件模板基类编译依赖（DomainEventSender 引 RabbitTemplate/CorrelationData、IdempotentConsumerSupport
+         引 Message）：版本 Boot BOM 托管零声明，fuyun-patient pom 同款先例，不破「零新增第三方依赖」口径 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
     <!-- Modulith 注解（@ApplicationModule OPEN 声明）：package-info 模块边界声明编译期可见，
          provided 不入运行产物；版本 spring-modulith-bom 托管零声明（D-2 裁决，任务 9） -->
     <dependency>

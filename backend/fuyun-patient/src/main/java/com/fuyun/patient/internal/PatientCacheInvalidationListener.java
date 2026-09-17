@@ -2,44 +2,49 @@ package com.fuyun.patient.internal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fuyun.common.messaging.EventEnvelope;
-import com.fuyun.common.messaging.EventEnvelopeCodec;
-import com.fuyun.common.messaging.MessageIdempotencyService;
-import com.fuyun.common.messaging.ReceivedEventRecord;
+import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.patient.cache.PatientCacheService;
 import com.fuyun.patient.constants.PatientMessagingConstants;
-import java.nio.charset.StandardCharsets;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * 患者自事件消费侧缓存失效（跨实例两级缓存一致性闭环；本实例写路径已即时 evict）。
  *
- * <p>消费姿态：容器 AUTO 确认 + raw Message + 标准幂等范式（A.5-5/A.5-6，MdmDispatchListener 同款）；
- * 队列经 MessagingGovernance 治理构件声明（q.patient.patient.<event>，事件先登记后订阅——V105 种子）。
- * 六事件订阅成对合规：merged↔split、frozen↔unfrozen 均成对声明（M-25）。
+ * <p>消费姿态：容器 AUTO 确认 + raw Message，幂等三段式（A.5-5/A.5-6）收敛 common
+ * {@link IdempotentConsumerSupport} 标准模板（终审 Minor「消费/缓存失效范式收敛」），本类仅保留
+ * 失效派发业务；队列经 MessagingGovernance 治理构件声明（q.patient.patient.&lt;event&gt;，事件先登记后
+ * 订阅——V105 种子）。六事件订阅成对合规：merged↔split、frozen↔unfrozen 均成对声明（M-25）。
  *
  * <p>归 internal/：容器驱动的模块内入口禁外引；Bean 注册点为 PatientMessagingConfig @Import。
  */
 @Slf4j
 public class PatientCacheInvalidationListener {
 
-    private final MessageIdempotencyService idempotencyService;
-
-    private final EventEnvelopeCodec codec;
+    private final IdempotentConsumerSupport consumerSupport;
 
     private final PatientCacheService cacheService;
 
-    /** 全参构造器（装配归 PatientMessagingConfig @Import） */
+    /**
+     * 全参构造器（装配归 PatientMessagingConfig @Import；IdempotentConsumerSupport 系 common 基类
+     * 跨模块多实例 Bean，fuyun-app 上下文与 billing 侧同型双候选，必须 @Qualifier 定绑
+     * patientConsumerSupport——第 2 轮审查 P0-1，禁靠自动解析兜底）。
+     *
+     * @param consumerSupport 幂等消费模板，非空；定绑 PatientMessagingConfig patientConsumerSupport Bean
+     * @param cacheService    患者两级缓存服务，非空
+     */
     public PatientCacheInvalidationListener(
-            MessageIdempotencyService idempotencyService, EventEnvelopeCodec codec, PatientCacheService cacheService) {
-        this.idempotencyService = idempotencyService;
-        this.codec = codec;
+            @Qualifier("patientConsumerSupport") IdempotentConsumerSupport consumerSupport,
+            PatientCacheService cacheService) {
+        this.consumerSupport = consumerSupport;
         this.cacheService = cacheService;
     }
 
     /**
-     * 六事件统一消费入口（队列名与 PatientMessagingConfig 声明同源常量拼接，禁手写字面量）。
+     * 六事件统一消费入口：标准幂等三段式收敛 common IdempotentConsumerSupport（终审 Minor 范式收敛），
+     * 本方法仅保留失效派发业务。
      *
      * @param message 原始消息帧，非空
      */
@@ -53,26 +58,7 @@ public class PatientCacheInvalidationListener {
                 "q." + PatientMessagingConstants.MODULE + "." + PatientMessagingConstants.EVENT_IDENTIFIER_CHANGED
             })
     public void onPatientEvent(Message message) {
-        EventEnvelope envelope = codec.fromJson(new String(message.getBody(), StandardCharsets.UTF_8));
-        // 标准范式①：重复投递（NX 失败且回查确认已处理）直接跳过
-        if (!idempotencyService.tryAcquire(envelope.eventId(), PatientMessagingConstants.MODULE)) {
-            return;
-        }
-        ReceivedEventRecord record = new ReceivedEventRecord(
-                envelope.eventId(),
-                envelope.eventType(),
-                envelope.producer(),
-                envelope.occurredAt(),
-                PatientMessagingConstants.MODULE);
-        try {
-            doEvict(envelope);
-            // 标准范式②：成功登记 received_event
-            idempotencyService.recordProcessed(record);
-        } catch (RuntimeException e) {
-            // 标准范式③：释放前置键 + FAILED 留痕（不遮蔽 e），上抛交容器有界重试耗尽进 fy.dlx
-            idempotencyService.settleFailure(record, e);
-            throw e;
-        }
+        consumerSupport.consume(message, this::doEvict);
     }
 
     /**
