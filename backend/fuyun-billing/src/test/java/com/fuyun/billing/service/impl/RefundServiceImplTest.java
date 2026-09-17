@@ -1,0 +1,644 @@
+package com.fuyun.billing.service.impl;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.billing.api.BillingErrorCode;
+import com.fuyun.billing.api.RefundApprovedPayload;
+import com.fuyun.billing.dto.RefundApplyRequest;
+import com.fuyun.billing.dto.RefundLine;
+import com.fuyun.billing.entity.FeeRecord;
+import com.fuyun.billing.entity.RefundFeeLink;
+import com.fuyun.billing.entity.RefundRequest;
+import com.fuyun.billing.entity.Settlement;
+import com.fuyun.billing.enums.ExecOccupyStatus;
+import com.fuyun.billing.enums.FeeStatus;
+import com.fuyun.billing.enums.PayerType;
+import com.fuyun.billing.enums.RefundStatus;
+import com.fuyun.billing.enums.RefundType;
+import com.fuyun.billing.enums.SettlementStatus;
+import com.fuyun.billing.enums.VisitType;
+import com.fuyun.billing.internal.BillingDomainEvent;
+import com.fuyun.billing.mapper.FeeRecordMapper;
+import com.fuyun.billing.mapper.RefundFeeLinkMapper;
+import com.fuyun.billing.mapper.RefundRequestMapper;
+import com.fuyun.billing.mapper.SettlementMapper;
+import com.fuyun.billing.properties.BillingRefundProperties;
+import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.api.CardAccountLedger;
+import com.fuyun.patient.api.CardTxnRecord;
+import com.fuyun.patient.api.CardTxnType;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
+
+/**
+ * 退费服务单测（资金红线：执行占用硬前置 BILL-1017、超可退拦截 BILL-1021、双人守卫 BILL-1020、
+ * 免审阈值直退与 refund.approved 事件、link 负向台账聚合判态 PART/FULL/REFUNDED 迁移）。
+ */
+@ExtendWith(MockitoExtension.class)
+class RefundServiceImplTest {
+
+    /** 门诊就诊号夹具（与原结算行 visit_id 同源） */
+    private static final String VISIT = "O2026091700001";
+
+    /** 申请人（登录上下文操作者） */
+    private static final String APPLICANT = "cashier-1";
+
+    /** 审批人（双人守卫另一人） */
+    private static final String APPROVER = "supervisor-1";
+
+    @Mock
+    private RefundRequestMapper refundRequestMapper;
+
+    @Mock
+    private SettlementMapper settlementMapper;
+
+    @Mock
+    private FeeRecordMapper feeRecordMapper;
+
+    @Mock
+    private RefundFeeLinkMapper refundFeeLinkMapper;
+
+    @Mock
+    private CardAccountLedger cardAccountLedger;
+
+    @Mock
+    private ApplicationEventPublisher events;
+
+    private RefundServiceImpl service;
+
+    @BeforeAll
+    static void initTableInfo() {
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), RefundRequest.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Settlement.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), FeeRecord.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), RefundFeeLink.class);
+    }
+
+    @BeforeEach
+    void setUp() {
+        service = new RefundServiceImpl(
+                settlementMapper,
+                feeRecordMapper,
+                refundFeeLinkMapper,
+                cardAccountLedger,
+                events,
+                new ObjectMapper(),
+                new BillingRefundProperties(50000L, 200000L));
+        ReflectionTestUtils.setField(service, "baseMapper", refundRequestMapper);
+        ReflectionTestUtils.setField(service, "entityClass", RefundRequest.class);
+    }
+
+    @AfterEach
+    void tearDown() {
+        // ThreadLocal 操作人上下文必须清理，防线程复用串号（与生产过滤器收尾同责）
+        OperatorContextHolder.clear();
+    }
+
+    private Settlement settlement(long id, long totalAmount) {
+        Settlement st = new Settlement();
+        st.setId(id);
+        st.setSettleNo("S" + id);
+        st.setPatientId(7L);
+        st.setVisitId(VISIT);
+        st.setSettleType(VisitType.OUT);
+        st.setPayerType(PayerType.SELF_PAY);
+        st.setTotalAmount(totalAmount);
+        st.setStatus(SettlementStatus.SETTLED);
+        return st;
+    }
+
+    private FeeRecord fee(long id, long unitPrice, long amount, LocalDate billingDate, ExecOccupyStatus occupy) {
+        FeeRecord fee = new FeeRecord();
+        fee.setId(id);
+        fee.setVisitId(VISIT);
+        fee.setSettlementId(900L);
+        fee.setUnitPriceSnapshot(unitPrice);
+        fee.setQuantity(BigDecimal.ONE);
+        fee.setAmount(amount);
+        fee.setBillingDate(billingDate);
+        fee.setExecOccupyStatus(occupy);
+        fee.setStatus(FeeStatus.SETTLED);
+        return fee;
+    }
+
+    private RefundRequest refund(long id, RefundStatus status, String applicant, RefundType type, long amount) {
+        RefundRequest refund = new RefundRequest();
+        refund.setId(id);
+        refund.setRefundNo("R" + id);
+        refund.setSettlementId(900L);
+        refund.setPatientId(7L);
+        refund.setVisitId(VISIT);
+        refund.setRefundType(type);
+        refund.setAmount(amount);
+        refund.setReason("退费理由");
+        refund.setApplicant(applicant);
+        refund.setAutoApproved(false);
+        refund.setStatus(status);
+        return refund;
+    }
+
+    private RefundFeeLink link(long refundId, long feeId, long refundAmount) {
+        RefundFeeLink row = new RefundFeeLink();
+        row.setId(refundAmount * 10 + feeId);
+        row.setRefundId(refundId);
+        row.setFeeId(feeId);
+        row.setRefundQuantity(BigDecimal.ONE);
+        row.setRefundAmount(refundAmount);
+        return row;
+    }
+
+    /** 打桩：insert 回填雪花 id=100（模拟 MP ASSIGN_ID）+ 历史无 APPROVED/EXECUTED 退费单。 */
+    private void stubInsertWithId100AndNoHistory() {
+        when(refundRequestMapper.insert(any(RefundRequest.class))).thenAnswer(inv -> {
+            inv.getArgument(0, RefundRequest.class).setId(100L);
+            return 1;
+        });
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of());
+    }
+
+    @Test
+    @DisplayName("免审直退：当日更正未占用且阈值内 → APPROVED+auto_approved=true+发 refund.approved(auto=true)")
+    void sameDaySmallUnoccupiedRefundAutoApproves() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        long id = service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "当日多收费更正"));
+
+        assertThat(id).isEqualTo(100L);
+        // 数据库写操作断言：申请单落库（免审直退=落库即 APPROVED，审计免审标识置位）
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(captor.capture());
+        RefundRequest row = captor.getValue();
+        assertThat(row.getRefundNo()).startsWith("R");
+        assertThat(row.getStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(row.getAutoApproved()).isTrue();
+        assertThat(row.getRefundType()).isEqualTo(RefundType.DAY_CORRECTION);
+        assertThat(row.getAmount()).isEqualTo(3000L); // 服务端按明细算额（单价快照×数量），不采信前端
+        assertThat(row.getApplicant()).isEqualTo(APPLICANT);
+        assertThat(row.getSettlementId()).isEqualTo(900L);
+        assertThat(row.getPatientId()).isEqualTo(7L);
+        assertThat(row.getVisitId()).isEqualTo(VISIT);
+        // link 负向台账落表（退费负向表达唯一载体，禁 fee_record 负向行）
+        ArgumentCaptor<RefundFeeLink> linkCaptor = ArgumentCaptor.forClass(RefundFeeLink.class);
+        verify(refundFeeLinkMapper).insert(linkCaptor.capture());
+        assertThat(linkCaptor.getValue().getRefundId()).isEqualTo(100L);
+        assertThat(linkCaptor.getValue().getFeeId()).isEqualTo(1L);
+        assertThat(linkCaptor.getValue().getRefundAmount()).isEqualTo(3000L);
+        // 免审直退同事件承载（CF-4）：autoApproved=true 为审计抽查检索键
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(evt.capture());
+        BillingDomainEvent published = (BillingDomainEvent) evt.getValue();
+        assertThat(published.eventType()).isEqualTo("billing.refund.approved");
+        RefundApprovedPayload payload = (RefundApprovedPayload) published.payload();
+        assertThat(payload.refundId()).isEqualTo(100L);
+        assertThat(payload.refundNo()).isEqualTo(row.getRefundNo());
+        assertThat(payload.settlementId()).isEqualTo(900L);
+        assertThat(payload.patientId()).isEqualTo(7L);
+        assertThat(payload.amount()).isEqualTo(3000L);
+        assertThat(payload.refundType()).isEqualTo("DAY_CORRECTION");
+        assertThat(payload.autoApproved()).isTrue();
+        // 可退聚合 SQL 守卫钉死：状态谓词必须落在 status 列且携带 APPROVED/EXECUTED 两态（防漏历史已退）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundRequestMapper).selectList(statusCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> statusWrapper = (LambdaQueryWrapper<RefundRequest>) statusCaptor.getValue();
+        assertThat(statusWrapper.getSqlSegment()).contains("status");
+        assertThat(statusWrapper.getParamNameValuePairs().values())
+                .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
+    }
+
+    @Test
+    @DisplayName("跨日退费：任一费用行计费日早于今日 → PENDING_APPROVAL 进审批、不自动、不发事件")
+    void crossDayRefundRequiresApproval() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        when(feeRecordMapper.selectById(1L))
+                .thenReturn(fee(1L, 3000L, 3000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日退费"));
+
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(captor.capture());
+        RefundRequest row = captor.getValue();
+        assertThat(row.getStatus()).isEqualTo(RefundStatus.PENDING_APPROVAL);
+        assertThat(row.getAutoApproved()).isFalse();
+        assertThat(row.getRefundType()).isEqualTo(RefundType.CROSS_DAY);
+        verifyNoInteractions(events); // 非免审直退不发 refund.approved（事件归 approve 发布点）
+    }
+
+    @Test
+    @DisplayName("医保结算退费分级：医保 payer 当日小额也判 SETTLED_REFUND 须审批（医保撤销联动前置口径）")
+    void insuranceSettledRefundRequiresApproval() {
+        OperatorContextHolder.set(APPLICANT);
+        Settlement cityIns = settlement(900L, 3000L);
+        cityIns.setPayerType(PayerType.CITY_INS);
+        when(settlementMapper.selectById(900L)).thenReturn(cityIns);
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退费"));
+
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(captor.capture());
+        assertThat(captor.getValue().getRefundType()).isEqualTo(RefundType.SETTLED_REFUND);
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.PENDING_APPROVAL);
+        assertThat(captor.getValue().getAutoApproved()).isFalse();
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("执行占用硬前置：费用行已发药（DISPENSED）→ BILL-1017 拒，申请单与 link 零落库")
+    void executeOccupiedFeeBlockedAsBill1017() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        when(feeRecordMapper.selectById(1L))
+                .thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.DISPENSED));
+
+        assertThatThrownBy(() -> service.apply(
+                        new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "已发药误退")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_BLOCKED_BY_EXEC_OCCUPY));
+        // 占用即拒：禁「只退钱不退业务」，申请单/link/事件零触碰
+        verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
+        verify(refundFeeLinkMapper, never()).insert(any(RefundFeeLink.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("超可退拦截：历史已退 2000+本次 2000 > 费用行 3000 → BILL-1021（含历史已退聚合）")
+    void refundAmountExceedsRemainingBlocked() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 1000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        // 历史已退：APPROVED 态退费单 101 已退 2000 分
+        RefundRequest history = refund(101L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 2000L);
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(history));
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(101L, 1L, 2000L)));
+
+        assertThatThrownBy(() -> service.apply(
+                        new RefundApplyRequest(900L, List.of(new RefundLine(1L, new BigDecimal("2"))), "超可退")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_AMOUNT_EXCEEDED));
+        verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
+        verify(refundFeeLinkMapper, never()).insert(any(RefundFeeLink.class));
+        // 已退聚合 SQL 守卫钉死：link 查询谓词落在 fee_id 列且携带本费用行 id（防跨行串账）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundFeeLinkMapper).selectList(linkCaptor.capture());
+        LambdaQueryWrapper<RefundFeeLink> linkWrapper = (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getValue();
+        assertThat(linkWrapper.getSqlSegment()).contains("fee_id");
+        assertThat(linkWrapper.getParamNameValuePairs().values()).contains(1L, 101L);
+    }
+
+    @Test
+    @DisplayName("缺登录上下文：无操作者不可追溯 → BILL-1012 拒（红线 3 退侧同款，资金动作零触碰）")
+    void applyRejectsMissingOperatorContextAsBill1012() {
+        // 不设置 OperatorContextHolder：模拟无登录上下文请求
+        assertThatThrownBy(() ->
+                        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.MANUAL_CHARGE_CONTEXT_MISSING));
+        verifyNoInteractions(settlementMapper, feeRecordMapper, events);
+    }
+
+    @Test
+    @DisplayName("缺原结算单：settlementId 无命中 → BILL-1014 拒（404，禁对幽灵结算单退费）")
+    void applyRejectsMissingSettlementAsBill1014() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(null);
+
+        assertThatThrownBy(() ->
+                        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.SETTLEMENT_NOT_FOUND));
+        verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
+    }
+
+    @Test
+    @DisplayName("缺费用行：link 引用费用不存在（脏数据）→ BILL-1010 拒（禁静默跳过半截退费）")
+    void applyRejectsMissingFeeAsBill1010() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        when(feeRecordMapper.selectById(1L)).thenReturn(null);
+
+        assertThatThrownBy(() ->
+                        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.FEE_NOT_FOUND));
+        verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
+    }
+
+    @Test
+    @DisplayName("双人守卫：审批人=申请人 → BILL-1020 拒（等保三级分权），状态与事件零触碰")
+    void approveRejectsSelfApprovalAsBill1020() {
+        OperatorContextHolder.set(APPLICANT);
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 3000L));
+
+        assertThatThrownBy(() -> service.approve(100L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_SELF_APPROVAL_FORBIDDEN));
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("审批通过：非自审 → APPROVED 迁移+审批人留痕+发 refund.approved(auto=false)")
+    void approvePublishsRefundApprovedEvent() {
+        OperatorContextHolder.set(APPROVER);
+        RefundRequest pending = refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 8000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+
+        service.approve(100L);
+
+        // 数据库写操作断言：状态迁移 + 审批人/时刻留痕（同事务）
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(captor.getValue().getApprover()).isEqualTo(APPROVER);
+        assertThat(captor.getValue().getApprovedAt()).isNotNull();
+        // 事件断言：审批通过事件 autoApproved=false（与免审直退 true 区分，审计抽查检索键）
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(evt.capture());
+        BillingDomainEvent published = (BillingDomainEvent) evt.getValue();
+        assertThat(published.eventType()).isEqualTo("billing.refund.approved");
+        RefundApprovedPayload payload = (RefundApprovedPayload) published.payload();
+        assertThat(payload.refundId()).isEqualTo(100L);
+        assertThat(payload.refundNo()).isEqualTo("R100");
+        assertThat(payload.settlementId()).isEqualTo(900L);
+        assertThat(payload.patientId()).isEqualTo(7L);
+        assertThat(payload.amount()).isEqualTo(8000L);
+        assertThat(payload.refundType()).isEqualTo("CROSS_DAY");
+        assertThat(payload.autoApproved()).isFalse();
+    }
+
+    @Test
+    @DisplayName("审批缺单：id 无命中 → BILL-1018 拒（404）")
+    void approveRejectsMissingRefundAsBill1018() {
+        OperatorContextHolder.set(APPROVER);
+        when(refundRequestMapper.selectById(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.approve(404L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_NOT_FOUND));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("审批状态守卫：非 PENDING_APPROVAL（免审直退行重复批）→ BILL-1019 拒（409）")
+    void approveRejectsNonPendingStateAsBill1019() {
+        OperatorContextHolder.set(APPROVER);
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(refund(100L, RefundStatus.EXECUTED, APPLICANT, RefundType.DAY_CORRECTION, 3000L));
+
+        assertThatThrownBy(() -> service.approve(100L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("驳回：PENDING_APPROVAL → REJECTED 终态并留驳回理由")
+    void rejectMovesPendingRefundToRejectedWithReason() {
+        OperatorContextHolder.set(APPROVER);
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 3000L));
+
+        service.reject(100L, "凭证不符，退回补件");
+
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.REJECTED);
+        assertThat(captor.getValue().getRejectReason()).isEqualTo("凭证不符，退回补件");
+        verifyNoInteractions(events); // 驳回不发 refund.approved（CF-4 仅审批通过承载）
+    }
+
+    @Test
+    @DisplayName("驳回缺单：id 无命中 → BILL-1018 拒（404）")
+    void rejectRejectsMissingRefundAsBill1018() {
+        OperatorContextHolder.set(APPROVER);
+        when(refundRequestMapper.selectById(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.reject(404L, "理由"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("驳回状态守卫：非 PENDING_APPROVAL（已执行单不可驳回）→ BILL-1019 拒（409）")
+    void rejectRejectsNonPendingStateAsBill1019() {
+        OperatorContextHolder.set(APPROVER);
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L));
+
+        assertThatThrownBy(() -> service.reject(100L, "理由"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+    }
+
+    @Test
+    @DisplayName("执行退回：CARD_BALANCE 行台账 REFUND 入账回填流水、费用 FULL_REFUND、结算单转 REFUNDED")
+    void executeRefundsCardBalanceAndMarksSettlementRefunded() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 3000L);
+        // payment_details 列形态与 Task 12 写入侧逐字同源：CASH 行 channelRef=null 三键保形
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":1000,\"channelRef\":null},"
+                + "{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"5\"}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 同一 mapper 两处查询（本单 link 清单 / refundedFen 聚合）打桩同值：本单已退=3000 分
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        when(cardAccountLedger.record(any())).thenReturn(777L);
+
+        service.execute(100L);
+
+        // 原路退回·就诊卡侧：channelRef=5 → 台账 REFUND 入账恰一次，金额=退费额、对账键=refundNo
+        verify(cardAccountLedger, times(1)).record(new CardTxnRecord(5L, CardTxnType.REFUND, 3000L, "R100"));
+        // 退费单终态：EXECUTED + 台账流水 id 回填（资金溯源锚）
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+        assertThat(refundCaptor.getValue().getPaymentRefundRef()).isEqualTo("777");
+        // 费用行判态：「既有已退+本次退」≥ 行金额 → FULL_REFUND
+        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
+        verify(feeRecordMapper).updateById(feeCaptor.capture());
+        assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.FULL_REFUND);
+        // 结算单全额退完 → REFUNDED
+        ArgumentCaptor<Settlement> stCaptor = ArgumentCaptor.forClass(Settlement.class);
+        verify(settlementMapper).updateById(stCaptor.capture());
+        assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.REFUNDED);
+        // link 聚合 SQL 守卫钉死：本单 link 清单谓词落在 refund_id 列且携带本单 id
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundFeeLinkMapper, times(3)).selectList(linkCaptor.capture());
+        LambdaQueryWrapper<RefundFeeLink> loopWrapper =
+                (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getAllValues().get(0);
+        assertThat(loopWrapper.getSqlSegment()).contains("refund_id");
+        assertThat(loopWrapper.getParamNameValuePairs().values()).contains(100L);
+        // 已退聚合状态谓词守卫：APPROVED/EXECUTED 两态（本单判定时点 APPROVED 必须计入，剔除即永判不满）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> statusWrapper =
+                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(0);
+        assertThat(statusWrapper.getSqlSegment()).contains("status");
+        assertThat(statusWrapper.getParamNameValuePairs().values())
+                .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
+        // 结算单聚合谓词守卫：settlement_id 等值（防跨结算单串账）
+        LambdaQueryWrapper<RefundRequest> settleWrapper =
+                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
+        assertThat(settleWrapper.getSqlSegment()).contains("settlement_id");
+        assertThat(settleWrapper.getParamNameValuePairs().values()).contains(900L);
+    }
+
+    @Test
+    @DisplayName("部分退：已退合计 < 结算总额 → 费用行 PART/FULL 按行判态、结算单留 SETTLED、纯现金不触台账")
+    void executeKeepsSettlementSettledOnPartialRefund() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 本单仅退费用行 1（3000 分）
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+
+        service.execute(100L);
+
+        // 纯 CASH 支付：payment_details 无 CARD_BALANCE 行 → 台账零触碰、退费单无原路流水
+        verifyNoInteractions(cardAccountLedger);
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+        assertThat(refundCaptor.getValue().getPaymentRefundRef()).isNull();
+        // 费用行 1 全退
+        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
+        verify(feeRecordMapper).updateById(feeCaptor.capture());
+        assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.FULL_REFUND);
+        // 已退 3000 < 结算总额 8000 → 结算单留 SETTLED（部分退不改结算终态）
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
+    }
+
+    @Test
+    @DisplayName("结算聚合空集兜底：结算维度已退集为空（防御分支）→ 0 < 总额留 SETTLED、退费单照常执行")
+    void executeKeepsSettlementSettledWhenSettlementAggregateEmpty() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
+        // 第一次查询（refundedFen 行维度）命中本单；第二次（totalRefundedFen 结算维度）空集 → 聚合 0 分
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved), List.of());
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+
+        service.execute(100L);
+
+        // 已退聚合 0 < 结算总额 8000 → 结算单留 SETTLED（部分退不改结算终态）
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+    }
+
+    @Test
+    @DisplayName("支付明细解析失败：落库文本破损 → IllegalStateException 显式暴露（禁静默跳过退回）")
+    void executeRejectsCorruptPaymentDetailsAsIllegalState() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 3000L);
+        st.setPaymentDetails("broken-json");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+
+        assertThatThrownBy(() -> service.execute(100L)).isInstanceOf(IllegalStateException.class);
+        // 数据不一致即停：不退钱、不改态（事务回滚由调用方语义保证）
+        verifyNoInteractions(cardAccountLedger);
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
+    }
+
+    @Test
+    @DisplayName("执行状态守卫：非 APPROVED（待审批单不可执行）→ BILL-1019 拒（409），资金零触碰")
+    void executeRejectsNonApprovedStateAsBill1019() {
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 3000L));
+
+        assertThatThrownBy(() -> service.execute(100L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
+        verifyNoInteractions(settlementMapper, cardAccountLedger, events);
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+    }
+
+    @Test
+    @DisplayName("执行缺单：id 无命中 → BILL-1018 拒（404）")
+    void executeRejectsMissingRefundAsBill1018() {
+        when(refundRequestMapper.selectById(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.execute(404L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("退费分页查询：status 可空=全部、id 升序稳定排序（wrapper 守卫钉死）")
+    void pageReturnsRefundsWithOptionalStatusFilter() {
+        RefundRequest row = refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 3000L);
+        when(refundRequestMapper.selectPage(any(), any())).thenAnswer(inv -> {
+            Page<RefundRequest> page = inv.getArgument(0);
+            page.setRecords(List.of(row));
+            page.setTotal(1);
+            return page;
+        });
+
+        PageResult<RefundRequest> result = service.page(RefundStatus.PENDING_APPROVAL, 0, 20);
+
+        assertThat(result.page()).isZero(); // 0 基分页契约原样回显
+        assertThat(result.size()).isEqualTo(20);
+        assertThat(result.total()).isEqualTo(1);
+        assertThat(result.content()).hasSize(1);
+        // 查询 SQL 守卫钉死：等值条件落在 status 列且携带请求状态、排序为 id 升序（A.4.3-17）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundRequest>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundRequestMapper).selectPage(any(), wrapperCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> wrapper = (LambdaQueryWrapper<RefundRequest>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("status").containsIgnoringCase("ORDER BY");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(RefundStatus.PENDING_APPROVAL);
+    }
+}
