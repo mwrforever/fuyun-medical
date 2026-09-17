@@ -2,7 +2,6 @@ package com.fuyun.common.messaging;
 
 import java.nio.charset.StandardCharsets;
 import java.util.function.Consumer;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 
 /**
@@ -16,7 +15,6 @@ import org.springframework.amqp.core.Message;
  *
  * <p>线程安全：无状态，Spring singleton 安全。
  */
-@Slf4j
 public class IdempotentConsumerSupport {
 
     private final MessageIdempotencyService idempotencyService;

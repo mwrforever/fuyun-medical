@@ -1,7 +1,6 @@
 package com.fuyun.patient.internal;
 
 import com.fuyun.common.messaging.DomainEventSender;
-import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.event.TransactionPhase;
@@ -18,7 +17,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
  * <p>确认回调归属：模板类红线——全系统单槽位回调由 SystemEventPublisher 统一持有
  * （TASK.md W-11），本发布器不注册。归 internal/，Bean 注册点 PatientMessagingConfig @Import。
  */
-@Slf4j
 public class PatientEventPublisher {
 
     /** traceId MDC 键（与 fuyun.trace.mdc-key 一致，镜像锚点见 BillingMessagingConstants 同款注释） */
