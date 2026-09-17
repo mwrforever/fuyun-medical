@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.billing.api.BillingErrorCode;
@@ -73,6 +76,21 @@ class PricingRuleServiceImplTest {
 
         assertThat(service.activeByTrigger(TriggerType.ORDER_CONFIRMED)).isSameAs(rule);
         assertThat(service.activeByTrigger(TriggerType.ORDER_CONFIRMED)).isNull();
+
+        // 查询 SQL 守卫钉死（Important 修复）：必须限定 trigger_type 且携带 status=ACTIVE 等值参数、
+        // LIMIT 1 防多规则行放大——删任一过滤即 INACTIVE 规则参与计价，禁被静默删除
+        ArgumentCaptor<Wrapper<PricingRule>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(pricingRuleMapper, times(2)).selectOne(wrapperCaptor.capture());
+        for (Wrapper<PricingRule> captured : wrapperCaptor.getAllValues()) {
+            LambdaQueryWrapper<PricingRule> wrapper = (LambdaQueryWrapper<PricingRule>) captured;
+            // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（integration 同款）
+            assertThat(wrapper.getSqlSegment())
+                    .contains("trigger_type")
+                    .contains("status")
+                    .contains("LIMIT 1");
+            assertThat(wrapper.getParamNameValuePairs().values())
+                    .contains(TriggerType.ORDER_CONFIRMED, ItemStatus.ACTIVE);
+        }
     }
 
     @Test
@@ -113,6 +131,15 @@ class PricingRuleServiceImplTest {
         verify(pricingRuleMapper).updateById(updated.capture());
         assertThat(updated.getValue().getId()).isEqualTo(5L);
         assertThat(updated.getValue().getItemScope()).isEqualTo("{\"itemIds\":[9]}");
+
+        // 查重 SQL 守卫钉死：两次登记均按 rule_code 等值查询（uk 兜底前置，防查重条件被静默删除）
+        ArgumentCaptor<Wrapper<PricingRule>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(pricingRuleMapper, times(2)).selectOne(wrapperCaptor.capture());
+        for (Wrapper<PricingRule> captured : wrapperCaptor.getAllValues()) {
+            LambdaQueryWrapper<PricingRule> wrapper = (LambdaQueryWrapper<PricingRule>) captured;
+            assertThat(wrapper.getSqlSegment()).contains("rule_code");
+            assertThat(wrapper.getParamNameValuePairs().values()).contains("R-001");
+        }
     }
 
     @Test

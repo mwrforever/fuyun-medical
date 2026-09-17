@@ -3,10 +3,13 @@ package com.fuyun.billing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.billing.dto.InsuranceMappingUpsertRequest;
 import com.fuyun.billing.entity.InsuranceMapping;
@@ -77,6 +80,17 @@ class InsuranceMappingServiceImplTest {
 
         assertThat(service.effectiveMapping(5L)).isSameAs(active);
         assertThat(service.effectiveMapping(5L)).isNull();
+
+        // 查询 SQL 守卫钉死（Important 修复）：必须限定 charge_item_id 且携带 status=ACTIVE 等值参数——
+        // ACTIVE 过滤是 Task 10 取价快照与 Task 12 贯标硬校验（BILL-1006）的数据前提，禁被静默删除
+        ArgumentCaptor<Wrapper<InsuranceMapping>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(insuranceMappingMapper, times(2)).selectOne(wrapperCaptor.capture());
+        for (Wrapper<InsuranceMapping> captured : wrapperCaptor.getAllValues()) {
+            LambdaQueryWrapper<InsuranceMapping> wrapper = (LambdaQueryWrapper<InsuranceMapping>) captured;
+            // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（integration 同款）
+            assertThat(wrapper.getSqlSegment()).contains("charge_item_id").contains("status");
+            assertThat(wrapper.getParamNameValuePairs().values()).contains(5L, MappingStatus.ACTIVE);
+        }
     }
 
     @Test

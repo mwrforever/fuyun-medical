@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.dto.ChargeItemCreateRequest;
@@ -48,6 +51,9 @@ class ChargeItemServiceImplTest {
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), ChargeItem.class);
+        // 组合成员 wrapper 断言（combo_item_id 列解析）依赖本实体 TableInfo，与主表一并初始化
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), ChargeItemComponent.class);
     }
 
     @BeforeEach
@@ -55,6 +61,13 @@ class ChargeItemServiceImplTest {
         service = new ChargeItemServiceImpl(componentMapper);
         ReflectionTestUtils.setField(service, "baseMapper", chargeItemMapper);
         ReflectionTestUtils.setField(service, "entityClass", ChargeItem.class);
+    }
+
+    /** 取捕获的查询 wrapper 并渲染 SQL 片段（MP 条件参数在 getSqlSegment 惰性求值时才写入参数表） */
+    private LambdaQueryWrapper<ChargeItem> rendered(Wrapper<ChargeItem> captured) {
+        LambdaQueryWrapper<ChargeItem> wrapper = (LambdaQueryWrapper<ChargeItem>) captured;
+        wrapper.getSqlSegment();
+        return wrapper;
     }
 
     private ChargeItemCreateRequest req(String code) {
@@ -90,6 +103,12 @@ class ChargeItemServiceImplTest {
         assertThatThrownBy(() -> service.createChargeItem(req("C001")))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.CHARGE_ITEM_CODE_EXISTS));
+        // 查重 SQL 守卫钉死：等值条件必须落在 item_code 列且携带本次编码（防查重条件被静默删除）
+        ArgumentCaptor<Wrapper<ChargeItem>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(chargeItemMapper).selectOne(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItem> wrapper = rendered(wrapperCaptor.getValue());
+        assertThat(wrapper.getSqlSegment()).contains("item_code");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("C001");
         verify(chargeItemMapper, never()).insert(any(ChargeItem.class));
     }
 
@@ -123,6 +142,13 @@ class ChargeItemServiceImplTest {
         when(chargeItemMapper.selectOne(any())).thenReturn(active);
 
         assertThat(service.requireActiveByCode("C001")).isSameAs(active);
+
+        // 取项 SQL 守卫钉死：必须按 item_code 等值查询（Task 11 引擎取项入口防静默改全表取首行）
+        ArgumentCaptor<Wrapper<ChargeItem>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(chargeItemMapper).selectOne(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItem> wrapper = rendered(wrapperCaptor.getValue());
+        assertThat(wrapper.getSqlSegment()).contains("item_code");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("C001");
     }
 
     @Test
@@ -138,6 +164,12 @@ class ChargeItemServiceImplTest {
         assertThatThrownBy(() -> service.requireActiveByCode("C002"))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.CHARGE_ITEM_NOT_FOUND));
+        // 两次取项均按 item_code 等值过滤（INACTIVE/缺项守卫建立在按码命中的前提上）
+        ArgumentCaptor<Wrapper<ChargeItem>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(chargeItemMapper, times(2)).selectOne(wrapperCaptor.capture());
+        for (Wrapper<ChargeItem> captured : wrapperCaptor.getAllValues()) {
+            assertThat(rendered(captured).getSqlSegment()).contains("item_code");
+        }
     }
 
     @Test
@@ -159,7 +191,14 @@ class ChargeItemServiceImplTest {
         service.saveComboComponents(9L, members);
 
         // 全量覆盖式落成员：先逻辑删旧成员，再逐成员插入
-        verify(componentMapper).delete(any());
+        // 删旧 SQL 守卫钉死：delete 必须限定 combo_item_id=本次组合（防删旧条件被静默删除放大为全表逻辑删）
+        ArgumentCaptor<Wrapper<ChargeItemComponent>> deleteCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(componentMapper).delete(deleteCaptor.capture());
+        LambdaQueryWrapper<ChargeItemComponent> deleteWrapper =
+                (LambdaQueryWrapper<ChargeItemComponent>) deleteCaptor.getValue();
+        // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（模块内既有同款）
+        assertThat(deleteWrapper.getSqlSegment()).contains("combo_item_id");
+        assertThat(deleteWrapper.getParamNameValuePairs().values()).contains(9L);
         ArgumentCaptor<ChargeItemComponent> captor = ArgumentCaptor.forClass(ChargeItemComponent.class);
         verify(componentMapper).insert(captor.capture());
         assertThat(captor.getValue().getComboItemId()).isEqualTo(9L);
@@ -179,5 +218,13 @@ class ChargeItemServiceImplTest {
         when(componentMapper.selectList(any())).thenReturn(List.of(first, second));
 
         assertThat(service.listComponents(9L)).containsExactly(first, second);
+
+        // 展开查询 SQL 守卫钉死：必须限定 combo_item_id=本次组合（防全量拉取误当成员清单）
+        ArgumentCaptor<Wrapper<ChargeItemComponent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(componentMapper).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItemComponent> wrapper =
+                (LambdaQueryWrapper<ChargeItemComponent>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("combo_item_id");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(9L);
     }
 }
