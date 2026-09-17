@@ -25,3 +25,10 @@ management:
   endpoint:
     health:
       show-details: always      # test 排障便利：健康明细全暴露
+# M02 患者域字段加密密钥（test 兜底合成值：仅测试上下文启动用，非生产密钥，先记于 CHANGELOG 红线不含真实凭据）
+# Task 14 装配后该组属性是 fuyun-app 全部 IT 上下文启动前置；EmpiGovernanceIT 的 @DynamicPropertySource 可继续覆写
+fuyun:
+  patient:
+    crypto:
+      data-key: ce714e506dc0737927b2ed726f66a9f24cfdfdfee47c3992c2ec3bd2b66b7cba
+      mac-key: 17062cfcde2eff5196246bf128169cce6fa9fdf98096aaabb70711dfd4938f6b

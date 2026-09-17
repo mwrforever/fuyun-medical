@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-2 Task 18 全量门禁暴露的装配完整性缺口修复（先记再改）
+
+- **问题一（上下文启动前置缺键）**：Task 14 将 `PatientConfig` @Import 接入 fuyun-app 后，
+  `PatientCryptoProperties`（prefix=`fuyun.patient.crypto`，@NotBlank fail-fast）成为 fuyun-app 全部
+  app 层 Spring 上下文启动前置；test profile 无该组键 → 绑定失败 → context refresh 取消 → 同 JVM 内
+  后续 IT 级联失败（仅自带 @DynamicPropertySource 的 EmpiGovernanceIT 独活）。
+- **修复一**：`fuyun-app/src/main/resources/application-test.yml` 追加 `fuyun.patient.crypto.data-key` /
+  `mac-key` 兜底合成值（随机 64 位 hex，仅供测试上下文启动，与 EmpiGovernanceIT 常量互异，
+  **非生产密钥、不触碰「禁提交真实凭据」红线**；@DynamicPropertySource 优先级更高可继续覆写）。
+- **问题二（冻结总量口径漂移）**：V105 患者域八事件种子（id 9–16）随 Task 14 装配进入 fuyun-app IT 库，
+  `event_registry` 总量 8→16，`MessagingGovernanceIT.seedRegistryRowsAreFrozenAndActive` 旧总量断言失效。
+- **修复二**：该断言总量口径更新为 16（V5 七条 + V403 一条 + V105 八条，注释同步）；属本次改动导致的
+  旧测试失效，按全局规范 §四 同步更新而非删除或跳过。
+
 ## 2026-09-17 · P1 PR-2 Task 17 配套：openapi 契约生成物 Prettier 排除清单（机制修订）
 
 - **问题**：Task 16（2671324）gen:api 首跑后，生成物 `web/packages/shared/src/api.d.ts`（openapi-typescript
