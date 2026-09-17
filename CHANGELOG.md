@@ -2,6 +2,16 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-3：openapi int64 生成契约根治为 string（D-18 裁决方向②，机制修订·先记再改）
+
+- **问题**：openapi-typescript 7.13.0 按 `format:int64` 生成 number，与后端 Jackson 全局
+  Long→String 运行时输出及 web 宪法 A.3-6「Long 一律 string 承载」红线漂移（D-18）。
+- **裁决落地**：fuyun-app 新增 `OpenApiSchemaConfig` 注册 springdoc ModelConverter，
+  int64 数值 schema 一律覆写为 type=string（无 format）——契约与运行时单口径，前端
+  `String()` 兜底不再是正确性依赖；PageResult.total 手写声明（string）与生成物自此同源。
+- **影响**：api.d.ts 全量重生成（int64 字段 number→string），前端五连复验；真实医保/HRP 等
+  外部对接不消费本生成物，无外部契约影响。
+
 ## 2026-09-17 · P1 PR-3 M13 收费物价与医保基线：billing 号段登记与门禁适配（先记再改）
 
 - **号段登记**：billing 域占用固定百位段 **V600–V699**（宪法 A.4.1-2「每模块固定百位段」；

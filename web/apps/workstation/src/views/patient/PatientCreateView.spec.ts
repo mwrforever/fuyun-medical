@@ -6,7 +6,6 @@ import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElFormItem, ElSelect } from 'element-plus';
 import { createPatient, matchCheck } from '@/api/patient';
-import type { MatchCheckVO } from '@/api/patient';
 import PatientCreateView from './PatientCreateView.vue';
 
 // useRouter 替身：建档成功后的跳转以 push spy 断言
@@ -90,11 +89,11 @@ describe('患者建档页', () => {
 
   it('建档成功跳转患者详情页（candidatePatientId 即档案 id）', async () => {
     // 后端 Long→String 全局序列化：运行时 candidatePatientId 为雪花 ID 字符串
-    // （生成契约 int64 标注为 number 与运行时存在漂移，页面以 String() 兜底消费）
+    // （D-18 根治后生成契约同为 string，与运行时单口径，无需类型断言强转）
     vi.mocked(createPatient).mockResolvedValue({
       outcome: 'NO_MATCH',
       candidatePatientId: '1932000000000000001',
-    } as unknown as MatchCheckVO);
+    });
     const wrapper = mount(PatientCreateView);
     await fillRequired(wrapper, true);
 

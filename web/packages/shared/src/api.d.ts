@@ -844,8 +844,8 @@ export interface components {
             accepted?: boolean;
         };
         PracticeCheckRequest: {
-            /** Format: int64 */
-            employeeId: number;
+            /** @example 0 */
+            employeeId: string;
             grantType: string;
             /** Format: date-time */
             checkTime?: string;
@@ -879,8 +879,8 @@ export interface components {
             remark?: string;
         };
         DictTypeVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             typeCode?: string;
             typeName?: string;
             nationalStandard?: boolean;
@@ -903,17 +903,17 @@ export interface components {
             accessToken?: string;
             refreshToken?: string;
             tokenType?: string;
-            /** Format: int64 */
-            expiresIn?: number;
+            /** @example 0 */
+            expiresIn?: string;
             user?: components["schemas"]["UserVO"];
         };
         UserVO: {
-            /** Format: int64 */
-            userId?: number;
+            /** @example 0 */
+            userId?: string;
             loginName?: string;
             displayName?: string;
-            /** Format: int64 */
-            orgId?: number;
+            /** @example 0 */
+            orgId?: string;
             roles?: string[];
         };
         LoginRequest: {
@@ -921,21 +921,21 @@ export interface components {
             password: string;
         };
         UnmaskRequest: {
-            /** Format: int64 */
-            patientId: number;
+            /** @example 0 */
+            patientId: string;
             fields: string[];
             purpose: string;
         };
         UnmaskVO: {
-            /** Format: int64 */
-            patientId?: number;
+            /** @example 0 */
+            patientId?: string;
             values?: {
                 [key: string]: string;
             };
         };
         PrivacyAuthCreateRequest: {
-            /** Format: int64 */
-            patientId: number;
+            /** @example 0 */
+            patientId: string;
             authType: string;
             authBasis: string;
             scope?: string;
@@ -943,10 +943,10 @@ export interface components {
             validToIso?: string;
         };
         PrivacyAuthVO: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: int64 */
-            patientId?: number;
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            patientId?: string;
             authType?: string;
             authBasis?: string;
             scope?: string;
@@ -979,8 +979,8 @@ export interface components {
         };
         PatientMatchCheckVO: {
             outcome?: string;
-            /** Format: int64 */
-            candidatePatientId?: number;
+            /** @example 0 */
+            candidatePatientId?: string;
             score?: number;
             matchedRules?: string[];
         };
@@ -990,8 +990,8 @@ export interface components {
             cardNo?: string;
         };
         IdentifierVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             identifierType?: string;
             cardNo?: string;
             status?: string;
@@ -1011,8 +1011,8 @@ export interface components {
             note?: string;
         };
         HealthItemVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             itemType?: string;
             itemCode?: string;
             itemName?: string;
@@ -1022,8 +1022,8 @@ export interface components {
             status?: string;
             source?: string;
             note?: string;
-            /** Format: int64 */
-            correctOfItemId?: number;
+            /** @example 0 */
+            correctOfItemId?: string;
         };
         FreezeRequest: {
             reason: string;
@@ -1036,21 +1036,21 @@ export interface components {
             mobile?: string;
         };
         MergeCreateRequest: {
-            /** Format: int64 */
-            survivorPatientId: number;
-            /** Format: int64 */
-            mergedPatientId: number;
+            /** @example 0 */
+            survivorPatientId: string;
+            /** @example 0 */
+            mergedPatientId: string;
             mergeReason: string;
-            /** Format: int64 */
-            possibleDuplicateId?: number;
+            /** @example 0 */
+            possibleDuplicateId?: string;
         };
         MergeRecordVO: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: int64 */
-            survivorPatientId?: number;
-            /** Format: int64 */
-            mergedPatientId?: number;
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            survivorPatientId?: string;
+            /** @example 0 */
+            mergedPatientId?: string;
             mergeReason?: string;
             status?: string;
             operator?: string;
@@ -1066,10 +1066,10 @@ export interface components {
             identifierValue: string;
         };
         ResolveVO: {
-            /** Format: int64 */
-            patientId?: number;
-            /** Format: int64 */
-            resolvedPatientId?: number;
+            /** @example 0 */
+            patientId?: string;
+            /** @example 0 */
+            resolvedPatientId?: string;
             status?: string;
             blocked?: boolean;
             blockReason?: string;
@@ -1086,10 +1086,10 @@ export interface components {
             newCardNo: string;
         };
         CardVO: {
-            /** Format: int64 */
-            identifierId?: number;
-            /** Format: int64 */
-            patientId?: number;
+            /** @example 0 */
+            identifierId?: string;
+            /** @example 0 */
+            patientId?: string;
             cardNo?: string;
             status?: string;
             /** Format: date-time */
@@ -1098,14 +1098,14 @@ export interface components {
             unboundAt?: string;
         };
         CardIssueRequest: {
-            /** Format: int64 */
-            patientId: number;
+            /** @example 0 */
+            patientId: string;
             cardNo: string;
         };
         CardBindRequest: {
             cardNo: string;
-            /** Format: int64 */
-            patientId: number;
+            /** @example 0 */
+            patientId: string;
         };
         MdmSubscriptionCreateRequest: {
             topic: string;
@@ -1113,13 +1113,13 @@ export interface components {
             syncMode: string;
         };
         MdmSubscriptionVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             topic?: string;
             subscriberModule?: string;
             syncMode?: string;
-            /** Format: int64 */
-            lastVersion?: number;
+            /** @example 0 */
+            lastVersion?: string;
             /** Format: date-time */
             lastSyncAt?: string;
             /** Format: date-time */
@@ -1127,8 +1127,8 @@ export interface components {
             reconStatus?: string;
         };
         DeadLetterDetailVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             sourceQueue?: string;
             routingKey?: string;
             eventType?: string;
@@ -1151,19 +1151,19 @@ export interface components {
         };
         PageResultPrivacyAccessLogVO: {
             content?: components["schemas"]["PrivacyAccessLogVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         PrivacyAccessLogVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             operatorId?: string;
-            /** Format: int64 */
-            patientId?: number;
+            /** @example 0 */
+            patientId?: string;
             accessType?: string;
             purpose?: string;
             fields?: string;
@@ -1173,22 +1173,22 @@ export interface components {
         };
         PageResultPossibleDuplicateVO: {
             content?: components["schemas"]["PossibleDuplicateVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         PossibleDuplicateVO: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: int64 */
-            patientIdA?: number;
-            /** Format: int64 */
-            patientIdB?: number;
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            patientIdA?: string;
+            /** @example 0 */
+            patientIdB?: string;
             matchScore?: number;
-            matchedRules?: string;
+            matchedRules?: string[];
             source?: string;
             status?: string;
             reviewedBy?: string;
@@ -1199,8 +1199,8 @@ export interface components {
             createdAt?: string;
         };
         PatientVO: {
-            /** Format: int64 */
-            patientId?: number;
+            /** @example 0 */
+            patientId?: string;
             name?: string;
             sex?: string;
             /** Format: date */
@@ -1209,8 +1209,8 @@ export interface components {
             mobile?: string;
             address?: string;
             status?: string;
-            /** Format: int64 */
-            mergedIntoPatientId?: number;
+            /** @example 0 */
+            mergedIntoPatientId?: string;
             realNameFlag?: boolean;
             registerChannel?: string;
             archiveSource?: string;
@@ -1218,8 +1218,8 @@ export interface components {
             createdAt?: string;
         };
         HealthSummaryVO: {
-            /** Format: int64 */
-            patientId?: number;
+            /** @example 0 */
+            patientId?: string;
             bloodType?: string;
             rhType?: string;
             pastHistory?: string;
@@ -1230,20 +1230,20 @@ export interface components {
         };
         PageResultPatientVO: {
             content?: components["schemas"]["PatientVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         CardAccountVO: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: int64 */
-            patientId?: number;
-            /** Format: int64 */
-            balance?: number;
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** @example 0 */
+            balance?: string;
             status?: string;
             /** Format: date-time */
             openedAt?: string;
@@ -1251,38 +1251,38 @@ export interface components {
             closedAt?: string;
         };
         CardTxnVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             txnType?: string;
-            /** Format: int64 */
-            amount?: number;
-            /** Format: int64 */
-            balanceAfter?: number;
+            /** @example 0 */
+            amount?: string;
+            /** @example 0 */
+            balanceAfter?: string;
             bizRef?: string;
             /** Format: date-time */
             occurredAt?: string;
         };
         PageResultCardTxnVO: {
             content?: components["schemas"]["CardTxnVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         PageResultReceivedEventVO: {
             content?: components["schemas"]["ReceivedEventVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         ReceivedEventVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             /** Format: uuid */
             eventId?: string;
             eventType?: string;
@@ -1301,16 +1301,16 @@ export interface components {
         };
         PageResultMdmSubscriptionVO: {
             content?: components["schemas"]["MdmSubscriptionVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         EventRegistryVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             eventType?: string;
             producerModule?: string;
             payloadDesc?: string;
@@ -1321,12 +1321,12 @@ export interface components {
         };
         PageResultEventRegistryVO: {
             content?: components["schemas"]["EventRegistryVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         EventPublicationVO: {
             /** Format: uuid */
@@ -1341,16 +1341,16 @@ export interface components {
         };
         PageResultEventPublicationVO: {
             content?: components["schemas"]["EventPublicationVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         DeadLetterVO: {
-            /** Format: int64 */
-            id?: number;
+            /** @example 0 */
+            id?: string;
             sourceQueue?: string;
             routingKey?: string;
             eventType?: string;
@@ -1370,12 +1370,12 @@ export interface components {
         };
         PageResultDeadLetterVO: {
             content?: components["schemas"]["DeadLetterVO"][];
-            /** Format: int64 */
-            page?: number;
-            /** Format: int64 */
-            size?: number;
-            /** Format: int64 */
-            total?: number;
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
     };
     responses: never;
@@ -1417,7 +1417,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1439,7 +1439,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1515,7 +1515,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                versionId: number;
+                versionId: string;
             };
             cookie?: never;
         };
@@ -1535,7 +1535,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                versionId: number;
+                versionId: string;
             };
             cookie?: never;
         };
@@ -1697,7 +1697,7 @@ export interface operations {
     auths: {
         parameters: {
             query: {
-                patientId: number;
+                patientId: string;
             };
             header?: never;
             path?: never;
@@ -1745,7 +1745,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -1793,7 +1793,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1813,7 +1813,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1835,7 +1835,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1861,7 +1861,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1887,7 +1887,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -1959,7 +1959,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -1981,7 +1981,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2027,7 +2027,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2165,7 +2165,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2185,7 +2185,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2254,7 +2254,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2276,7 +2276,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2344,7 +2344,7 @@ export interface operations {
     accessLogs: {
         parameters: {
             query?: {
-                patientId?: number;
+                patientId?: string;
                 page?: number;
                 size?: number;
             };
@@ -2394,7 +2394,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                patientId: number;
+                patientId: string;
             };
             cookie?: never;
         };
@@ -2462,7 +2462,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2487,7 +2487,7 @@ export interface operations {
             };
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2618,7 +2618,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
@@ -2640,7 +2640,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                id: string;
             };
             cookie?: never;
         };
