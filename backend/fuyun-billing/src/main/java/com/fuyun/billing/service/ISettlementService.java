@@ -20,9 +20,9 @@ public interface ISettlementService extends IService<Settlement> {
      * @param req 预结算请求（patientId/visitId/payerType），组件冻结见接口块
      * @return 结算单草稿（自费 DRAFT / 医保 PRESETTLED 锁价）
      * @throws com.fuyun.common.exception.BizException BILL-1008（409 无待结算费用）/
-     *                 BILL-1006（409 医保 payer 下存在未贯标费用行，随 Task 15 网关分支回填）/
-     *                 BILL-1016（409 勾稽不平，随 Task 15 五拆分勾稽回填）/
-     *                 BILL-1024（医保通道业务失败；网关交付前医保 payer 临时显式拒）
+     *                 BILL-1006（409 医保 payer 下存在未贯标费用行）/
+     *                 BILL-1016（409 医保五拆分勾稽不平）/
+     *                 BILL-1024（502 医保通道业务失败）
      */
     SettlementPreviewVO preview(SettlementPreviewRequest req);
 

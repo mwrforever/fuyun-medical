@@ -11,7 +11,7 @@ import com.fuyun.billing.entity.Settlement;
  * @param patientId         患者主索引
  * @param visitId           CF-3 就诊号
  * @param payerType         支付类型 SELF_PAY/CITY_INS/…
- * @param status            结算状态 DRAFT（自费）/PRESETTLED（医保锁价，随 Task 15 回填）
+ * @param status            结算状态 DRAFT（自费）/PRESETTLED（医保锁价）
  * @param totalAmount       应结总额（分）
  * @param pooledAmount      统筹支付（分，医保回执，自费为 null）
  * @param acctPayAmount     个账支付（分，医保回执，自费为 null）

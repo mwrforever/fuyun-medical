@@ -8,19 +8,25 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.api.SettlementCompletedPayload;
 import com.fuyun.billing.constants.BillingMessagingConstants;
+import com.fuyun.billing.dto.InsurancePreSettleCommand;
+import com.fuyun.billing.dto.InsurancePreSettleResult;
 import com.fuyun.billing.dto.PaymentLine;
 import com.fuyun.billing.dto.SettleRequest;
 import com.fuyun.billing.dto.SettlementPreviewRequest;
 import com.fuyun.billing.entity.FeeRecord;
+import com.fuyun.billing.entity.InsuranceCallLog;
 import com.fuyun.billing.entity.Settlement;
 import com.fuyun.billing.enums.FeeStatus;
+import com.fuyun.billing.enums.InsuranceCallStatus;
 import com.fuyun.billing.enums.PayerType;
 import com.fuyun.billing.enums.PaymentMethod;
 import com.fuyun.billing.enums.SettlementStatus;
 import com.fuyun.billing.enums.VisitType;
+import com.fuyun.billing.gateway.InsuranceGateway;
 import com.fuyun.billing.internal.BillingDomainEvent;
 import com.fuyun.billing.mapper.FeeRecordMapper;
 import com.fuyun.billing.mapper.SettlementMapper;
+import com.fuyun.billing.service.IInsuranceCallLogService;
 import com.fuyun.billing.service.ISettlementService;
 import com.fuyun.billing.vo.SettlementPreviewVO;
 import com.fuyun.billing.vo.SettlementVO;
@@ -33,6 +39,7 @@ import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,18 +55,40 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlement> implements ISettlementService {
 
+    /** traceId MDC 键（与 fuyun.trace.mdc-key 配置一致；BillingEventPublisher/GlobalExceptionHandler 同款镜像锚点，禁散落裸字符串） */
+    private static final String TRACE_ID_MDC_KEY = "traceId";
+
     private final FeeRecordMapper feeRecordMapper;
 
     private final CardAccountLedger cardAccountLedger;
 
     private final ApplicationEventPublisher events;
 
-    /** 全参构造器（InsuranceGateway/IInsuranceCallLogService 两成员随 Task 15 医保分支回填增设）。 */
+    private final InsuranceGateway insuranceGateway;
+
+    private final IInsuranceCallLogService callLogService;
+
+    /**
+     * 全参构造器（装配归 BillingWebConfig @Import；InsuranceGateway/IInsuranceCallLogService 两成员
+     * 系 Task 15 医保分支回填增设）。
+     *
+     * @param feeRecordMapper  费用行 mapper（纳入结算费用清单查询），非空
+     * @param cardAccountLedger 一卡通台账（CARD_BALANCE 支付项 PAY 出账），非空
+     * @param events           应用事件发布器（settlement.completed 事务提交后出 MQ），非空
+     * @param insuranceGateway 医保出站网关（preview 医保分支预结算取回基金拆分；模拟适应器零 IO 事务内直调合规），非空
+     * @param callLogService   医保调用留痕服务（2102 业务级留痕行落库，两级日志之业务级），非空
+     */
     public SettlementServiceImpl(
-            FeeRecordMapper feeRecordMapper, CardAccountLedger cardAccountLedger, ApplicationEventPublisher events) {
+            FeeRecordMapper feeRecordMapper,
+            CardAccountLedger cardAccountLedger,
+            ApplicationEventPublisher events,
+            InsuranceGateway insuranceGateway,
+            IInsuranceCallLogService callLogService) {
         this.feeRecordMapper = feeRecordMapper;
         this.cardAccountLedger = cardAccountLedger;
         this.events = events;
+        this.insuranceGateway = insuranceGateway;
+        this.callLogService = callLogService;
     }
 
     /**
@@ -102,19 +131,44 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
             st.setSelfExpenseAmount(total);
             st.setStatus(SettlementStatus.DRAFT);
         } else {
-            // 医保分支（贯标硬校验 BILL-1006 → InsuranceGateway 预结算取回基金拆分并锁价 → 五拆分
-            //   勾稽 BILL-1016 → insurance_call_log 2102 业务级留痕 → PRESETTLED）随 Task 15 网关
-            //   契约与模拟适应器交付整体回填（brief Step 3b：执行顺序统一 Task 15 先落网关接口骨架）；
-            //   回填前医保 payer 显式拒（502 通道不可用口径），禁产出缺基金拆分的半截结算单
-            // TODO(Task 15): 医保分支回填——InsuranceGateway.preSettle + 五拆分勾稽 + callLogService.record(2102 留痕)
-            log.warn(
-                    "医保通道未接入，预结算显式拒：visit={}，payer={}",
-                    req.visitId(),
-                    req.payerType().getCode());
-            throw new BizException(
-                    BillingErrorCode.INSURANCE_CALL_FAILED,
-                    HttpStatus.BAD_GATEWAY,
-                    "医保通道未接入，暂不支持医保支付类型预结算：" + req.payerType().getCode());
+            // 贯标硬校验（Spec FU-M13-01 红线「无有效对照禁参与医保结算」）：费用行 nhsaCodeSnapshot
+            //   为空=计费时点无 ACTIVE 对照（V601 对照唯一 ACTIVE 语义已冻结进快照列），快照空值即
+            //   未对照，BILL-1006 显式拒——禁未对照项目串入医保基金
+            if (fees.stream().anyMatch(f -> f.getNhsaCodeSnapshot() == null)) {
+                log.warn("医保预结算贯标校验拒绝：visit={}，存在无对照费用行", req.visitId());
+                throw new BizException(
+                        BillingErrorCode.INSURANCE_MAPPING_MISSING,
+                        HttpStatus.CONFLICT,
+                        "存在无有效医保对照（贯标缺失）的费用行，不可参与医保结算");
+            }
+            // 医保：经网关预结算取回基金拆分并锁价。口径统一（2026-09-17 审查裁决，Global Constraints
+            //   事务红线同源）：模拟适应器为进程内纯计算零 IO，preview 事务内直调合规（不触 A.4.2-7
+            //   事务内禁外部调用/MQ 发送）；P5 真实通道改「事务外两段式：先落 insurance_call_log
+            //   (INIT/SENT)→调网关→回填 SUCCESS/FAILED/TIMEOUT」，悬挂补偿随 P5
+            InsurancePreSettleResult split = insuranceGateway.preSettle(toCommand(st, fees));
+            // 五拆分逐列按回执回填（红线 1：本地不自行计算基金拆分，禁以本地估算覆盖回执）
+            st.setPooledAmount(split.pooledAmount());
+            st.setAcctPayAmount(split.acctPayAmount());
+            st.setSelfPayAmount(split.selfPayAmount());
+            st.setSelfExpenseAmount(split.selfExpenseAmount());
+            st.setPreSelfPayAmount(split.preSelfPayAmount());
+            st.setInsSettleNo(split.centerSerialNo());
+            st.setCatalogVersion(split.catalogVersion());
+            // 勾稽：五拆分和=总额（模拟与真实同口径，不平即拒——红线 1，禁产出缺拆分的半截结算单）
+            long splitSum = split.pooledAmount()
+                    + split.acctPayAmount()
+                    + split.selfPayAmount()
+                    + split.selfExpenseAmount()
+                    + split.preSelfPayAmount();
+            if (splitSum != total) {
+                log.warn("医保拆分勾稽不平：settleNo={}，五拆分和={}，应结总额={}", st.getSettleNo(), splitSum, total);
+                throw new BizException(BillingErrorCode.AMOUNT_MISMATCH, HttpStatus.CONFLICT, "医保拆分与应结总额不平");
+            }
+            // 医保业务级留痕（方案 3.2 两级日志之业务级落点）：preview 必落一行 insurance_call_log
+            //   txn_code=2102——模拟即时返回 status=SUCCESS、回执摘要入库前钳 512；P5 真实通道本行
+            //   前移事务外 INIT/SENT、调用后回填（见 Global Constraints 事务红线统一口径）
+            callLogService.record(preSettleCallLog(req.visitId(), total, split));
+            st.setStatus(SettlementStatus.PRESETTLED);
         }
         save(st);
         log.info(
@@ -257,6 +311,62 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
                     HttpStatus.BAD_REQUEST,
                     "就诊卡支付行 channelRef 必须为卡账户 id：" + channelRef);
         }
+    }
+
+    /**
+     * 预结算命令装配（费用行快照列投影 → 网关命令 record，FU-M13-05 冻结组件名）：nhsaCode/
+     * limitPrice/selfPayRatio 取 FeeRecord 快照列同源透传（计费时点快照为准）；幂等键=结算编号
+     * （preview 请求级幂等锚点，模拟通道据此派生确定性中心流水号）。
+     *
+     * @param st   本次预装配结算单（settleNo/visitId 来源；行此刻未落库，settlementDraftId 传 0）
+     * @param fees 纳入结算费用行（PENDING，id 升序）
+     * @return 预结算命令，非空
+     */
+    private static InsurancePreSettleCommand toCommand(Settlement st, List<FeeRecord> fees) {
+        return new InsurancePreSettleCommand(
+                0L,
+                st.getVisitId(),
+                fees.stream()
+                        .map(f -> new InsurancePreSettleCommand.Line(
+                                f.getNhsaCodeSnapshot(),
+                                f.getLimitPriceSnapshot(),
+                                f.getSelfPayRatioSnapshot(),
+                                f.getAmount()))
+                        .toList(),
+                st.getSettleNo());
+    }
+
+    /**
+     * 预结算留痕行装配（txn_code=2102，方案 3.2 两级日志之业务级）：请求摘要="preview|total=总额"，
+     * 应答摘要=模拟回执八组件 JSON（入库前由 record() 统一钳 512）；traceId 取 MDC 可空
+     * （非请求线程为 null）；settlement_id 留空（结算单此刻未落库，红线 5 引用列可空）。
+     *
+     * @param visitId CF-3 就诊号，非空
+     * @param total   应结总额（分）
+     * @param split   网关预结算回执，非空
+     * @return 留痕行（status=SUCCESS、result_code=0000），非空
+     */
+    private static InsuranceCallLog preSettleCallLog(String visitId, long total, InsurancePreSettleResult split) {
+        // 回执摘要 JSON 直组装不经全局 ObjectMapper（toPaymentDetailsJson 同款：免 Long→String 模块改写数值形态）
+        ObjectNode receipt = JsonNodeFactory.instance.objectNode();
+        receipt.put("totalAmount", split.totalAmount());
+        receipt.put("pooledAmount", split.pooledAmount());
+        receipt.put("acctPayAmount", split.acctPayAmount());
+        receipt.put("selfPayAmount", split.selfPayAmount());
+        receipt.put("selfExpenseAmount", split.selfExpenseAmount());
+        receipt.put("preSelfPayAmount", split.preSelfPayAmount());
+        receipt.put("centerSerialNo", split.centerSerialNo());
+        receipt.put("catalogVersion", split.catalogVersion());
+        InsuranceCallLog row = new InsuranceCallLog();
+        row.setTxnCode("2102");
+        row.setVisitId(visitId);
+        row.setRequestDigest("preview|total=" + total);
+        row.setResponseDigest(receipt.toString());
+        row.setCenterSerialNo(split.centerSerialNo());
+        row.setResultCode("0000");
+        row.setStatus(InsuranceCallStatus.SUCCESS);
+        row.setTraceId(MDC.get(TRACE_ID_MDC_KEY));
+        return row;
     }
 
     /**

@@ -15,19 +15,25 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.api.SettlementCompletedPayload;
+import com.fuyun.billing.dto.InsurancePreSettleCommand;
+import com.fuyun.billing.dto.InsurancePreSettleResult;
 import com.fuyun.billing.dto.PaymentLine;
 import com.fuyun.billing.dto.SettleRequest;
 import com.fuyun.billing.dto.SettlementPreviewRequest;
 import com.fuyun.billing.entity.FeeRecord;
+import com.fuyun.billing.entity.InsuranceCallLog;
 import com.fuyun.billing.entity.Settlement;
 import com.fuyun.billing.enums.FeeStatus;
+import com.fuyun.billing.enums.InsuranceCallStatus;
 import com.fuyun.billing.enums.PayerType;
 import com.fuyun.billing.enums.PaymentMethod;
 import com.fuyun.billing.enums.SettlementStatus;
 import com.fuyun.billing.enums.VisitType;
+import com.fuyun.billing.gateway.InsuranceGateway;
 import com.fuyun.billing.internal.BillingDomainEvent;
 import com.fuyun.billing.mapper.FeeRecordMapper;
 import com.fuyun.billing.mapper.SettlementMapper;
+import com.fuyun.billing.service.IInsuranceCallLogService;
 import com.fuyun.billing.vo.SettlementPreviewVO;
 import com.fuyun.billing.vo.SettlementVO;
 import com.fuyun.common.exception.BizException;
@@ -70,6 +76,12 @@ class SettlementServiceImplTest {
     @Mock
     private ApplicationEventPublisher events;
 
+    @Mock
+    private InsuranceGateway insuranceGateway;
+
+    @Mock
+    private IInsuranceCallLogService callLogService;
+
     private SettlementServiceImpl service;
 
     @BeforeAll
@@ -80,7 +92,8 @@ class SettlementServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new SettlementServiceImpl(feeRecordMapper, cardAccountLedger, events);
+        service =
+                new SettlementServiceImpl(feeRecordMapper, cardAccountLedger, events, insuranceGateway, callLogService);
         ReflectionTestUtils.setField(service, "baseMapper", settlementMapper);
         ReflectionTestUtils.setField(service, "entityClass", Settlement.class);
     }
@@ -158,15 +171,98 @@ class SettlementServiceImplTest {
         verify(settlementMapper, never()).insert(any(Settlement.class));
     }
 
+    /** 已贯标费用行夹具（对照编码快照在位，可参与医保结算） */
+    private FeeRecord mappedFee(long id, long amount, OffsetDateTime chargedAt) {
+        FeeRecord fee = fee(id, amount, chargedAt);
+        fee.setNhsaCodeSnapshot("NHBZ-TREAT-001");
+        return fee;
+    }
+
     @Test
-    @DisplayName("医保 payer 预结算：网关未接线前 BILL-1024 显式拒（禁产出缺基金拆分的半截结算单，Task 15 回填后替换为贯标校验+网关预结算链路）")
-    void previewRejectsInsurancePayerBeforeGatewayWiredAsBill1024() {
+    @DisplayName("医保预结算：贯标校验过→网关拆分回填五列并 PRESETTLED 锁价、2102 留痕行落 SUCCESS")
+    void previewInsurancePayerLocksSplitAndRecords2102CallLog() {
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(mappedFee(1L, 10000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        // 模拟网关回执：五拆分（勾稽恒等由适应器单测锁定，此处服务侧取回执回填+二次勾稽）
+        when(insuranceGateway.preSettle(any()))
+                .thenReturn(
+                        new InsurancePreSettleResult(10000L, 6000L, 2000L, 2000L, 0L, 0L, "SIM-S100", "SIM-2026Q3"));
+        // 模拟 MP ASSIGN_ID 回填：insert 时给实体置 id
+        when(settlementMapper.insert(any(Settlement.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Settlement.class).setId(900L);
+            return 1;
+        });
+
+        SettlementPreviewVO vo = service.preview(new SettlementPreviewRequest(7L, VISIT, PayerType.CITY_INS));
+
+        // 结算单锁价断言：五拆分逐列按回执回填（本地不自行计算，红线 1）、状态 PRESETTLED、中心流水号/目录版本回执同源
+        ArgumentCaptor<Settlement> captor = ArgumentCaptor.forClass(Settlement.class);
+        verify(settlementMapper).insert(captor.capture());
+        Settlement row = captor.getValue();
+        assertThat(row.getStatus()).isEqualTo(SettlementStatus.PRESETTLED);
+        assertThat(row.getTotalAmount()).isEqualTo(10000L);
+        assertThat(row.getPooledAmount()).isEqualTo(6000L);
+        assertThat(row.getAcctPayAmount()).isEqualTo(2000L);
+        assertThat(row.getSelfPayAmount()).isEqualTo(2000L);
+        assertThat(row.getSelfExpenseAmount()).isZero();
+        assertThat(row.getPreSelfPayAmount()).isZero();
+        assertThat(row.getInsSettleNo()).isEqualTo("SIM-S100");
+        assertThat(row.getCatalogVersion()).isEqualTo("SIM-2026Q3");
+        assertThat(vo.status()).isEqualTo("PRESETTLED");
+        // 网关命令守卫钉死：费用行快照列投影 + 幂等键=结算编号 + 预览前计算 settlementDraftId=0
+        ArgumentCaptor<InsurancePreSettleCommand> cmdCaptor = ArgumentCaptor.forClass(InsurancePreSettleCommand.class);
+        verify(insuranceGateway).preSettle(cmdCaptor.capture());
+        InsurancePreSettleCommand cmd = cmdCaptor.getValue();
+        assertThat(cmd.settlementDraftId()).isZero();
+        assertThat(cmd.visitId()).isEqualTo(VISIT);
+        assertThat(cmd.idempotencyKey()).isEqualTo(row.getSettleNo()); // 幂等键与结算编号同源
+        assertThat(cmd.lines()).hasSize(1);
+        assertThat(cmd.lines().get(0).nhsaCode()).isEqualTo("NHBZ-TREAT-001");
+        assertThat(cmd.lines().get(0).amount()).isEqualTo(10000L);
+        // 2102 业务级留痕断言（Task 12 Step 3b 交接口径：txn_code='2102'、status='SUCCESS'）
+        ArgumentCaptor<InsuranceCallLog> logCaptor = ArgumentCaptor.forClass(InsuranceCallLog.class);
+        verify(callLogService).record(logCaptor.capture());
+        InsuranceCallLog logRow = logCaptor.getValue();
+        assertThat(logRow.getTxnCode()).isEqualTo("2102");
+        assertThat(logRow.getVisitId()).isEqualTo(VISIT);
+        assertThat(logRow.getStatus()).isEqualTo(InsuranceCallStatus.SUCCESS);
+        assertThat(logRow.getResultCode()).isEqualTo("0000");
+        assertThat(logRow.getRequestDigest()).isEqualTo("preview|total=10000");
+        assertThat(logRow.getResponseDigest()).contains("SIM-S100");
+        assertThat(logRow.getResponseDigest().length()).isLessThanOrEqualTo(512); // 回执摘要列宽钳制口径
+        assertThat(logRow.getCenterSerialNo()).isEqualTo("SIM-S100");
+    }
+
+    @Test
+    @DisplayName("医保 payer 未贯标费用行：BILL-1006 贯标硬校验显式拒，网关与留痕零触碰")
+    void previewRejectsUnmappedFeeOnInsurancePayerAsBill1006() {
+        // 未贯标行：计费时点无 ACTIVE 对照 → nhsaCodeSnapshot=null（V601 唯一 ACTIVE 语义冻结进快照列）
         when(feeRecordMapper.selectList(any()))
                 .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
 
         assertThatThrownBy(() -> service.preview(new SettlementPreviewRequest(7L, VISIT, PayerType.CITY_INS)))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(BillingErrorCode.INSURANCE_CALL_FAILED));
+                        .isEqualTo(BillingErrorCode.INSURANCE_MAPPING_MISSING));
+        // 拒即零触碰：禁未对照项目串入医保基金，网关不调、留痕不落、结算单不产出
+        verifyNoInteractions(insuranceGateway, callLogService);
+        verify(settlementMapper, never()).insert(any(Settlement.class));
+    }
+
+    @Test
+    @DisplayName("医保拆分勾稽不平：五拆分和≠总额 BILL-1016 拒（红线 1，禁产出半截结算单）")
+    void previewRejectsSplitMismatchAsBill1016() {
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(mappedFee(1L, 10000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        // 模拟通道异常回执：五拆分和=9000 ≠ 总额 10000（真实通道同口径拒）
+        when(insuranceGateway.preSettle(any()))
+                .thenReturn(
+                        new InsurancePreSettleResult(10000L, 6000L, 2000L, 1000L, 0L, 0L, "SIM-S100", "SIM-2026Q3"));
+
+        assertThatThrownBy(() -> service.preview(new SettlementPreviewRequest(7L, VISIT, PayerType.CITY_INS)))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.AMOUNT_MISMATCH));
+        // 不平即拒：留痕不落、结算单不产出
+        verify(callLogService, never()).record(any());
         verify(settlementMapper, never()).insert(any(Settlement.class));
     }
 

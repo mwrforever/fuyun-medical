@@ -48,8 +48,9 @@ public class SettlementController {
      * @param req 预结算请求（@Valid 声明式校验）；来源：收费员工作站划价确认
      * @return 结算单草稿出参（金额分）；200
      * @throws com.fuyun.common.exception.BizException BILL-1008（409 无待结算费用）/
-     *                 BILL-1006（409 未贯标费用行，随 Task 15 回填）/
-     *                 BILL-1024（502 医保通道业务失败/未接入临时拒）
+     *                 BILL-1006（409 未贯标费用行）/
+     *                 BILL-1016（409 医保五拆分勾稽不平）/
+     *                 BILL-1024（502 医保通道业务失败）
      */
     @Operation(summary = "预结算（划价收款依据）", operationId = "previewSettlement")
     @PostMapping("/settlements/preview")
