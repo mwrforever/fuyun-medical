@@ -132,10 +132,10 @@
 ## 7. 对外接口
 
 **REST（`/api/v1/patient/` 前缀）**：
-- 建档与查询：`POST /patients`（建档，含匹配预检结果）、`GET /patients/{patientId}`、`PUT /patients/{patientId}`、`POST /patients/match-check`（建档前预检）、`GET /patients/search`（按标识/姓名/拼音检索，脱敏输出）
+- 建档与查询：`POST /patients`（建档，含匹配预检结果）、`GET /patients/{patientId}`、`PUT /patients/{patientId}`、`POST /patients/match-check`（建档前预检）、`GET /patients/search`（按标识/姓名/拼音检索，脱敏输出）、`POST /patients/{patientId}/freeze|unfreeze`（P1 PR-2 拍板 2 新增端点，本节原清单外：冻结/解冻成对最小 API，状态机见 §5 patient，事件成对见 §11 M-25）
 - 标识与解析：`POST /identifiers/resolve`（标识→patient_id+状态，全院高频入口）、`POST /patients/{patientId}/identifiers`（补挂标识）、`GET /patients/{patientId}/identifiers`
 - 重复与合并：`GET /possible-duplicates`、`POST /possible-duplicates/{id}/exclude`、`POST /merges`（发起合并）、`POST /merges/{id}/approve`、`POST /merges/{id}/split`（拆分）
-- 就诊卡：`POST /cards/issue|bind|loss|replace|unbind`、`GET /cards/{cardNo}`；`POST /card-accounts/{id}/freeze|close`、`GET /card-accounts/{id}/txns`（充值/消费记账由 M13 调内部接口）
+- 就诊卡：`POST /cards/issue|bind|replace`、`POST /cards/loss/{cardNo}`、`POST /cards/unbind/{cardNo}`（挂失/解绑以卡号路径承载、无请求体——A.3-1 收敛，P1 PR-2 实现注记）、`GET /cards/{cardNo}`；`POST /card-accounts/{id}/freeze|close`、`GET /card-accounts/{id}/txns`（充值/消费记账由 M13 调内部接口）
 - 健康档案：`GET /patients/{patientId}/health-summary`、`POST /patients/{patientId}/health-items`、`POST /health-items/{id}/correct`
 - 隐私：`GET/POST /privacy-auths`、`GET/PUT /privacy-mask-rules`、`POST /privacy/unmask`（明文查阅，留痕）、`GET /privacy-access-logs`
 - 标签：`GET/POST/PUT /tags`、`POST /tags/{tagCode}/assign`（圈选打标）、`GET /patients/{patientId}/tags`、`POST /tag-circles/preview`（人群圈选试算）
