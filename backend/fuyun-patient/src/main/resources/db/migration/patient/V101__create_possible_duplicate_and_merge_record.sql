@@ -35,7 +35,8 @@ CREATE TABLE patient.merge_record (
     survivor_patient_id  BIGINT        NOT NULL,               -- 主档（合并后保留方）
     merged_patient_id    BIGINT        NOT NULL,               -- 从档（被合并方，置 MERGED）
     merge_reason         VARCHAR(255)  NOT NULL,               -- 合并原因（审计必填）
-    pre_snapshot         TEXT          NOT NULL,               -- 合并前完整快照（JSON：从档字段 + 标识挂接清单；拆分回滚依据，方案 3.3）
+    pre_snapshot         TEXT          NULL,                   -- 合并前完整快照（JSON：从档字段 + 标识挂接清单；approve 执行合并时写入——
+                                                                       --   PROCESSING 阶段快照尚未产生故可空，拆分守卫仅放行 COMPLETED（快照必在），方案 3.3）
     status               VARCHAR(16)   NOT NULL DEFAULT 'PROCESSING', -- 状态机：PROCESSING/COMPLETED/FAILED(可重试)/REVERSED(终态)
     operator             VARCHAR(64)   NOT NULL,               -- 经办人（双人角色：与 approved_by 不得同人，应用层校验）
     approved_by          VARCHAR(64)   NULL,                   -- 审批人（approve 动作落）

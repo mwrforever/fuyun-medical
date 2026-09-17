@@ -2,6 +2,25 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-2 Task 15 验收 IT 暴露两处真栈缺陷修复（先记再改）
+
+- **缺陷一（装配遗漏）**：Task 15（EmpiGovernanceIT 端到端验收）真栈首跑实证 `POST /api/v1/patient/patients`
+  404（No static resource）——`PatientWebConfig` 的 `@Import` 清单漏登记 `PatientController.class`
+  （其余六个 patient 控制器均已装配），建档/详情/更新/检索/冻结/解冻七端点全部未进 MVC 映射；
+  单测（MockMvc standalone 直连 controller 构造器）与 Modulith verify 均无法暴露此缺陷，真栈 IT
+  验收门禁首跑即抓住。修复：`@Import` 补 `PatientController.class`（与其余六个控制器同模式）。
+- **缺陷二（迁移约束与状态机矛盾）**：IT 二跑实证 `POST /merges` 500——`merge_record.pre_snapshot`
+  被声明为 NOT NULL，但快照在 approve 执行合并时才产生（`executeMerge` 写入），发起合并（PROCESSING）
+  的合法 INSERT 必然违反约束。修复：V101 修订 `pre_snapshot` 为可空并补列注释（拆分守卫仅放行
+  COMPLETED，快照必在，可空性与状态机一致）。修订合法窗口 = 本 PR 未合入、无任何已应用基线
+  （存量 dev 卷最大 v503 不含 patient 段，Task 14 同口径）。
+- **缺陷三（拆分遗留悬空合并指针）**：IT 三跑实证 `POST /merges/{id}/split` 后从档详情仍带
+  `merged_into_patient_id`——`split()` 以 `updateById` 落恢复状态，MyBatis-Plus 默认忽略 null 字段，
+  指针置空从未生效（单测内存表断言掩盖）。修复：改 `LambdaUpdateWrapper` 显式 SET
+  status=NORMAL + merged_into_patient_id=NULL；同步改写 `splitRestoresMergedArchiveAndPublishes`
+  断言（捕获 wrapper 校验 SET 列与 NULL 值）。
+- **验收**：EmpiGovernanceIT 七用例全绿为本次三处修复的验收依据。
+
 ## 2026-09-17 · P1 PR-2 Task 14 门禁驱动的两项契约修复（先记再改）
 
 - **背景**：Task 14（装配与边界）真栈冒烟暴露两处上游契约缺陷，均由门禁 fail-fast 定位：

@@ -5,6 +5,7 @@ import com.fuyun.patient.controller.CardAccountController;
 import com.fuyun.patient.controller.CardController;
 import com.fuyun.patient.controller.DuplicateMergeController;
 import com.fuyun.patient.controller.HealthController;
+import com.fuyun.patient.controller.PatientController;
 import com.fuyun.patient.controller.PatientIdentifierController;
 import com.fuyun.patient.controller.PrivacyController;
 import com.fuyun.patient.convert.PatientConverter;
@@ -53,6 +54,7 @@ import org.springframework.context.annotation.Import;
     VisitCardServiceImpl.class,
     HealthSummaryServiceImpl.class,
     PatientIdentifierController.class,
+    PatientController.class,
     DuplicateMergeController.class,
     CardAccountController.class,
     CardController.class,

@@ -8,6 +8,9 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.exception.BizException;
@@ -29,6 +32,8 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -63,6 +68,13 @@ class MergeRecordServiceImplTest {
 
     /** 被测服务（默认 SPI 空清单=无注册实现） */
     private StubMergeService service;
+
+    @BeforeAll
+    static void initTableInfo() {
+        // 单测容器外手动初始化实体表信息（模块内既有 ServiceImpl 单测同款）：
+        // split 的指针置空走 LambdaUpdateWrapper，需 Patient 列 lambda 缓存在位
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Patient.class);
+    }
 
     @BeforeEach
     void setUp() {
@@ -220,15 +232,21 @@ class MergeRecordServiceImplTest {
     }
 
     @Test
-    @DisplayName("拆分：COMPLETED→REVERSED 终态、从档恢复 NORMAL 清指针、发布 split 事件")
+    @DisplayName("拆分：COMPLETED→REVERSED 终态、从档恢复经显式 SET 清指针、发布 split 事件")
     void splitRestoresMergedArchiveAndPublishes() {
         seedPatients();
         MergeRecord record = createRecord();
         service.approve(record.getId(), "reviewer");
         MergeRecordVO vo = service.split(record.getId(), "误合并纠正");
         assertThat(vo.getStatus()).isEqualTo("REVERSED");
-        assertThat(patients.get(2L).getStatus()).isEqualTo("NORMAL");
-        assertThat(patients.get(2L).getMergedIntoPatientId()).isNull();
+        // 从档恢复走显式 SET（LambdaUpdateWrapper）：updateById 忽略 null 字段会遗留悬空合并指针（真栈 IT 实证）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaUpdateWrapper<Patient>> restoreCaptor = ArgumentCaptor.forClass(LambdaUpdateWrapper.class);
+        verify(patientService).update(restoreCaptor.capture());
+        assertThat(restoreCaptor.getValue().getSqlSet()).contains("status").contains("merged_into_patient_id");
+        assertThat(restoreCaptor.getValue().getParamNameValuePairs().values())
+                .as("合并指针必须显式置 NULL，而非不更新")
+                .contains((Object) null);
         assertThat(service.records.get(record.getId()).getReversedAt()).isNotNull();
         assertThat(service.records.get(record.getId()).getReverseReason()).isEqualTo("误合并纠正");
         // approve(merged) + split(split) 共两次应用事件，第二次为 patient.patient.split（载荷：恢复档+主档）
@@ -268,6 +286,12 @@ class MergeRecordServiceImplTest {
         seedPatients();
         MergeRecord first = createRecord();
         service.approve(first.getId(), "reviewer");
+        // 模拟 DB UPDATE 生效：split 的显式 SET 落到内存患者表（恢复 NORMAL 清指针），再合并才可发起
+        when(patientService.update(any())).thenAnswer(inv -> {
+            patients.get(2L).setStatus("NORMAL");
+            patients.get(2L).setMergedIntoPatientId(null);
+            return true;
+        });
         service.split(first.getId(), "误合并纠正");
         MergeRecord second = createRecord();
         service.approve(second.getId(), "reviewer2");

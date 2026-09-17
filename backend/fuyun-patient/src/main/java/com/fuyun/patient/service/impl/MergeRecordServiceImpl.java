@@ -1,5 +1,6 @@
 package com.fuyun.patient.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -243,10 +244,13 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
                 identifierService.updateById(identifier);
             }
         }
-        // 从档恢复 NORMAL 并清合并指针（与 executeMerge ④ 互逆）
-        merged.setStatus("NORMAL");
-        merged.setMergedIntoPatientId(null);
-        patientService.updateById(merged);
+        // 从档恢复 NORMAL 并清合并指针（与 executeMerge ④ 互逆）。指针置空必须显式 SET：
+        // updateById 默认忽略 null 字段会遗留 merged_into_patient_id（真栈 IT 实证），
+        // 恢复档将长期携带悬空合并指针。
+        patientService.update(new LambdaUpdateWrapper<Patient>()
+                .set(Patient::getStatus, "NORMAL")
+                .set(Patient::getMergedIntoPatientId, null)
+                .eq(Patient::getPatientId, merged.getPatientId()));
         patientService.updateById(survivor);
         record.setStatus(STATUS_REVERSED);
         record.setReversedAt(OffsetDateTime.now());
