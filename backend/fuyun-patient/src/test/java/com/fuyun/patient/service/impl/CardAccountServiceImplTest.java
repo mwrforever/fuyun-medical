@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fuyun.common.exception.BizException;
@@ -219,54 +221,71 @@ class CardAccountServiceImplTest {
     }
 
     @Test
-    @DisplayName("销户余额未清：PAT-1015 拒绝（409），状态不变更")
+    @DisplayName("销户余额未清：条件更新 0 行受影响，复读定性为 PAT-1015（409）")
     void closeRejectsUnsettledBalanceAsPat1015() {
         when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 500L, "ACTIVE"));
 
         assertThatThrownBy(() -> cardAccountService.close(7L))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.CARD_ACCOUNT_BALANCE_NOT_SETTLED));
+        // 条件更新（balance=0 谓词）0 行命中：Mockito 对未打桩 update 默认返回 0，无需显式打桩
         verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
     }
 
     @Test
-    @DisplayName("销户成功：余额为零置 CLOSED 并落销户时刻")
+    @DisplayName("销户成功：条件更新置 CLOSED+销户时刻，SET 子句不含余额列（D-13 收口）")
     void closeSetsClosedStatusWhenBalanceZero() {
         when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 0L, "ACTIVE"));
-        when(cardAccountMapper.updateById(any(CardAccount.class))).thenReturn(1);
+        when(cardAccountMapper.update(isNull(), any())).thenReturn(1);
 
         cardAccountService.close(7L);
 
-        ArgumentCaptor<CardAccount> captor = ArgumentCaptor.forClass(CardAccount.class);
-        verify(cardAccountMapper).updateById(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("CLOSED");
-        assertThat(captor.getValue().getClosedAt()).isNotNull();
+        ArgumentCaptor<Wrapper<CardAccount>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(cardAccountMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<CardAccount> wrapper = (LambdaUpdateWrapper<CardAccount>) captor.getValue();
+        // D-13 红线：SET 只含状态与销户时刻，balance 永不回写（并发记账不被 stale 读覆写）
+        assertThat(wrapper.getSqlSet()).doesNotContain("balance");
+        assertThat(wrapper.getSqlSet()).contains("status").contains("closed_at");
+        assertThat(wrapper.getParamNameValuePairs().containsValue("CLOSED")).isTrue();
     }
 
     @Test
-    @DisplayName("冻结 ACTIVE 账户：切至 FROZEN（挂失联动）")
+    @DisplayName("冻结 ACTIVE：切至 FROZEN 且 SET 不含余额列")
     void freezeTogglesActiveToFrozen() {
         when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 100L, "ACTIVE"));
-        when(cardAccountMapper.updateById(any(CardAccount.class))).thenReturn(1);
+        when(cardAccountMapper.update(isNull(), any())).thenReturn(1);
 
         cardAccountService.freeze(7L);
 
-        ArgumentCaptor<CardAccount> captor = ArgumentCaptor.forClass(CardAccount.class);
-        verify(cardAccountMapper).updateById(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("FROZEN");
+        ArgumentCaptor<Wrapper<CardAccount>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(cardAccountMapper).update(isNull(), captor.capture());
+        LambdaUpdateWrapper<CardAccount> wrapper = (LambdaUpdateWrapper<CardAccount>) captor.getValue();
+        assertThat(wrapper.getSqlSet()).doesNotContain("balance").contains("status");
+        assertThat(wrapper.getParamNameValuePairs().containsValue("FROZEN")).isTrue();
     }
 
     @Test
-    @DisplayName("按患者挂失联动冻结：命中 ACTIVE 账户置 FROZEN（Task 10 就诊卡挂失联动入口）")
+    @DisplayName("挂失联动冻结：ACTIVE 命中条件更新，SET 不含余额列")
     void freezeByPatientSetsFrozenOnActiveAccount() {
+        when(cardAccountMapper.selectOne(any())).thenReturn(accountRow(7L, 300L, "ACTIVE"));
+        when(cardAccountMapper.update(isNull(), any())).thenReturn(1);
+
+        cardAccountService.freezeByPatient(42L);
+
+        ArgumentCaptor<Wrapper<CardAccount>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(cardAccountMapper).update(isNull(), captor.capture());
+        assertThat(((LambdaUpdateWrapper<CardAccount>) captor.getValue()).getSqlSet())
+                .doesNotContain("balance");
+    }
+
+    @Test
+    @DisplayName("挂失联动冻结写窗口状态竞态：条件更新 0 行命中静默放弃（挂失语义吞咽，无全量回写）")
+    void freezeByPatientRaceSkipsSilentlyWhenZeroRows() {
         when(cardAccountMapper.selectOne(any())).thenReturn(accountRow(66L, 100L, "ACTIVE"));
-        when(cardAccountMapper.updateById(any(CardAccount.class))).thenReturn(1);
 
         cardAccountService.freezeByPatient(5L);
 
-        ArgumentCaptor<CardAccount> captor = ArgumentCaptor.forClass(CardAccount.class);
-        verify(cardAccountMapper).updateById(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("FROZEN");
+        verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
     }
 
     @Test
@@ -290,26 +309,33 @@ class CardAccountServiceImplTest {
     }
 
     @Test
-    @DisplayName("冻结 FROZEN 账户：双向切回 ACTIVE（解挂联动）")
+    @DisplayName("解冻 FROZEN：切回 ACTIVE（成对切换同一条件更新通道）")
     void freezeTogglesFrozenBackToActive() {
         when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 100L, "FROZEN"));
-        when(cardAccountMapper.updateById(any(CardAccount.class))).thenReturn(1);
+        when(cardAccountMapper.update(isNull(), any())).thenReturn(1);
 
         cardAccountService.freeze(7L);
 
-        ArgumentCaptor<CardAccount> captor = ArgumentCaptor.forClass(CardAccount.class);
-        verify(cardAccountMapper).updateById(captor.capture());
-        assertThat(captor.getValue().getStatus()).isEqualTo("ACTIVE");
+        ArgumentCaptor<Wrapper<CardAccount>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(cardAccountMapper).update(isNull(), captor.capture());
+        assertThat(((LambdaUpdateWrapper<CardAccount>) captor.getValue())
+                        .getParamNameValuePairs()
+                        .containsValue("ACTIVE"))
+                .isTrue();
     }
 
     @Test
-    @DisplayName("已销户账户禁冻结：PAT-1014（CLOSED 为终态）")
+    @DisplayName("CLOSED 账户冻结/销户：前置守卫 409 PAT-1014，不发条件更新")
     void freezeOnClosedAccountFailsAsPat1014() {
         when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 0L, "CLOSED"));
 
         assertThatThrownBy(() -> cardAccountService.freeze(7L))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED));
+        assertThatThrownBy(() -> cardAccountService.close(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED));
+        verify(cardAccountMapper, never()).update(isNull(), any());
     }
 
     @Test
@@ -333,6 +359,56 @@ class CardAccountServiceImplTest {
         assertThatThrownBy(() -> cardAccountService.close(7L))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED));
+    }
+
+    @Test
+    @DisplayName("D-13 并发窗口回归：读取后余额被并发记账改写，条件更新仍不落败旧值（SET 无 balance 列）")
+    void concurrentRecordBetweenReadAndStatusUpdateNeverRewritesBalance() {
+        // 模拟竞态窗口（第 2 轮审查 P2-1 订正打桩形态）：同一 selectById 变参链依次命中——
+        //   首读 balance=0 的 ACTIVE 行，并发记账提交后复读行余额已为 800（本行不再可见）
+        when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 0L, "ACTIVE"), accountRow(7L, 800L, "ACTIVE"));
+        // 条件更新携带 balance=0 谓词 → 并发记账提交后 0 行命中，销户必须失败而非覆写余额
+        when(cardAccountMapper.update(isNull(), any())).thenReturn(0);
+
+        // 复读定性：实现按「0 行受影响 → 重读账户分类失败原因」处理；重读 balance≠0 → PAT-1015
+        assertThatThrownBy(() -> cardAccountService.close(7L)).isInstanceOf(BizException.class);
+        verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
+    }
+
+    @Test
+    @DisplayName("D-13 销户写窗口内账户被并发删除：条件更新 0 行命中复读无行 → PAT-1013（404）")
+    void closeWithAccountDeletedInWindowFailsAsPat1013() {
+        // 首读 ACTIVE 余额零（守卫通过），写窗口内整行消失（并发删除），复读无行
+        when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 0L, "ACTIVE"), (CardAccount) null);
+
+        assertThatThrownBy(() -> cardAccountService.close(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PatientErrorCode.CARD_ACCOUNT_NOT_FOUND));
+        verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
+    }
+
+    @Test
+    @DisplayName("D-13 销户状态竞态：0 行命中且复读余额仍为零（非余额原因拦截）→ PAT-1014（409）")
+    void closeRaceWithBalanceStillZeroFailsAsPat1014() {
+        // 首读与复读均为 ACTIVE 余额零：0 行命中只能源于窗口内状态变化（如并发冻结到非预期态）
+        when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 0L, "ACTIVE"));
+
+        assertThatThrownBy(() -> cardAccountService.close(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED));
+        verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
+    }
+
+    @Test
+    @DisplayName("D-13 冻结写窗口状态竞态：条件更新 0 行命中复读仍非终态 → PAT-1014 竞态拒切")
+    void freezeRaceZeroRowsReclassifiedAsPat1014() {
+        // 首读 ACTIVE 守卫通过，写窗口内并发操作令条件谓词落空，复读仍非 CLOSED（竞态兜底拒绝）
+        when(cardAccountMapper.selectById(7L)).thenReturn(accountRow(7L, 100L, "ACTIVE"));
+
+        assertThatThrownBy(() -> cardAccountService.freeze(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED));
+        verify(cardAccountMapper, never()).updateById(any(CardAccount.class));
     }
 
     @Test

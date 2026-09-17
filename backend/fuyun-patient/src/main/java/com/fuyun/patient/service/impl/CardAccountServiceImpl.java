@@ -69,41 +69,68 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
     }
 
     /**
-     * 冻结账户（ACTIVE ⇄ FROZEN 双向切换）。
+     * 冻结/解冻切换（ACTIVE ⇄ FROZEN）。
      *
-     * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
+     * <p>D-13 收口（2026-09-17，M13 接线前置）：改「条件更新 + 影响行数判定」——SET 子句仅状态列，
+     * 杜绝 getById→updateById 全量回写把并发记账（CardAccountLedger.record）刚写入的 balance
+     * 覆写回 stale 旧值；条件谓词 status IN(ACTIVE,FROZEN) 兜住 CLOSED 竞态。
      *
      * @param id 账户 id，非空
-     * @throws BizException PAT-1013/PAT-1014
+     * @throws BizException PAT-1013（404 不存在）/ PAT-1014（409 状态竞态或已销户）
      */
     @Override
     @Transactional
     public void freeze(long id) {
         CardAccount account = requireActiveOrFrozen(id);
-        account.setStatus("FROZEN".equals(account.getStatus()) ? "ACTIVE" : "FROZEN");
-        updateById(account);
-        log.info("一卡通账户冻结状态切换：accountId={}，status={}", id, account.getStatus());
+        String target = "FROZEN".equals(account.getStatus()) ? "ACTIVE" : "FROZEN";
+        // 数据库写操作：条件更新单列状态——balance 永不出现在 SET（D-13 资金列不被覆写）
+        boolean flipped = lambdaUpdate()
+                .set(CardAccount::getStatus, target)
+                .eq(CardAccount::getId, id)
+                .in(CardAccount::getStatus, "ACTIVE", "FROZEN")
+                .update();
+        if (!flipped) {
+            // 读-写窗口内被并发销户：0 行命中复读定性，统一按状态不允许处理
+            requireActiveOrFrozen(id);
+            throw new BizException(
+                    PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "账户状态竞态，冻结切换失败");
+        }
+        log.info("一卡通账户冻结状态切换：accountId={}，status={}", id, target);
     }
 
     /**
-     * 销户（余额必须为零）。
+     * 销户（余额必须为零，CLOSED 终态）。
      *
-     * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
+     * <p>D-13 收口：销户前置「余额为零」判定并入 UPDATE 谓词（balance = 0），条件更新影响行数
+     * 为准——读到的零余额与写之间存在记账提交时更新 0 行，杜绝 stale 回写。
      *
      * @param id 账户 id，非空
-     * @throws BizException PAT-1013/PAT-1014/PAT-1015
+     * @throws BizException PAT-1013 / PAT-1014 / PAT-1015（余额未清）
      */
     @Override
     @Transactional
     public void close(long id) {
-        CardAccount account = requireActiveOrFrozen(id);
-        if (account.getBalance() != null && account.getBalance() != 0L) {
-            throw new BizException(
-                    PatientErrorCode.CARD_ACCOUNT_BALANCE_NOT_SETTLED, HttpStatus.CONFLICT, "账户余额未结清，禁止销户");
+        requireActiveOrFrozen(id);
+        // 数据库写操作：status+closed_at 两列 SET，WHERE 携带 status/balance 双谓词（原子销户守卫）
+        boolean closed = lambdaUpdate()
+                .set(CardAccount::getStatus, "CLOSED")
+                .set(CardAccount::getClosedAt, OffsetDateTime.now())
+                .eq(CardAccount::getId, id)
+                .in(CardAccount::getStatus, "ACTIVE", "FROZEN")
+                .eq(CardAccount::getBalance, 0L)
+                .update();
+        if (!closed) {
+            CardAccount latest = getById(id);
+            if (latest == null) {
+                throw new BizException(PatientErrorCode.CARD_ACCOUNT_NOT_FOUND, HttpStatus.NOT_FOUND, "一卡通账户不存在");
+            }
+            if (latest.getBalance() != null && latest.getBalance() != 0L) {
+                // 并发记账在窗口内入账：余额未清拒销（旧值回写路径已被本收口根除）
+                throw new BizException(
+                        PatientErrorCode.CARD_ACCOUNT_BALANCE_NOT_SETTLED, HttpStatus.CONFLICT, "账户余额未结清，禁止销户");
+            }
+            throw new BizException(PatientErrorCode.CARD_ACCOUNT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "账户状态竞态，销户失败");
         }
-        account.setStatus("CLOSED");
-        account.setClosedAt(OffsetDateTime.now());
-        updateById(account);
         log.info("一卡通销户完成：accountId={}", id);
     }
 
@@ -204,7 +231,8 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
      * 账户不存在抛 BizException 时内层拦截器会把共享事务标记 rollback-only，调用方吞咽 PAT-1013
      * 后外层提交必抛 UnexpectedRollbackException（默认配置下每次挂失都 500 回滚）。独立调用方须自行开事务。
      *
-     * <p>并发窗口登记见 TASK.md D-13，M13 接线前收口。
+     * <p>D-13 收口（2026-09-17，条件更新）：联动写仅动状态列且以影响行数为准——0 行
+     * （窗口内并发状态变更）按挂失联动语义静默放弃，不再全量回写。
      *
      * @param patientId 患者主索引，非空
      * @throws BizException PAT-1013（404）无账户
@@ -221,8 +249,16 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
             // 已销户为终态：挂失联动静默跳过，不复活不改写（M02 §5 账户状态机）
             return;
         }
-        account.setStatus("FROZEN");
-        updateById(account);
+        // D-13 收口：条件更新仅动状态列；0 行 = 窗口内并发状态变更，按挂失联动语义静默放弃
+        boolean frozen = lambdaUpdate()
+                .set(CardAccount::getStatus, "FROZEN")
+                .eq(CardAccount::getId, account.getId())
+                .eq(CardAccount::getStatus, "ACTIVE")
+                .update();
+        if (!frozen) {
+            log.info("一卡通挂失联动冻结跳过（账户非 ACTIVE 或状态竞态）：patientId={}，accountId={}", patientId, account.getId());
+            return;
+        }
         log.info("一卡通账户挂失联动冻结：patientId={}，accountId={}", patientId, account.getId());
     }
 
