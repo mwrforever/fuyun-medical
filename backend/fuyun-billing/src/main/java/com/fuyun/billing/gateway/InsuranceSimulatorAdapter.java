@@ -124,8 +124,9 @@ public class InsuranceSimulatorAdapter implements InsuranceGateway {
     /**
      * 电子凭证核验模拟（接口位，2026-09-17 裁决补位）：非空令牌确定性派生核验流水号；
      * 空/空白显式拒——禁空凭证静默放行（实名核验入口，空令牌一律不可通过）。
+     * 核验成功日志不带流水号（2026-09-18 审查修复：流水号由令牌原文派生可反推，敏感信息禁入系统日志）。
      *
-     * @param ecToken 医保电子凭证令牌，非空白（扫码输出原文）
+     * @param ecToken 医保电子凭证令牌，非空白（扫码输出原文，禁留痕明文）
      * @return 核验流水号（"SIM-AUTH-"+令牌原文），非空
      * @throws BizException BILL-1024（502 凭证令牌空/空白；文案不带任何流水号，禁敏感派生值外泄）
      */
@@ -137,7 +138,9 @@ public class InsuranceSimulatorAdapter implements InsuranceGateway {
             throw new BizException(BillingErrorCode.INSURANCE_CALL_FAILED, HttpStatus.BAD_GATEWAY, "医保电子凭证核验失败：凭证令牌为空");
         }
         String authSerialNo = "SIM-AUTH-" + ecToken;
-        log.info("医保电子凭证核验模拟成功：authSerialNo={}", authSerialNo);
+        // 敏感信息红线（全局 AGENTS.md §二 禁 token 入日志）：流水号由令牌原文派生、可反向还原因牌，
+        //   禁入系统日志——成功仅记录事实，流水号经返回值（核验出参 authSerialNo）定向出网
+        log.info("医保电子凭证核验模拟成功：核验流水号已生成（令牌派生，禁日志留痕）");
         return authSerialNo;
     }
 }
