@@ -13,7 +13,8 @@
     "type-check": "pnpm -r --if-present type-check",
     "test": "vitest run",
     "build": "pnpm -r --if-present build",
-    "audit": "pnpm audit --audit-level high"
+    "audit": "pnpm audit --audit-level high",
+    "gen:api": "openapi-typescript ./api-docs.json -o packages/shared/src/api.d.ts"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "catalog:",
@@ -23,6 +24,7 @@
     "eslint-config-prettier": "catalog:",
     "eslint-plugin-vue": "catalog:",
     "jsdom": "catalog:",
+    "openapi-typescript": "catalog:",
     "prettier": "catalog:",
     "typescript": "catalog:",
     "typescript-eslint": "catalog:",

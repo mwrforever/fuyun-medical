@@ -2,6 +2,15 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-16 · P1 PR-2：openapi 类型契约生成链路首跑（T-R4-3/T-R4-4 兑现）
+
+- **Springdoc 首次引入**：fuyun-app 增 springdoc-openapi-starter-webmvc-ui 2.8.17（显式锁版，禁升 3.x）。
+- **T-R4-3 实证结论**：绿：Springdoc 2.8.17 产出与 openapi-typescript 7.13.0 端到端兼容，生成物
+  packages/shared/src/api.d.ts 入库，workstation type-check 全绿。
+- **T-R4-4 实证结论**：Element Plus 2.14.5 + dayjs 1.11.23 显式依赖已满足最小集，回填删除。
+- **遗留登记（PR 描述同步）**：CI 新鲜度自动校验（重新生成 diff 为空）需 backend job 产出 api-docs
+  artifact → frontend job 消费的跨 job 通道，随 CI 演进接线；本 PR 以收口任务本地重生成核对兜底。
+
 ## 2026-09-17 · P1 PR-2 Task 15 验收 IT 暴露两处真栈缺陷修复（先记再改）
 
 - **缺陷一（装配遗漏）**：Task 15（EmpiGovernanceIT 端到端验收）真栈首跑实证 `POST /api/v1/patient/patients`
