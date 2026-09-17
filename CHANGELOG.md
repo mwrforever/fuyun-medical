@@ -2,6 +2,23 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-17 · P1 PR-3 M13 收费物价与医保基线：billing 号段登记与门禁适配（先记再改）
+
+- **号段登记**：billing 域占用固定百位段 **V600–V699**（宪法 A.4.1-2「每模块固定百位段」；
+  既分配对 integration V1–99 / patient V100–199 / outpatient V200–299 / system V300–399 / iot V400–499，
+  V600 段未占用）；首批 V600–V605（V600 项目/价格/组合、V601 医保对照/计价规则、V602 fee_record、
+  V603 结算/退费三表、V604 押金两表+insurance_call_log、V605 CF-4 六事件 + CF-5 占位两事件种子 id 17–24）。
+  选段依据另含「真库已应用最大版本 V503，V600 段对存量 dev 卷与新库同为顺序应用，
+  免 out-of-order 承接路径」；`scripts/check-migration-governance.py` `_SEGMENTS` 同步增
+  `"billing": ((600, 699), (500, None))`。patient 后续迁移一律 V500+（W-12）红线不受影响。
+- **JaCoCo 核验**：父 POM 规则二核心包名单已预置 `com.fuyun.billing.service.impl`（P0 预置注释
+  「billing 随模块实装生效」），PR-3 零门禁修订，首个 impl 落码即 100% 行覆盖生效。
+- **事件三段名核验**：QueueGovernorImpl EVENT_TYPE_PATTERN（≥3 段）逐一过验，CF-4 六事件字面量
+  `billing.fee.created` 等本身即 `<模块>.<实体>.<动作>` 三段合规，无 patient 式二段塌缩，落码零校正。
+- **minio 宿主端口裁决落地预告**：deploy compose 宿主映射改 9003(API)/9004(console 预留)，
+  避开本机 mindsoar-minio 占用 9000/9001（2026-09-17 用户决策，执行见 PR-3 计划 Task 2，
+  根 AGENTS.md §2 端口表同步）。
+
 ## 2026-09-17 · P1 PR-3：用户批准计划并裁决 D-14/D-16/D-17 按默认建议（裁决登记·先记再改）
 
 - **计划批准**：PR-3 M13 收费物价与医保基线实施计划（`docs/superpowers/plans/2026-09-17-p1-pr3-m13-billing.md`，
