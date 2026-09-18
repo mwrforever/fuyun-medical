@@ -2,6 +2,21 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-18 · P1 PR-3：/code-review 复核缺口修复工作包 1（用户裁决=本 PR 内完整修复）
+
+- **B1/B3 请求侧硬校验**：`PaymentLine.amount` 与 `RefundLine.refundQuantity` 增 `@Positive`（0/负值
+  400 拒）。修复前负数卡行可使 Σamount 勾稽假平、但 `cardPayFen` 合计不 >0 跳过扣卡，payment_details
+  仍无条件落库 → 退费 execute 读回后全额入卡（凭空入卡）。
+- **B2 读回侧守卫**：`RefundServiceImpl.execute` 读 payment_details 的 CARD_BALANCE 行时，channelRef
+  缺失/JSON null/空文本/非数字 → BILL-1012（400）显式拒（新增私有 `parseCardAccountId`，与写入侧
+  `SettlementServiceImpl.parseCardAccountId` 对称形态）。修复前 NullNode.asText() 返字面量 `"null"`
+  致裸 `Long.parseLong` 抛 NumberFormatException 经兜底渲染成 500，出 BILL-* 契约外形态。
+- **B4 前端防抖**：RefundApprovalView 执行/驳回按钮补 `:loading` + `:disabled` 组合与 handler 入口
+  在途守卫（驳回含弹窗未决窗口）。修复前请求在途按钮仍可点，双击发双 POST（并发双退触发面）。
+- **测试**：后端新增 4 用例（支付行 0/负值 400、refundQuantity 0/负值 400、execute 四类非法卡引用
+  BILL-1012 且零资金动作）；前端新增 2 用例（execute 在途二次点击零出网、驳回弹窗未决抑制二次弹窗）。
+- **范围界定**：execute 并发幂等（TASK.md W-16）与混付分摊/二级审批/定时生效不在本包，另行派发。
+
 ## 2026-09-18 · P1 PR-3：结算/退费并发缺口收口（终审 parked 三项，用户裁决=结算锚点幂等重构·本 PR 内修复）
 
 - **修法落地**（条件更新/CAS 族，最小侵入根除读-校验-写 TOCTOU）：①settle 状态迁移改

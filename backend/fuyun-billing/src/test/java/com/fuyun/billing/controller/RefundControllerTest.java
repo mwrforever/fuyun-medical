@@ -83,6 +83,25 @@ class RefundControllerTest {
     }
 
     @Test
+    @DisplayName("退费申请端点：refundQuantity 0/负数 @Positive 400 且服务零交互（值域与 DepositRequest @Positive 先例一致）")
+    void applyRejectsNonPositiveQuantityAs400WithoutServiceCall() throws Exception {
+        mockMvc.perform(
+                        post("/api/v1/billing/refunds")
+                                .contentType("application/json")
+                                .content(
+                                        "{\"settlementId\":900,\"lines\":[{\"feeId\":1,\"refundQuantity\":0}],\"reason\":\"当日更正\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(
+                        post("/api/v1/billing/refunds")
+                                .contentType("application/json")
+                                .content(
+                                        "{\"settlementId\":900,\"lines\":[{\"feeId\":1,\"refundQuantity\":-1}],\"reason\":\"当日更正\"}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(refundService);
+    }
+
+    @Test
     @DisplayName("审批端点：POST /refunds/{id}/approve 透传 204（双人守卫归服务层）")
     void approvePassesThroughWith204() throws Exception {
         mockMvc.perform(post("/api/v1/billing/refunds/100/approve")).andExpect(status().isNoContent());

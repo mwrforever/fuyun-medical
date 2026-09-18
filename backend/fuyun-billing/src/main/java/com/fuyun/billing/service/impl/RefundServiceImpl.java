@@ -324,7 +324,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * 退费执行（APPROVED→EXECUTED，原路退回——资金动作与状态迁移同事务；IT 锚点①终态断言源）。
      *
      * @param id 退费申请 id；来源：审批通过后执行入口
-     * @throws BizException BILL-1018（404）/ BILL-1019（409 非 APPROVED）；
+     * @throws BizException BILL-1018（404）/ BILL-1019（409 非 APPROVED）/
+     *                      BILL-1012（400 CARD_BALANCE 行卡引用缺失/空文本/非数字——读回侧
+     *                      对称守卫，禁裸 parseLong 抛 500 出契约外形态）；
      *                      PAT-1013/1014（卡账户记账失败经调用方事务回滚上抛）
      */
     @Override
@@ -342,16 +344,20 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         }
         Settlement st = settlementMapper.selectById(refund.getSettlementId());
         // 原路退回·就诊卡侧（2026-09-18 用户裁决：同卡多行聚合单次入账）：自原结算行 payment_details
-        //   JSON 读回 CARD_BALANCE 行，按 channelRef 聚合求和去重（与写入侧「同卡多行求和一笔出账」
-        //   口径对称——SettlementServiceImpl 两层勾稽段已强制同结算单单卡），每卡单次全额贷记
-        //   refund.getAmount() → 台账 REFUND 入账，回填台账流水 id 作资金溯源锚。修复前逐行全额
-        //   贷记：拆分卡支付同卡两行会重复入账两倍退费额
-        Map<String, Long> cardChannels = new LinkedHashMap<>();
+        //   JSON 读回 CARD_BALANCE 行，channelRef 守卫解析为卡账户 id 后聚合求和去重（与写入侧
+        //   「同卡多行求和一笔出账」口径对称——SettlementServiceImpl 两层勾稽段已强制同结算单单卡），
+        //   每卡单次全额贷记 refund.getAmount() → 台账 REFUND 入账，回填台账流水 id 作资金溯源锚。
+        //   修复前逐行全额贷记：拆分卡支付同卡两行会重复入账两倍退费额；且逐行裸 Long.parseLong
+        //   使 channelRef 缺失/null 文本行抛 NumberFormatException 出 500
+        Map<Long, Long> cardChannels = new LinkedHashMap<>();
         try {
             for (JsonNode detail : objectMapper.readTree(st.getPaymentDetails())) {
                 if ("CARD_BALANCE".equals(detail.path("method").asText())) {
+                    // 卡引用先守卫后聚合（2026-09-18 修复）：写入侧 settle 只对 >0 卡行解析引用，
+                    //   读回侧不可复制该漏洞——缺失/null/空文本/非数字在此即 BILL-1012 拒，
+                    //   杜绝裸 parseLong 抛 NumberFormatException 经兜底渲染成 500 出 BILL-* 契约外
                     cardChannels.merge(
-                            detail.path("channelRef").asText(),
+                            parseCardAccountId(detail.path("channelRef")),
                             detail.path("amount").asLong(),
                             Long::sum);
                 }
@@ -360,8 +366,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             // 落库文本解析失败=数据不一致显式暴露（禁静默跳过退回）
             throw new IllegalStateException("payment_details 解析失败，settleNo=" + st.getSettleNo(), e);
         }
-        for (Map.Entry<String, Long> channel : cardChannels.entrySet()) {
-            long accountId = Long.parseLong(channel.getKey());
+        for (Map.Entry<Long, Long> channel : cardChannels.entrySet()) {
+            long accountId = channel.getKey();
             long txnId = cardAccountLedger.record(
                     new CardTxnRecord(accountId, CardTxnType.REFUND, refund.getAmount(), refund.getRefundNo()));
             refund.setPaymentRefundRef(String.valueOf(txnId));
@@ -407,6 +413,44 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 .orderByAsc(RefundRequest::getId)
                 .page(new Page<>(page + 1, size));
         return PageResult.of(result.getRecords(), page, size, result.getTotal());
+    }
+
+    /**
+     * 读回侧 CARD_BALANCE 行 channelRef → 卡账户 id（与写入侧
+     * {@code SettlementServiceImpl.parseCardAccountId} 对称的守卫形态）：JSON 节点缺失/
+     * NullNode/空文本/非数字均为资金动作定位要素缺失或非法，BILL-1012 显式拒——禁裸 parseLong
+     * 抛 NumberFormatException 经兜底渲染成 500 出 BILL-* 契约外形态（与 parseCardAccountId
+     * javadoc 自述契约同源）。
+     *
+     * @param channelRef payment_details 行内 channelRef 节点；来源：settlement.payment_details
+     *                   读回（可空——节点缺失或 JSON null 即非法拒）
+     * @return 卡账户 id
+     * @throws BizException BILL-1012（400 支付明细行卡引用缺失/非法）
+     */
+    private static long parseCardAccountId(JsonNode channelRef) {
+        // NullNode（"channelRef":null 落库形态）asText() 为字面量 "null"、缺失节点为 ""——
+        //   两者唯一区别于显式判定，禁依赖 asText 结果间接兜住
+        if (channelRef == null || channelRef.isNull() || channelRef.isMissingNode()) {
+            throw new BizException(
+                    BillingErrorCode.MANUAL_CHARGE_CONTEXT_MISSING,
+                    HttpStatus.BAD_REQUEST,
+                    "支付明细行卡引用缺失：CARD_BALANCE 行缺少 channelRef");
+        }
+        String ref = channelRef.asText();
+        if (ref.isBlank()) {
+            throw new BizException(
+                    BillingErrorCode.MANUAL_CHARGE_CONTEXT_MISSING,
+                    HttpStatus.BAD_REQUEST,
+                    "支付明细行卡引用非法：channelRef 为空文本");
+        }
+        try {
+            return Long.parseLong(ref);
+        } catch (NumberFormatException e) {
+            throw new BizException(
+                    BillingErrorCode.MANUAL_CHARGE_CONTEXT_MISSING,
+                    HttpStatus.BAD_REQUEST,
+                    "支付明细行卡引用非法：channelRef 必须为卡账户 id：" + ref);
+        }
     }
 
     /**

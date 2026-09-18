@@ -1,6 +1,7 @@
 package com.fuyun.billing.dto;
 
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 import java.math.BigDecimal;
 
 /**
@@ -11,4 +12,5 @@ import java.math.BigDecimal;
  * @param refundQuantity 本次退费数量（>0，可小数，支持部分退；服务端守卫累计退额不超费用行金额），
  *                       非空；来源：操作者录入
  */
-public record RefundLine(@NotNull Long feeId, @NotNull BigDecimal refundQuantity) {}
+public record RefundLine(
+        @NotNull Long feeId, @NotNull @Positive BigDecimal refundQuantity) {}

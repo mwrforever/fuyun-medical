@@ -51,7 +51,8 @@ public class RefundController {
     /**
      * 退费申请（POST /refunds，免审阈值内当日未占用直退 APPROVED、否则 PENDING_APPROVAL；WRITE 审计）。
      *
-     * @param req 退费申请请求（@Valid 声明校验，行级级联；金额服务端按明细算）；来源：收费员工作站
+     * @param req 退费申请请求（@Valid 声明校验，行级级联且 refundQuantity @Positive 恒正；金额服务端
+     *            按明细算）；来源：收费员工作站
      * @return 新退费申请 id（免审直退行已 APPROVED，可携 id 直达执行入口）；201
      * @throws com.fuyun.common.exception.BizException BILL-1012（400 缺登录上下文）/
      *                 BILL-1014（404 缺原结算单）/ BILL-1010（404 费用行缺行）/

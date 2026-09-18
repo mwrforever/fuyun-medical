@@ -82,6 +82,25 @@ class SettlementControllerTest {
     }
 
     @Test
+    @DisplayName("正式结算端点：支付行金额 0/负数 @Positive 400 且服务零交互（0 行语义非法，禁假平勾稽驱动退费凭空入卡）")
+    void settleRejectsNonPositivePaymentAmountAs400WithoutServiceCall() throws Exception {
+        // 0 值行：Σamount 可为 0 或配平总额，但卡行不产生扣款却落库驱动退费
+        mockMvc.perform(post("/api/v1/billing/settlements")
+                        .contentType("application/json")
+                        .content("{\"settleNo\":\"S100\",\"payments\":[{\"method\":\"CASH\",\"amount\":0}]}"))
+                .andExpect(status().isBadRequest());
+        // 负值卡行：Σamount 假平且 cardPayFen 不 >0 跳过扣卡，落库后退费 execute 全额入卡
+        mockMvc.perform(post("/api/v1/billing/settlements")
+                        .contentType("application/json")
+                        .content("{\"settleNo\":\"S100\",\"payments\":["
+                                + "{\"method\":\"CASH\",\"amount\":6000},"
+                                + "{\"method\":\"CARD_BALANCE\",\"amount\":-1000,\"channelRef\":\"5\"}]}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(settlementService);
+    }
+
+    @Test
     @DisplayName("正式结算端点：合法请求 200 且透传服务返 VO（controller 直传 SettleRequest 不拆参）")
     void settlePassesThroughServiceResult() throws Exception {
         when(settlementService.settle(any(SettleRequest.class)))

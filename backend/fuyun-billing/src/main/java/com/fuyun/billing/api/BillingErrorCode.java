@@ -33,7 +33,8 @@ public enum BillingErrorCode implements ErrorCode {
     /** 费用状态不允许该操作（409；已结算作废、非 PENDING/CONFIRMED 确认等状态机违例） */
     FEE_STATE_NOT_ALLOWED("BILL-1011"),
     /** 手工计费缺审计要素（400；操作者/理由必填，M13 红线 3）；兼支付明细行卡引用缺失/非法/多卡不一致
-     *  （A.3-4 码义扩展，Task 12 settle/parseCardAccountId 消费——第 2 轮审查 P2-4，不新增码位） */
+     *  （A.3-4 码义扩展，Task 12 settle 写入侧与 Task 13 execute 读回侧 parseCardAccountId 双边消费——
+     *  第 2 轮审查 P2-4，不新增码位） */
     MANUAL_CHARGE_CONTEXT_MISSING("BILL-1012"),
     /** 就诊号格式非法（400；CF-3 定长 14 位校验失败，复用 patient VisitIdValidator 语义） */
     VISIT_ID_MALFORMED("BILL-1013"),

@@ -63,7 +63,8 @@ public class SettlementController {
      * 正式结算（POST /settlements，金额两层勾稽+就诊卡记账+settlement.completed 事件，幂等以
      * settleNo 终态为锚点；WRITE 审计）。
      *
-     * @param req 结算请求（@Valid 声明式校验，payments 行级级联校验）；来源：收银台确认
+     * @param req 结算请求（@Valid 声明式校验，payments 行级级联校验且行金额 @Positive 恒正）；
+     *            来源：收银台确认
      * @return 结算出参（SETTLED 终态，重放同 settleNo 直返）；200
      * @throws com.fuyun.common.exception.BizException BILL-1014（404 缺单）/ BILL-1015（409 状态不允许）/
      *                 BILL-1016（409 勾稽不平）/ BILL-1012（400 卡账户引用缺失/非法/多卡混付）

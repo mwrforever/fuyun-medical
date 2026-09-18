@@ -58,6 +58,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -623,6 +624,36 @@ class RefundServiceImplTest {
         ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).updateById(refundCaptor.capture());
         assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+    }
+
+    @Test
+    @DisplayName("执行读回卡引用守卫：channelRef JSON null/空文本/非数字/缺键均 BILL-1012 拒（400，禁裸 parseLong 出 500）")
+    void executeRejectsMissingOrIllegalChannelRefAsBill1012() {
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L));
+        Settlement st = settlement(900L, 3000L);
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 四类非法落库形态：JSON null（写入侧三键保形产物）/ 空文本 / 非数字 / channelRef 键缺失
+        List<String> illegalDetails = List.of(
+                "[{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":null}]",
+                "[{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"  \"}]",
+                "[{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"卡9527\"}]",
+                "[{\"method\":\"CARD_BALANCE\",\"amount\":2000}]");
+
+        for (String details : illegalDetails) {
+            st.setPaymentDetails(details);
+            assertThatThrownBy(() -> service.execute(100L))
+                    .as("非法卡引用形态应显式拒：%s", details)
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        // 契约内形态：4xx + BILL-1012（修复前裸 parseLong 抛 NumberFormatException 经兜底渲染成 500）
+                        assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.MANUAL_CHARGE_CONTEXT_MISSING);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    });
+        }
+        // 引用非法即零资金动作：台账不入账、退费单不迁移、结算单不改态
+        verifyNoInteractions(cardAccountLedger);
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
     }
 
     @Test

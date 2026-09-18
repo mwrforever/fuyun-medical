@@ -49,7 +49,9 @@ public interface IRefundService extends IService<RefundRequest> {
      *
      * @param id 退费申请 id；来源：审批通过后执行入口
      * @throws com.fuyun.common.exception.BizException BILL-1018（404 缺单）/
-     *                 BILL-1019（409 非 APPROVED）；PAT-1013/1014（卡账户记账失败经调用方事务回滚上抛）
+     *                 BILL-1019（409 非 APPROVED）/ BILL-1012（400 payment_details 卡引用
+     *                 缺失/非法——读回侧对称守卫，禁裸 parseLong 抛 500 出契约外）；
+     *                 PAT-1013/1014（卡账户记账失败经调用方事务回滚上抛）
      */
     void execute(long id);
 
