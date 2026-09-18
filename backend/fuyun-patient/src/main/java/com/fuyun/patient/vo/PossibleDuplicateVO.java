@@ -2,6 +2,7 @@ package com.fuyun.patient.vo;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -24,8 +25,8 @@ public class PossibleDuplicateVO {
     /** 匹配评分（0-100） */
     private BigDecimal matchScore;
 
-    /** 命中规则快照（JSON 数组文本） */
-    private String matchedRules;
+    /** 命中规则名清单（读侧由库值归一还原，历史 toString 形态兼容解析） */
+    private List<String> matchedRules;
 
     /** 来源 REGISTER_SCAN/BATCH_SCAN */
     private String source;

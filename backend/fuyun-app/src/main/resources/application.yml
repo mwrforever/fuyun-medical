@@ -127,6 +127,11 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       scan-cron: ${FUYUN_PATIENT_EMPI_SCAN_CRON:0 30 2 * * *}
     card:                          # 一卡通（M02 §4：可选启用默认关闭；资金动作在 M13，本模块仅台账）
       account-enabled: ${FUYUN_PATIENT_CARD_ACCOUNT_ENABLED:false}
+  billing:                       # M13 收费域（阈值参数化不写死，Spec §6；M01 参数中心热刷新随其版本化
+    refund:                      #   读接口就绪接入（W-8 同款前置），本 PR 经 env 注入默认值
+      auto-exempt-fen: ${FUYUN_BILLING_REFUND_AUTO_EXEMPT_FEN:50000}      # 当日更正免审阈值（分）
+      single-approval-fen: ${FUYUN_BILLING_REFUND_SINGLE_APPROVAL_FEN:200000}  # 一级审批上限（分）
+    deposit-warning-threshold-fen: ${FUYUN_BILLING_DEPOSIT_WARNING_THRESHOLD_FEN:500000}  # 预交金开户默认欠费阈值（分）
   iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
     amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
                                   #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）

@@ -116,6 +116,7 @@
 - **deposit_txn**：`ACTIVE → REFUNDED(退回) / OFFSET(结算抵扣)`；`ACTIVE` 流水禁止修改，退回生成对冲流水。
 - **invoice 票据**：`ISSUED(已开具) → RED_FLIPPED(已红冲)`；`ISSUED → PAPER_ISSUED(已换开纸质，电子票锁定不可再红冲，换开留痕)`。
 - **refund_request**：`DRAFT → PENDING_APPROVAL(待审批) → APPROVED(审批通过) → EXECUTED(资金原路退回完成)`；`PENDING_APPROVAL → REJECTED(驳回，必填原因)`；`EXECUTED` 失败可重试并留痕。
+  > P1·PR-3 注记（二级审批）：完整状态链 `DRAFT → PENDING_APPROVAL →（大额/医保已结算经一级批）→ PENDING_SECOND_APPROVAL（待二级审批）→ APPROVED → EXECUTED`；`billing.refund.approved` 事件仅在终批（L1 批或二级批）发布；PENDING_APPROVAL 与 PENDING_SECOND_APPROVAL 均可驳回置 REJECTED。
 - **arrears_approval 出院挂账审批**：`DRAFT(病区/主管医师发起申请) → PENDING_APPROVAL(审批中) → APPROVED(已批准，发布 billing.arrears.approved) / REJECTED(已驳回，必填原因)`；REJECTED 为终态，可重新发起新申请。
 - **insurance_call_log**：`INIT → SENT → SUCCESS / FAILED / TIMEOUT(悬挂)`；`TIMEOUT → COMPENSATED(查询/冲正确认终态) / WAIVED(人工核销，必填结论)`。
 
@@ -156,6 +157,17 @@
 
 **MQ 事件（遵循 README 命名与信封约定，发布方登记 event_registry）**：
 - 发布：`billing.fee.created`（费用生成）、`billing.fee.confirmed`（费用确认入账）、`billing.charge.guaranteed`（绿通/挂账放行回执，M03 订阅后置订单 CHARGED）、`billing.arrears.approved`（出院挂账审批通过，驱动 M04 出院放行 BLOCKED→READY）、`billing.settlement.completed`（结算完成，载荷含结算类型与医保拆分摘要）、`billing.refund.approved`（退费审批通过）、`billing.deposit.changed`（押金账户余额/预警变更）、`billing.invoice.issued`（票据开具/红冲完成）、`billing.daily-statement.closed`（日结完成）、`billing.charge-item-price.published`（调价生效广播）
+
+> **P1·PR-3 落地注记（2026-09-17）**：本节发布清单中 CF-4 六事件（fee.created/fee.confirmed/
+> settlement.completed/refund.approved/deposit.changed/charge-item-price.published）已随 PR-3
+> 登记 event_registry（V605，id 17–22，三段名零校正）并发布/消费可用；`billing.charge.guaranteed`
+> 与 `billing.arrears.approved` 事件源（M03 绿通、M04 出院挂账）不在 P1 范围，随各自上游 PR 登记
+> （CF-4 全量冻结相应顺延，00-implementation-order §5 CF-4 行口径不变）；订阅清单中
+> `outpatient.order.created` / `pharmacy.prescription.created` 为 CF-5 占位登记（id 23–24），
+> billing 已先行声明消费队列，上游 PR-5/PR-4 实装冻结载荷字段后零改动接通；其余订阅事件
+> （M04/M07/M08/M09/M10/M12/M17/M18 族与 M06 发药/退药占用回写、执行占用消费面）随对应
+> 模块 PR 启用，PR-3 不实装（计划 not-in-scope 声明同源）。
+
 - 订阅（按上游模块分组，事件名以上游模块 Spec 在 event_registry 登记为准）：
   - M03：开单事件（非药品计费行）、`outpatient.visit.registered`（门诊就诊登记，医保就诊登记联动）、`outpatient.order.executed`（门诊治疗执行，门诊治疗补费）、`outpatient.green-channel.opened/closed`（绿通开/关，挂账状态维护）
   - M04：`inpatient.visit.admitted`（入院事件，床位费/护理费等持续性费用起费锚点）、`inpatient.visit.registered`（入院办理，医保入院登记联动）、`inpatient.order.audited`（医嘱审核，住院药费即时计价与住院离散类费用锚点）、执行回签/转科/出院申请事件（计费与停费）

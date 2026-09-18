@@ -275,4 +275,41 @@ class HealthSummaryServiceImplTest {
         verify(healthItemMapper, never()).insert(any(HealthItem.class));
         verifyNoInteractions(eventPublisher);
     }
+
+    @Test
+    @DisplayName("onsetDate 空文本按无发生日期处理：明细正常落库且 onsetDate 为 null（D-15 空值边界）")
+    void addItemWithBlankOnsetDatePersistsNullDate() {
+        when(patientService.getById(5L)).thenReturn(new Patient());
+        when(healthItemMapper.insert(any(HealthItem.class))).thenAnswer(inv -> {
+            inv.getArgument(0, HealthItem.class).setId(73L);
+            return 1;
+        });
+        when(healthSummaryMapper.selectOne(any())).thenReturn(summaryRow(9L, 5L));
+        when(healthItemMapper.selectList(any())).thenReturn(List.of());
+
+        healthSummaryService.addItem(
+                5L, new HealthItemCreateRequest("ALLERGY", "PENICILLIN", "青霉素", "SEVERE", " ", "MANUAL", null));
+
+        ArgumentCaptor<HealthItem> insertCaptor = ArgumentCaptor.forClass(HealthItem.class);
+        verify(healthItemMapper).insert(insertCaptor.capture());
+        assertThat(insertCaptor.getValue().getOnsetDate()).isNull();
+    }
+
+    @Test
+    @DisplayName("onsetDate 非法文本拒绝：400 PAT-1023（D-15 收口，用户输入错误不走全局 500）")
+    void addItemWithMalformedOnsetDateRejectedAsPat1023() {
+        when(patientService.getById(1L)).thenReturn(new Patient());
+
+        // 合法格式非法日期（2026-13-40）：正则近似校验兜不住的形态，显式解析转 400 契约
+        assertThatThrownBy(() -> healthSummaryService.addItem(
+                        1L,
+                        new HealthItemCreateRequest(
+                                "ALLERGY", "PENICILLIN", "青霉素", "SEVERE", "2026-13-40", "DOCTOR_STATION", null)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(healthItemMapper, never()).insert(any(HealthItem.class));
+        verifyNoInteractions(eventPublisher);
+    }
 }

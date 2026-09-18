@@ -8,13 +8,79 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M13 收费物价与医保结算）：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M13 收费物价与医保结算）：P1 PR-3 起落迁移与业务实现，依赖面对齐 fuyun-patient 实证清单（去加密项） -->
   <artifactId>fuyun-billing</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- 审计切面注解契约（@AuditLog/AuditActionType）：仅消费 fuyun-system api 包（B.2-2） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 患者上下文：CardAccountLedger/VisitIdValidator（资金收付与 CF-3 就诊号校验，B.2-2） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-patient</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 自/入事件消费队列声明（MessagingGovernance/ConsumerQueueSpec）：仅 api 包 -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- Modulith 注解（@NamedInterface api 出口声明）：provided 不入运行产物 -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <!-- API 文档注解（宪法 A.3-7：controller @Tag/@Operation 契约注解；Springdoc 2.8.17 禁升 3.x，
+         版本与 fuyun-app 同源锁定；契约=DTO 注解推导生成，OpenAPI 生成物归 app 汇聚） -->
+    <dependency>
+      <groupId>org.springdoc</groupId>
+      <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+      <version>2.8.17</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.mapstruct</groupId>
+      <artifactId>mapstruct</artifactId>
+    </dependency>
+    <!-- 实体 @Getter/@Setter 编译期依赖（A.1-12 允许清单），provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

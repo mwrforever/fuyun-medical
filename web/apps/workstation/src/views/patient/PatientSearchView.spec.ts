@@ -40,7 +40,7 @@ function maskedRow(): PatientVO {
     mobile: '138****0000',
     status: 'NORMAL',
     createdAt: '2026-09-01 10:00:00',
-  } as unknown as PatientVO;
+  };
 }
 
 describe('患者检索页', () => {

@@ -18,7 +18,7 @@ fuyun-medical：大型医院管理系统（HIS），按业务域划分为 20 个
 | postgres | :5432 | PostgreSQL 16 + TimescaleDB 单容器：业务库（多 schema）+ 遥测超表 |
 | redis | :6379 | 会话 / 字典缓存 / 号源床位并发锁 / 大屏实时快照 |
 | rabbitmq | :5672、:15672 | 领域事件总线 / 告警分发 / TTL+DLX 延迟消息；管理台仅 dev/test |
-| minio | :9000 | 对象存储（仅 dev/test；生产为华为云 OBS，应用层 S3 SDK 不感知差异） |
+| minio | :9003（宿主映射，容器内 9000；控制台预留 9004） | 对象存储（仅 dev/test；生产为华为云 OBS，应用层 S3 SDK 不感知差异） |
 | iot-simulator | 无 | 模拟设备端（compose profile `sim`），打通 IoTDA→AMQP→库→WebSocket 链路 |
 
 原则：nginx 是唯一公网入口；backend 不暴露端口（联调经 debug profile override）；一切凭据经环境变量注入，禁止硬编码；dev/test 容器镜像版本与 prod 托管服务版本严格对齐。编排查详见 `docs/language/2026-09-07-技术栈选型.md` §6（compose 与 `.env.example` 随 P0 工程骨架落盘于 `deploy/`）。

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  一日清单大类汇总聚合映射（FeeRecordMapper.dailyListSummary，宪法 A.4.3-15 复杂聚合 SQL 走 mapper+XML）。
+  三层勾稽前提：谓词人群（visit_id + billing_date + deleted=0）与明细 wrapper 查询严格同口径
+  （@TableLogic 仅自动作用于 wrapper，原生 SQL 须显式补 deleted=0；不做状态过滤——清单面向患者展示，
+  与费用查询同口径按当日全部留痕行出）。
+  约束：GROUP BY fee_category_snapshot + SUM 且必带 ORDER BY fee_category_snapshot（大类唯一顺序，A.4.3-15/17）。
+  加载路径：MP starter 默认 mapper-locations=classpath*:/mapper/**/*.xml，零配置生效。
+-->
+<mapper namespace="com.fuyun.billing.mapper.FeeRecordMapper">
+
+    <!-- 聚合投影按构造器映射到 record（DailyListRow 规范构造器，列名与组件名一一同源） -->
+    <resultMap id="dailyListRowMap" type="com.fuyun.billing.record.DailyListRow">
+        <constructor>
+            <arg column="fee_category_snapshot" javaType="java.lang.String"/>
+            <arg column="amount" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 大类汇总：金额恒为分（SUM(amount)），行序=fee_category_snapshot 升序 -->
+    <select id="dailyListSummary" resultMap="dailyListRowMap">
+        SELECT fee_category_snapshot, SUM(amount) AS amount
+        FROM billing.fee_record
+        WHERE visit_id = #{visitId}
+          AND billing_date = #{date}
+          AND deleted = 0
+        GROUP BY fee_category_snapshot
+        ORDER BY fee_category_snapshot
+    </select>
+</mapper>

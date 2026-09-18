@@ -3,7 +3,6 @@ package com.fuyun.app;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
@@ -30,7 +29,6 @@ import org.springframework.amqp.rabbit.listener.RabbitListenerEndpointRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpEntity;
@@ -38,15 +36,10 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.RabbitMQContainer;
 import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
@@ -65,11 +58,9 @@ import org.testcontainers.utility.MountableFile;
  * it-reviewer(id=2，复用 admin 口令哈希与 ADMIN 角色) 后走真实登录取令牌，create=admin("1")/
  * approve=reviewer("2") 双人角色在真栈成立，全程 HTTP 不混层。
  */
-@Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
-class EmpiGovernanceIT {
+class EmpiGovernanceIT extends FuyunStackITBase {
 
     /** TimescaleDB 容器：迁移历史/患者域表/事件台账断言目标库；tag 与 deploy compose 严格一致 */
     @Container
@@ -88,36 +79,6 @@ class EmpiGovernanceIT {
     static final RabbitMQContainer RABBITMQ = new RabbitMQContainer(DockerImageName.parse("rabbitmq:4.3.5-management"))
             .withCopyFileToContainer(
                     MountableFile.forClasspathResource("it/rabbitmq.conf"), "/etc/rabbitmq/conf.d/20-fuyun-it.conf");
-
-    /** 测试假密钥（仅具 IT 意义；token/加密构件 fail-fast 需要） */
-    private static final String TEST_SECRET = "it-only-fake-secret-0123456789abcdef0123456789abcdef";
-
-    private static final String TEST_DATA_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    private static final String TEST_MAC_KEY = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
-
-    /**
-     * 注入测试假密钥：token HMAC 与患者敏感列 AES-GCM/HMAC 构件均启动 fail-fast，缺密钥上下文无法拉起。
-     *
-     * @param registry 动态属性注册器，非空；来源：Spring TestContext 框架
-     */
-    @DynamicPropertySource
-    static void registerSecrets(DynamicPropertyRegistry registry) {
-        registry.add("fuyun.security.token-hmac-secret", () -> TEST_SECRET);
-        registry.add("fuyun.patient.crypto.data-key", () -> TEST_DATA_KEY);
-        registry.add("fuyun.patient.crypto.mac-key", () -> TEST_MAC_KEY);
-    }
-
-    /** V303 种子账号登录名（内置超管，用例 5 ADMIN 豁免分支与业务动作共用） */
-    private static final String ADMIN_LOGIN_NAME = "admin";
-
-    /** IT 播种的第二账号登录名（双人角色审批人，V303 形态经 JdbcTemplate 播种） */
-    private static final String REVIEWER_LOGIN_NAME = "it-reviewer";
-
-    /** 种子口令（与 V303 admin 初始口令一致，仅具 dev/test 联调意义） */
-    private static final String SEED_PASSWORD = "Fuyun@2026";
-
-    /** 播种账号主键（小整数种子 ID 口径，与 V303 的 admin id=1 错开） */
-    private static final long REVIEWER_USER_ID = 2L;
 
     /** 合成测试值：主档 A 全要素实名（18 位合成证件号，仅具 IT 意义） */
     private static final String ID_CARD_A = "110101198503121234";
@@ -166,12 +127,6 @@ class EmpiGovernanceIT {
     static final AtomicReference<Long> PATIENT_B = new AtomicReference<>();
 
     @Autowired
-    TestRestTemplate http;
-
-    @Autowired
-    JdbcTemplate jdbc;
-
-    @Autowired
     RabbitTemplate rabbitTemplate;
 
     @Autowired
@@ -182,9 +137,6 @@ class EmpiGovernanceIT {
 
     @Autowired
     RabbitListenerEndpointRegistry listenerRegistry;
-
-    @Autowired
-    ObjectMapper objectMapper;
 
     /**
      * IT 测试消费队列声明（复审 C3 定稿：仿 MessagingGovernanceIT——@TestConfiguration 内
@@ -215,26 +167,26 @@ class EmpiGovernanceIT {
     @DisplayName("真库断言：flyway V100–V105 六行 success 且 V100 与 V503 升序并存，event_registry 9–16 八行登记")
     void freshDatabaseAppliesPatientMigrationsAndSeeds() {
         // 迁移红线：patient 段六迁移全部成功应用（V100–V105）
-        Integer migrated = jdbc.queryForObject(
+        Integer migrated = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM public.flyway_schema_history"
                         + " WHERE version IN ('100','101','102','103','104','105') AND success = TRUE",
                 Integer.class);
         assertThat(migrated).as("V100–V105 应全部 success=t").isEqualTo(6);
 
         // 升序应用实证：V100（patient 段）installed_rank 必须小于 V503（后续 system 段），两行并存
-        Map<String, Object> v100 =
-                jdbc.queryForMap("SELECT installed_rank FROM public.flyway_schema_history WHERE version = '100'");
-        Map<String, Object> v503 =
-                jdbc.queryForMap("SELECT installed_rank FROM public.flyway_schema_history WHERE version = '503'");
+        Map<String, Object> v100 = jdbcTemplate.queryForMap(
+                "SELECT installed_rank FROM public.flyway_schema_history WHERE version = '100'");
+        Map<String, Object> v503 = jdbcTemplate.queryForMap(
+                "SELECT installed_rank FROM public.flyway_schema_history WHERE version = '503'");
         assertThat(((Number) v100.get("installed_rank")).intValue())
                 .as("V100 应先于 V503 应用（installed_rank 升序）")
                 .isLessThan(((Number) v503.get("installed_rank")).intValue());
 
         // 事件契约台账：V105 种子 id 9–16 八行，event_type 与消息常量三方一致（三段化字面量冻结）
-        Integer seeded = jdbc.queryForObject(
+        Integer seeded = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM integration.event_registry WHERE id BETWEEN 9 AND 16", Integer.class);
         assertThat(seeded).as("V105 应登记 id 9–16 八行").isEqualTo(8);
-        List<String> seededTypes = jdbc.queryForList(
+        List<String> seededTypes = jdbcTemplate.queryForList(
                 "SELECT event_type FROM integration.event_registry WHERE id BETWEEN 9 AND 16 ORDER BY id",
                 String.class);
         assertThat(seededTypes)
@@ -318,6 +270,16 @@ class EmpiGovernanceIT {
         JsonNode approved = postForJson("/api/v1/patient/merges/" + mergeId + "/approve", REVIEWER_TOKEN.get(), null);
         assertThat(approved.path("status").asText()).isEqualTo("COMPLETED");
         assertThat(approved.path("approvedBy").asText()).isEqualTo("2");
+
+        // 终审 Minor 补强：合并执行后 pre_snapshot 内容断言（此前仅断存在性——快照是拆分回挂唯一依据）
+        String preSnapshot = jdbcTemplate.queryForObject(
+                "SELECT pre_snapshot FROM patient.merge_record WHERE id = ?", String.class, mergeId);
+        JsonNode snapshot = objectMapper.readTree(preSnapshot);
+        assertThat(snapshot.path("name").asText()).isEqualTo(DUPLICATE_NAME);
+        assertThat(snapshot.path("sex").asText()).isEqualTo(DUPLICATE_SEX);
+        assertThat(snapshot.path("mobile").asText()).hasSize(64); // 盲索引 hex 入快照（禁明文，M02 红线 3）
+        assertThat(snapshot.path("identifiers").isArray()).isTrue();
+        assertThat(snapshot.path("identifiers").size()).isGreaterThanOrEqualTo(1);
 
         // ⑥ 归一解析：A 证件号解析收敛 A；B 证件号（合并后标识随重挂/指针链）同样收敛 A
         JsonNode resolveA = postForJson(
@@ -458,7 +420,7 @@ class EmpiGovernanceIT {
         assertThat(detail.path("birthDate").asText()).isEqualTo("1985-01-01");
 
         // 明文查阅前置：该患者台账行基线
-        Integer accessLogsBefore = jdbc.queryForObject(
+        Integer accessLogsBefore = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM patient.privacy_access_log WHERE patient_id = ?", Integer.class, patientA);
 
         // ADMIN 豁免分支：带 Bearer 令牌（AuthTokenInterceptor 注入 roles 含 ADMIN）→ 200 明文
@@ -475,10 +437,10 @@ class EmpiGovernanceIT {
         assertThat(unmask.path("values").path("mobile").asText()).isEqualTo(MOBILE_A);
 
         // 台账侧留痕：privacy_access_log 恰 +1，操作人/目的/字段清单逐项落库（审计侧 SENSITIVE_QUERY 行由切面承载）
-        Integer accessLogsAfter = jdbc.queryForObject(
+        Integer accessLogsAfter = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM patient.privacy_access_log WHERE patient_id = ?", Integer.class, patientA);
         assertThat(accessLogsAfter).as("明文查阅必须落台账行").isEqualTo(accessLogsBefore + 1);
-        Map<String, Object> logRow = jdbc.queryForMap(
+        Map<String, Object> logRow = jdbcTemplate.queryForMap(
                 "SELECT operator_id, access_type, purpose, fields FROM patient.privacy_access_log"
                         + " WHERE patient_id = ? ORDER BY occurred_at DESC LIMIT 1",
                 patientA);
@@ -541,7 +503,7 @@ class EmpiGovernanceIT {
         duplicateService.scanBatch();
 
         assertThat(pendingRowCount()).as("两次扫描后待审行数不得增加").isEqualTo(pendingBefore);
-        Integer pairRows = jdbc.queryForObject(
+        Integer pairRows = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM patient.possible_duplicate"
                         + " WHERE patient_id_a = ? AND patient_id_b = ? AND status = 'PENDING'",
                 Integer.class,
@@ -551,56 +513,17 @@ class EmpiGovernanceIT {
     }
 
     /**
-     * 播种第二账号并完成双账号登录（幂等）：reviewer 复用 admin 的 bcrypt 口令哈希与 ADMIN 角色绑定
-     * （V303 形态），操作人注入链路（AuthTokenInterceptor → OperatorContextHolder）在真栈成立双人角色。
-     *
-     * @throws Exception 登录响应解析失败（登录链路异常应显式失败，禁静默吞掉）
+     * 播种第二账号并完成双账号登录（幂等）：播种与登录编排收敛基类助手（终审 Minor「测试夹具收敛」
+     * 换 FuyunStackITBase），reviewer 复用 admin 的 bcrypt 口令哈希与 ADMIN 角色绑定（V303 形态），
+     * 操作人注入链路（AuthTokenInterceptor → OperatorContextHolder）在真栈成立双人角色。
      */
-    private void ensurePrincipals() throws Exception {
+    private void ensurePrincipals() {
         if (ADMIN_TOKEN.get() != null && REVIEWER_TOKEN.get() != null) {
             return;
         }
-        // IT 内播种审批人账号（仅具 IT 意义）：口令哈希直取 admin 行，禁明文/禁硬编码哈希
-        String adminHash = jdbc.queryForObject(
-                "SELECT password_hash FROM system.sys_user WHERE login_name = ?", String.class, ADMIN_LOGIN_NAME);
-        jdbc.update(
-                "INSERT INTO system.sys_user (id, login_name, password_hash, user_type, status)"
-                        + " SELECT ?, ?, ?, 'STAFF', 'ACTIVE'"
-                        + " WHERE NOT EXISTS (SELECT 1 FROM system.sys_user WHERE login_name = ?)",
-                REVIEWER_USER_ID,
-                REVIEWER_LOGIN_NAME,
-                adminHash,
-                REVIEWER_LOGIN_NAME);
-        jdbc.update(
-                "INSERT INTO system.sys_user_role (id, user_id, role_id)"
-                        + " SELECT ?, ?, 1"
-                        + " WHERE NOT EXISTS (SELECT 1 FROM system.sys_user_role WHERE user_id = ? AND role_id = 1)",
-                REVIEWER_USER_ID,
-                REVIEWER_USER_ID,
-                REVIEWER_USER_ID);
-        ADMIN_TOKEN.compareAndSet(null, loginAndGetAccessToken(ADMIN_LOGIN_NAME));
-        REVIEWER_TOKEN.compareAndSet(null, loginAndGetAccessToken(REVIEWER_LOGIN_NAME));
-    }
-
-    /**
-     * 登录并取 accessToken（AuthFlowIT 先例：POST /api/v1/system/auth/login 成功直出双令牌）。
-     *
-     * @param loginName 登录名，非空；来源：V303 种子或 IT 播种账号
-     * @return Bearer accessToken，非空
-     * @throws Exception 响应非 200 或解析失败（登录链路断裂显式失败）
-     */
-    private String loginAndGetAccessToken(String loginName) throws Exception {
-        ResponseEntity<String> response = exchange(
-                "/api/v1/system/auth/login",
-                HttpMethod.POST,
-                null,
-                objectMapper
-                        .createObjectNode()
-                        .put("loginName", loginName)
-                        .put("password", SEED_PASSWORD)
-                        .toString());
-        assertThat(response.getStatusCode().value()).as("登录应成功：%s", loginName).isEqualTo(200);
-        return objectMapper.readTree(response.getBody()).path("accessToken").asText();
+        seedReviewerUser();
+        ADMIN_TOKEN.compareAndSet(null, loginToken(ADMIN_LOGIN_NAME));
+        REVIEWER_TOKEN.compareAndSet(null, loginToken(REVIEWER_LOGIN_NAME));
     }
 
     /**
@@ -660,7 +583,7 @@ class EmpiGovernanceIT {
         if (token != null) {
             headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + token);
         }
-        return http.exchange(uri, method, new HttpEntity<>(body, headers), String.class);
+        return restTemplate.exchange(uri, method, new HttpEntity<>(body, headers), String.class);
     }
 
     /**
@@ -712,7 +635,7 @@ class EmpiGovernanceIT {
 
     /** 当前 PENDING 待审行总数（幂等断言锚点） */
     private Integer pendingRowCount() {
-        return jdbc.queryForObject(
+        return jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM patient.possible_duplicate WHERE status = 'PENDING'", Integer.class);
     }
 }

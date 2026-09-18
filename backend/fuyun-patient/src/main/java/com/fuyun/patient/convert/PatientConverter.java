@@ -9,6 +9,7 @@ import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PatientIdentifier;
 import com.fuyun.patient.entity.PossibleDuplicate;
 import com.fuyun.patient.entity.PrivacyAccessLog;
+import com.fuyun.patient.service.impl.PossibleDuplicateServiceImpl;
 import com.fuyun.patient.vo.CardAccountVO;
 import com.fuyun.patient.vo.CardTxnVO;
 import com.fuyun.patient.vo.CardVO;
@@ -52,6 +53,18 @@ public interface PatientConverter {
 
     /** 疑似重复实体→出参直映（审核人/时刻/备注直映，双 id 对无敏感列） */
     PossibleDuplicateVO toVO(PossibleDuplicate entity);
+
+    /**
+     * matched_rules 库值→命中规则名清单（终审 Minor 口径统一：MapStruct 属性级映射方法，
+     * String→List 无内建转换由此承载；委托 {@link PossibleDuplicateServiceImpl#parseMatchedRules}
+     * 单一实现，读侧归一兼容历史 toString 形态与 JSON 数组形态）。
+     *
+     * @param dbText 库值原文，可空
+     * @return 规则名清单，非空
+     */
+    default List<String> parseMatchedRules(String dbText) {
+        return PossibleDuplicateServiceImpl.parseMatchedRules(dbText);
+    }
 
     /** 合并记录实体→出参（preSnapshot 快照全文不映射——审计经库内查询，禁出接口层） */
     MergeRecordVO toVO(MergeRecord entity);

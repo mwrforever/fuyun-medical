@@ -128,7 +128,8 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
         row.setPatientIdA(a);
         row.setPatientIdB(b);
         row.setMatchScore(check.score());
-        row.setMatchedRules(String.valueOf(check.matchedRules()));
+        // 终审 Minor 口径统一：库值 = JSON 数组文本（规则名为受限标识符，手工拼装无注入面，零新依赖）
+        row.setMatchedRules(toJsonArrayText(check.matchedRules()));
         row.setSource("REGISTER_SCAN");
         row.setStatus(STATUS_PENDING);
         try {
@@ -187,5 +188,38 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
                         .or()
                         .eq(PossibleDuplicate::getPatientIdB, patientId))
                 .count();
+    }
+
+    /** 规则名清单 → JSON 数组文本（写入侧唯一口径；规则名经匹配引擎枚举产出，无需转义） */
+    private static String toJsonArrayText(List<String> rules) {
+        if (rules == null || rules.isEmpty()) {
+            return "[]";
+        }
+        return "[" + rules.stream().map(r -> "\"" + r + "\"").collect(java.util.stream.Collectors.joining(",")) + "]";
+    }
+
+    /**
+     * 库值 → 规则名清单（读取侧归一，公开静态供 MapStruct 转换器与单测直证——VO 构造经
+     * PatientConverter 承载跨包可达）：兼容 JSON 数组与历史 {@code String.valueOf(List)} 的
+     * "[A, B]" toString 形态——存量 dev 行不做数据迁移（测试数据语义，读侧归一即口径闭合），
+     * 新写入一律 JSON。
+     *
+     * @param dbText 库值原文，可空（null/空 → 空清单）
+     * @return 规则名清单，非空
+     */
+    public static List<String> parseMatchedRules(String dbText) {
+        if (dbText == null || dbText.isBlank()) {
+            return List.of();
+        }
+        String body = dbText.trim();
+        if (body.startsWith("[") && body.endsWith("]")) {
+            body = body.substring(1, body.length() - 1);
+        }
+        // 统一剥除引号/空白后按逗号切分（两形态共同超集）
+        String normalized = body.replace("\"", "").replace("'", "");
+        return java.util.Arrays.stream(normalized.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
     }
 }

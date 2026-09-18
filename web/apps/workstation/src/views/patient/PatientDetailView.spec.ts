@@ -30,7 +30,7 @@ function patientWithStatus(status: string): PatientVO {
     registerChannel: 'WINDOW',
     archiveSource: 'STANDARD',
     createdAt: '2026-09-01 10:00:00',
-  } as unknown as PatientVO;
+  };
 }
 
 describe('患者详情页', () => {
