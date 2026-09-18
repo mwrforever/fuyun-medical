@@ -264,7 +264,7 @@ public class PricingEngineServiceImpl extends ServiceImpl<FeeRecordMapper, FeeRe
     @Override
     @Transactional(readOnly = true)
     public QuoteVO quote(QuoteRequest req) {
-        List<QuoteVO.Line> lines = new ArrayList<>();
+        List<QuoteVO.QuoteLine> lines = new ArrayList<>();
         long total = 0L;
         for (QuoteRequest.Line l : req.lines()) {
             ChargeItem item = itemService.requireActiveByCode(l.itemCode());
@@ -289,13 +289,13 @@ public class PricingEngineServiceImpl extends ServiceImpl<FeeRecordMapper, FeeRe
     }
 
     /** 单行预计价：快照取价 + 服务端算额 + 行装配，返回行金额（分）。 */
-    private long quoteLine(List<QuoteVO.Line> lines, ChargeItem item, BigDecimal quantity) {
+    private long quoteLine(List<QuoteVO.QuoteLine> lines, ChargeItem item, BigDecimal quantity) {
         PriceSnapshot snap = priceService.snapshot(item.getItemCode(), item.getId());
         long amount = BigDecimal.valueOf(snap.unitPrice())
                 .multiply(quantity)
                 .setScale(0, RoundingMode.HALF_UP)
                 .longValueExact();
-        lines.add(new QuoteVO.Line(
+        lines.add(new QuoteVO.QuoteLine(
                 item.getId(),
                 item.getItemCode(),
                 item.getItemName(),

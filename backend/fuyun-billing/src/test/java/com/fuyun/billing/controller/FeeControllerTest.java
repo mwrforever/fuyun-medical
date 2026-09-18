@@ -62,7 +62,7 @@ class FeeControllerTest {
                 .thenReturn(new QuoteVO(
                         "O2026091700001",
                         3000L,
-                        List.of(new QuoteVO.Line(100L, "C001", "检查费", 1500L, new BigDecimal("2"), 3000L, true))));
+                        List.of(new QuoteVO.QuoteLine(100L, "C001", "检查费", 1500L, new BigDecimal("2"), 3000L, true))));
 
         String body = mockMvc.perform(post("/api/v1/billing/pricing/quote")
                         .contentType("application/json")
