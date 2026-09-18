@@ -564,6 +564,366 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/billing/settlements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 正式结算（幂等以 settleNo 终态为锚点） */
+        post: operations["settleSettlement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/settlements/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预结算（划价收款依据） */
+        post: operations["previewSettlement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/refunds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 退费申请分页查询 */
+        get: operations["listRefunds"];
+        put?: never;
+        /** 退费申请（免审阈值内当日未占用直退） */
+        post: operations["applyRefund"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/refunds/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 退费驳回（终态留痕） */
+        post: operations["rejectRefund"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/refunds/{id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 退费执行（原路退回） */
+        post: operations["executeRefund"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/refunds/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 退费审批（双人守卫） */
+        post: operations["approveRefund"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/pricing/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预计价（不落库） */
+        post: operations["quotePricing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/pricing-rules/upsert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 计价规则登记（ruleCode upsert） */
+        post: operations["upsertPricingRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/price-adjustments/{id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 发布调价（DRAFT→PUBLISHED） */
+        post: operations["publishPriceAdjustment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance/reverse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保撤销（2104 接口位） */
+        post: operations["reverseInsuranceSettlement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保门诊登记（2001 接口位） */
+        post: operations["registerInsuranceVisit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance/fee-uploads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保费用上传（2101 接口位） */
+        post: operations["uploadInsuranceFees"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance/credential": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保电子凭证核验（接口位，模拟形态） */
+        post: operations["verifyInsuranceCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance/call-logs/{id}/compensation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保调用补偿重试（BILL-1026 状态守卫） */
+        post: operations["retryInsuranceCompensation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance-mappings/upsert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保对照登记（单 ACTIVE 行 upsert） */
+        post: operations["upsertInsuranceMapping"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/fees/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 未结算费用作废 */
+        post: operations["cancelFee"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/fees/manual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 手工计费 */
+        post: operations["manualChargeFee"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/deposits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按就诊号查押金账户 */
+        get: operations["getDepositAccount"];
+        put?: never;
+        /** 住院预交金缴存（原子记账+欠费预警判定） */
+        post: operations["createDeposit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/charge-items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 新建收费项目 */
+        post: operations["createChargeItem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/charge-items/{id}/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 列项目价格版本链 */
+        get: operations["listChargeItemPrices"];
+        put?: never;
+        /** 新建调价草稿 */
+        post: operations["createPriceDraft"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/charge-items/{id}/combo-components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 组合构成全量覆盖维护 */
+        post: operations["saveComboComponents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/dicts/{typeCode}": {
         parameters: {
             query?: never;
@@ -780,6 +1140,125 @@ export interface paths {
             cookie?: never;
         };
         get: operations["detail_3"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/settlements/{no}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按结算编号查结算单 */
+        get: operations["getSettlementByNo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/pricing-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 全量规则清单 */
+        get: operations["listPricingRules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance/call-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 医保调用留痕分页查询 */
+        get: operations["listInsuranceCallLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/insurance-mappings/{chargeItemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按项目查当前 ACTIVE 对照 */
+        get: operations["getEffectiveInsuranceMapping"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/fees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 就诊费用分页查询 */
+        get: operations["listFees"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/daily-lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按日查一日清单（明细+大类汇总+总额三层勾稽） */
+        get: operations["getDailyList"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/charge-items/by-code/{itemCode}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按编码查生效项目 */
+        get: operations["getActiveChargeItem"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1149,6 +1628,206 @@ export interface components {
         DeadLetterCloseRequest: {
             handleNote: string;
         };
+        PaymentLine: {
+            /** @enum {string} */
+            method: "CASH" | "BANK" | "SCAN" | "ONLINE" | "CARD_BALANCE" | "CHARGE_ON_CREDIT";
+            /** @example 0 */
+            amount: string;
+            channelRef?: string;
+        };
+        SettleRequest: {
+            settleNo: string;
+            payments: components["schemas"]["PaymentLine"][];
+        };
+        SettlementVO: {
+            /** @example 0 */
+            id?: string;
+            settleNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            payerType?: string;
+            settleType?: string;
+            status?: string;
+            /** @example 0 */
+            totalAmount?: string;
+            /** @example 0 */
+            pooledAmount?: string;
+            /** @example 0 */
+            acctPayAmount?: string;
+            /** @example 0 */
+            selfPayAmount?: string;
+            /** @example 0 */
+            selfExpenseAmount?: string;
+            /** @example 0 */
+            preSelfPayAmount?: string;
+            settledAt?: string;
+        };
+        SettlementPreviewRequest: {
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            /** @enum {string} */
+            payerType: "SELF_PAY" | "CITY_INS" | "PROV_INS" | "OUTSIDE_INS" | "COMM_INS";
+        };
+        SettlementPreviewVO: {
+            settleNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            payerType?: string;
+            status?: string;
+            /** @example 0 */
+            totalAmount?: string;
+            /** @example 0 */
+            pooledAmount?: string;
+            /** @example 0 */
+            acctPayAmount?: string;
+            /** @example 0 */
+            selfPayAmount?: string;
+            /** @example 0 */
+            selfExpenseAmount?: string;
+            /** @example 0 */
+            preSelfPayAmount?: string;
+        };
+        RefundApplyRequest: {
+            /** @example 0 */
+            settlementId: string;
+            lines: components["schemas"]["RefundLine"][];
+            reason: string;
+        };
+        RefundLine: {
+            /** @example 0 */
+            feeId: string;
+            refundQuantity: number;
+        };
+        RefundRejectRequest: {
+            reason: string;
+        };
+        Line: {
+            itemCode: string;
+            quantity: number;
+        };
+        QuoteRequest: {
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            lines: components["schemas"]["Line"][];
+        };
+        QuoteLine: {
+            /** @example 0 */
+            itemId?: string;
+            itemCode?: string;
+            itemName?: string;
+            /** @example 0 */
+            unitPrice?: string;
+            quantity?: number;
+            /** @example 0 */
+            amount?: string;
+            selfExpenseOnly?: boolean;
+        };
+        QuoteVO: {
+            visitId?: string;
+            /** @example 0 */
+            totalAmount?: string;
+            lines?: components["schemas"]["QuoteLine"][];
+        };
+        PricingRuleUpsertRequest: {
+            ruleCode: string;
+            ruleName: string;
+            /** @enum {string} */
+            triggerType: "ORDER_CONFIRMED" | "PRESCRIPTION_EFFECTIVE" | "EXECUTED" | "REGISTERED" | "SCANNED" | "DURATION" | "MANUAL";
+            itemScope: string;
+            /** @enum {string} */
+            status: "ACTIVE" | "INACTIVE";
+            remark?: string;
+        };
+        CredentialVerifyRequest: {
+            ecToken: string;
+        };
+        CredentialVerifyResponse: {
+            authSerialNo?: string;
+        };
+        CompensationRetryRequest: {
+            note: string;
+        };
+        InsuranceMappingUpsertRequest: {
+            /** @example 0 */
+            chargeItemId: string;
+            /** @enum {string} */
+            mapType: "TREATMENT" | "DRUG" | "CONSUMABLE";
+            nhsaCode: string;
+            catalogVersion: string;
+            selfPayRatio: number;
+            /** @example 0 */
+            limitPrice?: string;
+            /** @enum {string} */
+            insurancePayType: "CLASS_A" | "CLASS_B" | "CLASS_C" | "SELF_EXPENSE";
+            checkReceipt?: string;
+        };
+        ManualChargeRequest: {
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            itemCode: string;
+            quantity: number;
+            reason: string;
+        };
+        DepositRequest: {
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            /** @example 0 */
+            amountFen: string;
+            /** @enum {string} */
+            paymentMethod: "CASH" | "BANK" | "SCAN" | "ONLINE" | "CARD_BALANCE" | "CHARGE_ON_CREDIT";
+            channelRef?: string;
+            /** @example 0 */
+            warningThresholdFen?: string;
+        };
+        ChargeItemCreateRequest: {
+            itemCode: string;
+            itemName: string;
+            /** @enum {string} */
+            itemClass: "WEST_DRUG" | "TRAD_DRUG" | "TREATMENT" | "CONSUMABLE" | "BED" | "NURSING" | "OTHER";
+            unit: string;
+            /** @example 0 */
+            execDeptId?: string;
+            comboFlag: boolean;
+            feeCategory: string;
+        };
+        ChargeItemVO: {
+            /** @example 0 */
+            id?: string;
+            itemCode?: string;
+            itemName?: string;
+            /** @enum {string} */
+            itemClass?: "WEST_DRUG" | "TRAD_DRUG" | "TREATMENT" | "CONSUMABLE" | "BED" | "NURSING" | "OTHER";
+            unit?: string;
+            /** @example 0 */
+            execDeptId?: string;
+            /** @enum {string} */
+            priceFlag?: "SINGLE" | "COMBO_ONLY";
+            comboFlag?: boolean;
+            feeCategory?: string;
+            /** @enum {string} */
+            status?: "ACTIVE" | "INACTIVE";
+        };
+        PriceDraftRequest: {
+            itemCode: string;
+            /** @example 0 */
+            price: string;
+            /** Format: date-time */
+            effectiveFrom: string;
+            /** @enum {string} */
+            priceSource?: "OFFICIAL_DOC" | "AGREEMENT";
+            approvalNo?: string;
+        };
+        ComboComponentRequest: {
+            /** @example 0 */
+            componentItemId: string;
+            defaultQuantity: number;
+        };
         PageResultPrivacyAccessLogVO: {
             content?: components["schemas"]["PrivacyAccessLogVO"][];
             /** @example 0 */
@@ -1376,6 +2055,182 @@ export interface components {
             size?: string;
             /** @example 0 */
             total?: string;
+        };
+        PageResultRefundVO: {
+            content?: components["schemas"]["RefundVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        RefundVO: {
+            /** @example 0 */
+            id?: string;
+            refundNo?: string;
+            /** @example 0 */
+            settlementId?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            refundType?: string;
+            /** @example 0 */
+            amount?: string;
+            reason?: string;
+            applicant?: string;
+            approver?: string;
+            autoApproved?: boolean;
+            status?: string;
+        };
+        PricingRuleVO: {
+            /** @example 0 */
+            id?: string;
+            ruleCode?: string;
+            ruleName?: string;
+            /** @enum {string} */
+            triggerType?: "ORDER_CONFIRMED" | "PRESCRIPTION_EFFECTIVE" | "EXECUTED" | "REGISTERED" | "SCANNED" | "DURATION" | "MANUAL";
+            itemScope?: string;
+            /** @enum {string} */
+            status?: "ACTIVE" | "INACTIVE";
+            remark?: string;
+        };
+        InsuranceCallLogVO: {
+            /** @example 0 */
+            id?: string;
+            txnCode?: string;
+            visitId?: string;
+            /** @example 0 */
+            settlementId?: string;
+            requestDigest?: string;
+            responseDigest?: string;
+            centerSerialNo?: string;
+            resultCode?: string;
+            resultMsg?: string;
+            /** @example 0 */
+            durationMs?: string;
+            status?: string;
+            compensateNote?: string;
+            traceId?: string;
+        };
+        PageResultInsuranceCallLogVO: {
+            content?: components["schemas"]["InsuranceCallLogVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        InsuranceMappingVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            chargeItemId?: string;
+            /** @enum {string} */
+            mapType?: "TREATMENT" | "DRUG" | "CONSUMABLE";
+            nhsaCode?: string;
+            catalogVersion?: string;
+            selfPayRatio?: number;
+            /** @example 0 */
+            limitPrice?: string;
+            /** @enum {string} */
+            insurancePayType?: "CLASS_A" | "CLASS_B" | "CLASS_C" | "SELF_EXPENSE";
+            /** @enum {string} */
+            status?: "ACTIVE" | "EXPIRED";
+            checkReceipt?: string;
+        };
+        FeeRecordVO: {
+            /** @example 0 */
+            id?: string;
+            feeNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            visitType?: string;
+            /** @example 0 */
+            chargeItemId?: string;
+            itemNameSnapshot?: string;
+            /** @example 0 */
+            unitPriceSnapshot?: string;
+            quantity?: number;
+            /** @example 0 */
+            amount?: string;
+            feeCategorySnapshot?: string;
+            chargeSource?: string;
+            sourceRef?: string;
+            triggerPoint?: string;
+            /** Format: date */
+            billingDate?: string;
+            nhsaCodeSnapshot?: string;
+            catalogVersionSnapshot?: string;
+            selfPayRatioSnapshot?: number;
+            /** @example 0 */
+            limitPriceSnapshot?: string;
+            /** Format: int32 */
+            priceVersion?: number;
+            /** @example 0 */
+            settlementId?: string;
+            execOccupyStatus?: string;
+            status?: string;
+            operator?: string;
+            manualReason?: string;
+            /** Format: date-time */
+            chargedAt?: string;
+        };
+        PageResultFeeRecordVO: {
+            content?: components["schemas"]["FeeRecordVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        DepositAccountVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            /** @example 0 */
+            balance?: string;
+            /** @example 0 */
+            warningThreshold?: string;
+            status?: string;
+        };
+        CategorySummary: {
+            feeCategory?: string;
+            /** @example 0 */
+            amount?: string;
+        };
+        DailyListVO: {
+            visitId?: string;
+            /** Format: date */
+            date?: string;
+            items?: components["schemas"]["FeeRecordVO"][];
+            categories?: components["schemas"]["CategorySummary"][];
+            /** @example 0 */
+            totalAmount?: string;
+        };
+        ChargeItemPriceVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            chargeItemId?: string;
+            /** @example 0 */
+            price?: string;
+            /** Format: int32 */
+            version?: number;
+            /** Format: date-time */
+            effectiveFrom?: string;
+            /** Format: date-time */
+            effectiveTo?: string;
+            /** @enum {string} */
+            priceSource?: "OFFICIAL_DOC" | "AGREEMENT";
+            approvalNo?: string;
+            /** @enum {string} */
+            status?: "DRAFT" | "PUBLISHED" | "EXPIRED";
         };
     };
     responses: never;
@@ -2297,6 +3152,566 @@ export interface operations {
             };
         };
     };
+    settleSettlement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SettlementVO"];
+                };
+            };
+        };
+    };
+    previewSettlement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettlementPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SettlementPreviewVO"];
+                };
+            };
+        };
+    };
+    listRefunds: {
+        parameters: {
+            query?: {
+                status?: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "EXECUTED" | "REJECTED";
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultRefundVO"];
+                };
+            };
+        };
+    };
+    applyRefund: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefundApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    rejectRefund: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefundRejectRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    executeRefund: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approveRefund: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    quotePricing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QuoteVO"];
+                };
+            };
+        };
+    };
+    upsertPricingRule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PricingRuleUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    publishPriceAdjustment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reverseInsuranceSettlement: {
+        parameters: {
+            query: {
+                centerSerialNo: string;
+                idempotencyKey: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    registerInsuranceVisit: {
+        parameters: {
+            query: {
+                visitId: string;
+                patientId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    uploadInsuranceFees: {
+        parameters: {
+            query: {
+                visitId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": string[];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": number;
+                };
+            };
+        };
+    };
+    verifyInsuranceCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["CredentialVerifyResponse"];
+                };
+            };
+        };
+    };
+    retryInsuranceCompensation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompensationRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upsertInsuranceMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InsuranceMappingUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    cancelFee: {
+        parameters: {
+            query: {
+                reason: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    manualChargeFee: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualChargeRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getDepositAccount: {
+        parameters: {
+            query: {
+                visitId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DepositAccountVO"];
+                };
+            };
+        };
+    };
+    createDeposit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DepositRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    createChargeItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChargeItemCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChargeItemVO"];
+                };
+            };
+        };
+    };
+    listChargeItemPrices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChargeItemPriceVO"][];
+                };
+            };
+        };
+    };
+    createPriceDraft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PriceDraftRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    saveComboComponents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComboComponentRequest"][];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     readVersion: {
         parameters: {
             query?: {
@@ -2631,6 +4046,163 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["DeadLetterDetailVO"];
+                };
+            };
+        };
+    };
+    getSettlementByNo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SettlementVO"];
+                };
+            };
+        };
+    };
+    listPricingRules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PricingRuleVO"][];
+                };
+            };
+        };
+    };
+    listInsuranceCallLogs: {
+        parameters: {
+            query?: {
+                visitId?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultInsuranceCallLogVO"];
+                };
+            };
+        };
+    };
+    getEffectiveInsuranceMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                chargeItemId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["InsuranceMappingVO"];
+                };
+            };
+        };
+    };
+    listFees: {
+        parameters: {
+            query: {
+                visitId: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultFeeRecordVO"];
+                };
+            };
+        };
+    };
+    getDailyList: {
+        parameters: {
+            query: {
+                visitId: string;
+                date: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DailyListVO"];
+                };
+            };
+        };
+    };
+    getActiveChargeItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemCode: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChargeItemVO"];
                 };
             };
         };
