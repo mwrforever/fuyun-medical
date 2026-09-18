@@ -37,6 +37,10 @@ const selectedRows = ref<RefundRow[]>([]);
 const reason = ref('');
 const summaryLoading = ref(false);
 const applying = ref(false);
+/** 驳回在途（弹窗/请求期间抑制二次点击，防双击弹双窗双 POST） */
+const rejecting = ref(false);
+/** 执行在途（请求期间按钮禁用/加载，根除双击双 POST 的并发双退触发面） */
+const executing = ref(false);
 
 /**
  * 按结算号查摘要并带出可退明细。
@@ -167,34 +171,48 @@ async function handleApprove(row: RefundVO): Promise<void> {
   }
 }
 
-/** 驳回退费（弹窗理由必填，与后端校验同口径） */
+/** 驳回退费（弹窗理由必填，与后端校验同口径；在途抑制二次点击） */
 async function handleReject(row: RefundVO): Promise<void> {
-  let input: { value: string };
-  try {
-    input = await ElMessageBox.prompt('请输入驳回理由', '驳回退费申请', {
-      inputValidator: (text: string) => (text.trim() === '' ? '驳回理由必填' : true),
-    });
-  } catch {
-    // 用户关闭弹窗=放弃驳回
+  // 入口守卫先行（同步置位）：双击的第二次事件在弹窗渲染前即被拦截，防弹双窗双 POST
+  if (rejecting.value) {
     return;
   }
+  rejecting.value = true;
   try {
+    let input: { value: string };
+    try {
+      input = await ElMessageBox.prompt('请输入驳回理由', '驳回退费申请', {
+        inputValidator: (text: string) => (text.trim() === '' ? '驳回理由必填' : true),
+      });
+    } catch {
+      // 用户关闭弹窗=放弃驳回
+      return;
+    }
     await rejectRefund(row.id ?? '', input.value.trim());
     void ElMessage.success('已驳回');
     await loadQueue();
   } catch {
     // 失败弹错归响应拦截器
+  } finally {
+    rejecting.value = false;
   }
 }
 
-/** 执行退费（审批通过后原路退回；阈值内免审单由后端已直批，此处覆盖 APPROVED 态） */
+/** 执行退费（审批通过后原路退回；阈值内免审单由后端已直批，此处覆盖 APPROVED 态；在途抑制二次点击） */
 async function handleExecute(row: RefundVO): Promise<void> {
+  // 入口守卫先行（同步置位）：mock/慢响应等长在途窗口下二次点击零出网，根除并发双退触发面
+  if (executing.value) {
+    return;
+  }
+  executing.value = true;
   try {
     await executeRefund(row.id ?? '');
     void ElMessage.success('已执行原路退回');
     await loadQueue();
   } catch {
     // 失败弹错归响应拦截器
+  } finally {
+    executing.value = false;
   }
 }
 
@@ -291,10 +309,20 @@ onMounted(() => {
             <el-button size="small" :disabled="!canApprove(row)" @click="handleApprove(row)">
               批准
             </el-button>
-            <el-button size="small" :disabled="!canReject(row)" @click="handleReject(row)">
+            <el-button
+              size="small"
+              :disabled="!canReject(row) || rejecting"
+              :loading="rejecting"
+              @click="handleReject(row)"
+            >
               驳回
             </el-button>
-            <el-button size="small" :disabled="!canExecute(row)" @click="handleExecute(row)">
+            <el-button
+              size="small"
+              :disabled="!canExecute(row) || executing"
+              :loading="executing"
+              @click="handleExecute(row)"
+            >
               执行
             </el-button>
           </template>
