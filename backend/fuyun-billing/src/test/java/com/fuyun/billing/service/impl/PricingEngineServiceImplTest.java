@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
@@ -173,6 +174,26 @@ class PricingEngineServiceImplTest {
         assertThat(keyWrapper.getSqlSegment()).contains("billing_key");
         assertThat(keyWrapper.getParamNameValuePairs().values())
                 .anyMatch(v -> String.valueOf(v).contains("7|ORD-01|ORDER_CONFIRMED|100|"));
+    }
+
+    @Test
+    @DisplayName("visit_id 结构守卫：非法形态计费落库前 BILL-1013 拒（CF-3，事件消费与手工计费共同入口）")
+    void generateRejectsMalformedVisitIdAsBill1013() {
+        assertThatThrownBy(() -> engine.generateFromSource(new FeeGenerateCommand(
+                        7L,
+                        "X123",
+                        ChargeSource.ORDER_LINKED,
+                        "ORD-01",
+                        TriggerType.ORDER_CONFIRMED,
+                        "C001",
+                        BigDecimal.ONE,
+                        VisitType.OUT,
+                        null,
+                        null)))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.VISIT_ID_MALFORMED));
+        // 守卫先于一切数据访问：非法结构不落库、不查项目（mapper 零交互）
+        verifyNoInteractions(feeRecordMapper, itemService);
     }
 
     @Test

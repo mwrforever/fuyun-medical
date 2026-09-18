@@ -77,12 +77,18 @@ public class PricingEngineServiceImpl extends ServiceImpl<FeeRecordMapper, FeeRe
      *
      * @param cmd 费用生成命令，非空
      * @return 新费用行 id（组合展开多行时为首成员行 id）
-     * @throws BizException BILL-1009（409 重复计费）/ BILL-1008（定价不可得，经 snapshot 抛；
+     * @throws BizException BILL-1013（400 visit_id 结构不合法，事件消费/手工两通道共同入口守卫）/
+     *                      BILL-1009（409 重复计费）/ BILL-1008（定价不可得，经 snapshot 抛；
      *                      组合未维护构成同码显式拒）/ BILL-1001（组合成员缺行脏数据）
      */
     @Override
     @Transactional
     public long generateFromSource(FeeGenerateCommand cmd) {
+        // CF-3 结构守卫：非法就诊号在计费落库前拒（BILL-1013 引用点收口，消费侧不可信输入面）
+        if (!VisitIdValidator.isValid(cmd.visitId())) {
+            throw new BizException(
+                    BillingErrorCode.VISIT_ID_MALFORMED, HttpStatus.BAD_REQUEST, "就诊号结构不合法：" + cmd.visitId());
+        }
         ChargeItem item = itemService.requireActiveByCode(cmd.itemCode());
         if (!Boolean.TRUE.equals(item.getComboFlag())) {
             return chargeOne(cmd, item);
