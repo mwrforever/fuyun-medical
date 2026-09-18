@@ -100,7 +100,7 @@ async function handleApply(): Promise<void> {
     await applyRefund({
       settlementId: settlement.value.id,
       lines: selectedRows.value.map((row) => ({
-        feeId: String(row.fee.id ?? ''),
+        feeId: row.fee.id ?? '',
         refundQuantity: row.qty,
       })),
       reason: reason.value.trim(),
@@ -159,7 +159,7 @@ async function loadQueue(): Promise<void> {
 /** 批准退费（自审场景后端 403 拒绝，拦截器弹错后驻留队列） */
 async function handleApprove(row: RefundVO): Promise<void> {
   try {
-    await approveRefund(String(row.id ?? ''));
+    await approveRefund(row.id ?? '');
     void ElMessage.success('已批准');
     await loadQueue();
   } catch {
@@ -179,7 +179,7 @@ async function handleReject(row: RefundVO): Promise<void> {
     return;
   }
   try {
-    await rejectRefund(String(row.id ?? ''), String(input.value).trim());
+    await rejectRefund(row.id ?? '', input.value.trim());
     void ElMessage.success('已驳回');
     await loadQueue();
   } catch {
@@ -190,7 +190,7 @@ async function handleReject(row: RefundVO): Promise<void> {
 /** 执行退费（审批通过后原路退回；阈值内免审单由后端已直批，此处覆盖 APPROVED 态） */
 async function handleExecute(row: RefundVO): Promise<void> {
   try {
-    await executeRefund(String(row.id ?? ''));
+    await executeRefund(row.id ?? '');
     void ElMessage.success('已执行原路退回');
     await loadQueue();
   } catch {
