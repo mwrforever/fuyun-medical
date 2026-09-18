@@ -50,6 +50,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>红线：金额全部服务端计算与勾稽（明细合计=结算总额、支付明细合计=总额，两层，Spec §9）；
  * 医保拆分按预结算回执落库、本地不自行计算基金拆分；已结算只读（红线 2）。
  * 就诊卡余额收付经 M02 {@link CardAccountLedger}（D-13 收口后首次真实调用，同事务原子记账不超扣）。
+ * 并发收口（2026-09-18 用户裁决）：正式结算状态迁移经 CAS 条件更新抢锚
+ * {@link SettlementMapper#casMarkSettled}，费用迁移经条件更新 {@link FeeRecordMapper#casMarkFeesSettled}，
+ * 根除同单并发双发双扣与双单并发抢同批费用双扣（读-校验-写 TOCTOU）。
  * 事件 billing.settlement.completed 在结算落库事务提交后发（AFTER_COMMIT，M03 据此放行发药）。
  */
 @Slf4j
@@ -184,11 +187,19 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
      * 正式结算（幂等以 settleNo 终态为流水号锚点：重放同单直返不重复扣费——医保通道的
      * 请求级流水号语义由 Task 15 insurance_call_log 承载，自费通道不再冗余建键）。
      *
+     * <p>并发收口（2026-09-18 用户裁决：结算锚点幂等重构）：状态迁移不再走读-校验-写全实体
+     * updateById，改 CAS 条件更新抢锚——{@link SettlementMapper#casMarkSettled} 仅当行仍处
+     * DRAFT/PRESETTLED 时落 SETTLED，并发双发同单时第二事务在行锁上等待、首事务提交后条件不
+     * 命中得 0 行，重读分流幂等直返，根除双 PAY 双扣；费用行集经
+     * {@link FeeRecordMapper#casMarkFeesSettled} 条件更新，双 DRAFT 单并发抢同批费用时行数不足
+     * 抛 BILL-1016 整体回滚（同事务，结算锚抢占一并回滚无中间态）。动卡入账严格后置于锚抢占成功。
+     *
      * @param req 结算请求（settleNo 非空；payments 支付明细行非空——CARD_BALANCE 行 channelRef=卡
      *            账户 id 字符串，组件冻结见接口块）
      * @return 结算出参
-     * @throws BizException BILL-1014（404 缺单）/ BILL-1015（409 状态不允许）/ BILL-1016（409 两层
-     *                      勾稽任一不平）/ BILL-1012（400 CARD_BALANCE 行缺/非法卡账户引用或多卡混付）；
+     * @throws BizException BILL-1014（404 缺单）/ BILL-1015（409 状态不允许，含 CAS 抢锚失败后
+     *                      重读非 SETTLED 态）/ BILL-1016（409 两层勾稽任一不平或费用行并发被抢
+     *                      迁移数不足）/ BILL-1012（400 CARD_BALANCE 行缺/非法卡账户引用或多卡混付）；
      *                      PAT-1013/1014/1016（就诊卡记账失败经调用方事务回滚上抛）
      */
     @Override
@@ -201,7 +212,8 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
         if (st == null) {
             throw new BizException(BillingErrorCode.SETTLEMENT_NOT_FOUND, HttpStatus.NOT_FOUND, "结算单不存在");
         }
-        // 幂等：已 SETTLED 直返（结算交易以流水号管理，重复请求不重扣——Spec 调研依据 7）
+        // 幂等快路径：已 SETTLED 直返（结算交易以流水号管理，重复请求不重扣——Spec 调研依据 7；
+        //   并发抢锚输家经 casMarkSettled 影响行数 0 后重读进入本同一分支语义）
         if (st.getStatus() == SettlementStatus.SETTLED) {
             log.info("结算幂等命中：settleNo={}，已结算直返", settleNo);
             return SettlementVO.from(st);
@@ -233,33 +245,48 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
             log.warn("支付勾稽不平：settleNo={}，支付合计={}，结算总额={}", settleNo, paySum, st.getTotalAmount());
             throw new BizException(BillingErrorCode.AMOUNT_MISMATCH, HttpStatus.CONFLICT, "支付明细合计与结算总额不符，禁止结算");
         }
-        // 就诊卡余额支付：调 M02 台账原子记账（PAY 出账，余额不足 PAT-1016 由调用方事务回滚）；无卡行不调
-        if (cardPayFen > 0L) {
-            cardAccountLedger.record(
-                    new CardTxnRecord(parseCardAccountId(cardAccountIdRef), CardTxnType.PAY, cardPayFen, settleNo));
-        }
+        // 三层勾稽第一层前置（纯读校验先于一切写动作）：明细合计=结算总额，不平零写拒绝
         List<FeeRecord> fees = feeRecordMapper.selectList(Wrappers.<FeeRecord>lambdaQuery()
                 .eq(FeeRecord::getVisitId, st.getVisitId())
                 .eq(FeeRecord::getStatus, FeeStatus.PENDING)
                 .orderByAsc(FeeRecord::getId));
         long feeSum = fees.stream().mapToLong(FeeRecord::getAmount).sum();
-        // 三层勾稽第一层：明细合计=结算总额
         if (feeSum != st.getTotalAmount()) {
             log.warn("金额勾稽不平：settleNo={}，明细合计={}，结算总额={}", settleNo, feeSum, st.getTotalAmount());
             throw new BizException(BillingErrorCode.AMOUNT_MISMATCH, HttpStatus.CONFLICT, "费用明细合计与结算总额不符，禁止结算");
         }
-        // 数据库写操作：费用批量置 SETTLED 并回填结算引用（同事务）
-        for (FeeRecord fee : fees) {
-            fee.setStatus(FeeStatus.SETTLED);
-            fee.setSettlementId(st.getId());
-            feeRecordMapper.updateById(fee);
+        // 结算锚点 CAS 抢占：条件更新落 SETTLED 终态字段（终态字段=状态+结算时刻+支付明细同语句落库）。
+        //   并发双发同单在此串行化——输家影响行数 0，重读分流：SETTLED 幂等直返（与首请求等效）、
+        //   他态（如并发退费已迁移）拒 BILL-1015；抢占失败即无后续任何资金动作
+        OffsetDateTime settledAt = OffsetDateTime.now();
+        String paymentDetails = toPaymentDetailsJson(payments);
+        if (baseMapper.casMarkSettled(st.getId(), settledAt, paymentDetails) == 0) {
+            Settlement latest = baseMapper.selectById(st.getId());
+            if (latest != null && latest.getStatus() == SettlementStatus.SETTLED) {
+                log.info("结算并发幂等命中：settleNo={}，CAS 抢锚输家按已结算直返", settleNo);
+                return SettlementVO.from(latest);
+            }
+            throw new BizException(
+                    BillingErrorCode.SETTLEMENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "结算单已被并发请求处理，当前状态不允许结算");
         }
-        // 支付明细落库（V603 payment_details 列形态 [{method,amount,channelRef}]；退费 execute
-        //   原路退回自此读回卡账户引用与各行金额）
-        st.setPaymentDetails(toPaymentDetailsJson(payments));
+        // 就诊卡余额支付：调 M02 台账原子记账（PAY 出账，余额不足 PAT-1016 由调用方事务回滚）；
+        //   无卡行不调。入账严格后置于锚抢占成功——抢锚输家已在上一步直返，杜绝并发双 PAY 双扣
+        if (cardPayFen > 0L) {
+            cardAccountLedger.record(
+                    new CardTxnRecord(parseCardAccountId(cardAccountIdRef), CardTxnType.PAY, cardPayFen, settleNo));
+        }
+        // 费用行集条件更新迁移（V602 status/settlement_id）：仅 PENDING 行可迁移——双 DRAFT 单并发
+        //   结算同批费用时，后到者在行锁上被首单提交串行化，已被迁移的行条件不命中；影响行数必须
+        //   全量命中，不足即并发被抢，抛 BILL-1016 整体回滚（结算锚抢占同事务一并回滚，无中间态）
+        List<Long> feeIds = fees.stream().map(FeeRecord::getId).toList();
+        if (feeRecordMapper.casMarkFeesSettled(st.getId(), feeIds) != feeIds.size()) {
+            log.warn("费用行并发迁移不足：settleNo={}，期望={}，实际已被并发结算迁移", settleNo, feeIds.size());
+            throw new BizException(BillingErrorCode.AMOUNT_MISMATCH, HttpStatus.CONFLICT, "费用明细已被并发结算处理，禁止重复结算");
+        }
+        // 内存态同步 CAS 已落库的终态字段（事件 payload 与出参 VO 取值源；不再全实体 updateById）
         st.setStatus(SettlementStatus.SETTLED);
-        st.setSettledAt(OffsetDateTime.now());
-        updateById(st);
+        st.setSettledAt(settledAt);
+        st.setPaymentDetails(paymentDetails);
         // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：AFTER_COMMIT 经 BillingEventPublisher 出 fy.topic，
         //   结算回滚则广播不出（M03 据 settlement.completed 放行发药，禁误放）
         events.publishEvent(new BillingDomainEvent(

@@ -2,6 +2,21 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-18 · P1 PR-3：结算/退费并发缺口收口（终审 parked 三项，用户裁决=结算锚点幂等重构·本 PR 内修复）
+
+- **修法落地**（条件更新/CAS 族，最小侵入根除读-校验-写 TOCTOU）：①settle 状态迁移改
+  `SettlementMapper.casMarkSettled` 条件更新抢锚（DRAFT/PRESETTLED 谓词，输家重读分流幂等直返/
+  BILL-1015），费用迁移改 `FeeRecordMapper.casMarkFeesSettled` 条件更新（PENDING 谓词+行数全量断言，
+  不足抛 BILL-1016 同事务整体回滚），动卡入账严格后置于锚抢占成功；②apply 目标费用行集
+  `FeeRecordMapper.lockByIds`（SELECT FOR UPDATE + id 升序锁序）串行化并发申请，锁内重读聚合做
+  超可退守卫；③execute CARD_BALANCE 行按 channelRef 聚合、每卡单次全额贷记（与写入侧求和扣款
+  口径对称）。不动迁移文件（零加列）、不动 REST 契约与 api.d.ts。
+- **preview 双单口径**：不加同 visit 在途单守卫（最小侵入），双 DRAFT 单并发由 settle 费用行条件
+  更新兜底（第二单 BILL-1016 拒，属可接受语义）。
+- **测试**：单测新增 CAS 三分支/行锁顺序/同卡聚合/mapper 注解 SQL 守卫 8 用例（billing 173 绿）；
+  新增 `BillingConcurrencyGuardIT` 三场景×3 轮真栈并发 IT（同单双 settle 恰一赢一幂等+PAY 台账
+  恰一行/并发双 apply 恰一 201 一 409 BILL-1021/同卡拆分两行 execute REFUND 台账恰一行）。
+
 ## 2026-09-17 · P1 PR-3 M13 收费物价与医保基线收口（CF-4 冻结载体交付 + 前置项全清，先记再改）
 
 - CF-4 六事件登记（V605 id 17–22）并发布/消费可用；CF-5 占位订阅两行（id 23–24）登记，

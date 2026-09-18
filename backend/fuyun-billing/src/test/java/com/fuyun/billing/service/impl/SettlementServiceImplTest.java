@@ -3,6 +3,8 @@ package com.fuyun.billing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -267,7 +269,7 @@ class SettlementServiceImplTest {
     }
 
     @Test
-    @DisplayName("正式结算：费用批量置 SETTLED 并回填结算引用、结算单终态、发 settlement.completed")
+    @DisplayName("正式结算：CAS 抢锚落终态、费用条件更新迁移、发 settlement.completed（零全实体 updateById）")
     void settleMarksFeesSettledAndPublishsCompleted() {
         Settlement st = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
         when(settlementMapper.selectOne(any())).thenReturn(st);
@@ -275,25 +277,27 @@ class SettlementServiceImplTest {
                 .thenReturn(List.of(
                         fee(1L, 3000L, OffsetDateTime.parse("2026-09-17T09:30+08:00")),
                         fee(2L, 2000L, OffsetDateTime.parse("2026-09-17T08:00+08:00"))));
+        // CAS 抢锚成功 + 费用行全量迁移（并发语义桩：两语句均命中满额行数）
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
+        when(feeRecordMapper.casMarkFeesSettled(anyLong(), any())).thenReturn(2);
 
         SettlementVO vo =
                 service.settle(new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null))));
 
-        // 数据库写操作断言：费用逐行 SETTLED 并回填结算引用（captor 校验）
-        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
-        verify(feeRecordMapper, times(2)).updateById(feeCaptor.capture());
-        assertThat(feeCaptor.getAllValues()).allSatisfy(f -> {
-            assertThat(f.getStatus()).isEqualTo(FeeStatus.SETTLED);
-            assertThat(f.getSettlementId()).isEqualTo(900L);
-        });
-        // 结算单落库断言：状态终态 + 结算时刻
-        ArgumentCaptor<Settlement> stCaptor = ArgumentCaptor.forClass(Settlement.class);
-        verify(settlementMapper).updateById(stCaptor.capture());
-        assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.SETTLED);
-        assertThat(stCaptor.getValue().getSettledAt()).isNotNull();
+        // 结算锚 CAS 断言：终态三字段同语句落库（status/settled_at/payment_details），禁全实体改写
+        ArgumentCaptor<OffsetDateTime> settledAtCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
+        ArgumentCaptor<String> detailsCaptor = ArgumentCaptor.forClass(String.class);
+        verify(settlementMapper).casMarkSettled(eq(900L), settledAtCaptor.capture(), detailsCaptor.capture());
+        assertThat(settledAtCaptor.getValue()).isNotNull();
+        assertThat(detailsCaptor.getValue()).isEqualTo("[{\"method\":\"CASH\",\"amount\":5000,\"channelRef\":null}]");
         assertThat(vo.id()).isEqualTo(900L);
         assertThat(vo.status()).isEqualTo("SETTLED");
         assertThat(vo.settledAt()).isNotNull();
+        // 费用行条件更新断言：仅 PENDING 行迁移并回填结算引用（id 集与勾稽读侧同源）
+        verify(feeRecordMapper).casMarkFeesSettled(900L, List.of(1L, 2L));
+        // 并发收口后费用/结算单均不走全实体 updateById（读-校验-写 TOCTOU 写点已根除）
+        verify(feeRecordMapper, never()).updateById(any(FeeRecord.class));
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
         // 事件断言走冻结机制：事务内应用事件（AFTER_COMMIT 出 MQ 归 BillingEventPublisher，Task 10 锁定）
         ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
         verify(events, times(1)).publishEvent(evt.capture());
@@ -343,12 +347,14 @@ class SettlementServiceImplTest {
     }
 
     @Test
-    @DisplayName("就诊卡支付：CARD_BALANCE 行金额求和为扣额，台账 PAY 记账恰一次；卡引用=行内 channelRef")
+    @DisplayName("就诊卡支付：CARD_BALANCE 行金额求和为扣额，台账 PAY 记账恰一次（入账后置于 CAS 抢锚成功）")
     void settleCardBalanceCallsLedgerRecordPay() {
         Settlement st = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
         when(settlementMapper.selectOne(any())).thenReturn(st);
         when(feeRecordMapper.selectList(any()))
                 .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
+        when(feeRecordMapper.casMarkFeesSettled(anyLong(), any())).thenReturn(1);
 
         service.settle(new SettleRequest(
                 "S100",
@@ -383,6 +389,8 @@ class SettlementServiceImplTest {
         when(settlementMapper.selectOne(any())).thenReturn(st);
         when(feeRecordMapper.selectList(any()))
                 .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
+        when(feeRecordMapper.casMarkFeesSettled(anyLong(), any())).thenReturn(1);
 
         service.settle(new SettleRequest(
                 "S100",
@@ -390,10 +398,10 @@ class SettlementServiceImplTest {
                         new PaymentLine(PaymentMethod.CASH, 3000L, null),
                         new PaymentLine(PaymentMethod.CARD_BALANCE, 2000L, "5"))));
 
-        ArgumentCaptor<Settlement> captor = ArgumentCaptor.forClass(Settlement.class);
-        verify(settlementMapper).updateById(captor.capture());
         // 逐字符断言列形态：method=code、amount 恒数值（不经全局 Long→String 模块）、channelRef null 用 null 保三键
-        assertThat(captor.getValue().getPaymentDetails())
+        ArgumentCaptor<String> detailsCaptor = ArgumentCaptor.forClass(String.class);
+        verify(settlementMapper).casMarkSettled(eq(900L), any(), detailsCaptor.capture());
+        assertThat(detailsCaptor.getValue())
                 .isEqualTo("[{\"method\":\"CASH\",\"amount\":3000,\"channelRef\":null},"
                         + "{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"5\"}]");
     }
@@ -425,7 +433,7 @@ class SettlementServiceImplTest {
     }
 
     @Test
-    @DisplayName("明细勾稽不平：支付已配平但 Σ费用明细≠总额 BILL-1016 拒（两层勾稽第一层 feeSum 侧）")
+    @DisplayName("明细勾稽不平：支付已配平但 Σ费用明细≠总额 BILL-1016 拒（勾稽前置纯读校验，CAS 与费用迁移零触碰）")
     void settleRejectsWhenFeeSumMismatchBill1016() {
         Settlement st = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
         when(settlementMapper.selectOne(any())).thenReturn(st);
@@ -436,9 +444,75 @@ class SettlementServiceImplTest {
                         new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null)))))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.AMOUNT_MISMATCH));
-        // 不平即拒：费用不动、结算单不改、事件不发（本用例纯 CASH，台账本就不触）
-        verify(feeRecordMapper, never()).updateById(any(FeeRecord.class));
-        verify(settlementMapper, never()).updateById(any(Settlement.class));
+        // 不平即零写拒绝：CAS 抢锚与费用迁移均不触发、事件不发（本用例纯 CASH，台账本就不触）
+        verify(settlementMapper, never()).casMarkSettled(anyLong(), any(), any());
+        verify(feeRecordMapper, never()).casMarkFeesSettled(anyLong(), any());
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("CAS 抢锚输家·幂等分支：并发赢家已提交 SETTLED → 重读直返既有终态（零资金动作零事件）")
+    void settleCasLoserReturnsIdempotentWhenConcurrentWinnerCommitted() {
+        Settlement draft = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
+        when(settlementMapper.selectOne(any())).thenReturn(draft);
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        // CAS 影响行数 0：并发同单赢家已提交置 SETTLED → 重读到终态行（原结算时刻不被改写）
+        Settlement settled = settlement(900L, "S100", SettlementStatus.SETTLED, 5000L);
+        settled.setSettledAt(OffsetDateTime.parse("2026-09-17T10:00+08:00"));
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(0);
+        when(settlementMapper.selectById(900L)).thenReturn(settled);
+
+        SettlementVO vo =
+                service.settle(new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null))));
+
+        // 输家幂等直返：与赢家等效（同 settleNo 终态），费用迁移/台账/事件零触碰（根除并发双 PAY）
+        assertThat(vo.settleNo()).isEqualTo("S100");
+        assertThat(vo.status()).isEqualTo("SETTLED");
+        assertThat(vo.settledAt()).isEqualTo("2026-09-17T10:00+08:00");
+        verify(feeRecordMapper, never()).casMarkFeesSettled(anyLong(), any());
+        verifyNoInteractions(cardAccountLedger, events);
+    }
+
+    @Test
+    @DisplayName("CAS 抢锚输家·态不符分支：重读非 SETTLED（并发退费已迁移 REFUNDED）→ BILL-1015 拒")
+    void settleCasLoserRejectsWhenStatusMigratedElsewhere() {
+        Settlement draft = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
+        when(settlementMapper.selectOne(any())).thenReturn(draft);
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        // CAS 影响行数 0：重读 REFUNDED（并发路径已迁移）→ 非 DRAFT/PRESETTLED/SETTLED 任一直返态
+        Settlement refunded = settlement(900L, "S100", SettlementStatus.REFUNDED, 5000L);
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(0);
+        when(settlementMapper.selectById(900L)).thenReturn(refunded);
+
+        assertThatThrownBy(() -> service.settle(
+                        new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null)))))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.SETTLEMENT_STATE_NOT_ALLOWED));
+        // 抢锚失败即无后续资金动作：费用迁移/台账/事件零触碰
+        verify(feeRecordMapper, never()).casMarkFeesSettled(anyLong(), any());
+        verifyNoInteractions(cardAccountLedger, events);
+    }
+
+    @Test
+    @DisplayName("费用行并发被抢：CAS 抢锚成功但条件更新迁移数不足（双单并发抢同批费用）→ BILL-1016 整体回滚")
+    void settleRejectsWhenFeeRowsLostToConcurrentSettlement() {
+        Settlement draft = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
+        when(settlementMapper.selectOne(any())).thenReturn(draft);
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(
+                        fee(1L, 3000L, OffsetDateTime.parse("2026-09-17T09:30+08:00")),
+                        fee(2L, 2000L, OffsetDateTime.parse("2026-09-17T08:00+08:00"))));
+        // 本单锚抢占成功，但两行费用已被并发单迁移一行 → 条件更新仅命中 1 < 期望 2
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
+        when(feeRecordMapper.casMarkFeesSettled(anyLong(), any())).thenReturn(1);
+
+        assertThatThrownBy(() -> service.settle(
+                        new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null)))))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.AMOUNT_MISMATCH));
+        // 迁移不足即拒：事件不发（结算锚抢占随调用方事务整体回滚，无中间态）
         verifyNoInteractions(events);
     }
 
@@ -467,6 +541,11 @@ class SettlementServiceImplTest {
         Settlement blank = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
         Settlement nonNumeric = settlement(901L, "S101", SettlementStatus.DRAFT, 5000L);
         when(settlementMapper.selectOne(any())).thenReturn(blank, nonNumeric);
+        // 费用清单读已前置（纯读勾稽先于 CAS 与动卡）：配平费用行 + 抢锚成功，让流程推进至
+        //   动卡处的引用解析拒绝点（parseCardAccountId 在 record 调用点，锚抢占成功之后）
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
 
         // 空白引用：资金定位要素缺失显式拒
         assertThatThrownBy(() -> service.settle(
@@ -478,8 +557,8 @@ class SettlementServiceImplTest {
                         "S101", List.of(new PaymentLine(PaymentMethod.CARD_BALANCE, 5000L, "卡9527")))))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.MANUAL_CHARGE_CONTEXT_MISSING));
+        // 引用非法即零资金动作：台账不动卡（锚已抢占但引用解析失败随调用方事务整体回滚）
         verify(cardAccountLedger, never()).record(any());
-        verify(feeRecordMapper, never()).selectList(any());
     }
 
     @Test

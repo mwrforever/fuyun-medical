@@ -3,6 +3,7 @@ package com.fuyun.billing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -53,6 +54,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -184,12 +186,17 @@ class RefundServiceImplTest {
         when(refundRequestMapper.selectList(any())).thenReturn(List.of());
     }
 
+    /** 打桩：行锁读回目标费用行（并发收口后 apply 守卫唯一取数源，不再逐行 selectById）。 */
+    private void stubLockByIdsReturning(FeeRecord... rows) {
+        when(feeRecordMapper.lockByIds(any())).thenReturn(List.of(rows));
+    }
+
     @Test
     @DisplayName("免审直退：当日更正未占用且阈值内 → APPROVED+auto_approved=true+发 refund.approved(auto=true)")
     void sameDaySmallUnoccupiedRefundAutoApproves() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
         long id = service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "当日多收费更正"));
@@ -242,8 +249,7 @@ class RefundServiceImplTest {
     void crossDayRefundRequiresApproval() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
-        when(feeRecordMapper.selectById(1L))
-                .thenReturn(fee(1L, 3000L, 3000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
         service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日退费"));
@@ -264,7 +270,7 @@ class RefundServiceImplTest {
         Settlement cityIns = settlement(900L, 3000L);
         cityIns.setPayerType(PayerType.CITY_INS);
         when(settlementMapper.selectById(900L)).thenReturn(cityIns);
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
         service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退费"));
@@ -282,8 +288,7 @@ class RefundServiceImplTest {
     void executeOccupiedFeeBlockedAsBill1017() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
-        when(feeRecordMapper.selectById(1L))
-                .thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.DISPENSED));
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.DISPENSED));
 
         assertThatThrownBy(() -> service.apply(
                         new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "已发药误退")))
@@ -300,7 +305,7 @@ class RefundServiceImplTest {
     void refundAmountExceedsRemainingBlocked() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 1000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubLockByIdsReturning(fee(1L, 1000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         // 历史已退：APPROVED 态退费单 101 已退 2000 分
         RefundRequest history = refund(101L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 2000L);
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(history));
@@ -346,11 +351,11 @@ class RefundServiceImplTest {
     }
 
     @Test
-    @DisplayName("缺费用行：link 引用费用不存在（脏数据）→ BILL-1010 拒（禁静默跳过半截退费）")
+    @DisplayName("缺费用行：lockByIds 锁内读回缺行（脏数据）→ BILL-1010 拒（禁静默跳过半截退费）")
     void applyRejectsMissingFeeAsBill1010() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
-        when(feeRecordMapper.selectById(1L)).thenReturn(null);
+        stubLockByIdsReturning(); // 锁内零行=引用费用不存在
 
         assertThatThrownBy(() ->
                         service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正")))
@@ -524,6 +529,49 @@ class RefundServiceImplTest {
                 (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
         assertThat(settleWrapper.getSqlSegment()).contains("settlement_id");
         assertThat(settleWrapper.getParamNameValuePairs().values()).contains(900L);
+    }
+
+    @Test
+    @DisplayName("同卡多行聚合入账：拆分卡支付两行 CARD_BALANCE 同 channelRef → 台账 REFUND 恰一次全额贷记")
+    void executeAggregatesSameCardRowsIntoSingleCredit() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 5000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 5000L);
+        // 同卡拆分两行（写入侧同卡多行求和扣款合形态）：2000+3000 同 channelRef="5"
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":1000,\"channelRef\":null},"
+                + "{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"5\"},"
+                + "{\"method\":\"CARD_BALANCE\",\"amount\":3000,\"channelRef\":\"5\"}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 5000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        when(cardAccountLedger.record(any())).thenReturn(777L);
+
+        service.execute(100L);
+
+        // 并发收口（2026-09-18 裁决）：同卡多行按 channelRef 聚合单次全额贷记——修复前逐行全额
+        //   贷记会入账两倍退费额；断言台账恰一次且金额=退费额 5000（与写入侧求和扣款口径对称）
+        verify(cardAccountLedger, times(1)).record(new CardTxnRecord(5L, CardTxnType.REFUND, 5000L, "R100"));
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getPaymentRefundRef()).isEqualTo("777");
+    }
+
+    @Test
+    @DisplayName("行锁守卫顺序：apply 先锁目标费用行（FOR UPDATE 串行化并发申请）后落申请单，锁参数=费用行 id 集")
+    void applyLocksFeeRowsBeforePersistingRequest() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正"));
+
+        // 锁先于守卫与落库：并发双申请同费用行时后到者在 lockByIds 阻塞至先到者提交，
+        //   锁内重读的已退聚合含先到申请 → 超可退守卫即拒（TOCTOU 根除锚点，顺序不可倒置）
+        InOrder order = inOrder(feeRecordMapper, refundRequestMapper);
+        order.verify(feeRecordMapper).lockByIds(List.of(1L));
+        order.verify(refundRequestMapper).insert(any(RefundRequest.class));
     }
 
     @Test

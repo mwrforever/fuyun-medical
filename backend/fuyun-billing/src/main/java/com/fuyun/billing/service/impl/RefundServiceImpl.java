@@ -38,7 +38,10 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -52,8 +55,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 双人守卫=审批人≠申请人（BILL-1020，等保三级分权）；免审阈值经 {@link BillingRefundProperties}
  * 注入（M01 参数中心就绪前 env 兜底）。退费负向表达收敛为 refund_fee_link 负向台账、不生成
  * fee_record 负向行（裁决⑫，link 表即负向账）；原路退回·就诊卡侧经 M02 {@link CardAccountLedger}
- * 台账 REFUND 入账（同事务原子记账）。事件 billing.refund.approved（免审直退同事件承载）在事务
- * 提交后发（AFTER_COMMIT，A.4.2-7 禁事务内直发 MQ）。
+ * 台账 REFUND 入账（同事务原子记账），CARD_BALANCE 行按 channelRef 聚合单次入账（与写入侧
+ * 求和扣款口径对称，2026-09-18 用户裁决并发收口）。事件 billing.refund.approved（免审直退
+ * 同事件承载）在事务提交后发（AFTER_COMMIT，A.4.2-7 禁事务内直发 MQ）。并发收口：apply 目标
+ * 费用行集 SELECT FOR UPDATE 行锁（{@link FeeRecordMapper#lockByIds}）串行化并发申请，锁内
+ * 重读聚合做超可退守卫，根除「双读 refundedFen 互不可见双双过守卫」的 TOCTOU。
  */
 @Slf4j
 public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRequest> implements IRefundService {
@@ -103,16 +109,22 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     /**
      * 退费申请（免审阈值内当日未占用直退、否则进审批）。
      *
-     * <p>执行流程：登录上下文取申请人 → 逐行守卫（缺行/执行占用/超可退）并服务端算额 →
-     * 分级判定（医保结算退费一律 SETTLED_REFUND；自费按计费日当日/跨日）→ 免审直退判定
-     * （当日更正且金额≤阈值）→ 申请单与 link 负向台账同事务落表 → 免审命中即发 refund.approved。
+     * <p>执行流程：登录上下文取申请人 → 目标费用行集 SELECT FOR UPDATE 行锁串行化并发申请 →
+     * 锁内逐行守卫（缺行/执行占用/超可退）并服务端算额 → 分级判定（医保结算退费一律
+     * SETTLED_REFUND；自费按计费日当日/跨日）→ 免审直退判定（当日更正且金额≤阈值）→
+     * 申请单与 link 负向台账同事务落表 → 免审命中即发 refund.approved。
+     *
+     * <p>并发收口（2026-09-18 用户裁决）：行锁前置于守卫——并发双申请同费用行时后到者阻塞至
+     * 先到者提交，锁内重读的费用行与 refundedFen 已退聚合（每条语句取新快照）均含先到者已落
+     * 的 APPROVED 负向台账，超可退守卫即拒；免审阈值内「双双自动批准全自动重复退款」的
+     * TOCTOU 窗口就此根除（uk_refund_fee 仅 (refund_id,fee_id) 无跨申请保护，靠本行锁补位）。
      *
      * @param req 退费申请请求（settlementId/lines/reason），非空；金额入参无字段（红线 1）
      * @return 新退费申请 id
      * @throws BizException BILL-1012（400 缺登录操作者上下文——不可追溯资金动作显式拒）/
      *                      BILL-1014（404 缺原结算单）/ BILL-1010（404 费用行缺行脏数据）/
      *                      BILL-1017（409 执行占用硬前置——已发药/已执行须先逆向业务）/
-     *                      BILL-1021（409 超可退余额，含历史已退聚合）
+     *                      BILL-1021（409 超可退余额，含历史已退聚合与并发先到申请）
      */
     @Override
     @Transactional
@@ -129,12 +141,19 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             throw new BizException(
                     BillingErrorCode.SETTLEMENT_NOT_FOUND, HttpStatus.NOT_FOUND, "结算单不存在：" + req.settlementId());
         }
-        // 逐行守卫与服务端算额：行金额=单价快照×退费数量 HALF_UP 取整到分（与计价同口径）
+        // 行锁抢占目标费用行集至事务提交（并发收口锚点）：后到并发申请在此阻塞，先到者提交后
+        //   本事务读到的行与下方 refundedFen 聚合即最新口径——守卫读值不再是过期快照
+        List<Long> feeIds =
+                req.lines().stream().map(RefundLine::feeId).distinct().toList();
+        Map<Long, FeeRecord> lockedFees =
+                feeRecordMapper.lockByIds(feeIds).stream().collect(Collectors.toMap(FeeRecord::getId, f -> f));
+        // 逐行守卫与服务端算额（锁内口径）：行金额=单价快照×退费数量 HALF_UP 取整到分（与计价同口径）
         long amount = 0L;
         boolean crossDay = false;
         List<Long> lineAmounts = new ArrayList<>(req.lines().size());
         for (RefundLine line : req.lines()) {
-            FeeRecord fee = feeRecordMapper.selectById(line.feeId());
+            // 锁内读回的行即最新已提交版本（缺行=费用不存在，原 BILL-1010 语义保留）
+            FeeRecord fee = lockedFees.get(line.feeId());
             if (fee == null) {
                 throw new BizException(BillingErrorCode.FEE_NOT_FOUND, HttpStatus.NOT_FOUND, "费用记录不存在：" + line.feeId());
             }
@@ -322,20 +341,36 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     "仅已审批退费可执行，当前状态：" + refund.getStatus().getCode());
         }
         Settlement st = settlementMapper.selectById(refund.getSettlementId());
-        // 原路退回·就诊卡侧：自原结算行 payment_details JSON 读回 CARD_BALANCE 行 channelRef=卡账户 id
-        //   （裁决①同源，金额数值形态与本域写入侧一致）→ 台账 REFUND 入账，回填台账流水 id 作资金溯源锚
+        // 原路退回·就诊卡侧（2026-09-18 用户裁决：同卡多行聚合单次入账）：自原结算行 payment_details
+        //   JSON 读回 CARD_BALANCE 行，按 channelRef 聚合求和去重（与写入侧「同卡多行求和一笔出账」
+        //   口径对称——SettlementServiceImpl 两层勾稽段已强制同结算单单卡），每卡单次全额贷记
+        //   refund.getAmount() → 台账 REFUND 入账，回填台账流水 id 作资金溯源锚。修复前逐行全额
+        //   贷记：拆分卡支付同卡两行会重复入账两倍退费额
+        Map<String, Long> cardChannels = new LinkedHashMap<>();
         try {
             for (JsonNode detail : objectMapper.readTree(st.getPaymentDetails())) {
                 if ("CARD_BALANCE".equals(detail.path("method").asText())) {
-                    long accountId = Long.parseLong(detail.path("channelRef").asText());
-                    long txnId = cardAccountLedger.record(
-                            new CardTxnRecord(accountId, CardTxnType.REFUND, refund.getAmount(), refund.getRefundNo()));
-                    refund.setPaymentRefundRef(String.valueOf(txnId));
+                    cardChannels.merge(
+                            detail.path("channelRef").asText(),
+                            detail.path("amount").asLong(),
+                            Long::sum);
                 }
             }
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             // 落库文本解析失败=数据不一致显式暴露（禁静默跳过退回）
             throw new IllegalStateException("payment_details 解析失败，settleNo=" + st.getSettleNo(), e);
+        }
+        for (Map.Entry<String, Long> channel : cardChannels.entrySet()) {
+            long accountId = Long.parseLong(channel.getKey());
+            long txnId = cardAccountLedger.record(
+                    new CardTxnRecord(accountId, CardTxnType.REFUND, refund.getAmount(), refund.getRefundNo()));
+            refund.setPaymentRefundRef(String.valueOf(txnId));
+            log.info(
+                    "退费原路退回入账：refundNo={}，cardAccount={}，卡侧原付合计={}分，本次退={}分",
+                    refund.getRefundNo(),
+                    accountId,
+                    channel.getValue(),
+                    refund.getAmount());
         }
         // link 负向台账聚合判态：该行「既有已退 + 本次退」≥ 费用行金额 → FULL_REFUND，否则 PART_REFUND
         //   （负向表达归 refund_fee_link，不生成 fee_record 负向行——裁决⑫同源；本单 link 于 apply 已落表，
