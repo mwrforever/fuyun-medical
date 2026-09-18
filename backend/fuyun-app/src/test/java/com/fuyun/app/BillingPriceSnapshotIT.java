@@ -206,15 +206,19 @@ class BillingPriceSnapshotIT extends FuyunStackITBase {
     /**
      * 新建调价草稿并发布（返回草稿行 id）：Order(4) 未来起点版本造数入口。
      *
-     * @param targetItemId  收费项目 id（草稿归属项目，POST 路径变量）
+     * @param itemCode      项目编码（草稿归属项目的业务唯一码；POST 路径项目 id 由库按码定位，
+     *                      草稿落库以 itemCode 为准——杜绝「传他项 id、码硬编码」的静默错定价）
      * @param price         单价（分）
      * @param effectiveFrom 生效起点（区间左闭端点；必须 UTC 瞬时构造，见 Order(4) 时区收口注记）
      * @return 草稿行 id
      */
-    private long publishDraft(long targetItemId, long price, OffsetDateTime effectiveFrom) {
+    private long publishDraft(String itemCode, long price, OffsetDateTime effectiveFrom) {
+        // POST 路径变量取项目 id：按 itemCode 定位（item_code 业务唯一、未删行），防 id/码语义漂移
+        long targetItemId = jdbcTemplate.queryForObject(
+                "SELECT id FROM billing.charge_item WHERE item_code = ? AND deleted = 0", Long.class, itemCode);
         ObjectNode draft = objectMapper.createObjectNode();
         // PriceDraftRequest.itemCode @NotBlank 必填（saveDraft 按码取项目，缺字段整请求 400）
-        draft.put("itemCode", ITEM_CODE_FUTURE)
+        draft.put("itemCode", itemCode)
                 .put("price", price)
                 .put("effectiveFrom", effectiveFrom.toString())
                 .put("priceSource", "OFFICIAL_DOC");
@@ -278,9 +282,8 @@ class BillingPriceSnapshotIT extends FuyunStackITBase {
                 .asLong();
         ObjectNode draft = objectMapper.createObjectNode();
         // PriceDraftRequest.itemCode @NotBlank 必填（saveDraft 按码取项目，缺字段整请求 400）
-        // 生效起点＝当前瞬时前 10 分钟（区间判定修订后必须落在过去）：相对瞬时构造，不用 UTC 日界
-        // atStartOfDay——UTC 零点在本地 08:00（Asia/Shanghai），凌晨运行时日界值晚于当前时刻，
-        // 会被区间判定当成未来版本（v1 不生效）而误判 BILL-1008
+        // 生效起点＝当前瞬时前 10 分钟（区间判定修订后必须落在过去）：改用相对瞬时构造——
+        // 免疫日期边界、可读性更好
         draft.put("itemCode", ITEM_CODE)
                 .put("price", 3000)
                 .put(
@@ -376,16 +379,14 @@ class BillingPriceSnapshotIT extends FuyunStackITBase {
                 .put("unit", "次")
                 .put("comboFlag", false)
                 .put("feeCategory", "EXAM_FEE");
-        long futureItemId = postJson("/api/v1/billing/charge-items", adminToken, futureItem)
-                .path("id")
-                .asLong();
-        // 造数时区收口（本次区间判定修订配套）：区间端点取「当前瞬时 ± 偏移」，不用 UTC 日界 atStartOfDay
-        //   （本地 Asia/Shanghai 凌晨运行时 UTC 日界晚于当前时刻，会把已生效版本误造为未来版本）
+        postJson("/api/v1/billing/charge-items", adminToken, futureItem);
+        // 造数时区收口（本次区间判定修订配套）：区间端点取「当前瞬时 ± 偏移」——改用相对瞬时构造，
+        // 免疫日期边界、可读性更好
         OffsetDateTime activeFrom =
                 OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(10).truncatedTo(ChronoUnit.SECONDS);
         OffsetDateTime dueFrom = OffsetDateTime.now(ZoneOffset.UTC).plusHours(1).truncatedTo(ChronoUnit.SECONDS);
-        long v1 = publishDraft(futureItemId, 5000L, activeFrom);
-        long v2 = publishDraft(futureItemId, 6000L, dueFrom);
+        long v1 = publishDraft(ITEM_CODE_FUTURE, 5000L, activeFrom);
+        long v2 = publishDraft(ITEM_CODE_FUTURE, 6000L, dueFrom);
 
         // 区间落库：旧行闭到未来起点（到点前仍覆盖当前时刻）且 EXPIRED；新行未闭等到点（无提前生效）
         assertThat(jdbcTemplate.queryForObject(

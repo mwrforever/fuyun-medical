@@ -72,7 +72,7 @@ public class RefundRequest {
     /** 免审直退标识（审计抽查检索键） */
     private Boolean autoApproved;
 
-    /** 退费状态机（RefundStatus 五值） */
+    /** 退费状态机（RefundStatus 六值） */
     private RefundStatus status;
 
     /** 审计列：库维护 */

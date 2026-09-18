@@ -464,7 +464,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         /** L0 免审：当日更正 + 无执行占用 + 金额 ≤ autoExemptFen（落库即 APPROVED + 发事件） */
         EXEMPT,
 
-        /** L1 一级：跨日/部分退/超免审但未超一级上限且自费（收费组长一级批即终批） */
+        /** L1 一级：跨日/超免审但未超一级上限且自费（收费组长一级批即终批）；部分退维度未落地（沿用现状，Spec :136 列有该维度） */
         FIRST,
 
         /** L2 二级：大额（>singleApprovalFen）或医保已结算（财务/医保办终批） */
@@ -480,7 +480,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * 与免审「≤ 阈值」的最保守口径一致）；医保已结算退费（{@code refundType=SETTLED_REFUND}，即 apply 侧
      * {@code payerType != SELF_PAY} 的唯一映射，原 :198-200 判定解耦复用）一律二级（基金已支出退费升审）；
      * 其后当日更正且 ≤ {@code autoExemptFen} 判免审（执行占用硬前置已在明细守卫段拦截，命中本方法即无占用）；
-     * 其余（跨日/部分退/超免审未超上限且自费）归一级。
+     * 其余（跨日/超免审未超上限且自费）归一级；部分退维度未落地（沿用现状，Spec :136 列有该维度，TASK.md W-19）。
      *
      * @param refundType 退费分级（DAY_CORRECTION/CROSS_DAY/SETTLED_REFUND），非空；来源：apply 分级判定
      * @param amount     退费申请金额（分，服务端按明细聚合），非空且 &gt;0
@@ -488,7 +488,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      */
     private ApprovalLevel resolveApprovalLevel(RefundType refundType, long amount) {
         // TODO(FU-M13-06): 票据已开具 → 二级。票据维度依赖开票记录（M13 票据管理 FU-M13-06 明确不在
-        //   PR-3 范围），本模块当前无法判定开票状态，显式占位禁静默忽略：接入后在此追加票据开具查询即升级。
+        //   PR-3 范围），本模块当前无法判定开票状态，显式占位禁静默忽略：接入后在此追加票据开具查询
+        //   即升级，计划于 FU-M13-06（P1）接入时升级。
         // L2 判定：大额（严格大于一级上限，等于归一级）或医保已结算（基金已支出，一律升二级）
         if (amount > properties.singleApprovalFen() || refundType == RefundType.SETTLED_REFUND) {
             return ApprovalLevel.SECOND;
@@ -497,7 +498,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         if (refundType == RefundType.DAY_CORRECTION && amount <= properties.autoExemptFen()) {
             return ApprovalLevel.EXEMPT;
         }
-        // L1 一级：跨日/部分退/超免审阈值但未超一级上限且自费
+        // L1 一级：跨日/超免审阈值但未超一级上限且自费；部分退维度未落地（沿用现状，Spec :136 列有该维度）
         return ApprovalLevel.FIRST;
     }
 
