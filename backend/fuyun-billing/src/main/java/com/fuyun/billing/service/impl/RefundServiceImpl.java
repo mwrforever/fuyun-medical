@@ -57,7 +57,9 @@ import org.springframework.transaction.annotation.Transactional;
  * fee_record 负向行（裁决⑫，link 表即负向账）；原路退回·就诊卡侧经 M02 {@link CardAccountLedger}
  * 台账 REFUND 入账（同事务原子记账），CARD_BALANCE 行按 channelRef 聚合单次入账（与写入侧
  * 求和扣款口径对称，2026-09-18 用户裁决并发收口）。事件 billing.refund.approved（免审直退
- * 同事件承载）在事务提交后发（AFTER_COMMIT，A.4.2-7 禁事务内直发 MQ）。并发收口：apply 目标
+ * 同事件承载）在事务提交后发（AFTER_COMMIT，A.4.2-7 禁事务内直发 MQ）。分级审批（Spec §6：
+ * 免审/一级/二级）由 {@link ApprovalLevel} 单一判定承载：L2 单一级批后转待二级且不发事件、
+ * 二级批终批才发事件；收费组长/财务/医保办角色硬校验随 PR-5 RBAC 接线。并发收口：apply 目标
  * 费用行集 SELECT FOR UPDATE 行锁（{@link FeeRecordMapper#lockByIds}）串行化并发申请，锁内
  * 重读聚合做超可退守卫，根除「双读 refundedFen 互不可见双双过守卫」的 TOCTOU。
  */
@@ -107,12 +109,13 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     }
 
     /**
-     * 退费申请（免审阈值内当日未占用直退、否则进审批）。
+     * 退费申请（免审阈值内当日未占用直退 APPROVED，其余按分级进 PENDING_APPROVAL 待一审）。
      *
      * <p>执行流程：登录上下文取申请人 → 目标费用行集 SELECT FOR UPDATE 行锁串行化并发申请 →
      * 锁内逐行守卫（缺行/执行占用/超可退）并服务端算额 → 分级判定（医保结算退费一律
-     * SETTLED_REFUND；自费按计费日当日/跨日）→ 免审直退判定（当日更正且金额≤阈值）→
-     * 申请单与 link 负向台账同事务落表 → 免审命中即发 refund.approved。
+     * SETTLED_REFUND；自费按计费日当日/跨日）→ 审批级别判定（{@link #resolveApprovalLevel}：
+     * L0 免审直退落库即 APPROVED；L1/L2 均先落 PENDING_APPROVAL，L2 由 approve 一级批后升待二级）
+     * → 申请单与 link 负向台账同事务落表 → 免审命中即发 refund.approved。
      *
      * <p>并发收口（2026-09-18 用户裁决）：行锁前置于守卫——并发双申请同费用行时后到者阻塞至
      * 先到者提交，锁内重读的费用行与 refundedFen 已退聚合（每条语句取新快照）均含先到者已落
@@ -198,8 +201,10 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         RefundType refundType = st.getPayerType() != PayerType.SELF_PAY
                 ? RefundType.SETTLED_REFUND
                 : (crossDay ? RefundType.CROSS_DAY : RefundType.DAY_CORRECTION);
-        // 免审直退判定（Spec §6）：当日更正 + 阈值内（执行占用已前置拦截）→ 落库即 APPROVED
-        boolean autoApproved = refundType == RefundType.DAY_CORRECTION && amount <= properties.autoExemptFen();
+        // 审批级别判定（Spec `13-billing.md:136` 分级口径）：L0 免审直退落库即 APPROVED；
+        //   L1/L2 均先落 PENDING_APPROVAL（一级审批入口），L2 由 approve 在一级批后推进待二级
+        ApprovalLevel level = resolveApprovalLevel(refundType, amount);
+        boolean autoApproved = level == ApprovalLevel.EXEMPT;
         RefundRequest refund = new RefundRequest();
         refund.setRefundNo("R" + System.nanoTime());
         refund.setSettlementId(st.getId());
@@ -246,11 +251,21 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     }
 
     /**
-     * 退费审批（双人守卫 + APPROVED 迁移 + 发 billing.refund.approved 应用事件）。
+     * 退费审批（分级两段式：一级批 L2 单推进待二级、L1 单即终批；二级批终批落 APPROVED 并发事件）。
+     *
+     * <p>执行流程：缺单守卫 → 状态守卫（仅待一级 PENDING_APPROVAL 或待二级 PENDING_SECOND_APPROVAL 可批，
+     * 免审直退已 APPROVED 行重复批拒）→ 双人守卫（终批人≠申请人；二级批追加 终批人≠一级审批人，
+     * 同一账号不得连批两级）→ 按单据级别与当前状态推进：待一级且级别 L2 → 落一级审批链
+     * first_approver/first_approved_at 并置 PENDING_SECOND_APPROVAL（**不发事件**，事件时点=终批，
+     * CF-4 `billing.refund.approved` 契约冻结）；待一级且级别 L1 或待二级 → 落终批审批人/时刻、置
+     * APPROVED 并发事件（autoApproved 恒 false，载荷与免审区分不变）。
+     *
+     * <p>角色分权（收费组长一级 / 财务·医保办二级）属 PR-5 RBAC 面：本 PR 以「级别 × 双人链」近似，
+     * 待 PR-5 权限点接线后叠加角色硬校验（注释显式声明，禁静默滞留）。
      *
      * @param id 退费申请 id；来源：审批列表选行
-     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非 PENDING_APPROVAL）/
-     *                      BILL-1020（403 审批人=申请人，等保分权）
+     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态）/
+     *                      BILL-1020（403 终批人=申请人，或二级终批人=一级审批人，等保分权）
      */
     @Override
     @Transactional
@@ -259,8 +274,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         if (refund == null) {
             throw new BizException(BillingErrorCode.REFUND_NOT_FOUND, HttpStatus.NOT_FOUND, "退费申请不存在：" + id);
         }
-        // 状态守卫：仅待审批可批（免审直退行已 APPROVED，重复批拒）
-        if (refund.getStatus() != RefundStatus.PENDING_APPROVAL) {
+        // 状态守卫：仅待一级/待二级可批（免审直退行已 APPROVED、已终批/已执行行重复批拒）
+        if (refund.getStatus() != RefundStatus.PENDING_APPROVAL
+                && refund.getStatus() != RefundStatus.PENDING_SECOND_APPROVAL) {
             throw new BizException(
                     BillingErrorCode.REFUND_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
@@ -272,7 +288,29 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             throw new BizException(
                     BillingErrorCode.REFUND_SELF_APPROVAL_FORBIDDEN, HttpStatus.FORBIDDEN, "退费不得自审（审批人须不同于申请人）");
         }
-        // 数据库写操作：状态迁移 + 审批人/时刻留痕（同事务）
+        // 连批守卫（BILL-1020 语义扩展）：二级终批人不得为一级审批人——同一账号不得连批两级，
+        //   与申请人自审守卫叠加后申请/一级/二级三方账号两两互异（等保分权链闭合）
+        if (refund.getStatus() == RefundStatus.PENDING_SECOND_APPROVAL && approver.equals(refund.getFirstApprover())) {
+            throw new BizException(
+                    BillingErrorCode.REFUND_SELF_APPROVAL_FORBIDDEN,
+                    HttpStatus.FORBIDDEN,
+                    "退费二级审批不得连批（二级审批人须不同于一级审批人）");
+        }
+        if (refund.getStatus() == RefundStatus.PENDING_APPROVAL
+                && resolveApprovalLevel(refund.getRefundType(), refund.getAmount()) == ApprovalLevel.SECOND) {
+            // 一级审批（L2 单）：状态推进待二级 + 审批链一级留痕（连批守卫比对位）；不发事件（时点=终批）
+            refund.setStatus(RefundStatus.PENDING_SECOND_APPROVAL);
+            refund.setFirstApprover(approver);
+            refund.setFirstApprovedAt(OffsetDateTime.now());
+            updateById(refund);
+            log.info(
+                    "退费一级审批通过（升二级）：refundNo={}，firstApprover={}，金额={}分",
+                    refund.getRefundNo(),
+                    approver,
+                    refund.getAmount());
+            return;
+        }
+        // 终批（L1 一级即终批 / L2 二级终批）：APPROVED 迁移 + 审批人/时刻留痕 + 发事件（同事务）
         refund.setStatus(RefundStatus.APPROVED);
         refund.setApprover(approver);
         refund.setApprovedAt(OffsetDateTime.now());
@@ -288,15 +326,15 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                         refund.getAmount(),
                         refund.getRefundType().getCode(),
                         false)));
-        log.info("退费审批通过：refundNo={}，approver={}，金额={}分", refund.getRefundNo(), approver, refund.getAmount());
+        log.info("退费审批通过（终批）：refundNo={}，approver={}，金额={}分", refund.getRefundNo(), approver, refund.getAmount());
     }
 
     /**
-     * 退费驳回（PENDING_APPROVAL → REJECTED 终态，理由必填留痕）。
+     * 退费驳回（PENDING_APPROVAL/PENDING_SECOND_APPROVAL → REJECTED 终态，理由必填留痕）。
      *
      * @param id     退费申请 id；来源：审批列表选行
      * @param reason 驳回理由，非空白；来源：审批人录入（@NotBlank 边界已保，服务层不重复校验）
-     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非 PENDING_APPROVAL——已审批单
+     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态——已审批单
      *                      走业务逆流程而非驳回）
      */
     @Override
@@ -306,8 +344,10 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         if (refund == null) {
             throw new BizException(BillingErrorCode.REFUND_NOT_FOUND, HttpStatus.NOT_FOUND, "退费申请不存在：" + id);
         }
-        // 状态守卫：仅待审批可驳回（REJECTED 为终态，已执行单走业务逆流程）
-        if (refund.getStatus() != RefundStatus.PENDING_APPROVAL) {
+        // 状态守卫：待一级/待二级均可驳回（二级驳回语义=一级已批后财务/医保办否决整单；
+        //   REJECTED 为终态，已执行单走业务逆流程）
+        if (refund.getStatus() != RefundStatus.PENDING_APPROVAL
+                && refund.getStatus() != RefundStatus.PENDING_SECOND_APPROVAL) {
             throw new BizException(
                     BillingErrorCode.REFUND_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
@@ -413,6 +453,52 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 .orderByAsc(RefundRequest::getId)
                 .page(new Page<>(page + 1, size));
         return PageResult.of(result.getRecords(), page, size, result.getTotal());
+    }
+
+    /**
+     * 退费审批级别（Spec `13-billing.md:136` FU-M13-03 分级口径的唯一表达，apply 落初次状态与
+     * approve 推进分支共用本判定，禁第二处重复分级）。
+     */
+    private enum ApprovalLevel {
+
+        /** L0 免审：当日更正 + 无执行占用 + 金额 ≤ autoExemptFen（落库即 APPROVED + 发事件） */
+        EXEMPT,
+
+        /** L1 一级：跨日/部分退/超免审但未超一级上限且自费（收费组长一级批即终批） */
+        FIRST,
+
+        /** L2 二级：大额（>singleApprovalFen）或医保已结算（财务/医保办终批） */
+        SECOND
+    }
+
+    /**
+     * 退费审批级别判定（Spec `docs/specs/modules/13-billing.md:136`「退费分级（方案 3.3）：当日更正性退费
+     * 且未发生执行占用且金额≤阈值 → 收费员免审直退；跨日、超免审阈值、部分退 → 收费组长一级审批；大额
+     * （参数阈值）、医保已结算、票据已开具 → 财务/医保办二级审批」）。
+     *
+     * <p>判定顺序（L2 前置，保守优先）：金额严格大于 {@code singleApprovalFen} 判二级（恰好等于归一级——
+     * 与免审「≤ 阈值」的最保守口径一致）；医保已结算退费（{@code refundType=SETTLED_REFUND}，即 apply 侧
+     * {@code payerType != SELF_PAY} 的唯一映射，原 :198-200 判定解耦复用）一律二级（基金已支出退费升审）；
+     * 其后当日更正且 ≤ {@code autoExemptFen} 判免审（执行占用硬前置已在明细守卫段拦截，命中本方法即无占用）；
+     * 其余（跨日/部分退/超免审未超上限且自费）归一级。
+     *
+     * @param refundType 退费分级（DAY_CORRECTION/CROSS_DAY/SETTLED_REFUND），非空；来源：apply 分级判定
+     * @param amount     退费申请金额（分，服务端按明细聚合），非空且 &gt;0
+     * @return 审批级别，非空；EXEMPT 免审 / FIRST 一级 / SECOND 二级
+     */
+    private ApprovalLevel resolveApprovalLevel(RefundType refundType, long amount) {
+        // TODO(FU-M13-06): 票据已开具 → 二级。票据维度依赖开票记录（M13 票据管理 FU-M13-06 明确不在
+        //   PR-3 范围），本模块当前无法判定开票状态，显式占位禁静默忽略：接入后在此追加票据开具查询即升级。
+        // L2 判定：大额（严格大于一级上限，等于归一级）或医保已结算（基金已支出，一律升二级）
+        if (amount > properties.singleApprovalFen() || refundType == RefundType.SETTLED_REFUND) {
+            return ApprovalLevel.SECOND;
+        }
+        // L0 免审：当日更正 + 免审阈值内（占用已前置拦截）
+        if (refundType == RefundType.DAY_CORRECTION && amount <= properties.autoExemptFen()) {
+            return ApprovalLevel.EXEMPT;
+        }
+        // L1 一级：跨日/部分退/超免审阈值但未超一级上限且自费
+        return ApprovalLevel.FIRST;
     }
 
     /**

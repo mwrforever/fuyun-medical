@@ -49,8 +49,8 @@ import org.testcontainers.utility.MountableFile;
 
 /**
  * 结算闭环验收锚点 IT（PLAN-P1-01 §PR-3 验收行①）：门诊开单事件→PENDING 费用（快照冻结）→
- * 重复投递幂等→预结算→正式结算（settlement.completed 事件可消费）→退费（免审直退 + 双人审批
- * 两路径，refund.approved 事件可消费）全链真栈（HTTP/MQ/DB 零 mock）。
+ * 重复投递幂等→预结算→正式结算（settlement.completed 事件可消费）→退费（免审直退 + 一级审批 +
+ * 二级审批三路径，refund.approved 事件可消费）全链真栈（HTTP/MQ/DB 零 mock）。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -81,11 +81,19 @@ class BillingSettlementFlowIT extends FuyunStackITBase {
     private static final String ITEM_CODE = "C-IT-" + (System.nanoTime() % 1_000_000L);
 
     private static final String ITEM_CODE2 = ITEM_CODE + "-2";
-    /** CF-3 结构合法门诊就诊号（两笔：免审路径 / 审批路径） */
+    /** 二级审批大额项目编码（单行 3000 分 × 70 = 210000 分 > singleApprovalFen 200000） */
+    private static final String LARGE_ITEM_CODE = ITEM_CODE + "-LARGE";
+    /** CF-3 结构合法门诊就诊号（三笔：免审路径 / 一级审批路径 / 二级审批路径） */
     private static final String VISIT_A = visitId("00001");
 
     private static final String VISIT_B = visitId("00002");
+    private static final String VISIT_C = visitId("00003");
     private static final long PATIENT_ID = 700101L;
+
+    /** 二级审批账号（财务/医保办侧；IT 就地播种，与申请人/一级审批人三方互异） */
+    private static final String REVIEWER2_LOGIN_NAME = "it-reviewer2";
+
+    private static final long REVIEWER2_USER_ID = 3L;
 
     private static String adminToken = "";
     private static String reviewerToken = "";
@@ -196,6 +204,68 @@ class BillingSettlementFlowIT extends FuyunStackITBase {
 
     private void putToken() {
         adminToken = loginToken(ADMIN_LOGIN_NAME);
+    }
+
+    /**
+     * 就地播种第三账号（二级审批人；照 FuyunStackITBase.seedReviewerUser 形态：口令哈希直取 admin 行，
+     * 复用 ADMIN 角色绑定）。二级审批链要求申请/一级/二级三方账号互异，本账号作二级终批人。
+     */
+    private void seedReviewer2User() {
+        String adminHash = jdbcTemplate.queryForObject(
+                "SELECT password_hash FROM system.sys_user WHERE login_name = ?", String.class, ADMIN_LOGIN_NAME);
+        jdbcTemplate.update(
+                "INSERT INTO system.sys_user (id, login_name, password_hash, user_type, status)"
+                        + " SELECT ?, ?, ?, 'STAFF', 'ACTIVE'"
+                        + " WHERE NOT EXISTS (SELECT 1 FROM system.sys_user WHERE login_name = ?)",
+                REVIEWER2_USER_ID,
+                REVIEWER2_LOGIN_NAME,
+                adminHash,
+                REVIEWER2_LOGIN_NAME);
+        jdbcTemplate.update(
+                "INSERT INTO system.sys_user_role (id, user_id, role_id)"
+                        + " SELECT ?, ?, 1"
+                        + " WHERE NOT EXISTS (SELECT 1 FROM system.sys_user_role WHERE user_id = ? AND role_id = 1)",
+                REVIEWER2_USER_ID,
+                REVIEWER2_USER_ID,
+                REVIEWER2_USER_ID);
+    }
+
+    /** 注入门诊开单事件帧（通用单行形态：指定项目与数量，二级审批大额造数用）。 */
+    private void publishOrderEvent(String orderId, String visitId, String itemCode, int quantity) {
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("orderId", orderId).put("patientId", PATIENT_ID).put("visitId", visitId);
+        payload.putArray("lines").addObject().put("itemCode", itemCode).put("quantity", quantity);
+        rabbitTemplate.convertAndSend(
+                "fy.topic",
+                "outpatient.order.created",
+                envelopeCodec.create(
+                        Clock.systemUTC(),
+                        "outpatient",
+                        "outpatient.order.created",
+                        "it-flow-" + orderId,
+                        objectMapper.convertValue(payload, Map.class)));
+    }
+
+    /**
+     * 轮询等待指定退费单的 refund.approved 事件到达（事件时点=终批的实证锚点；上限 10s）。
+     *
+     * @param refundIdText 退费单 id 文本（载荷内 Long 经全局 Long→String 序列化为文本）
+     * @return 命中的事件信封（首条）
+     */
+    private EventEnvelope awaitRefundApprovedEvent(String refundIdText) throws InterruptedException {
+        for (int i = 0; i < 100; i++) {
+            EventEnvelope hit = ItCaptureConfig.CAPTURED.stream()
+                    .filter(e -> "billing.refund.approved".equals(e.eventType()))
+                    .filter(e ->
+                            refundIdText.equals(e.payload().path("refundId").asText()))
+                    .findFirst()
+                    .orElse(null);
+            if (hit != null) {
+                return hit;
+            }
+            Thread.sleep(100);
+        }
+        throw new IllegalStateException("退费终批事件超时：refundId=" + refundIdText);
     }
 
     /** 注入门诊开单事件帧（一单两行：3000×2 + 2000×1 = 8000 分）。 */
@@ -482,6 +552,84 @@ class BillingSettlementFlowIT extends FuyunStackITBase {
                 "SELECT status FROM billing.refund_request WHERE id = ?", String.class, refundId);
         assertThat(approved).isEqualTo("APPROVED");
         postJson("/api/v1/billing/refunds/" + refundId + "/execute", reviewerToken, objectMapper.createObjectNode());
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT status FROM billing.refund_request WHERE id = ?", String.class, refundId))
+                .isEqualTo("EXECUTED");
+    }
+
+    @Test
+    @Order(7)
+    @DisplayName("二级审批路径：超一级上限升 PENDING_SECOND_APPROVAL、一级审批人连批拒 403、二级终批后事件承载")
+    void secondLevelApprovalPath() throws InterruptedException {
+        // 第三账号播种（二级终批人：与申请人 admin、一级审批人 it-reviewer 三方互异，连批守卫前提）
+        seedReviewer2User();
+        String reviewer2Token = loginToken(REVIEWER2_LOGIN_NAME);
+
+        // 大额造数：单行 3000 分 × 70 = 210000 分 > singleApprovalFen 200000 → L2 二级审批
+        newItemWithPrice(LARGE_ITEM_CODE, 3000);
+        publishOrderEvent("ORD-IT-C", VISIT_C, LARGE_ITEM_CODE, 70);
+        awaitFees(VISIT_C, 1);
+
+        ObjectNode preview = objectMapper.createObjectNode();
+        preview.put("patientId", PATIENT_ID).put("visitId", VISIT_C).put("payerType", "SELF_PAY");
+        JsonNode pv = postJson("/api/v1/billing/settlements/preview", adminToken, preview);
+        assertThat(pv.path("totalAmount").asLong()).isEqualTo(210000L);
+        ObjectNode settle = objectMapper.createObjectNode();
+        settle.put("settleNo", pv.path("settleNo").asText());
+        settle.putArray("payments").addObject().put("method", "CASH").put("amount", "210000");
+        postJson("/api/v1/billing/settlements", adminToken, settle);
+
+        Long feeId = jdbcTemplate.queryForObject(
+                "SELECT id FROM billing.fee_record WHERE visit_id = ? LIMIT 1", Long.class, VISIT_C);
+        Long settlementId = jdbcTemplate.queryForObject(
+                "SELECT settlement_id FROM billing.fee_record WHERE id = ?", Long.class, feeId);
+        long refundId = postJson("/api/v1/billing/refunds", adminToken, refundBody(settlementId, feeId, "70"))
+                .asLong();
+        String refundIdText = String.valueOf(refundId);
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT status FROM billing.refund_request WHERE id = ?", String.class, refundId))
+                .isEqualTo("PENDING_APPROVAL"); // L2 亦从待一审起（级别在批时判定）
+
+        // 一级审批（收费组长侧）：超上限单升待二级 + 一级审批链落库；终批人空、事件不发（时点=终批）
+        // 注：OperatorContextHolder 取登录会话 userId（AuthTokenInterceptor:76），故留痕断言取用户 id 文本
+        postJson("/api/v1/billing/refunds/" + refundId + "/approve", reviewerToken, objectMapper.createObjectNode());
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT status FROM billing.refund_request WHERE id = ?", String.class, refundId))
+                .isEqualTo("PENDING_SECOND_APPROVAL");
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT first_approver FROM billing.refund_request WHERE id = ?", String.class, refundId))
+                .isEqualTo(String.valueOf(REVIEWER_USER_ID));
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT first_approved_at IS NOT NULL FROM billing.refund_request WHERE id = ?",
+                        Boolean.class,
+                        refundId))
+                .isTrue();
+        assertThat(ItCaptureConfig.CAPTURED.stream()
+                        .filter(e -> "billing.refund.approved".equals(e.eventType()))
+                        .noneMatch(e ->
+                                refundIdText.equals(e.payload().path("refundId").asText())))
+                .as("一级批不发事件（billing.refund.approved 事件时点=终批）")
+                .isTrue();
+
+        // 连批守卫：一级审批人同账号再批二级 → 403（同一账号不得连批两级，BILL-1020 语义扩展）
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(reviewerToken);
+        org.springframework.http.ResponseEntity<String> repeatApprove = restTemplate.postForEntity(
+                "/api/v1/billing/refunds/" + refundId + "/approve", new HttpEntity<>(headers), String.class);
+        assertThat(repeatApprove.getStatusCode().value()).isEqualTo(403);
+
+        // 二级终批（财务/医保办侧）：APPROVED + 终批人留痕 + refund.approved 事件到达
+        postJson("/api/v1/billing/refunds/" + refundId + "/approve", reviewer2Token, objectMapper.createObjectNode());
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT status FROM billing.refund_request WHERE id = ?", String.class, refundId))
+                .isEqualTo("APPROVED");
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT approver FROM billing.refund_request WHERE id = ?", String.class, refundId))
+                .isEqualTo(String.valueOf(REVIEWER2_USER_ID));
+        EventEnvelope approved = awaitRefundApprovedEvent(refundIdText);
+        assertThat(approved.payload().path("autoApproved").asBoolean()).isFalse();
+
+        postJson("/api/v1/billing/refunds/" + refundId + "/execute", reviewer2Token, objectMapper.createObjectNode());
         assertThat(jdbcTemplate.queryForObject(
                         "SELECT status FROM billing.refund_request WHERE id = ?", String.class, refundId))
                 .isEqualTo("EXECUTED");

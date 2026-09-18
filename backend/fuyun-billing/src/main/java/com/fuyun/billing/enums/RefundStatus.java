@@ -4,18 +4,26 @@ import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 退费申请状态机（Spec §5）：DRAFT→PENDING_APPROVAL→APPROVED→EXECUTED；驳回归 REJECTED 终态。
- * 双人守卫在 APPROVED 前置校验（审批人≠申请人，BILL-1020）。枚举规范同 FeeStatus。
+ * 退费申请状态机（Spec §5 + §6 FU-M13-03 退费分级）：DRAFT→PENDING_APPROVAL→APPROVED→EXECUTED；
+ * L2 二级审批单在两段审核间增 PENDING_SECOND_APPROVAL（一级已批、待二级财务/医保办）；
+ * PENDING_APPROVAL/PENDING_SECOND_APPROVAL 驳回归 REJECTED 终态。
+ * 双人守卫在终批前置校验（审批人≠申请人，且二级批人≠一级批人，BILL-1020 语义扩展）。枚举规范同 FeeStatus。
  */
 public enum RefundStatus {
 
     /** 草稿（明细编辑中） */
     DRAFT("DRAFT"),
 
-    /** 待审批（提交后等待双人守卫审批） */
+    /** 待审批（提交后等待一级（收费组长）审批；L2 单一级批后转 PENDING_SECOND_APPROVAL） */
     PENDING_APPROVAL("PENDING_APPROVAL"),
 
-    /** 已审批通过（待执行退费） */
+    /**
+     * 待二级审批（一级已批：L2 大额/医保已结算单待财务/医保办二级审批，终批后转 APPROVED）。
+     * 存储值 23 字符超 V603 原 VARCHAR(16)，V606 已放宽列宽至 VARCHAR(32)。
+     */
+    PENDING_SECOND_APPROVAL("PENDING_SECOND_APPROVAL"),
+
+    /** 已审批通过（一级即终批或二级终批；待执行退费） */
     APPROVED("APPROVED"),
 
     /** 已执行（原路退回完成，终态） */

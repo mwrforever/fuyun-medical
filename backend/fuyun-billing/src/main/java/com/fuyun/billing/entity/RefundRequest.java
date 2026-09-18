@@ -12,7 +12,7 @@ import lombok.Setter;
 
 /**
  * 退费申请实体（billing.refund_request，FU-M13-03）：退费以负向 fee_record+link 表达，
- * 本表承载申请/审批状态机与双人守卫（审批人≠申请人，BILL-1020）。线程安全：可变实体仅
+ * 本表承载申请/审批状态机与双人守卫（审批人≠申请人且二级批人≠一级批人，BILL-1020）。线程安全：可变实体仅
  * service 事务内使用，不出数据层。
  */
 @Getter
@@ -48,11 +48,17 @@ public class RefundRequest {
     /** 申请人（登录身份注入） */
     private String applicant;
 
-    /** 审批人（双人守卫：≠applicant，可空） */
+    /** 审批人（终批审批人；双人守卫：≠applicant 且二级批时≠firstApprover，可空） */
     private String approver;
 
-    /** 审批时刻（可空） */
+    /** 审批时刻（终批时刻，可空） */
     private OffsetDateTime approvedAt;
+
+    /** 一级审批人（L2 二级审批链一级留痕；连批守卫比对位：二级批人≠本值，可空） */
+    private String firstApprover;
+
+    /** 一级审批时刻（L2 二级审批链一级留痕，可空） */
+    private OffsetDateTime firstApprovedAt;
 
     /** 原路退回流水（渠道占位；CARD_BALANCE=台账流水 id，可空） */
     private String paymentRefundRef;

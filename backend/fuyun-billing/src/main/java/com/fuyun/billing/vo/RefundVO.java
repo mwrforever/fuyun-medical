@@ -16,9 +16,10 @@ import com.fuyun.billing.entity.RefundRequest;
  * @param amount       退费金额（分，服务端按明细聚合）
  * @param reason       退费理由
  * @param applicant    申请人（登录身份注入）
- * @param approver     审批人（双人守卫：≠applicant；待审批/驳回行为 null）
+ * @param approver     审批人（终批审批人；双人守卫：≠applicant 且二级批时≠一级审批人；待审批/驳回行为 null）
  * @param autoApproved 免审直退标识（审计抽查检索键）
- * @param status       退费状态 DRAFT/PENDING_APPROVAL/APPROVED/EXECUTED/REJECTED
+ * @param status       退费状态 DRAFT/PENDING_APPROVAL/PENDING_SECOND_APPROVAL/APPROVED/EXECUTED/REJECTED
+ *                     （PENDING_SECOND_APPROVAL=一级已批待二级，前端按 status 值区分待一级/待二级；不加字段）
  */
 public record RefundVO(
         Long id,

@@ -63,7 +63,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 退费服务单测（资金红线：执行占用硬前置 BILL-1017、超可退拦截 BILL-1021、双人守卫 BILL-1020、
- * 免审阈值直退与 refund.approved 事件、link 负向台账聚合判态 PART/FULL/REFUNDED 迁移）。
+ * 免审阈值直退与 refund.approved 事件、link 负向台账聚合判态 PART/FULL/REFUNDED 迁移；
+ * 分级三级：免审/一级/二级阈值边界、二级审批链落库与连批守卫、二级态驳回）。
+ *
+ * <p>「票据已开具 → 二级」维度声明：依赖 FU-M13-06 开票记录（明确不在 PR-3 范围），分级判定处为
+ * 显式 TODO 占位，本类用例均以金额/医保维度驱动升级——该维度缺省不触发。
  */
 @ExtendWith(MockitoExtension.class)
 class RefundServiceImplTest {
@@ -76,6 +80,9 @@ class RefundServiceImplTest {
 
     /** 审批人（双人守卫另一人） */
     private static final String APPROVER = "supervisor-1";
+
+    /** 二级审批人（连批守卫另一人：与申请人/一级审批人三方互异，财务/医保办侧） */
+    private static final String SECOND_APPROVER = "finance-1";
 
     @Mock
     private RefundRequestMapper refundRequestMapper;
@@ -473,6 +480,201 @@ class RefundServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
         verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+    }
+
+    @Test
+    @DisplayName("免审边界：当日更正金额恰等于 autoExemptFen → 仍免审直退（≤ 阈值判免审）")
+    void sameDayAmountAtExemptThresholdStillAutoApproves() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 50000L));
+        stubLockByIdsReturning(fee(1L, 50000L, 50000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "恰好等于免审阈值"));
+
+        // 边界钉死：恰等于 autoExemptFen（50000 分）归免审（「≤ 阈值」口径），落库即 APPROVED
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(captor.getValue().getAutoApproved()).isTrue();
+    }
+
+    @Test
+    @DisplayName("一级即终批：跨日自费 60000 分（超免审未超一级上限）→ 一级批后 APPROVED+发事件")
+    void crossDayAmountWithinSingleApprovalFinishesAtFirstLevel() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 60000L));
+        stubLockByIdsReturning(fee(1L, 60000L, 60000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日自费超免审"));
+        ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(applyCaptor.capture());
+        RefundRequest row = applyCaptor.getValue();
+        assertThat(row.getStatus()).isEqualTo(RefundStatus.PENDING_APPROVAL); // L1 亦先落待一审（唯一审批入口）
+        assertThat(row.getRefundType()).isEqualTo(RefundType.CROSS_DAY);
+        assertThat(row.getAutoApproved()).isFalse();
+
+        when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        OperatorContextHolder.set(APPROVER);
+        service.approve(100L);
+
+        // 一级即终批：APPROVED + 终批人/时刻留痕；非二级单不落一级审批链（firstApprover 保持空）
+        ArgumentCaptor<RefundRequest> approveCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(approveCaptor.capture());
+        assertThat(approveCaptor.getValue().getStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(approveCaptor.getValue().getApprover()).isEqualTo(APPROVER);
+        assertThat(approveCaptor.getValue().getApprovedAt()).isNotNull();
+        assertThat(approveCaptor.getValue().getFirstApprover()).isNull();
+        verify(events).publishEvent(any(BillingDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("一级边界钉死：金额恰等于 singleApprovalFen → 归一级（一级批即 APPROVED，非二级升批）")
+    void amountAtSingleApprovalThresholdStaysFirstLevel() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 200000L));
+        stubLockByIdsReturning(fee(1L, 200000L, 200000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "恰等于一级上限"));
+        ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(applyCaptor.capture());
+        RefundRequest row = applyCaptor.getValue();
+
+        when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        OperatorContextHolder.set(APPROVER);
+        service.approve(100L);
+
+        // 严格大于才升二级（等于归一级）：一级批即终批 APPROVED，禁入 PENDING_SECOND_APPROVAL
+        ArgumentCaptor<RefundRequest> approveCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(approveCaptor.capture());
+        assertThat(approveCaptor.getValue().getStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(approveCaptor.getValue().getFirstApprover()).isNull();
+    }
+
+    @Test
+    @DisplayName("二级升批：金额超 singleApprovalFen → 一级批转 PENDING_SECOND_APPROVAL+审批链落库+零事件")
+    void amountAboveSingleApprovalThresholdEscalatesToSecondApproval() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 200001L));
+        stubLockByIdsReturning(fee(1L, 200001L, 200001L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "超一级上限大额"));
+        ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(applyCaptor.capture());
+        RefundRequest row = applyCaptor.getValue();
+        assertThat(row.getStatus()).isEqualTo(RefundStatus.PENDING_APPROVAL); // L2 亦从待一审起（级别在批时判定）
+
+        when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        OperatorContextHolder.set(APPROVER);
+        service.approve(100L);
+
+        // 一级审批（L2）：状态推进待二级 + 一级审批人/时刻落库；终批人保持空、零事件（事件时点=终批）
+        ArgumentCaptor<RefundRequest> approveCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(approveCaptor.capture());
+        RefundRequest first = approveCaptor.getValue();
+        assertThat(first.getStatus()).isEqualTo(RefundStatus.PENDING_SECOND_APPROVAL);
+        assertThat(first.getFirstApprover()).isEqualTo(APPROVER);
+        assertThat(first.getFirstApprovedAt()).isNotNull();
+        assertThat(first.getApprover()).isNull();
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("医保直判二级：payerType≠SELF_PAY 当日小额也升二级（基金已支出退费升审）")
+    void insurancePayerEscalatesToSecondApproval() {
+        OperatorContextHolder.set(APPLICANT);
+        Settlement cityIns = settlement(900L, 3000L);
+        cityIns.setPayerType(PayerType.CITY_INS);
+        when(settlementMapper.selectById(900L)).thenReturn(cityIns);
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退款"));
+        ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(applyCaptor.capture());
+        RefundRequest row = applyCaptor.getValue();
+        // 现口径解耦复用：医保已结算 → SETTLED_REFUND，分级判定据其直判 L2（当日小额亦不例外）
+        assertThat(row.getRefundType()).isEqualTo(RefundType.SETTLED_REFUND);
+        assertThat(row.getStatus()).isEqualTo(RefundStatus.PENDING_APPROVAL);
+        assertThat(row.getAutoApproved()).isFalse();
+
+        when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        OperatorContextHolder.set(APPROVER);
+        service.approve(100L);
+
+        ArgumentCaptor<RefundRequest> approveCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(approveCaptor.capture());
+        assertThat(approveCaptor.getValue().getStatus()).isEqualTo(RefundStatus.PENDING_SECOND_APPROVAL);
+        assertThat(approveCaptor.getValue().getFirstApprover()).isEqualTo(APPROVER);
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("二级终批：待二级单二级批 → APPROVED+终批人留痕+发 refund.approved(auto=false)")
+    void secondLevelApprovalFinalizesAndPublishesEvent() {
+        OperatorContextHolder.set(SECOND_APPROVER);
+        RefundRequest pending =
+                refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        pending.setFirstApprover(APPROVER);
+        when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+
+        service.approve(100L);
+
+        // 终批落态：APPROVED + 终批人/时刻（approver/approvedAt），一级链留痕原样保留（审计链完整）
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.APPROVED);
+        assertThat(captor.getValue().getApprover()).isEqualTo(SECOND_APPROVER);
+        assertThat(captor.getValue().getApprovedAt()).isNotNull();
+        assertThat(captor.getValue().getFirstApprover()).isEqualTo(APPROVER);
+        // 事件时点=终批：载荷与免审/一级批同构（CF-4 冻结），autoApproved=false 区分免审直退
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(evt.capture());
+        BillingDomainEvent published = (BillingDomainEvent) evt.getValue();
+        assertThat(published.eventType()).isEqualTo("billing.refund.approved");
+        RefundApprovedPayload payload = (RefundApprovedPayload) published.payload();
+        assertThat(payload.refundId()).isEqualTo(100L);
+        assertThat(payload.amount()).isEqualTo(200001L);
+        assertThat(payload.refundType()).isEqualTo("CROSS_DAY");
+        assertThat(payload.autoApproved()).isFalse();
+    }
+
+    @Test
+    @DisplayName("连批守卫：二级审批人=一级审批人 → BILL-1020 拒（同一账号不得连批两级），状态与事件零触碰")
+    void secondApprovalByFirstApproverRejectedAsBill1020() {
+        OperatorContextHolder.set(APPROVER);
+        RefundRequest pending =
+                refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        pending.setFirstApprover(APPROVER);
+        when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+
+        assertThatThrownBy(() -> service.approve(100L)).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.REFUND_SELF_APPROVAL_FORBIDDEN);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+        });
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("二级态驳回：PENDING_SECOND_APPROVAL → REJECTED 终态留痕（一级已批后财务/医保办否决整单）")
+    void rejectSecondLevelPendingRefundMovesToRejected() {
+        OperatorContextHolder.set(SECOND_APPROVER);
+        RefundRequest pending =
+                refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        pending.setFirstApprover(APPROVER);
+        when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+
+        service.reject(100L, "大额退费凭证不符，整单退回");
+
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.REJECTED);
+        assertThat(captor.getValue().getRejectReason()).isEqualTo("大额退费凭证不符，整单退回");
+        verifyNoInteractions(events); // 驳回不发 refund.approved（CF-4 仅审批通过承载）
     }
 
     @Test

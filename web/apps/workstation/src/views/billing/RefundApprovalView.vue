@@ -125,10 +125,12 @@ const statusFilter = ref('');
 const queue = ref<RefundVO[]>([]);
 const queueLoading = ref(false);
 
-/** 队列状态展示词表（未知态原样透出，防后端扩态即白屏） */
+/** 队列状态展示词表（未知态原样透出，防后端扩态即白屏；PENDING_SECOND_APPROVAL=待二级（一级已批）） */
 const refundStatusText: Record<string, string> = {
   DRAFT: '草稿',
   PENDING_APPROVAL: '待审批',
+  // 待二级（一级已批）：L2 大额/医保已结算单一级批后、财务/医保办终批前
+  PENDING_SECOND_APPROVAL: '待二级',
   APPROVED: '已批准',
   EXECUTED: '已执行',
   REJECTED: '已驳回',
@@ -136,12 +138,15 @@ const refundStatusText: Record<string, string> = {
 
 /** 队列动作按态启停（双人守卫与终态不可逆由后端强制，前端仅抑制无效点击） */
 function canApprove(row: RefundVO): boolean {
-  return row.status === 'PENDING_APPROVAL';
+  // 待一层与待二级（一级已批）均可批准：同一按钮两段式复用，服务端按 status 推进
+  return row.status === 'PENDING_APPROVAL' || row.status === 'PENDING_SECOND_APPROVAL';
 }
 function canReject(row: RefundVO): boolean {
-  return row.status === 'PENDING_APPROVAL';
+  // 待二级（一级已批）亦可驳回：财务/医保办否决整单，终态 REJECTED
+  return row.status === 'PENDING_APPROVAL' || row.status === 'PENDING_SECOND_APPROVAL';
 }
 function canExecute(row: RefundVO): boolean {
+  // 仅 APPROVED（一级即终批或二级终批）可执行；待二级（一级已批）不可执行
   return row.status === 'APPROVED';
 }
 
@@ -285,6 +290,8 @@ onMounted(() => {
         <el-select v-model="statusFilter" class="refund-approval-filter" @change="loadQueue">
           <el-option value="" label="全部" />
           <el-option value="PENDING_APPROVAL" label="待审批" />
+          <!-- 待二级（一级已批）：L2 大额/医保已结算单升审后由财务/医保办终批 -->
+          <el-option value="PENDING_SECOND_APPROVAL" label="待二级" />
           <el-option value="APPROVED" label="已批准" />
           <el-option value="EXECUTED" label="已执行" />
         </el-select>

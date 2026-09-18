@@ -50,7 +50,8 @@ public enum BillingErrorCode implements ErrorCode {
     REFUND_NOT_FOUND("BILL-1018"),
     /** 退费状态不允许该操作（409） */
     REFUND_STATE_NOT_ALLOWED("BILL-1019"),
-    /** 退费双人守卫（403；审批人=申请人，等保分权） */
+    /** 退费双人守卫（403；审批人=申请人，或二级审批人=一级审批人——同一账号不得连批两级，等保分权；
+     *  语义扩展与 BILL-1012/1023 先例同款，不新增码位） */
     REFUND_SELF_APPROVAL_FORBIDDEN("BILL-1020"),
     /** 退费金额超可退余额（409；含历史已退聚合） */
     REFUND_AMOUNT_EXCEEDED("BILL-1021"),

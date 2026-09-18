@@ -49,7 +49,7 @@ public class RefundController {
     }
 
     /**
-     * 退费申请（POST /refunds，免审阈值内当日未占用直退 APPROVED、否则 PENDING_APPROVAL；WRITE 审计）。
+     * 退费申请（POST /refunds，免审阈值内当日未占用直退 APPROVED、否则按分级进 PENDING_APPROVAL 待一审；WRITE 审计）。
      *
      * @param req 退费申请请求（@Valid 声明校验，行级级联且 refundQuantity @Positive 恒正；金额服务端
      *            按明细算）；来源：收费员工作站
@@ -67,12 +67,14 @@ public class RefundController {
     }
 
     /**
-     * 退费审批（POST /refunds/{id}/approve，双人守卫：审批人≠申请人 BILL-1020；WRITE 审计）。
+     * 退费审批（POST /refunds/{id}/approve，分级两段式复用本端点：一级批 L2 单迁移
+     * PENDING_APPROVAL→PENDING_SECOND_APPROVAL、L1 单迁移 APPROVED；二级批迁移 PENDING_SECOND_APPROVAL→APPROVED
+     * 并发事件。双人守卫：审批人≠申请人且二级审批人≠一级审批人 BILL-1020；WRITE 审计）。
      *
      * @param id 退费申请 id（路径变量）
-     * @return 204 无体（状态机迁移 PENDING_APPROVAL→APPROVED）
+     * @return 204 无体（状态机迁移 PENDING_APPROVAL→APPROVED（L1）/ PENDING_APPROVAL→PENDING_SECOND_APPROVAL→APPROVED（L2））
      * @throws com.fuyun.common.exception.BizException BILL-1018（404 缺单）/
-     *                 BILL-1019（409 非 PENDING_APPROVAL）/ BILL-1020（403 自审）
+     *                 BILL-1019（409 非待审态）/ BILL-1020（403 自审或二级连批）
      */
     @Operation(summary = "退费审批（双人守卫）", operationId = "approveRefund")
     @PostMapping("/refunds/{id}/approve")
@@ -83,13 +85,13 @@ public class RefundController {
     }
 
     /**
-     * 退费驳回（POST /refunds/{id}/reject，PENDING_APPROVAL→REJECTED 终态留痕；WRITE 审计）。
+     * 退费驳回（POST /refunds/{id}/reject，PENDING_APPROVAL/PENDING_SECOND_APPROVAL→REJECTED 终态留痕；WRITE 审计）。
      *
      * @param id  退费申请 id（路径变量）
      * @param req 驳回请求（@Valid，理由必填）；来源：审批人录入
      * @return 204 无体
      * @throws com.fuyun.common.exception.BizException BILL-1018（404 缺单）/
-     *                 BILL-1019（409 非 PENDING_APPROVAL）
+     *                 BILL-1019（409 非待审态）
      */
     @Operation(summary = "退费驳回（终态留痕）", operationId = "rejectRefund")
     @PostMapping("/refunds/{id}/reject")

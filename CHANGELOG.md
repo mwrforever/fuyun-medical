@@ -2,6 +2,38 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-18 · P1 PR-3 评审修复轮：退费二级审批实装（D，含 V606）+ 调价定时生效（E）登记（用户裁决=本 PR 内完整实现）
+
+- **D 退费二级审批实装**（Spec FU-M13-03 P0，`docs/specs/modules/13-billing.md:136` 分级口径）：分级判定
+  集中 `RefundServiceImpl.resolveApprovalLevel`——L0 免审（当日更正+无执行占用+金额≤autoExemptFen，现逻辑
+  保留）、L1 一级（跨日/部分退/超免审但≤singleApprovalFen 且自费）、L2 二级（金额严格大于
+  singleApprovalFen，恰等于归一级；或 payerType≠SELF_PAY 医保已结算，等价 refundType=SETTLED_REFUND，
+  原判定解耦复用）；「票据已开具」维度依赖 FU-M13-06（明确不在本 PR），分级处留显式
+  `TODO(FU-M13-06): 票据已开具 → 二级` 占位，测试声明该维度缺省不触发。
+- **状态机与审批链**：`RefundStatus` 增 `PENDING_SECOND_APPROVAL`（一级已批、待二级）；`approve` 两段式
+  复用现端点——PENDING_APPROVAL 批：L2 → PENDING_SECOND_APPROVAL + 落 first_approver/first_approved_at
+  且不发事件，L1 → APPROVED + 发事件（现行为）；PENDING_SECOND_APPROVAL 批 → APPROVED + 发
+  `billing.refund.approved`（载荷不变，CF-4 冻结）。连批守卫 BILL-1020 语义扩展：二级批人≠一级批人
+  （同一账号不得连批两级），申请人自审守卫不变。reject 两个待审态均可驳（置 REJECTED+理由留痕）。
+- **V606 迁移**（billing 固定段 V600–V699，V603 禁改）：`refund_request` 增审批链引用列
+  `first_approver VARCHAR(32)` / `first_approved_at TIMESTAMPTZ`，`status` 列宽 VARCHAR(16)→VARCHAR(32)
+  （新值 23 字符超原宽；PG 加长变宽为元数据级变更，存量数据保全）。本条目先记，迁移正文随后落盘。
+- **零契约改动**：RefundVO 不加字段（前端靠 status 值区分待一级/待二级）、REST 无新端点、事件零改、
+  api.d.ts 零重生成（生成态 status 为 string 宽容）；收费组长/财务/医保办角色硬校验随 PR-5 RBAC
+  接线，本 PR 以「级别 × 双人链」近似并在代码注释显式声明。
+- **E 调价定时生效**（工作包 2，commit ee3bede，采纳其报告建议条目文本）：snapshot 取价改按生效区间
+  判定（status <> DRAFT AND effective_from <= now AND (effective_to IS NULL OR effective_to > now)，
+  effective_from DESC 取首行；now＝装配期注入 Clock.systemUTC()，不注册全局 Clock Bean 以免与条件装配
+  iotAmqpClock 类型注入歧义），到点由取价侧自然切换，不引入调度器/延迟队列；publish 补区间倒挂守卫
+  BILL-1004（新起点早于当前未闭行起点拒发布，兑现并删除计划 TODO(P1-后段)）；零契约/迁移/事件改动。
+- **B 支付行校验收口**已随上方「工作包 1」条目登记（commit 02035ea 支付行正数硬校验+退费读回卡引用
+  守卫、2219cd7 前端执行按钮防抖），本条不重复展开，仅登记衔接关系。
+- **测试与门禁**：后端单测新增 8 例（免审边界=autoExemptFen、超免审未超上限自费一级即 APPROVED、
+  =singleApprovalFen 归一级、>singleApprovalFen 升二级且一级批零事件+审批链落库、医保 payerType
+  直判二级、二级批→APPROVED+事件、连批守卫 403 BILL-1020、二级态驳回），申请人自审守卫回归复用既有
+  用例；IT 扩二级场景（三账号：申请→一级批→连批拒→二级批→执行全链）；billing `mvn verify`（JaCoCo
+  核心包 100%）与 `BillingSettlementFlowIT` 真栈 7/7、前端五连全绿。
+
 ## 2026-09-18 · P1 PR-3：/code-review 复核缺口修复工作包 1（用户裁决=本 PR 内完整修复）
 
 - **B1/B3 请求侧硬校验**：`PaymentLine.amount` 与 `RefundLine.refundQuantity` 增 `@Positive`（0/负值

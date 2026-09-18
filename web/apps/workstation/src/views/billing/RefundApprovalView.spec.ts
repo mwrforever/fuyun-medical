@@ -1,11 +1,12 @@
 // 退费审批页单测（FU-M13-04 前端面）：空结算号查询被前置拦截不出网、审批队列按态驱动——
-// PENDING_APPROVAL 行批准调用 approveRefund(id)、EXECUTED 行三按钮全禁用（终态不可逆的
-// UI 抑制；双人守卫拒绝由后端 403 承载不在前端断言）；执行/驳回在途防抖（慢响应窗口内
-// 按钮禁用且二次点击零出网，根除双击双 POST 的并发双退触发面）。api mock 承载，不打真实网络。
+// PENDING_APPROVAL 行批准调用 approveRefund(id)、PENDING_SECOND_APPROVAL 行（待二级=一级已批）
+// 可批可驳不可执行、EXECUTED 行三按钮全禁用（终态不可逆的 UI 抑制；双人守卫拒绝由后端 403
+// 承载不在前端断言）；执行/驳回在途防抖（慢响应窗口内按钮禁用且二次点击零出网，根除双击
+// 双 POST 的并发双退触发面）；状态筛选含待二级新态。api mock 承载，不打真实网络。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElMessageBox } from 'element-plus';
+import { ElMessageBox, ElSelect } from 'element-plus';
 import type { MessageBoxData } from 'element-plus';
 import {
   approveRefund,
@@ -123,6 +124,47 @@ describe('退费审批页', () => {
       // 退费单 id 以 string 原样入路径（雪花 ID 禁 number 处理，web A.3-6）
       expect(vi.mocked(approveRefund)).toHaveBeenCalledWith('1932000000000000009');
     });
+    wrapper.unmount();
+  });
+
+  it('PENDING_SECOND_APPROVAL 行（待二级=一级已批）批准调用 approveRefund(id)、执行按钮禁用', async () => {
+    vi.mocked(listRefunds).mockResolvedValue({
+      content: [queueRow('PENDING_SECOND_APPROVAL')],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(RefundApprovalView);
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('RF-20260918-001');
+    });
+    // 词表：待二级（一级已批）按新态透出，不落未知态原样显示
+    expect(wrapper.text()).toContain('待二级');
+    // 按钮启停：二级待审可批可驳；未到 APPROVED 不可执行（二级终批前零资金动作）
+    expect(findButton(wrapper, '批准').attributes('disabled')).toBeUndefined();
+    expect(findButton(wrapper, '驳回').attributes('disabled')).toBeUndefined();
+    expect(findButton(wrapper, '执行').attributes('disabled')).toBeDefined();
+
+    await clickButton(wrapper, '批准');
+
+    await vi.waitFor(() => {
+      // 同一 approveRefund 入口两段式复用：待二级行批准即二级终批（服务端按 status 推进）
+      expect(vi.mocked(approveRefund)).toHaveBeenCalledWith('1932000000000000009');
+    });
+    wrapper.unmount();
+  });
+
+  it('状态筛选选中待二级（PENDING_SECOND_APPROVAL）后按新态查询队列', async () => {
+    const wrapper = mount(RefundApprovalView);
+    await flushPromises();
+
+    // 筛选下拉选中待二级（一级已批）→ 出网参数携带新状态值（词表与后端枚举同源）
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'PENDING_SECOND_APPROVAL');
+    wrapper.findComponent(ElSelect).vm.$emit('change');
+    await flushPromises();
+
+    expect(vi.mocked(listRefunds)).toHaveBeenLastCalledWith({ status: 'PENDING_SECOND_APPROVAL' });
     wrapper.unmount();
   });
 
