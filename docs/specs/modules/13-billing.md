@@ -116,6 +116,7 @@
 - **deposit_txn**：`ACTIVE → REFUNDED(退回) / OFFSET(结算抵扣)`；`ACTIVE` 流水禁止修改，退回生成对冲流水。
 - **invoice 票据**：`ISSUED(已开具) → RED_FLIPPED(已红冲)`；`ISSUED → PAPER_ISSUED(已换开纸质，电子票锁定不可再红冲，换开留痕)`。
 - **refund_request**：`DRAFT → PENDING_APPROVAL(待审批) → APPROVED(审批通过) → EXECUTED(资金原路退回完成)`；`PENDING_APPROVAL → REJECTED(驳回，必填原因)`；`EXECUTED` 失败可重试并留痕。
+  > P1·PR-3 注记（二级审批）：完整状态链 `DRAFT → PENDING_APPROVAL →（大额/医保已结算经一级批）→ PENDING_SECOND_APPROVAL（待二级审批）→ APPROVED → EXECUTED`；`billing.refund.approved` 事件仅在终批（L1 批或二级批）发布；PENDING_APPROVAL 与 PENDING_SECOND_APPROVAL 均可驳回置 REJECTED。
 - **arrears_approval 出院挂账审批**：`DRAFT(病区/主管医师发起申请) → PENDING_APPROVAL(审批中) → APPROVED(已批准，发布 billing.arrears.approved) / REJECTED(已驳回，必填原因)`；REJECTED 为终态，可重新发起新申请。
 - **insurance_call_log**：`INIT → SENT → SUCCESS / FAILED / TIMEOUT(悬挂)`；`TIMEOUT → COMPENSATED(查询/冲正确认终态) / WAIVED(人工核销，必填结论)`。
 
