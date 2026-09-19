@@ -4,6 +4,24 @@
  */
 
 export interface paths {
+    "/api/v1/pharmacy/drugs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 药品详情 */
+        get: operations["get"];
+        /** 药品变更 */
+        put: operations["update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/patient/privacy-mask-rules/{ruleCode}": {
         parameters: {
             query?: never;
@@ -28,7 +46,7 @@ export interface paths {
             cookie?: never;
         };
         get: operations["detail"];
-        put: operations["update"];
+        put: operations["update_1"];
         post?: never;
         delete?: never;
         options?: never;
@@ -180,6 +198,143 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pharmacy/prescriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 处方分页查询 */
+        get: operations["list"];
+        put?: never;
+        /** 开方 */
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/prescriptions/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 处方作废 */
+        post: operations["cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/drugs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 药品建档 */
+        post: operations["create_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/drugs/{id}/insurance-mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医保编码对照 */
+        post: operations["mapInsurance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispenses/{no}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 扫码核对 */
+        post: operations["verify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispenses/{no}/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 配药 */
+        post: operations["pick"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispenses/{no}/issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 发药签名 */
+        post: operations["issue"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-returns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 退药受理 */
+        post: operations["acceptReturn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/patient/privacy/unmask": {
         parameters: {
             query?: never;
@@ -237,7 +392,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["create"];
+        post: operations["create_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -267,7 +422,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list"];
+        get: operations["list_1"];
         put?: never;
         post: operations["attach"];
         delete?: never;
@@ -333,7 +488,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["create_1"];
+        post: operations["create_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -461,7 +616,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["issue"];
+        post: operations["issue_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -523,7 +678,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_1"];
+        get: operations["list_2"];
         put?: never;
         post: operations["register"];
         delete?: never;
@@ -940,6 +1095,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pharmacy/medication-occupancy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 执行占用查询 */
+        get: operations["occupancy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/drugs/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 选药检索 */
+        get: operations["search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispenses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按处方号查发药单 */
+        get: operations["getByRxNo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/patient/privacy-mask-rules": {
         parameters: {
             query?: never;
@@ -979,7 +1185,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_2"];
+        get: operations["list_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1011,7 +1217,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["search"];
+        get: operations["search_1"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1075,7 +1281,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_3"];
+        get: operations["list_4"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1091,7 +1297,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_4"];
+        get: operations["list_5"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1107,7 +1313,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_5"];
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1123,7 +1329,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1287,6 +1493,58 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        DrugSaveRequest: {
+            drugCode: string;
+            genericName: string;
+            tradeName?: string;
+            pinyinCode?: string;
+            dosageForm?: string;
+            specification?: string;
+            manufacturer?: string;
+            routeCodes?: string[];
+            unit?: string;
+            splitRatio?: string;
+            essentialFlag?: boolean;
+            antibioClass: string;
+            hazardLevel: string;
+            skinTestFlag?: boolean;
+            narcoticClass: string;
+            itemCode?: string;
+            traceCodeType?: string;
+            indication?: string;
+            maxDose?: string;
+            contraindication?: string;
+            storageCondition?: string;
+        };
+        DrugVO: {
+            /** @example 0 */
+            id?: string;
+            drugCode?: string;
+            genericName?: string;
+            tradeName?: string;
+            dosageForm?: string;
+            specification?: string;
+            manufacturer?: string;
+            routeCodes?: string[];
+            unit?: string;
+            splitRatio?: number;
+            nhsaCode?: string;
+            nhsaCatalogVersion?: string;
+            nhsaPayType?: string;
+            essentialFlag?: boolean;
+            antibioClass?: string;
+            hazardLevel?: string;
+            skinTestFlag?: boolean;
+            narcoticClass?: string;
+            itemCode?: string;
+            traceCodeType?: string;
+            indication?: string;
+            maxDose?: string;
+            contraindication?: string;
+            storageCondition?: string;
+            insuredSettleable?: boolean;
+            status?: string;
+        };
         PrivacyMaskRuleUpdateRequest: {
             maskPattern?: string;
             exemptRoles?: string;
@@ -1398,6 +1656,92 @@ export interface components {
         LoginRequest: {
             loginName: string;
             password: string;
+        };
+        PrescriptionCreateRequest: {
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            rxType: string;
+            deptCode?: string;
+            diagnosisCodes?: string[];
+            skinTestRequired?: boolean;
+            items: components["schemas"]["RxItemRequest"][];
+        };
+        RxItemRequest: {
+            /** @example 0 */
+            drugId: string;
+            quantity: string;
+            unit?: string;
+            singleDose?: string;
+            routeCode?: string;
+            frequency?: string;
+            /** Format: int32 */
+            days?: number;
+            usageNote?: string;
+        };
+        PrescriptionItemVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            drugId?: string;
+            drugCode?: string;
+            itemCode?: string;
+            quantity?: string;
+            unit?: string;
+            singleDose?: string;
+            routeCode?: string;
+            frequency?: string;
+            /** Format: int32 */
+            days?: number;
+            usageNote?: string;
+            usageSummary?: string;
+            status?: string;
+            returnedQuantity?: string;
+        };
+        PrescriptionVO: {
+            /** @example 0 */
+            id?: string;
+            rxNo?: string;
+            rxType?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            doctor?: string;
+            deptCode?: string;
+            diagnosisCodes?: string[];
+            rxCategory?: string;
+            skinTestRequired?: boolean;
+            reviewLevel?: string;
+            status?: string;
+            cancelReason?: string;
+            items?: components["schemas"]["PrescriptionItemVO"][];
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        PrescriptionCancelRequest: {
+            reason: string;
+        };
+        InsuranceMappingRequest: {
+            nhsaCode: string;
+            catalogVersion: string;
+            payType: string;
+        };
+        PickLine: {
+            prescriptionItemId: string;
+            traceCodes?: string[];
+        };
+        PickRequest: {
+            items: components["schemas"]["PickLine"][];
+        };
+        DispenseReturnRequest: {
+            dispenseNo: string;
+            mode: string;
+            items: components["schemas"]["ReturnLine"][];
+        };
+        ReturnLine: {
+            prescriptionItemId: string;
+            returnQuantity: string;
+            traceCodes?: string[];
         };
         UnmaskRequest: {
             /** @example 0 */
@@ -1828,6 +2172,62 @@ export interface components {
             componentItemId: string;
             defaultQuantity: number;
         };
+        PageResultPrescriptionVO: {
+            content?: components["schemas"]["PrescriptionVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        OccupancyVO: {
+            rxNo?: string;
+            itemCode?: string;
+            prescriptionStatus?: string;
+            dispenseNo?: string;
+            dispenseStatus?: string;
+            issuedQuantity?: string;
+            returnedQuantity?: string;
+        };
+        PageResultDrugVO: {
+            content?: components["schemas"]["DrugVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        DispenseItemVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            prescriptionItemId?: string;
+            itemCode?: string;
+            requestedQuantity?: string;
+            issuedQuantity?: string;
+            returnedQuantity?: string;
+            batchNo?: string;
+            traceCodes?: string[];
+            itemStatus?: string;
+        };
+        DispenseVO: {
+            /** @example 0 */
+            id?: string;
+            dispenseNo?: string;
+            dispenseType?: string;
+            rxNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            storehouse?: string;
+            picker?: string;
+            verifier?: string;
+            issuer?: string;
+            status?: string;
+            items?: components["schemas"]["DispenseItemVO"][];
+        };
         PageResultPrivacyAccessLogVO: {
             content?: components["schemas"]["PrivacyAccessLogVO"][];
             /** @example 0 */
@@ -2241,6 +2641,54 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DrugVO"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrugSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DrugVO"];
+                };
+            };
+        };
+    };
     updateRule: {
         parameters: {
             query?: never;
@@ -2289,7 +2737,7 @@ export interface operations {
             };
         };
     };
-    update: {
+    update_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -2525,6 +2973,215 @@ export interface operations {
             };
         };
     };
+    list: {
+        parameters: {
+            query?: {
+                visitId?: string;
+                patientId?: string;
+                rxNo?: string;
+                status?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultPrescriptionVO"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrescriptionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PrescriptionVO"];
+                };
+            };
+        };
+    };
+    cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrescriptionCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrugSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DrugVO"];
+                };
+            };
+        };
+    };
+    mapInsurance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InsuranceMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pick: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PickRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    acceptReturn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispenseReturnRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     unmask: {
         parameters: {
             query?: never;
@@ -2619,7 +3276,7 @@ export interface operations {
             };
         };
     };
-    create: {
+    create_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -2663,7 +3320,7 @@ export interface operations {
             };
         };
     };
-    list: {
+    list_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -2785,7 +3442,7 @@ export interface operations {
             };
         };
     };
-    create_1: {
+    create_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -2967,7 +3624,7 @@ export interface operations {
             };
         };
     };
-    issue: {
+    issue_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -3055,7 +3712,7 @@ export interface operations {
             };
         };
     };
-    list_1: {
+    list_2: {
         parameters: {
             query?: {
                 topic?: string;
@@ -3203,7 +3860,7 @@ export interface operations {
     listRefunds: {
         parameters: {
             query?: {
-                status?: "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "EXECUTED" | "REJECTED";
+                status?: "DRAFT" | "PENDING_APPROVAL" | "PENDING_SECOND_APPROVAL" | "APPROVED" | "EXECUTED" | "REJECTED";
                 page?: number;
                 size?: number;
             };
@@ -3736,6 +4393,79 @@ export interface operations {
             };
         };
     };
+    occupancy: {
+        parameters: {
+            query: {
+                patientId: string;
+                visitId?: string;
+                itemCode?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OccupancyVO"][];
+                };
+            };
+        };
+    };
+    search: {
+        parameters: {
+            query?: {
+                keyword?: string;
+                essential?: boolean;
+                antibioClass?: string;
+                insuranceMapped?: boolean;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultDrugVO"];
+                };
+            };
+        };
+    };
+    getByRxNo: {
+        parameters: {
+            query: {
+                rxNo: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DispenseVO"][];
+                };
+            };
+        };
+    };
     maskRules: {
         parameters: {
             query?: never;
@@ -3780,7 +4510,7 @@ export interface operations {
             };
         };
     };
-    list_2: {
+    list_3: {
         parameters: {
             query?: {
                 status?: string;
@@ -3826,7 +4556,7 @@ export interface operations {
             };
         };
     };
-    search: {
+    search_1: {
         parameters: {
             query?: {
                 keyword?: string;
@@ -3919,7 +4649,7 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    list_4: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -3948,7 +4678,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -3974,7 +4704,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_6: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -4001,7 +4731,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_7: {
         parameters: {
             query?: {
                 status?: string;
