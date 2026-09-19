@@ -112,7 +112,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * 退费申请（免审阈值内当日未占用直退 APPROVED，其余按分级进 PENDING_APPROVAL 待一审）。
      *
      * <p>执行流程：登录上下文取申请人 → 目标费用行集 SELECT FOR UPDATE 行锁串行化并发申请 →
-     * 锁内逐行守卫（缺行/执行占用/超可退）并服务端算额 → 分级判定（医保结算退费一律
+     * 锁内逐行守卫（缺行/归属与可退态/执行占用/超可退）并服务端算额 → 分级判定（医保结算退费一律
      * SETTLED_REFUND；自费按计费日当日/跨日）→ 审批级别判定（{@link #resolveApprovalLevel}：
      * L0 免审直退落库即 APPROVED；L1/L2 均先落 PENDING_APPROVAL，L2 由 approve 一级批后升待二级）
      * → 申请单与 link 负向台账同事务落表 → 免审命中即发 refund.approved。
@@ -127,7 +127,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * @throws BizException BILL-1012（400 缺登录操作者上下文——不可追溯资金动作显式拒）/
      *                      BILL-1014（404 缺原结算单）/ BILL-1010（404 费用行缺行脏数据）/
      *                      BILL-1017（409 执行占用硬前置——已发药/已执行须先逆向业务）/
-     *                      BILL-1021（409 超可退余额，含历史已退聚合与并发先到申请）
+     *                      BILL-1021（409 超可退余额，含历史已退聚合与并发先到申请）/
+     *                      BILL-1030（409 结算单非 SETTLED——SETTLED 唯一可退基点，封堵免审绕过主链）/
+     *                      BILL-1031（409 费用行不属于该结算单）
      */
     @Override
     @Transactional
@@ -144,6 +146,15 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             throw new BizException(
                     BillingErrorCode.SETTLEMENT_NOT_FOUND, HttpStatus.NOT_FOUND, "结算单不存在：" + req.settlementId());
         }
+        // W-18 结算单级状态守卫：SETTLED 单值判等（实况枚举无 PART_REFUND，SETTLED 唯一可退基点；
+        //   REFUNDED 由退费执行链回写，费用行级可退集见下方 FeeStatus 分层守卫）
+        if (st.getStatus() != SettlementStatus.SETTLED) {
+            throw new BizException(
+                    BillingErrorCode.REFUND_SETTLEMENT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "结算单状态不允许退费：" + st.getSettleNo() + "，status="
+                            + st.getStatus().getCode());
+        }
         // 行锁抢占目标费用行集至事务提交（并发收口锚点）：后到并发申请在此阻塞，先到者提交后
         //   本事务读到的行与下方 refundedFen 聚合即最新口径——守卫读值不再是过期快照
         List<Long> feeIds =
@@ -159,6 +170,22 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             FeeRecord fee = lockedFees.get(line.feeId());
             if (fee == null) {
                 throw new BizException(BillingErrorCode.FEE_NOT_FOUND, HttpStatus.NOT_FOUND, "费用记录不存在：" + line.feeId());
+            }
+            // W-18 归属与状态守卫（锁内口径）：行必属原结算单且处可退态——封堵「DRAFT/预结算单
+            //   费用行免审直退绕过 SETTLED 主链」与跨单拼行（两侧均 Long，显式拆箱数值比较禁引用判等）
+            if (fee.getSettlementId() == null
+                    || fee.getSettlementId().longValue() != st.getId().longValue()) {
+                throw new BizException(
+                        BillingErrorCode.REFUND_FEE_NOT_IN_SETTLEMENT,
+                        HttpStatus.CONFLICT,
+                        "费用行不属于该结算单：feeId=" + fee.getId() + "，settlementId=" + fee.getSettlementId());
+            }
+            if (fee.getStatus() != FeeStatus.SETTLED && fee.getStatus() != FeeStatus.PART_REFUND) {
+                throw new BizException(
+                        BillingErrorCode.FEE_STATE_NOT_ALLOWED,
+                        HttpStatus.CONFLICT,
+                        "费用行状态不允许退费：" + fee.getId() + "，status="
+                                + fee.getStatus().getCode());
             }
             // 执行占用硬前置（Spec §6「已发药先退药」硬绑定——杜绝只退钱不退业务）
             if (fee.getExecOccupyStatus() != ExecOccupyStatus.NONE) {
@@ -177,7 +204,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     .setScale(0, RoundingMode.HALF_UP)
                     .longValueExact();
             // 超可退守卫：历史已退（APPROVED/EXECUTED 态 link 负向聚合）+ 本次 > 费用行金额 → 拒
-            long alreadyRefunded = refundedFen(fee.getId());
+            long alreadyRefunded = refundedFen(fee.getId(), null);
             if (alreadyRefunded + lineAmount > fee.getAmount()) {
                 log.warn(
                         "退费超可退拦截：refundSettlement={}，feeId={}，行金额={}分，已退={}分，原额={}分",
@@ -363,25 +390,37 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     /**
      * 退费执行（APPROVED→EXECUTED，原路退回——资金动作与状态迁移同事务；IT 锚点①终态断言源）。
      *
+     * <p>并发收口（W-16）：首步 CAS 抢 EXECUTED 锚（仅 APPROVED 可迁移），并发双发同退费单恰一赢；
+     * 输家重读定性——已 EXECUTED 幂等直返、仍非终态拒 BILL-1019；动卡入账严格后置于锚抢占成功
+     * （与 SettlementMapper.casMarkSettled 结算收口同款时序）。
+     *
      * @param id 退费申请 id；来源：审批通过后执行入口
-     * @throws BizException BILL-1018（404）/ BILL-1019（409 非 APPROVED）/
+     * @throws BizException BILL-1018（404）/ BILL-1019（409 非 APPROVED 并发被抢或状态违例）/
      *                      BILL-1012（400 CARD_BALANCE 行卡引用缺失/空文本/非数字——读回侧
      *                      对称守卫，禁裸 parseLong 抛 500 出契约外形态）；
+     *                      BILL-1029（409 卡行原付金额 ≤0 或退款额超卡侧原付合计，复审 F6 加固）；
      *                      PAT-1013/1014（卡账户记账失败经调用方事务回滚上抛）
      */
     @Override
     @Transactional
     public void execute(long id) {
-        RefundRequest refund = getById(id);
-        if (refund == null) {
-            throw new BizException(BillingErrorCode.REFUND_NOT_FOUND, HttpStatus.NOT_FOUND, "退费申请不存在：" + id);
-        }
-        if (refund.getStatus() != RefundStatus.APPROVED) {
+        // W-16：CAS 抢 EXECUTED 锚（读值守卫的 TOCTOU 面根除）——动卡入账严格后置于锚抢占成功
+        if (baseMapper.casMarkExecuted(id) != 1) {
+            RefundRequest latest = getById(id);
+            if (latest == null) {
+                // CAS 败北后行已消失属脏数据：404 语义与入口查询一致（BILL-1018），禁漂移为 409 状态违例
+                throw new BizException(BillingErrorCode.REFUND_NOT_FOUND, HttpStatus.NOT_FOUND, "退费申请不存在：" + id);
+            }
+            if (latest.getStatus() == RefundStatus.EXECUTED) {
+                log.info("退费执行幂等直返（并发输家已执行）：refundId={}", id);
+                return;
+            }
             throw new BizException(
                     BillingErrorCode.REFUND_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
-                    "仅已审批退费可执行，当前状态：" + refund.getStatus().getCode());
+                    "仅已审批退费可执行，当前状态：" + latest.getStatus().getCode());
         }
+        RefundRequest refund = getById(id);
         Settlement st = settlementMapper.selectById(refund.getSettlementId());
         // 原路退回·就诊卡侧（2026-09-18 用户裁决：同卡多行聚合单次入账）：自原结算行 payment_details
         //   JSON 读回 CARD_BALANCE 行，channelRef 守卫解析为卡账户 id 后聚合求和去重（与写入侧
@@ -406,6 +445,24 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             // 落库文本解析失败=数据不一致显式暴露（禁静默跳过退回）
             throw new IllegalStateException("payment_details 解析失败，settleNo=" + st.getSettleNo(), e);
         }
+        // W-16 读回侧守卫（F6）：卡行原付金额必须为正；退款额不得超卡侧原付合计
+        //  （纯现金退单零卡行为合规保留；混付单卡侧份额以 payment_details 原付为上限）
+        for (Map.Entry<Long, Long> guard : cardChannels.entrySet()) {
+            if (guard.getValue() <= 0) {
+                throw new BizException(
+                        BillingErrorCode.REFUND_CARD_CHANNEL_INVALID,
+                        HttpStatus.CONFLICT,
+                        "卡支付行原付金额非法（≤0），拒绝退费入账：cardAccount=" + guard.getKey());
+            }
+        }
+        long cardTotal =
+                cardChannels.values().stream().mapToLong(Long::longValue).sum();
+        if (!cardChannels.isEmpty() && refund.getAmount() > cardTotal) {
+            throw new BizException(
+                    BillingErrorCode.REFUND_CARD_CHANNEL_INVALID,
+                    HttpStatus.CONFLICT,
+                    "退款额超卡侧原付合计：refund=" + refund.getAmount() + "，cardTotal=" + cardTotal);
+        }
         for (Map.Entry<Long, Long> channel : cardChannels.entrySet()) {
             long accountId = channel.getKey();
             long txnId = cardAccountLedger.record(
@@ -424,7 +481,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         for (RefundFeeLink link : refundFeeLinkMapper.selectList(
                 Wrappers.<RefundFeeLink>lambdaQuery().eq(RefundFeeLink::getRefundId, refund.getId()))) {
             FeeRecord fee = feeRecordMapper.selectById(link.getFeeId());
-            long refunded = refundedFen(fee.getId());
+            long refunded = refundedFen(fee.getId(), null);
             fee.setStatus(refunded >= fee.getAmount() ? FeeStatus.FULL_REFUND : FeeStatus.PART_REFUND);
             feeRecordMapper.updateById(fee);
         }
@@ -541,22 +598,43 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     }
 
     /**
-     * 单费用行累计已退金额（分；link 负向台账聚合）：取 APPROVED/EXECUTED 态退费单 id 集，按集内
-     * refund_fee_link 求和——本单于 execute 判定时点已 APPROVED，必须计入（剔除即永判不满）。
+     * 单费用行累计已退/在途占用金额（分；W-17 聚合口径）：已决（APPROVED/EXECUTED）全量计入
+     * ——execute 判态时点本单已 APPROVED 必须计入（剔除即永判不满）；在途（PENDING_APPROVAL/
+     * PENDING_SECOND_APPROVAL）计入但排除自身 refund_id（防同单审批期自我占用误判——当前调用面
+     * 自身要么未落库要么已决、排除位为防御性语义锁定，W-17 单测直驱）。最小侵入=状态集扩展，
+     * 不引入审批串行化（主控裁决 9）。
      *
-     * @param feeId 费用行 id；来源：本单 link 行
-     * @return 累计已退金额（分，无历史已退为 0）
+     * @param feeId                   费用行 id；来源：apply 守卫/execute 判态
+     * @param excludeInFlightRefundId 在途聚合排除的自身单 id，可空（null=不排除）
+     * @return 累计占用金额（分）
      */
-    private long refundedFen(long feeId) {
-        // 数据库读操作：APPROVED/EXECUTED 态退费单 id 集（免审直退行落库即 APPROVED，天然入集）
-        List<Long> refundIds =
+    long refundedFen(long feeId, Long excludeInFlightRefundId) {
+        // 数据库读操作：已决单 id 集（含本单——execute 时点本单已 APPROVED）
+        List<Long> decidedIds =
                 lambdaQuery().in(RefundRequest::getStatus, RefundStatus.APPROVED, RefundStatus.EXECUTED).list().stream()
                         .map(RefundRequest::getId)
                         .toList();
-        if (refundIds.isEmpty()) {
-            return 0L;
+        // 数据库读操作：在途单 id 集（排除自身）
+        List<Long> inFlightIds = lambdaQuery()
+                .in(RefundRequest::getStatus, RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL)
+                .ne(excludeInFlightRefundId != null, RefundRequest::getId, excludeInFlightRefundId)
+                .list()
+                .stream()
+                .map(RefundRequest::getId)
+                .toList();
+        long total = 0L;
+        if (!decidedIds.isEmpty()) {
+            total += sumLinks(feeId, decidedIds);
         }
-        // 数据库读操作：集内本费用行 link 负向金额求和（禁 XML，两次 lambdaQuery 口径）
+        if (!inFlightIds.isEmpty()) {
+            total += sumLinks(feeId, inFlightIds);
+        }
+        return total;
+    }
+
+    /** 集内本费用行 link 负向金额求和（抽取自原 refundedFen 尾段，口径不变） */
+    private long sumLinks(long feeId, List<Long> refundIds) {
+        // 数据库读操作：集内本费用行 link 负向金额求和（禁 XML，lambdaQuery 口径）
         return refundFeeLinkMapper
                 .selectList(Wrappers.<RefundFeeLink>lambdaQuery()
                         .eq(RefundFeeLink::getFeeId, feeId)
@@ -567,7 +645,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     }
 
     /**
-     * 结算单累计已退金额（分；同 {@link #refundedFen(long)} 聚合口径，按结算单维度归集）。
+     * 结算单累计已退金额（分；同 {@link #refundedFen(long, Long)} 已决集聚合口径，按结算单维度归集）。
      *
      * @param settlementId 结算单 id；来源：原路退回目标结算行
      * @return 累计已退金额（分，无历史已退为 0）

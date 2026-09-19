@@ -46,11 +46,13 @@ import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 /**
- * 结算/退费并发收口验收 IT（2026-09-18 用户裁决：PR-3 三项资金缺口本 PR 修复）：真栈
- * Testcontainers（HTTP/MQ/DB 零 mock）下以 CountDownLatch 对齐起跑的双线程并发，验证
+ * 结算/退费并发收口验收 IT（2026-09-18 用户裁决：PR-3 三项资金缺口本 PR 修复；PR-4 W-16/W-18 收口扩场景）：
+ * 真栈 Testcontainers（HTTP/MQ/DB 零 mock）下以 CountDownLatch 对齐起跑的双线程并发，验证
  * ①同单并发双 settle 恰一赢一幂等直返（CAS 抢锚，无并发双 PAY）；②并发双 apply 同费用
  * 超可退恰一成功一 BILL-1021（行锁内重读聚合守卫）；③同卡拆分两行结算后 execute 单次入账
- * （channelRef 聚合，无重复贷记）。每场景重复 3 轮防 flaky，断言 DB 终态与台账行数不绑实现细节。
+ * （channelRef 聚合，无重复贷记）；④并发双发 execute 恰一执行一幂等直返（W-16 CAS 抢 EXECUTED
+ * 锚，REFUND 台账恰一笔）；⑤跨结算单费用行 apply 被 409 BILL-1031 拒（W-18 归属守卫）。
+ * 每并发场景重复 3 轮防 flaky，断言 DB 终态与台账行数不绑实现细节。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -450,5 +452,129 @@ class BillingConcurrencyGuardIT extends FuyunStackITBase {
             Long expected = 1000000L - 5000L * (long) ROUNDS /* 场景①三轮各 PAY 5000 不退 */;
             assertThat(balanceAfter).isEqualTo(expected);
         }
+    }
+
+    @Test
+    @Order(10)
+    @DisplayName("W-16 并发双发 execute：CAS 锚恰一执行、输家幂等直返，REFUND 台账恰一笔")
+    void concurrentDoubleExecuteHasSingleLedgerEntry() throws Exception {
+        for (int round = 1; round <= ROUNDS; round++) {
+            String visitId = nextVisitId();
+            publishOrderEvent("ITX-S4-" + round, visitId);
+            awaitFees(visitId, 2);
+            String settleNo = previewSelfPay(visitId);
+            ObjectNode settle = objectMapper.createObjectNode();
+            settle.put("settleNo", settleNo);
+            settle.putArray("payments")
+                    .addObject()
+                    .put("method", "CARD_BALANCE")
+                    .put("amount", "5000")
+                    .put("channelRef", String.valueOf(CARD_ACCOUNT_ID));
+            assertThat(postForEntity("/api/v1/billing/settlements", adminToken, settle)
+                            .getStatusCode()
+                            .value())
+                    .isEqualTo(200);
+            Long settlementId = jdbcTemplate.queryForObject(
+                    "SELECT id FROM billing.settlement WHERE settle_no = ?", Long.class, settleNo);
+            List<Long> feeIds = jdbcTemplate.queryForList(
+                    "SELECT id FROM billing.fee_record WHERE visit_id = ? ORDER BY id", Long.class, visitId);
+
+            // 免审直退（5000 ≤ 免审阈值 50000 当日）→ apply 即 APPROVED，取退费单 id
+            ObjectNode apply = objectMapper.createObjectNode();
+            apply.put("settlementId", settlementId).put("reason", "IT 并发双执行幂等验证");
+            ArrayNode lines = apply.putArray("lines");
+            lines.addObject().put("feeId", feeIds.get(0)).put("refundQuantity", "1");
+            lines.addObject().put("feeId", feeIds.get(1)).put("refundQuantity", "1");
+            long refundId = toNode(postForEntity("/api/v1/billing/refunds", adminToken, apply)
+                            .getBody())
+                    .asLong();
+
+            // 对齐起跑双 execute（绕 UI 并发面：直接双 HTTP 同拍）：CAS 锚下恰一执行一幂等直返
+            List<ResponseEntity<String>> results = runConcurrent(
+                    2,
+                    () -> postForEntity(
+                            "/api/v1/billing/refunds/" + refundId + "/execute",
+                            adminToken,
+                            objectMapper.createObjectNode()));
+
+            // 双响应皆 2xx：赢家 204 真执行、输家 204 幂等直返（修复前双贷记两笔 REFUND）
+            for (ResponseEntity<String> resp : results) {
+                assertThat(resp.getStatusCode().is2xxSuccessful()).isTrue();
+            }
+            // DB 终态：该退费单恰一行且 EXECUTED（轮询上限 10s 兜底——输家 CAS 语义上晚于赢家提交返回）
+            boolean executed = false;
+            for (int i = 0; i < 100 && !executed; i++) {
+                Integer rows = jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM billing.refund_request WHERE id = ? AND status = 'EXECUTED'",
+                        Integer.class,
+                        refundId);
+                executed = rows != null && rows == 1;
+                if (!executed) {
+                    Thread.sleep(100);
+                }
+            }
+            assertThat(jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM billing.refund_request WHERE id = ? AND status = 'EXECUTED'",
+                            Integer.class,
+                            refundId))
+                    .isEqualTo(1);
+            // 台账断言：REFUND 入账恰一行且金额=全额 5000（双发仅赢家一笔贷记；退额 ≤ 卡侧原付 5000 过 W-16 F6 守卫）
+            String refundNo = jdbcTemplate.queryForObject(
+                    "SELECT refund_no FROM billing.refund_request WHERE id = ?", String.class, refundId);
+            assertThat(jdbcTemplate.queryForObject(
+                            "SELECT count(*) FROM patient.card_txn WHERE account_id = ? AND txn_type = 'REFUND'"
+                                    + " AND biz_ref = ?",
+                            Integer.class,
+                            CARD_ACCOUNT_ID,
+                            refundNo))
+                    .isEqualTo(1);
+            assertThat(jdbcTemplate.queryForObject(
+                            "SELECT amount FROM patient.card_txn WHERE account_id = ? AND txn_type = 'REFUND' AND biz_ref = ?",
+                            Long.class,
+                            CARD_ACCOUNT_ID,
+                            refundNo))
+                    .isEqualTo(5000L);
+        }
+    }
+
+    @Test
+    @Order(11)
+    @DisplayName("W-18 顺序守卫：跨结算单费用行 apply 被 409 BILL-1031 拒（BILL-1030 归单测面承载）")
+    void applyWithForeignFeeRejectedAsBill1031() throws Exception {
+        // 造数 A：常规开单→CASH 结算（SETTLED）——退费申请的归属结算单
+        String visitA = nextVisitId();
+        publishOrderEvent("ITX-S5-A", visitA);
+        awaitFees(visitA, 2);
+        String settleNoA = previewSelfPay(visitA);
+        ObjectNode settle = objectMapper.createObjectNode();
+        settle.put("settleNo", settleNoA);
+        settle.putArray("payments").addObject().put("method", "CASH").put("amount", "5000");
+        assertThat(postForEntity("/api/v1/billing/settlements", adminToken, settle)
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(200);
+        Long settlementIdA = jdbcTemplate.queryForObject(
+                "SELECT id FROM billing.settlement WHERE settle_no = ?", Long.class, settleNoA);
+
+        // 造数 B：仅开单不结算——费用行 PENDING 且 settlement_id 为空（跨单外行）
+        String visitB = nextVisitId();
+        publishOrderEvent("ITX-S5-B", visitB);
+        awaitFees(visitB, 2);
+        Long foreignFeeId = jdbcTemplate.queryForObject(
+                "SELECT id FROM billing.fee_record WHERE visit_id = ? ORDER BY id LIMIT 1", Long.class, visitB);
+
+        // 归属结算单 A（SETTLED）+ 外单费用行 B：行 settlement_id（空）≠ A → 归属守卫先命中 BILL-1031
+        ObjectNode apply = objectMapper.createObjectNode();
+        apply.put("settlementId", settlementIdA).put("reason", "IT 跨结算单拼行退费守卫验证");
+        apply.putArray("lines").addObject().put("feeId", foreignFeeId).put("refundQuantity", "1");
+        ResponseEntity<String> resp = postForEntity("/api/v1/billing/refunds", adminToken, apply);
+        assertThat(resp.getStatusCode().value()).isEqualTo(409);
+        assertThat(toNode(resp.getBody()).path("errorCode").asText()).isEqualTo("BILL-1031");
+        // DB 终态：守卫前置即拒，申请单零落库
+        assertThat(jdbcTemplate.queryForObject(
+                        "SELECT count(*) FROM billing.refund_request WHERE settlement_id = ?",
+                        Integer.class,
+                        settlementIdA))
+                .isZero();
     }
 }

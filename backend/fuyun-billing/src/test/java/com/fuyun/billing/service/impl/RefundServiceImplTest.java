@@ -242,14 +242,22 @@ class RefundServiceImplTest {
         assertThat(payload.amount()).isEqualTo(3000L);
         assertThat(payload.refundType()).isEqualTo("DAY_CORRECTION");
         assertThat(payload.autoApproved()).isTrue();
-        // 可退聚合 SQL 守卫钉死：状态谓词必须落在 status 列且携带 APPROVED/EXECUTED 两态（防漏历史已退）
+        // 可退聚合 SQL 守卫钉死（W-17 双查询）：第 1 次已决集状态谓词落在 status 列且携带
+        //   APPROVED/EXECUTED 两态（防漏历史已退）、第 2 次在途集携带 PENDING_APPROVAL/PENDING_SECOND_APPROVAL
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundRequestMapper).selectList(statusCaptor.capture());
-        LambdaQueryWrapper<RefundRequest> statusWrapper = (LambdaQueryWrapper<RefundRequest>) statusCaptor.getValue();
+        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> statusWrapper =
+                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(0);
         assertThat(statusWrapper.getSqlSegment()).contains("status");
         assertThat(statusWrapper.getParamNameValuePairs().values())
                 .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
+        LambdaQueryWrapper<RefundRequest> inFlightWrapper =
+                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
+        // 先取 sqlSegment 触发 IN 参数懒物化（MP formatParam 惰性求值，mock 不渲染 SQL 不会自动回填）
+        assertThat(inFlightWrapper.getSqlSegment()).contains("status");
+        assertThat(inFlightWrapper.getParamNameValuePairs().values())
+                .contains(RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL);
     }
 
     @Test
@@ -325,10 +333,10 @@ class RefundServiceImplTest {
                         .isEqualTo(BillingErrorCode.REFUND_AMOUNT_EXCEEDED));
         verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
         verify(refundFeeLinkMapper, never()).insert(any(RefundFeeLink.class));
-        // 已退聚合 SQL 守卫钉死：link 查询谓词落在 fee_id 列且携带本费用行 id（防跨行串账）
+        // 已退聚合 SQL 守卫钉死（W-17 后已决/在途各求和一次）：link 查询谓词落在 fee_id 列且携带本费用行 id（防跨行串账）
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundFeeLinkMapper).selectList(linkCaptor.capture());
+        verify(refundFeeLinkMapper, times(2)).selectList(linkCaptor.capture());
         LambdaQueryWrapper<RefundFeeLink> linkWrapper = (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getValue();
         assertThat(linkWrapper.getSqlSegment()).contains("fee_id");
         assertThat(linkWrapper.getParamNameValuePairs().values()).contains(1L, 101L);
@@ -681,13 +689,15 @@ class RefundServiceImplTest {
     @DisplayName("执行退回：CARD_BALANCE 行台账 REFUND 入账回填流水、费用 FULL_REFUND、结算单转 REFUNDED")
     void executeRefundsCardBalanceAndMarksSettlementRefunded() {
         RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
         when(refundRequestMapper.selectById(100L)).thenReturn(approved);
         Settlement st = settlement(900L, 3000L);
-        // payment_details 列形态与 Task 12 写入侧逐字同源：CASH 行 channelRef=null 三键保形
-        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":1000,\"channelRef\":null},"
-                + "{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"5\"}]");
+        // 纯卡支付夹具（W-16 F6 守卫后正路径要求退额 ≤ 卡侧原付合计；CASH 混付形态解析覆盖
+        //   由 executeAggregatesSameCardRowsIntoSingleCredit 承载）
+        st.setPaymentDetails("[{\"method\":\"CARD_BALANCE\",\"amount\":3000,\"channelRef\":\"5\"}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
-        // 同一 mapper 两处查询（本单 link 清单 / refundedFen 聚合）打桩同值：本单已退=3000 分
+        // 同一 mapper 多处查询（本单 link 清单 / refundedFen 已决+在途 / 结算维度聚合）打桩同值：本单已退=3000 分
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
         when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
@@ -711,25 +721,26 @@ class RefundServiceImplTest {
         verify(settlementMapper).updateById(stCaptor.capture());
         assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.REFUNDED);
         // link 聚合 SQL 守卫钉死：本单 link 清单谓词落在 refund_id 列且携带本单 id
+        //  （W-17 后共 4 次：清单 1 + refundedFen 已决/在途集内求和 2 + 结算维度求和 1）
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundFeeLinkMapper, times(3)).selectList(linkCaptor.capture());
+        verify(refundFeeLinkMapper, times(4)).selectList(linkCaptor.capture());
         LambdaQueryWrapper<RefundFeeLink> loopWrapper =
                 (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getAllValues().get(0);
         assertThat(loopWrapper.getSqlSegment()).contains("refund_id");
         assertThat(loopWrapper.getParamNameValuePairs().values()).contains(100L);
-        // 已退聚合状态谓词守卫：APPROVED/EXECUTED 两态（本单判定时点 APPROVED 必须计入，剔除即永判不满）
+        // 已退聚合状态谓词守卫：第 1 次已决集 APPROVED/EXECUTED 两态（本单判定时点 APPROVED 必须计入，剔除即永判不满）
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
+        verify(refundRequestMapper, times(3)).selectList(statusCaptor.capture());
         LambdaQueryWrapper<RefundRequest> statusWrapper =
                 (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(0);
         assertThat(statusWrapper.getSqlSegment()).contains("status");
         assertThat(statusWrapper.getParamNameValuePairs().values())
                 .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
-        // 结算单聚合谓词守卫：settlement_id 等值（防跨结算单串账）
+        // 结算单聚合谓词守卫：第 3 次（已决/在途集之后）settlement_id 等值（防跨结算单串账）
         LambdaQueryWrapper<RefundRequest> settleWrapper =
-                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
+                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(2);
         assertThat(settleWrapper.getSqlSegment()).contains("settlement_id");
         assertThat(settleWrapper.getParamNameValuePairs().values()).contains(900L);
     }
@@ -738,6 +749,8 @@ class RefundServiceImplTest {
     @DisplayName("同卡多行聚合入账：拆分卡支付两行 CARD_BALANCE 同 channelRef → 台账 REFUND 恰一次全额贷记")
     void executeAggregatesSameCardRowsIntoSingleCredit() {
         RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 5000L);
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
         when(refundRequestMapper.selectById(100L)).thenReturn(approved);
         Settlement st = settlement(900L, 5000L);
         // 同卡拆分两行（写入侧同卡多行求和扣款合形态）：2000+3000 同 channelRef="5"
@@ -781,6 +794,8 @@ class RefundServiceImplTest {
     @DisplayName("部分退：已退合计 < 结算总额 → 费用行 PART/FULL 按行判态、结算单留 SETTLED、纯现金不触台账")
     void executeKeepsSettlementSettledOnPartialRefund() {
         RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
         when(refundRequestMapper.selectById(100L)).thenReturn(approved);
         Settlement st = settlement(900L, 8000L);
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
@@ -810,12 +825,14 @@ class RefundServiceImplTest {
     @DisplayName("结算聚合空集兜底：结算维度已退集为空（防御分支）→ 0 < 总额留 SETTLED、退费单照常执行")
     void executeKeepsSettlementSettledWhenSettlementAggregateEmpty() {
         RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
         when(refundRequestMapper.selectById(100L)).thenReturn(approved);
         Settlement st = settlement(900L, 8000L);
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
-        // 第一次查询（refundedFen 行维度）命中本单；第二次（totalRefundedFen 结算维度）空集 → 聚合 0 分
+        // 第 1/2 次查询（refundedFen 已决/在途）首次命中本单、在途空集；第 3 次（totalRefundedFen 结算维度）空集 → 聚合 0 分
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved), List.of());
         when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
 
@@ -831,6 +848,8 @@ class RefundServiceImplTest {
     @Test
     @DisplayName("执行读回卡引用守卫：channelRef JSON null/空文本/非数字/缺键均 BILL-1012 拒（400，禁裸 parseLong 出 500）")
     void executeRejectsMissingOrIllegalChannelRefAsBill1012() {
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
         when(refundRequestMapper.selectById(100L))
                 .thenReturn(refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L));
         Settlement st = settlement(900L, 3000L);
@@ -862,6 +881,8 @@ class RefundServiceImplTest {
     @DisplayName("支付明细解析失败：落库文本破损 → IllegalStateException 显式暴露（禁静默跳过退回）")
     void executeRejectsCorruptPaymentDetailsAsIllegalState() {
         RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
         when(refundRequestMapper.selectById(100L)).thenReturn(approved);
         Settlement st = settlement(900L, 3000L);
         st.setPaymentDetails("broken-json");
@@ -921,5 +942,144 @@ class RefundServiceImplTest {
         LambdaQueryWrapper<RefundRequest> wrapper = (LambdaQueryWrapper<RefundRequest>) wrapperCaptor.getValue();
         assertThat(wrapper.getSqlSegment()).contains("status").containsIgnoringCase("ORDER BY");
         assertThat(wrapper.getParamNameValuePairs().values()).contains(RefundStatus.PENDING_APPROVAL);
+    }
+
+    // ===== W-16：execute CAS 锚与卡侧守卫 =====
+
+    @Test
+    @DisplayName("W-16 并发输家幂等：CAS 0 行重读已 EXECUTED 直返（零资金动作零异常）")
+    void executeConcurrentLoserReturnsIdempotentlyWhenAlreadyExecuted() {
+        RefundRequest executed = refund(7L, RefundStatus.EXECUTED, "cashier-0", RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.casMarkExecuted(7L)).thenReturn(0);
+        when(refundRequestMapper.selectById(7L)).thenReturn(executed);
+
+        service.execute(7L);
+
+        verify(cardAccountLedger, never()).record(any());
+    }
+
+    // 「CAS 后缺行 BILL-1018」不另设用例（复审 N4 去重）：既有 executeRejectsMissingRefundAsBill1018
+    // 在本改造后自然命中同路径——execute 首步 casMarkExecuted 未命中（mock 缺省 0 行）→重读 null→
+    // BILL-1018，原打桩（selectById 404L→null）零改动直过，同路径禁双用例。
+
+    @Test
+    @DisplayName("W-16 并发输家仍非终态：拒 BILL-1019（禁带 APPROVED 继续资金动作）")
+    void executeConcurrentLoserRejectsAsBill1019WhenStillApproved() {
+        when(refundRequestMapper.casMarkExecuted(7L)).thenReturn(0);
+        when(refundRequestMapper.selectById(7L))
+                .thenReturn(refund(7L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 3000L));
+
+        assertThatThrownBy(() -> service.execute(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
+        verify(cardAccountLedger, never()).record(any());
+    }
+
+    @Test
+    @DisplayName("W-16 卡行金额非法：channelRef 聚合后单卡原付 ≤0 拒 BILL-1029（防负行凭空入卡）")
+    void executeRejectsNonPositiveCardChannelAsBill1029() {
+        RefundRequest approved = refund(7L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.casMarkExecuted(7L)).thenReturn(1);
+        when(refundRequestMapper.selectById(7L)).thenReturn(approved);
+        Settlement st = settlement(900L, 3000L);
+        st.setPaymentDetails("[{\"method\":\"CARD_BALANCE\",\"amount\":-500,\"channelRef\":\"9\"}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+
+        assertThatThrownBy(() -> service.execute(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_CARD_CHANNEL_INVALID));
+        verify(cardAccountLedger, never()).record(any());
+    }
+
+    @Test
+    @DisplayName("W-16 退款额超卡侧原付合计：拒 BILL-1029（F6 加固——退额以卡侧实付为上限）")
+    void executeRejectsRefundExceedingCardOriginalPaymentAsBill1029() {
+        // 退费额 8000 > 卡侧原付合计 3000（混付单卡侧份额伪造放大面封堵）
+        RefundRequest approved = refund(7L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 8000L);
+        when(refundRequestMapper.casMarkExecuted(7L)).thenReturn(1);
+        when(refundRequestMapper.selectById(7L)).thenReturn(approved);
+        Settlement st = settlement(900L, 3000L);
+        st.setPaymentDetails("[{\"method\":\"CARD_BALANCE\",\"amount\":1000,\"channelRef\":\"9\"},"
+                + "{\"method\":\"CARD_BALANCE\",\"amount\":2000,\"channelRef\":\"9\"}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+
+        assertThatThrownBy(() -> service.execute(7L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_CARD_CHANNEL_INVALID));
+        verify(cardAccountLedger, never()).record(any());
+    }
+
+    // ===== W-17：在途额度口径 =====
+
+    @Test
+    @DisplayName("W-17 在途聚合：已决全量 + 在途除自身（excludeInFlightRefundId 语义锁定）")
+    void refundedFenCountsDecidedFullyAndInFlightExcludingSelf() {
+        // 打桩=模拟 SQL 结果：第一次聚合查已决（APPROVED/EXECUTED）→ 仅 [11]；
+        // 第二次查在途（PENDING_* 且 .ne(12) 排除自身在 SQL 侧生效）→ 仅 [13]，单 12 不得出现于返回集
+        when(refundRequestMapper.selectList(any()))
+                .thenReturn(
+                        List.of(refund(11L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 300L)),
+                        List.of(refund(
+                                13L,
+                                RefundStatus.PENDING_SECOND_APPROVAL,
+                                "cashier-0",
+                                RefundType.DAY_CORRECTION,
+                                100L)));
+        // link 求和随两次集内查询依序打桩：已决集 [11]→300 分；在途集 [13]→100 分
+        when(refundFeeLinkMapper.selectList(any()))
+                .thenReturn(List.of(link(11L, 9L, 300L)), List.of(link(13L, 9L, 100L)));
+
+        long occupied = service.refundedFen(9L, 12L); // 包级双参直调，无别名方法
+
+        assertThat(occupied).isEqualTo(400L); // 300（已决）+100（他单在途）；自身单 12 被 .ne(12) 排除不入集
+        verify(refundRequestMapper, times(2)).selectList(any()); // 已决/在途各聚合恰一次
+        verify(refundFeeLinkMapper, times(2)).selectList(any());
+    }
+
+    // ===== W-18：apply 双守卫 =====
+
+    @Test
+    @DisplayName("W-18 结算单状态守卫：DRAFT 结算单退费申请拒 BILL-1030（SETTLED 唯一可退基点，封堵免审绕过主链）")
+    void applyRejectsDraftSettlementAsBill1030() {
+        OperatorContextHolder.set(APPLICANT);
+        Settlement draft = settlement(5L, 3000L);
+        draft.setStatus(SettlementStatus.DRAFT);
+        when(settlementMapper.selectById(5L)).thenReturn(draft);
+
+        assertThatThrownBy(() -> service.apply(
+                        new RefundApplyRequest(5L, List.of(new RefundLine(9L, BigDecimal.ONE)), "当日多收费更正")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_SETTLEMENT_STATE_NOT_ALLOWED));
+    }
+
+    @Test
+    @DisplayName("W-18 费用行归属守卫：settlementId 与原单不符拒 BILL-1031")
+    void applyRejectsFeeNotInSettlementAsBill1031() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(5L)).thenReturn(settlement(5L, 3000L));
+        FeeRecord foreign = fee(9L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE);
+        foreign.setSettlementId(99L); // 归属结算单 99 ≠ 5
+        when(feeRecordMapper.lockByIds(any())).thenReturn(List.of(foreign));
+
+        assertThatThrownBy(() -> service.apply(
+                        new RefundApplyRequest(5L, List.of(new RefundLine(9L, BigDecimal.ONE)), "当日多收费更正")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_FEE_NOT_IN_SETTLEMENT));
+    }
+
+    @Test
+    @DisplayName("W-18 费用行状态守卫：PENDING 行不可退（复用 BILL-1011 不新增码位）")
+    void applyRejectsRefundablePendingFeeAsBill1011() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(5L)).thenReturn(settlement(5L, 3000L));
+        FeeRecord pending = fee(9L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE);
+        pending.setStatus(FeeStatus.PENDING);
+        pending.setSettlementId(5L); // 归属对齐原结算单（复审 N3）：W-18 归属守卫在前，不对齐会先命中 BILL-1031 而非本用例期望的行状态 BILL-1011
+        when(feeRecordMapper.lockByIds(any())).thenReturn(List.of(pending));
+
+        assertThatThrownBy(() -> service.apply(
+                        new RefundApplyRequest(5L, List.of(new RefundLine(9L, BigDecimal.ONE)), "当日多收费更正")))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.FEE_STATE_NOT_ALLOWED));
     }
 }
