@@ -45,8 +45,8 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 发药服务实现：放行链（charged→PENDING_DISPENSE+入队）、费用链（fee.created→PENDING_FEE）、
  * 调剂三段闭环（pick FEFO 批次锁定+追溯码采集 → verify 双签核对 → issue 发药签名+批次扣减+
- * 出库流水+completed 事件）与退药受理两时点（ISSUED_RETURN 实物退批次回补+returned 事件 /
- * DISPENSING_CANCEL 发药中明细退场释放锁定）、refund.approved 终态收敛与执行占用查询
+ * 出库流水+completed 事件）与退药受理两时点（ISSUED_RETURN 实物退批次回补+处方明细退药
+ * 累计回写+returned 事件 / DISPENSING_CANCEL 发药中明细退场释放锁定）、refund.approved 终态收敛与执行占用查询
  * （读侧经主数据缓存患者归一，供 M13 位）。状态机 CAS 收口：
  * 0 行=并发被抢/状态违例一律显式拒绝（无负库存，未锁先发即 PH-1010）；双签分权（调配/核对
  * 同人 PH-1011，Spec :226）为法定留痕硬守卫；退药追溯码逐码核验防回流（PH-1012，Spec §10）。
@@ -397,6 +397,15 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             stockLedgerMapper.insert(ledger);
             item.setReturnedQty(item.getReturnedQty().add(returnQty));
             dispenseItemMapper.updateById(item);
+            // 数据库写操作：处方明细已退数量累计回写（V701 列注释「已退数量（退药回写）」承诺的回写点，
+            //   occupancy returnedQuantity 数据源；服务端原子累加、与 dispense_item 回写同事务；
+            //   0 行=明细行缺失/已逻辑删脏数据，显式拒整事务回滚——casMarkFeesSettled 影响行数范式）
+            if (prescriptionItemMapper.accumulateReturnedQuantity(item.getPrescriptionItemId(), returnQty) != 1) {
+                throw new BizException(
+                        PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                        HttpStatus.CONFLICT,
+                        "处方明细已退数量回写失败：prescriptionItemId=" + item.getPrescriptionItemId());
+            }
             summary.add(new DispenseReturnedPayload.Line(
                     item.getItemCode(), item.getBatchNo(), returnQty.toPlainString(), issuedTraces));
             if (item.getReturnedQty().compareTo(item.getIssuedQty()) != 0) {

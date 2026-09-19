@@ -616,6 +616,22 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
                 dispenseNo);
         assertThat(restockRows).isEqualTo(1);
 
+        // occupancy returnedQuantity 断言（code-review 修复验证面，brief 断言清单外增量）：退药受理
+        //  同事务回写 prescription_item.returned_quantity 后，占用查询出「实发 2/已退 2」
+        //  （修复前该列全 PR 无写入点、恒 null）。两数量列均数值比较：DECIMAL(12,3) 读回
+        //  toPlainString 携库侧 3 位标度出 "2.000"，契约=D-18 DECIMAL string 直出，断言不绑文本标度
+        JsonNode occupancyRows = getJson(
+                "/api/v1/pharmacy/medication-occupancy?patientId=" + PATIENT_ID + "&visitId=" + VISIT + "&itemCode="
+                        + ITEM_CODE,
+                adminToken);
+        assertThat(occupancyRows).hasSize(1);
+        assertThat(new java.math.BigDecimal(
+                        occupancyRows.get(0).path("issuedQuantity").asText()))
+                .isEqualByComparingTo("2");
+        assertThat(new java.math.BigDecimal(
+                        occupancyRows.get(0).path("returnedQuantity").asText()))
+                .isEqualByComparingTo("2");
+
         // returned 事件捕获：fullReturn=true（billing 占用回退与退费联动依据，V702 id 29 契约面）
         assertThat(ItCaptureConfig.RETURNED_LATCH.await(10, TimeUnit.SECONDS))
                 .as("pharmacy.dispense.returned 事件应可消费")

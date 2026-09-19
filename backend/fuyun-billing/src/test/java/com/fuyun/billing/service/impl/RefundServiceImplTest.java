@@ -697,7 +697,7 @@ class RefundServiceImplTest {
         //   由 executeAggregatesSameCardRowsIntoSingleCredit 承载）
         st.setPaymentDetails("[{\"method\":\"CARD_BALANCE\",\"amount\":3000,\"channelRef\":\"5\"}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
-        // 同一 mapper 多处查询（本单 link 清单 / refundedFen 已决+在途 / 结算维度聚合）打桩同值：本单已退=3000 分
+        // 同一 mapper 多处查询（本单 link 清单 / 仅已决口径判态 / 结算维度聚合）打桩同值：本单已退=3000 分
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
         when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
@@ -721,26 +721,27 @@ class RefundServiceImplTest {
         verify(settlementMapper).updateById(stCaptor.capture());
         assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.REFUNDED);
         // link 聚合 SQL 守卫钉死：本单 link 清单谓词落在 refund_id 列且携带本单 id
-        //  （W-17 后共 4 次：清单 1 + refundedFen 已决/在途集内求和 2 + 结算维度求和 1）
+        //  （口径复位后共 3 次：清单 1 + 仅已决集内求和 1 + 结算维度求和 1）
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundFeeLinkMapper, times(4)).selectList(linkCaptor.capture());
+        verify(refundFeeLinkMapper, times(3)).selectList(linkCaptor.capture());
         LambdaQueryWrapper<RefundFeeLink> loopWrapper =
                 (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getAllValues().get(0);
         assertThat(loopWrapper.getSqlSegment()).contains("refund_id");
         assertThat(loopWrapper.getParamNameValuePairs().values()).contains(100L);
-        // 已退聚合状态谓词守卫：第 1 次已决集 APPROVED/EXECUTED 两态（本单判定时点 APPROVED 必须计入，剔除即永判不满）
+        // 已退聚合状态谓词守卫：第 1 次已决集 APPROVED/EXECUTED 两态（本单判定时点已 CAS 至 EXECUTED
+        //  必须计入，剔除即永判不满）；在途两态绝不出现在 execute 判态谓词中
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundRequestMapper, times(3)).selectList(statusCaptor.capture());
+        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
         LambdaQueryWrapper<RefundRequest> statusWrapper =
                 (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(0);
         assertThat(statusWrapper.getSqlSegment()).contains("status");
         assertThat(statusWrapper.getParamNameValuePairs().values())
                 .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
-        // 结算单聚合谓词守卫：第 3 次（已决/在途集之后）settlement_id 等值（防跨结算单串账）
+        // 结算单聚合谓词守卫：第 2 次（仅已决判态之后）settlement_id 等值（防跨结算单串账）
         LambdaQueryWrapper<RefundRequest> settleWrapper =
-                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(2);
+                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
         assertThat(settleWrapper.getSqlSegment()).contains("settlement_id");
         assertThat(settleWrapper.getParamNameValuePairs().values()).contains(900L);
     }
@@ -832,7 +833,7 @@ class RefundServiceImplTest {
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
-        // 第 1/2 次查询（refundedFen 已决/在途）首次命中本单、在途空集；第 3 次（totalRefundedFen 结算维度）空集 → 聚合 0 分
+        // 第 1 次查询（execute 仅已决口径判费用行终态）命中本单；第 2 次（totalRefundedFen 结算维度）空集 → 聚合 0 分
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved), List.of());
         when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
 
@@ -1034,6 +1035,77 @@ class RefundServiceImplTest {
         assertThat(occupied).isEqualTo(400L); // 300（已决）+100（他单在途）；自身单 12 被 .ne(12) 排除不入集
         verify(refundRequestMapper, times(2)).selectList(any()); // 已决/在途各聚合恰一次
         verify(refundFeeLinkMapper, times(2)).selectList(any());
+    }
+
+    // ===== W-17 口径复位回归（code-review 修复）：execute 判费用行终态恢复仅已决，apply 在途守卫不变 =====
+
+    @Test
+    @DisplayName("口径复位·execute 判态：兄弟单 PENDING 在途不计入——已决 3000<行额 5000 判 PART_REFUND 不误锁 FULL_REFUND")
+    void executeJudgesFeeTerminalByDecidedOnlyIgnoringSiblingInFlight() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 5000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":5000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
+        // 打桩=模拟 SQL 结果：第 1 次（execute 仅已决判态）与第 2 次（结算维度）均只含已决本单——
+        //  兄弟单 PENDING 在途被状态谓词过滤不入集（同费用行在途兄弟单 link 2000 分场景）
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved), List.of(approved));
+        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE));
+
+        service.execute(100L);
+
+        // 修复面断言：仅已决 3000 < 行额 5000 → PART_REFUND（修复前混入在途 2000 误判 5000≥5000 →
+        //  FULL_REFUND，兄弟单驳回后剩余 2000 分被 apply 行状态守卫永锁）
+        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
+        verify(feeRecordMapper).updateById(feeCaptor.capture());
+        assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.PART_REFUND);
+        // 口径钉死：execute 全程不再发起在途集查询（refundRequestMapper.selectList 恰 2 次=仅已决判态
+        //  + 结算维度），且两次谓词均只携已决两态、绝无在途两态
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
+        for (Wrapper<RefundRequest> captured : statusCaptor.getAllValues()) {
+            LambdaQueryWrapper<RefundRequest> wrapper = (LambdaQueryWrapper<RefundRequest>) captured;
+            // 先取 sqlSegment 触发 IN 参数懒物化（MP formatParam 惰性求值，mock 不渲染 SQL 不会自动回填）
+            assertThat(wrapper.getSqlSegment()).contains("status");
+            assertThat(wrapper.getParamNameValuePairs().values())
+                    .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED)
+                    .doesNotContain(RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL);
+        }
+    }
+
+    @Test
+    @DisplayName("口径复位·驳回解锁：兄弟单驳回后 apply 剩余额成功（已退 3000+本次 2000=行额 5000，400 守卫不再误锁）")
+    void applyReleasesRemainingRefundAfterSiblingRejected() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 5000L));
+        // 兄弟单执行后费用行 PART_REFUND（已退 3000/行额 5000）；在途兄弟单被驳回——reject 只改退费单
+        //  状态不回滚费用行，其 link 2000 分仍留表但不入任何聚合集
+        FeeRecord partRefunded = fee(1L, 2000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE);
+        partRefunded.setStatus(FeeStatus.PART_REFUND);
+        stubLockByIdsReturning(partRefunded);
+        RefundRequest executedOwn = refund(101L, RefundStatus.EXECUTED, "cashier-0", RefundType.DAY_CORRECTION, 3000L);
+        // 打桩=模拟 SQL 结果：第 1 次（apply 已决集）→ [101]；第 2 次（在途集）→ 空集（REJECTED 被谓词排除）
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(executedOwn), List.of());
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(101L, 1L, 3000L)));
+        when(refundRequestMapper.insert(any(RefundRequest.class))).thenAnswer(inv -> {
+            inv.getArgument(0, RefundRequest.class).setId(103L);
+            return 1;
+        });
+
+        long id = service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "驳回后剩余额再退"));
+
+        assertThat(id).isEqualTo(103L);
+        // 剩余额守卫通过：仅已决 3000 + 本次 2000 = 行额 5000（修复前 execute 混在途误标 FULL_REFUND，
+        //  本申请会先命中 BILL-1011 行状态守卫 400 拒，剩余额永锁）
+        ArgumentCaptor<RefundFeeLink> linkCaptor = ArgumentCaptor.forClass(RefundFeeLink.class);
+        verify(refundFeeLinkMapper).insert(linkCaptor.capture());
+        assertThat(linkCaptor.getValue().getRefundAmount()).isEqualTo(2000L);
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getAmount()).isEqualTo(2000L);
     }
 
     // ===== W-18：apply 双守卫 =====

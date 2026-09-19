@@ -44,8 +44,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 退药受理与终态单测：实物退（追溯码核验/批次回补/流水冲正/单据终态/returned 事件）、
- * 发药中明细退场（释放锁定不落流水）、refund.approved 终态镜像与幂等。
+ * 退药受理与终态单测：实物退（追溯码核验/批次回补/流水冲正/处方明细退药累计回写/单据终态/
+ * returned 事件）、发药中明细退场（释放锁定不落流水）、refund.approved 终态镜像与幂等。
  */
 @ExtendWith(MockitoExtension.class)
 class DispenseReturnTest {
@@ -155,10 +155,14 @@ class DispenseReturnTest {
         when(drugBatchMapper.restock(55L, new BigDecimal("2"))).thenReturn(1);
         when(dispenseMapper.casStatus(900L, "ISSUED", "FULL_RETURNED")).thenReturn(1);
         when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
+        when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("2")))
+                .thenReturn(1);
 
         impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4")));
 
         verify(drugBatchMapper).restock(55L, new BigDecimal("2"));
+        // 数据库写操作断言：处方明细退药累计回写（V701 returned_quantity 落地点，occupancy 数据源）
+        verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("2"));
         ArgumentCaptor<StockLedger> ledgerCaptor = ArgumentCaptor.forClass(StockLedger.class);
         verify(stockLedgerMapper).insert(ledgerCaptor.capture());
         assertThat(ledgerCaptor.getValue().getAction()).isEqualTo("RETURN_RESTOCK");
@@ -198,10 +202,14 @@ class DispenseReturnTest {
         when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
         when(dispenseMapper.casStatus(900L, "ISSUED", "PART_RETURNED")).thenReturn(1);
         when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
+        when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("1")))
+                .thenReturn(1);
 
         impl.acceptReturn(issuedReturn("1", List.of("TR-A1B2")));
 
         verify(dispenseMapper).casStatus(900L, "ISSUED", "PART_RETURNED");
+        // 部分退时点回写断言：回写参数=本次退量（服务端原子累加，累计形态由 SQL 侧 + 承载）
+        verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("1"));
         ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
         verify(events).publishEvent(eventCaptor.capture());
         DispenseReturnedPayload payload = (DispenseReturnedPayload)
@@ -209,6 +217,49 @@ class DispenseReturnTest {
         assertThat(payload.fullReturn()).isFalse();
         assertThat(payload.lines()).hasSize(1); // 部分退同样携退药行摘要（非空，与 id 29 desc 对齐）
         assertThat(payload.lines().get(0).quantity()).isEqualTo("1");
+    }
+
+    @Test
+    @DisplayName("部分退同样携退药行摘要后：PART_RETURNED 续退余量→处方明细退药累计再次按增量回写")
+    void acceptReturnSecondPartialAccumulatesReturnedQuantityIncrementally() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("PART_RETURNED"));
+        // 既往已退 1/实发 2：可退余额 1，本次续退 1（同批次剩码）
+        when(dispenseItemMapper.selectList(any()))
+                .thenReturn(List.of(issuedItem("2", "1", "[\"TR-A1B2\",\"TR-C3D4\"]")));
+        when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
+        when(dispenseMapper.casStatus(900L, "PART_RETURNED", "FULL_RETURNED")).thenReturn(1);
+        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
+        when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("1")))
+                .thenReturn(1);
+
+        impl.acceptReturn(issuedReturn("1", List.of("TR-C3D4")));
+
+        // 累计形态断言：续退时点再次按增量回写（returned_quantity = returned_quantity + 本次退量），
+        //   两次部分退累计 = 全量——occupancy returnedQuantity 由此收敛到实发数
+        verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("1"));
+        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
+        verify(dispenseItemMapper).updateById(itemCaptor.capture());
+        assertThat(itemCaptor.getValue().getReturnedQty()).isEqualByComparingTo("2");
+    }
+
+    @Test
+    @DisplayName("处方明细回写零行：accumulateReturnedQuantity 0 行拒 PH-1013（明细脏数据整事务回滚）")
+    void acceptReturnRejectsWhenRxItemAccumulateAffectsZeroRows() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("ISSUED"));
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\"]")));
+        when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
+        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
+        when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("1")))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("1", List.of("TR-A1B2"))))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED));
+        // 回写失败即整事务回滚（批次回补/明细回写随之作废）：终态迁移与 returned 事件禁出
+        verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        verify(events, never()).publishEvent(any());
     }
 
     @Test
@@ -372,6 +423,9 @@ class DispenseReturnTest {
         when(drugBatchMapper.restock(55L, new BigDecimal("2"))).thenReturn(1);
         when(stockLedgerMapper.insert(any(StockLedger.class))).thenReturn(1);
         when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
+        // 退药累计回写打桩命中（本次改动新增写面，置于终态 CAS 之前）——本用例靶点为终态并发被抢分支
+        when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("2")))
+                .thenReturn(1);
         when(dispenseMapper.casStatus(900L, "ISSUED", "FULL_RETURNED")).thenReturn(0);
 
         assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4"))))
