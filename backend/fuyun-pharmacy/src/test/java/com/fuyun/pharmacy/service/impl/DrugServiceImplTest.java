@@ -28,13 +28,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 药品字典服务单测（service.impl LINE=1.00 达标件）：建档/变更/详情/对照维护/检索谓词
- * 全方法覆盖（正常/边界/异常三类场景，支撑 LINE=1.00 全行判定）；changed 事件发布点在
- * Task 4 统一接线后由契约测试面覆盖——本类构造届时追加 ApplicationEventPublisher 第二参
- * （newService() 同步双参构造——第二参即 ApplicationEventPublisher）。
+ * 全方法覆盖（正常/边界/异常三类场景，支撑 LINE=1.00 全行判定）；changed 广播发布点已由
+ * Task 4 接线（构造器第二参 ApplicationEventPublisher，newService() 双参构造同源）。
  */
 @ExtendWith(MockitoExtension.class)
 class DrugServiceImplTest {
@@ -42,9 +42,12 @@ class DrugServiceImplTest {
     @Mock
     private DrugMapper drugMapper;
 
+    @Mock
+    private ApplicationEventPublisher events;
+
     private DrugServiceImpl newService() {
         // 构造器注入 collaborator；ServiceImpl 继承字段 baseMapper 由反射注入（Global Constraints 单测范式）
-        DrugServiceImpl impl = new DrugServiceImpl(drugMapper);
+        DrugServiceImpl impl = new DrugServiceImpl(drugMapper, events);
         ReflectionTestUtils.setField(impl, "baseMapper", drugMapper);
         return impl;
     }
@@ -93,6 +96,10 @@ class DrugServiceImplTest {
         assertThat(vo.insuredSettleable()).isFalse(); // 未对照=显式标记不可医保结算（Spec :154）
         assertThat(vo.status()).isEqualTo("ENABLED"); // 院内启用
         assertThat(vo.antibioClass()).isEqualTo("UNRESTRICTED");
+        // 事务内应用事件已发布（AFTER_COMMIT 出线由发布器承载，此处锚定事务内发布动作；
+        // any(Object.class) 定位 publishEvent(Object) 重载——PharmacyDomainEvent 非 ApplicationEvent，
+        // 裸 any() 会解析到 ApplicationEvent 重载致 verify 落空，与 billing 单测同款）
+        verify(events).publishEvent(any(Object.class));
     }
 
     @Test

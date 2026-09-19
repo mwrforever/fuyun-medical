@@ -15,11 +15,15 @@ import com.fuyun.billing.api.PrescriptionFeePort;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import com.fuyun.pharmacy.api.PrescriptionCancelledPayload;
+import com.fuyun.pharmacy.api.PrescriptionCreatedPayload;
+import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import com.fuyun.pharmacy.dto.PrescriptionCreateRequest;
 import com.fuyun.pharmacy.dto.RxItemRequest;
 import com.fuyun.pharmacy.entity.Drug;
 import com.fuyun.pharmacy.entity.Prescription;
 import com.fuyun.pharmacy.entity.PrescriptionItem;
+import com.fuyun.pharmacy.internal.PharmacyDomainEvent;
 import com.fuyun.pharmacy.mapper.DrugMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
@@ -30,14 +34,16 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 处方服务单测（service.impl LINE=1.00 达标件）：开方守卫（就诊号/途径集/计费关联/类型白名单）、
- * rx_no 签发与 CREATED→APPROVED 同事务、作废三分支（未缴费联动费用作废/已缴费拒/并发抢锚）。
- * created/cancelled 事件发布由 Task 4 接线（构造器届时追加 events 参数，本类构造同步补 mock）。
+ * rx_no 签发与 CREATED→APPROVED 同事务、作废三分支（未缴费联动费用作废/已缴费拒/并发抢锚）、
+ * created/cancelled 事件发布锚（事件字面量与冻结载荷断言——CF-5 三方一致的可执行面）。
  */
 @ExtendWith(MockitoExtension.class)
 class PrescriptionServiceImplTest {
@@ -56,6 +62,9 @@ class PrescriptionServiceImplTest {
     @Mock
     private PrescriptionFeePort prescriptionFeePort;
 
+    @Mock
+    private ApplicationEventPublisher events;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Prescription.class);
@@ -63,7 +72,7 @@ class PrescriptionServiceImplTest {
 
     private PrescriptionServiceImpl newService() {
         PrescriptionServiceImpl impl = new PrescriptionServiceImpl(
-                prescriptionMapper, prescriptionItemMapper, drugMapper, prescriptionFeePort);
+                prescriptionMapper, prescriptionItemMapper, drugMapper, prescriptionFeePort, events);
         ReflectionTestUtils.setField(impl, "baseMapper", prescriptionMapper);
         return impl;
     }
@@ -118,6 +127,17 @@ class PrescriptionServiceImplTest {
         assertThat(vo.items().get(0).usageSummary()).contains("ORAL").contains("TID");
         assertThat(vo.rxCategory()).isEqualTo("NORMAL"); // 毒麻类别派生
         verify(prescriptionMapper).casApprove(100L);
+
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(eventCaptor.capture());
+        PharmacyDomainEvent published = (PharmacyDomainEvent) eventCaptor.getValue();
+        assertThat(published.eventType()).isEqualTo(PharmacyMessagingConstants.EVENT_PRESCRIPTION_CREATED);
+        PrescriptionCreatedPayload payload = (PrescriptionCreatedPayload) published.payload();
+        // 冻结契约：prescriptionId 与 rxNo 同值（主控裁决 3）、计费行 quantity DECIMAL string
+        assertThat(payload.prescriptionId()).isEqualTo(payload.rxNo()).isEqualTo(vo.rxNo());
+        assertThat(payload.lines()).hasSize(1);
+        assertThat(payload.lines().get(0).quantity()).isEqualTo("2");
+        assertThat(payload.lines().get(0).usageSummary()).isNotBlank();
     }
 
     @Test
@@ -212,6 +232,15 @@ class PrescriptionServiceImplTest {
 
         verify(prescriptionFeePort).cancelPendingBySourceRef("R20260918000001", "医生改方");
         verify(prescriptionMapper).casCancel(100L, "医生改方");
+
+        // 作废回执事件：字面量与冻结载荷 reason 断言（billing 不订阅，M03 联动随 PR-5）
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(eventCaptor.capture());
+        PharmacyDomainEvent published = (PharmacyDomainEvent) eventCaptor.getValue();
+        assertThat(published.eventType()).isEqualTo(PharmacyMessagingConstants.EVENT_PRESCRIPTION_CANCELLED);
+        PrescriptionCancelledPayload payload = (PrescriptionCancelledPayload) published.payload();
+        assertThat(payload.prescriptionId()).isEqualTo(payload.rxNo()).isEqualTo("R20260918000001");
+        assertThat(payload.reason()).isEqualTo("医生改方");
     }
 
     @Test

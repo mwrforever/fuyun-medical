@@ -9,11 +9,15 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.VisitIdValidator;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import com.fuyun.pharmacy.api.PrescriptionCancelledPayload;
+import com.fuyun.pharmacy.api.PrescriptionCreatedPayload;
+import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import com.fuyun.pharmacy.dto.PrescriptionCreateRequest;
 import com.fuyun.pharmacy.dto.RxItemRequest;
 import com.fuyun.pharmacy.entity.Drug;
 import com.fuyun.pharmacy.entity.Prescription;
 import com.fuyun.pharmacy.entity.PrescriptionItem;
+import com.fuyun.pharmacy.internal.PharmacyDomainEvent;
 import com.fuyun.pharmacy.mapper.DrugMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
@@ -26,6 +30,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +55,9 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
 
     private final PrescriptionFeePort prescriptionFeePort;
 
+    /** 应用事件发布器（created/cancelled 事务内发布，AFTER_COMMIT 出 fy.topic），非空 */
+    private final ApplicationEventPublisher events;
+
     /**
      * 全参构造器（装配归 PharmacyWebConfig @Import）。
      *
@@ -57,15 +65,18 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
      * @param prescriptionItemMapper 明细 mapper，非空
      * @param drugMapper             药品 mapper（开方逐行取药），非空
      * @param prescriptionFeePort    billing 费用作废端口（未缴费作废联动），非空
+     * @param events                 应用事件发布器，非空
      */
     public PrescriptionServiceImpl(
             PrescriptionMapper prescriptionMapper,
             PrescriptionItemMapper prescriptionItemMapper,
             DrugMapper drugMapper,
-            PrescriptionFeePort prescriptionFeePort) {
+            PrescriptionFeePort prescriptionFeePort,
+            ApplicationEventPublisher events) {
         this.prescriptionItemMapper = prescriptionItemMapper;
         this.drugMapper = drugMapper;
         this.prescriptionFeePort = prescriptionFeePort;
+        this.events = events;
     }
 
     @Override
@@ -124,6 +135,19 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         rx.setSkinTestRequired(skinRequired);
         rx.setRxCategory(topNarcotic);
         baseMapper.updateById(rx);
+        // 事务内发应用事件：处方生效即发布（携计费行，M-4 裁决；事件与生效同事务落 outbox 语义
+        //   由 AFTER_COMMIT 发布器承载——处方生效但事件丢失的窗口被事务提交序消除）
+        events.publishEvent(new PharmacyDomainEvent(
+                PharmacyMessagingConstants.EVENT_PRESCRIPTION_CREATED,
+                new PrescriptionCreatedPayload(
+                        rx.getRxNo(),
+                        rx.getRxNo(),
+                        rx.getVisitId(),
+                        rx.getPatientId(),
+                        items.stream()
+                                .map(i -> new PrescriptionCreatedPayload.Line(
+                                        i.getItemCode(), i.getQuantity().toPlainString(), i.getUsageSummary()))
+                                .toList())));
         log.info(
                 "处方开立生效：rxNo={}，visitId={}，patientId={}，行数={}，category={}，reviewLevel=PASS",
                 rx.getRxNo(),
@@ -164,6 +188,10 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
             throw new BizException(
                     PharmacyErrorCode.PRESCRIPTION_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "处方状态已并发变更，作废未生效：" + rxNo);
         }
+        // 事务内发应用事件：作废回执（M03 引用联动随 PR-5 订阅；billing 不订阅——费用已同事务作废）
+        events.publishEvent(new PharmacyDomainEvent(
+                PharmacyMessagingConstants.EVENT_PRESCRIPTION_CANCELLED,
+                new PrescriptionCancelledPayload(rxNo, rxNo, rx.getPatientId(), rx.getVisitId(), reason)));
         log.info("处方作废：rxNo={}，原状态={}，原因={}", rxNo, status, reason);
     }
 

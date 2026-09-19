@@ -6,16 +6,20 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.pharmacy.api.DrugChangedPayload;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import com.fuyun.pharmacy.dto.DrugSaveRequest;
 import com.fuyun.pharmacy.dto.InsuranceMappingRequest;
 import com.fuyun.pharmacy.entity.Drug;
+import com.fuyun.pharmacy.internal.PharmacyDomainEvent;
 import com.fuyun.pharmacy.mapper.DrugMapper;
 import com.fuyun.pharmacy.service.IDrugService;
 import com.fuyun.pharmacy.vo.DrugVO;
 import java.math.BigDecimal;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,8 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 药品字典服务实现（FU-M06-01）：建档/变更走 uk 兜底+应用层先查的双防线；对照维护独立入口
  * 使「变更类型=MAPPING」可区分广播；检索默认启用面（停用药品不进选药场景）。
  * 装配归 PharmacyWebConfig @Import（禁组件扫描放宽，billing 九 impl 同款——Task 3 落配置类时
- * 统一注册）；changed 广播发布点由 Task 4 回挂（PharmacyEventPublisher 构造注入位在本类
- * 改造时一并加入，发布形态=事务内 publishEvent AFTER_COMMIT 出 fy.topic）。
+ * 统一注册）；changed 广播发布形态=事务内 publishEvent AFTER_COMMIT 出 fy.topic
+ * （PharmacyEventPublisher 承载出线时机）。
  */
 @Slf4j
 public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements IDrugService {
@@ -32,20 +36,27 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
     /** 途径集分隔符（drug.route_codes 逗号分隔存储约定） */
     private static final String ROUTE_SEPARATOR = ",";
 
+    private final DrugMapper drugMapper;
+
+    /** 应用事件发布器（drug.changed 广播 AFTER_COMMIT 出 fy.topic），非空 */
+    private final ApplicationEventPublisher events;
+
     /**
-     * 构造器注入 mapper（@Import 装配期由容器解析 DrugMapper Bean；单测直建实例注入 mock）。
+     * 全参构造器（装配归 PharmacyWebConfig @Import）。
      *
-     * @param drugMapper 药品字典 mapper，非空；来源：容器 Bean 或单测 mock
+     * @param drugMapper 药品 mapper（ServiceImpl 继承 baseMapper 同源），非空
+     * @param events     应用事件发布器，非空
      */
-    public DrugServiceImpl(DrugMapper drugMapper) {
-        this.baseMapper = drugMapper;
+    public DrugServiceImpl(DrugMapper drugMapper, ApplicationEventPublisher events) {
+        this.drugMapper = drugMapper;
+        this.events = events;
     }
 
     @Override
     @Transactional
     public DrugVO create(DrugSaveRequest req) {
         // 数据库读操作：uk 前置查（唯一索引兜底并发，双防线与 billing charge_item 同型）
-        Long exists = baseMapper.selectCount(Wrappers.<Drug>lambdaQuery().eq(Drug::getDrugCode, req.drugCode()));
+        Long exists = drugMapper.selectCount(Wrappers.<Drug>lambdaQuery().eq(Drug::getDrugCode, req.drugCode()));
         if (exists != null && exists > 0) {
             throw new BizException(
                     PharmacyErrorCode.DRUG_CODE_EXISTS, HttpStatus.CONFLICT, "药品编码已存在：" + req.drugCode());
@@ -62,13 +73,17 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
                 row.getGenericName(),
                 row.getAntibioClass(),
                 row.getHazardLevel());
+        // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：变更留痕广播 changeType=CREATE
+        events.publishEvent(new PharmacyDomainEvent(
+                PharmacyMessagingConstants.EVENT_DRUG_CHANGED,
+                new DrugChangedPayload(String.valueOf(row.getId()), row.getDrugCode(), "CREATE")));
         return DrugVO.from(row);
     }
 
     @Override
     @Transactional
     public DrugVO update(long id, DrugSaveRequest req) {
-        Drug row = baseMapper.selectById(id);
+        Drug row = drugMapper.selectById(id);
         if (row == null) {
             throw new BizException(PharmacyErrorCode.DRUG_NOT_FOUND, HttpStatus.NOT_FOUND, "药品不存在：" + id);
         }
@@ -76,6 +91,10 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         // 数据库写操作：档案变更（对照三列与 status 不在覆盖面——applyRequest 不触碰）
         updateById(row);
         log.info("药品变更：drugCode={}，id={}，status={}", row.getDrugCode(), row.getId(), row.getStatus());
+        // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：变更留痕广播 changeType=UPDATE
+        events.publishEvent(new PharmacyDomainEvent(
+                PharmacyMessagingConstants.EVENT_DRUG_CHANGED,
+                new DrugChangedPayload(String.valueOf(row.getId()), row.getDrugCode(), "UPDATE")));
         return DrugVO.from(row);
     }
 
@@ -92,7 +111,7 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
     @Override
     @Transactional
     public void mapInsurance(long id, InsuranceMappingRequest req) {
-        Drug row = baseMapper.selectById(id);
+        Drug row = drugMapper.selectById(id);
         if (row == null) {
             throw new BizException(PharmacyErrorCode.DRUG_NOT_FOUND, HttpStatus.NOT_FOUND, "药品不存在：" + id);
         }
@@ -107,6 +126,10 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
                 req.nhsaCode(),
                 req.catalogVersion(),
                 req.payType());
+        // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：变更留痕广播 changeType=MAPPING
+        events.publishEvent(new PharmacyDomainEvent(
+                PharmacyMessagingConstants.EVENT_DRUG_CHANGED,
+                new DrugChangedPayload(String.valueOf(row.getId()), row.getDrugCode(), "MAPPING")));
     }
 
     @Override
