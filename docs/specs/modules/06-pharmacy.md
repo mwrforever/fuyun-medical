@@ -202,6 +202,25 @@
 
 **WebSocket**：`/ws/pharmacy/review-tasks`（审方工作台实时任务推送与队列变更）；其余提醒（效期预警、补药提醒、审方超时升级、毒麻差异告警）经 M01 通知中心站内信通道投递，不自建重复通道。
 
+> **P1 PR-4 落地注记（2026-09-18，CF-5 冻结载体）**：① 事件 id 排定——prescription.created=id 24
+> （V605 占位经 V702 UPDATE 载荷冻结：prescriptionId/rxNo/visitId/patientId/lines[]{itemCode,
+> quantity,usageSummary}，prescriptionId=rx_no 业务号）、order.charged=id 25 / order.cancelled=id 31
+> （outpatient 占位，生产发布方随 PR-5）、prescription.cancelled=26、prescription.rejected=27
+> （P3 引擎前无发布点）、dispense.completed=28、dispense.returned=29、drug.changed=30；总行 31。
+> ② 审方预检为占位级（恒通过，CREATED→APPROVED 同事务），practice/check 未接线（TODO(PR-5)）。
+> ③ 批次账最小实现：仅 ISSUE/RETURN_RESTOCK 两类动作，选批 FEFO 单批足量（拆批随 P3）。
+> ④ M13（本仓 billing）占用回写已接线（dispense.completed→DISPENSED/returned fullReturn→NONE）；
+> `GET /medication-occupancy` 交付 API 位、billing 暂不切（P3 注记维持）。⑤ 订阅实装集：fee.created/
+> refund.approved/order.charged(占位)/order.cancelled(占位)/system.dict.published（版本水位）/
+> patient.merged/split（读侧归一）；其余 §7 声明订阅随 P3/P2 注记。⑥ 未发药作废取消：cancel API
+> 仅承载未缴费（APPROVED/PENDING_FEE），已缴费（PENDING_DISPENSE+）拒绝并引导退药/退费链；
+> :132 的 PENDING_DISPENSE/DISPENSING→CANCELLED 完整作废路径随 PR-5（outpatient.order.cancelled
+> 终态确认回切）落地。⑦ 已知收口缺口（P3）：confirmRefundTerminal 以患者维度镜像处方终态，
+> 同患者其他在途发药单存在被提前置终态的误伤面——P3 收口（billing refund.approved 载荷补 rxNo
+> 或经 api 端口单据化精确定位；载荷变更属 CF-4 冻结面，须双向评审）。⑧ 豁免两条：Spec :154
+> 字典版本化审核随 P3 药事管理交付；扫码核对中的取药凭证核对随 PR-5 凭证载体交付（本 PR 以
+> 追溯码逐码核验承载防回流）。
+
 ## 8. 集成点
 
 - **M01**：认证与 RBAC（审方/调剂/毒麻双锁/盘点审批/调价联动/ADR 上报等独立权限点）；执业授权强校验（开方 API 内部调 `POST /api/v1/system/practice/check`：处方权/麻精处方权/抗菌药三级，与 M03 开方入口校验构成纵深防御）；字典引用（给药途径/频次/诊断 code，不自建副本）；系统参数（效期预警阈值、静默运行开关、审方超时阈值等）；通知中心与打印模板（瓶签/摆药单/毒麻专册报表）；审计切面；订阅主数据广播刷新缓存。

@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-18 · P1 PR-4 M06 药事基础收口：药品字典+门诊发药闭环交付（CF-5 冻结载体）
+
+- **交付面**：给药途径/用药频次字典预置（V607 两类 PUBLISHED 各 v1 共 25 条，前置项 P-3 改判载体）、
+  药品字典（V700+对照/检索/changed 广播/未对照标记）、处方域（V701+开方/作废/
+  billing PrescriptionFeePort 同事务联动）、发药闭环（V703+charged 放行/三段调剂/退药受理/
+  refund.approved 终态收敛）、CF-5 事件 id 24–31 登记（V702）、billing 占用回写接线（零迁移，
+  订阅经治理构件副作用回填）、W-16/17/18 退费守卫收口、前端药房工作站三页。
+- **门禁记录**：后端 `mvn verify` 全模块绿（pharmacy impl LINE=1.00 生效）；前端五连绿；
+  双验收锚点 IT（PharmacyPrescriptionFlowIT/PharmacyDispenseGuardIT）真栈绿；真栈探针
+  （V700 系迁移 success/event_registry=31/q.pharmacy.* 七队列/api.d.ts 新鲜度）全绿。
+- **裁决落实**：号段 V700–V799、事件 id 全局递增排定、stub 边界（无生产发布器，IT 注入）、
+  W-16/17/18 本 PR 承接收口（TASK.md 回填删除）；偏差与评估结论见计划
+  `docs/superpowers/plans/2026-09-18-p1-pr4-m06-pharmacy.md` Execution Handoff 偏差清单。
+
 ## 2026-09-18 · P1 PR-4 M06 药事基础：pharmacy 号段登记与门禁适配（先记再改）
 
 - **号段登记**：pharmacy 域占用固定百位段 **V700–V799**（宪法 A.4.1-2「每模块固定百位段」；
