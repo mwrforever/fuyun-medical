@@ -3,6 +3,7 @@ package com.fuyun.billing.config;
 import com.fuyun.billing.constants.BillingMessagingConstants;
 import com.fuyun.billing.internal.BillingChargeEventListener;
 import com.fuyun.billing.internal.BillingEventPublisher;
+import com.fuyun.billing.internal.BillingPharmacyOccupyListener;
 import com.fuyun.common.messaging.DomainEventSender;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
@@ -22,7 +23,7 @@ import org.springframework.context.annotation.Import;
  * 本类由 fuyun-app BillingConfig @Import 生效，交换机全集归 integration 禁私建 A.5-4）。
  */
 @Configuration
-@Import({BillingEventPublisher.class, BillingChargeEventListener.class})
+@Import({BillingEventPublisher.class, BillingChargeEventListener.class, BillingPharmacyOccupyListener.class})
 public class BillingMessagingConfig {
 
     /**

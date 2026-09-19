@@ -48,6 +48,32 @@ public interface FeeRecordMapper extends BaseMapper<FeeRecord> {
     int casMarkFeesSettled(@Param("settlementId") long settlementId, @Param("feeIds") List<Long> feeIds);
 
     /**
+     * 发药完成占用回写（M06 dispense.completed 消费）：NONE→DISPENSED 条件迁移。
+     * exec_occupy_status 字面量与 {@link com.fuyun.billing.enums.ExecOccupyStatus} code 同源；
+     * deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param rxNo 处方号（=fee_record.source_ref，PRESCRIPTION_EFFECTIVE 通道）；来源：事件载荷
+     * @return 影响行数（0=无 NONE 行/已迁移——幂等达成）
+     */
+    @Update("UPDATE billing.fee_record SET exec_occupy_status = 'DISPENSED' "
+            + "WHERE source_ref = #{rxNo} AND trigger_point = 'PRESCRIPTION_EFFECTIVE' "
+            + "AND exec_occupy_status = 'NONE' AND deleted = 0")
+    int casMarkDispensed(@Param("rxNo") String rxNo);
+
+    /**
+     * 全额退药占用回退（M06 dispense.returned fullReturn 消费）：DISPENSED→NONE（退费硬前置解锁）。
+     * exec_occupy_status 字面量与 {@link com.fuyun.billing.enums.ExecOccupyStatus} code 同源；
+     * deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param rxNo 处方号；来源：事件载荷
+     * @return 影响行数（0=无 DISPENSED 行/已回退——幂等达成）
+     */
+    @Update("UPDATE billing.fee_record SET exec_occupy_status = 'NONE' "
+            + "WHERE source_ref = #{rxNo} AND trigger_point = 'PRESCRIPTION_EFFECTIVE' "
+            + "AND exec_occupy_status = 'DISPENSED' AND deleted = 0")
+    int casReleaseDispense(@Param("rxNo") String rxNo);
+
+    /**
      * 按主键集加行锁读回（SELECT ... FOR UPDATE，退费申请并发收口）：退费 apply 在校验前先锁
      * 目标费用行至事务提交——并发双申请同费用行时后到者在本语句阻塞，持锁者提交（负向 link 已落）
      * 后读到最新行与最新已退聚合，超可退守卫即拒，根除「双读 refundedFen 聚合互不可见」的

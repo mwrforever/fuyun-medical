@@ -33,9 +33,18 @@ public final class BillingMessagingConstants {
     /** 订阅事件：处方生效（CF-5 占位，PR-4 实装；V605 id 24） */
     public static final String EVENT_SUB_PHARMACY_PRESCRIPTION_CREATED = "pharmacy.prescription.created";
 
+    /** 订阅事件：门诊发药完成（V702 id 28；执行占用标记 DISPENSED，PR-4 接线） */
+    public static final String EVENT_SUB_PHARMACY_DISPENSE_COMPLETED = "pharmacy.dispense.completed";
+
+    /** 订阅事件：退药受理完成（V702 id 29；fullReturn 占用回退 NONE，PR-4 接线） */
+    public static final String EVENT_SUB_PHARMACY_DISPENSE_RETURNED = "pharmacy.dispense.returned";
+
     /** 订阅事件全集（队列声明与监听器同源） */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
-        EVENT_SUB_OUTPATIENT_ORDER_CREATED, EVENT_SUB_PHARMACY_PRESCRIPTION_CREATED
+        EVENT_SUB_OUTPATIENT_ORDER_CREATED,
+        EVENT_SUB_PHARMACY_PRESCRIPTION_CREATED,
+        EVENT_SUB_PHARMACY_DISPENSE_COMPLETED,
+        EVENT_SUB_PHARMACY_DISPENSE_RETURNED
     };
 
     /** 私有构造器（A.2-6） */
