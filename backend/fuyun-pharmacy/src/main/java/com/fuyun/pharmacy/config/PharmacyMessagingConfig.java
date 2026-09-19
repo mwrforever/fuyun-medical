@@ -7,6 +7,8 @@ import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
+import com.fuyun.pharmacy.internal.PharmacyBillingSyncListener;
+import com.fuyun.pharmacy.internal.PharmacyChargedOrderListener;
 import com.fuyun.pharmacy.internal.PharmacyEventPublisher;
 import java.util.Arrays;
 import org.springframework.amqp.core.Declarables;
@@ -22,7 +24,7 @@ import org.springframework.context.annotation.Import;
  * 监听器类同步追加进 @Import（先登记后订阅红线）。
  */
 @Configuration
-@Import({PharmacyEventPublisher.class})
+@Import({PharmacyEventPublisher.class, PharmacyChargedOrderListener.class, PharmacyBillingSyncListener.class})
 public class PharmacyMessagingConfig {
 
     /**

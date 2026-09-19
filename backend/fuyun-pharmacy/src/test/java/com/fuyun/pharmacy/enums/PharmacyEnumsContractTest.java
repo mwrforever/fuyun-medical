@@ -10,14 +10,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * 十枚举全量契约测试（A.2-7 code↔enum 双向映射统一模板验证）：带 fromCode 的十枚举逐常量
- * 验证 code 与枚举名一致（V700/V701 列注释直读口径）、fromCode/getCode 双向闭环、valueOf 同源、
- * 值域外 code 显式拒绝（脏数据禁静默）；DrugChangeType 为广播出向专用（无 fromCode——仅
+ * 十四枚举全量契约测试（A.2-7 code↔enum 双向映射统一模板验证）：带 fromCode 的十四枚举逐常量
+ * 验证 code 与枚举名一致（V700/V701/V703 列注释直读口径）、fromCode/getCode 双向闭环、valueOf
+ * 同源、值域外 code 显式拒绝（脏数据禁静默）；DrugChangeType 为广播出向专用（无 fromCode——仅
  * @JsonValue 出向，Task 4 发布器消费），单独断言该形态。
  */
 class PharmacyEnumsContractTest {
 
-    /** 带 fromCode 的十枚举全集：新增枚举必须登记入列（漏登即本测试不再覆盖其映射契约，CI 兜底） */
+    /** 带 fromCode 的十四枚举全集：新增枚举必须登记入列（漏登即本测试不再覆盖其映射契约，CI 兜底） */
     private static final List<Class<? extends Enum<?>>> PHARMACY_FROMCODE_ENUMS = List.of(
             DrugStatus.class,
             AntibacterialClass.class,
@@ -28,12 +28,16 @@ class PharmacyEnumsContractTest {
             RxCategory.class,
             RxSource.class,
             ReviewLevel.class,
-            PrescriptionStatus.class);
+            PrescriptionStatus.class,
+            DispenseStatus.class,
+            DispenseType.class,
+            BatchStatus.class,
+            LedgerAction.class);
 
     @Test
-    @DisplayName("十枚举契约：code=常量名 + fromCode 双向闭环 + valueOf 同源 + 值域外拒绝")
+    @DisplayName("十四枚举契约：code=常量名 + fromCode 双向闭环 + valueOf 同源 + 值域外拒绝")
     void fromCodeEnumsFollowCodeRoundTripContract() throws Exception {
-        assertThat(PHARMACY_FROMCODE_ENUMS).hasSize(10);
+        assertThat(PHARMACY_FROMCODE_ENUMS).hasSize(14);
 
         for (Class<? extends Enum<?>> type : PHARMACY_FROMCODE_ENUMS) {
             Method getCode = type.getMethod("getCode");
