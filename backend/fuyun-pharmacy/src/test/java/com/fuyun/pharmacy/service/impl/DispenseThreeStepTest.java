@@ -180,6 +180,11 @@ class DispenseThreeStepTest {
         verify(dispenseItemMapper).updateById(itemCaptor.capture());
         assertThat(itemCaptor.getValue().getTraceCodes()).contains("TR-A1B2").contains("TR-C3D4");
         assertThat(itemCaptor.getValue().getBatchNo()).isEqualTo("B20260601");
+        // 留痕实体状态与 CAS 迁移终态同步（禁携带 CAS 前旧状态落库覆写状态机——PR-4 IT 实证缺陷回归守卫）
+        ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
+        verify(dispenseMapper).updateById(dispenseCaptor.capture());
+        assertThat(dispenseCaptor.getValue().getStatus()).isEqualTo("PICKING");
+        assertThat(dispenseCaptor.getValue().getPicker()).isEqualTo("dispenser-01");
     }
 
     @Test
@@ -326,6 +331,8 @@ class DispenseThreeStepTest {
         verify(dispenseMapper).updateById(captor.capture());
         assertThat(captor.getValue().getVerifier()).isEqualTo("verify-02"); // 核对留痕=第二人
         assertThat(captor.getValue().getPicker()).isEqualTo("dispenser-01"); // 调配留痕不变（分权不改写）
+        // 留痕实体状态与 CAS 迁移终态同步（禁携带 CAS 前旧状态落库覆写状态机——PR-4 IT 实证缺陷回归守卫）
+        assertThat(captor.getValue().getStatus()).isEqualTo("PICKED");
     }
 
     @Test

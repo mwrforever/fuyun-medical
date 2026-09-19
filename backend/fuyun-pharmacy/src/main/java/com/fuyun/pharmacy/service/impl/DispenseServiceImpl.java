@@ -227,6 +227,9 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             item.setTraceCodes(toJson(line.traceCodes()));
             dispenseItemMapper.updateById(item);
         }
+        // 数据库写操作：调配留痕回填（内存态与 DB 迁移同步：上方 CAS 已置 PICKING，实体补写同值后再
+        //   update——禁携带 CAS 前旧状态落库把状态机覆写回 CREATED，PrescriptionServiceImpl.create 同款约定）
+        d.setStatus("PICKING");
         d.setPicker(operator);
         dispenseMapper.updateById(d);
         log.info("配药锁定完成：dispenseNo={}，picker={}，行数={}", dispenseNo, operator, items.size());
@@ -246,6 +249,9 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             throw new BizException(
                     PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "调剂单状态不允许核对：" + dispenseNo);
         }
+        // 数据库写操作：核对留痕回填（内存态与 DB 迁移同步：上方 CAS 已置 PICKED，实体补写同值后再
+        //   update——禁携带 CAS 前旧状态落库把状态机覆写回 PICKING，pick 调配留痕同款约定）
+        d.setStatus("PICKED");
         d.setVerifier(operator);
         dispenseMapper.updateById(d);
         log.info("扫码核对通过：dispenseNo={}，verifier={}", dispenseNo, operator);
