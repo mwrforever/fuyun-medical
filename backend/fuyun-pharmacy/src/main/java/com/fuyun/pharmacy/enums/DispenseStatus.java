@@ -28,7 +28,10 @@ public enum DispenseStatus {
     /** 全额退药 */
     FULL_RETURNED("FULL_RETURNED"),
 
-    /** 已取消（释放锁定批次） */
+    /**
+     * 已取消（释放锁定批次）。备案：PR-4 无全单 CANCELLED 写入路径（发药中明细退场仅置明细
+     * itemStatus=CANCELLED），完整作废联动 PR-5 回切（Spec 06-pharmacy §7 注记⑥）。
+     */
     CANCELLED("CANCELLED");
 
     /** 存储值：DB 列写入（@EnumValue）与 JSON 输出（@JsonValue）共用 */

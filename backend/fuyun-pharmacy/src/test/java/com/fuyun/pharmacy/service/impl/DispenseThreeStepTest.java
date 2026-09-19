@@ -397,7 +397,7 @@ class DispenseThreeStepTest {
     }
 
     @Test
-    @DisplayName("issue 状态守卫：非 PICKED 拒 PH-1009；发药人未留痕（缺核对）拒 PH-1011")
+    @DisplayName("issue 状态守卫：非 PICKED 拒 PH-1009；发药人未留痕（缺核对）一并拒 PH-1009")
     void issueRejectsWrongStateAndMissingVerifier() {
         DispenseServiceImpl impl = newService();
         when(dispenseMapper.selectOne(any())).thenReturn(dispense("PICKING"));

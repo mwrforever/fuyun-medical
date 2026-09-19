@@ -37,8 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 处方服务实现（开方主链）：预检占位恒「通过级」（主控裁决 5——P3 审方引擎接入前不建
  * review_task/audit_rule，预检分级结果字段结构预留固定 PASS）；CREATED→APPROVED 同事务
- * （Spec :132），created/cancelled 事件发布点由 Task 4 回挂；作废未缴费走 billing
- * PrescriptionFeePort 同事务联动（主控裁决 7），已缴费（PENDING_DISPENSE+）拒绝并引导退药/退费。
+ * （Spec :132），created/cancelled 事件事务内经 ApplicationEventPublisher 发布（AFTER_COMMIT
+ * 出 fy.topic）；作废无条件联动 billing PrescriptionFeePort 作废 PENDING 费用行（主控裁决 7，
+ * 幂等——堵读态与 CAS 间 TOCTOU 资金窗口），已缴费（PENDING_DISPENSE+）拒绝并引导退药/退费。
  * practice/check 执业授权校验 PR-4 不接线（P0 骨架恒 false 无判定力——主控裁决 6），
  * TODO(PR-5): 接入执业授权校验（处方权/麻精权/抗菌药分级，M01 小改后于此调用）。
  */
@@ -179,10 +180,12 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
             throw new BizException(
                     PharmacyErrorCode.PRESCRIPTION_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "处方状态不允许作废，当前状态：" + status);
         }
-        // 未缴费联动：PENDING 费用行组同事务作废（billing 引擎 cancel 语义复用，主控裁决 7）
-        if ("PENDING_FEE".equals(status)) {
-            prescriptionFeePort.cancelPendingBySourceRef(rxNo, reason);
-        }
+        // 未缴费联动：PENDING 费用行组同事务作废（billing 引擎 cancel 语义复用，主控裁决 7）。
+        // 无条件调用（勿按读态 APPROVED 跳过）：读态与下方 casCancel 之间存在 TOCTOU 窗口——
+        // fee.created 消费（APPROVED→PENDING_FEE 的 CAS）可落在其间，按读态跳过会留下处方已
+        // CANCELLED 而 billing 侧 PENDING 费用行仍可经收费窗口结算的资金漏洞。幂等依据：port
+        // 仅作废 PENDING 行（尚无费用行时零行 no-op；已缴 SETTLED 行不触），重复调用安全。
+        prescriptionFeePort.cancelPendingBySourceRef(rxNo, reason);
         // 数据库写操作：CAS 终态（并发作废/放行抢先时 0 行定性拒绝）
         if (baseMapper.casCancel(rx.getId(), reason) != 1) {
             throw new BizException(

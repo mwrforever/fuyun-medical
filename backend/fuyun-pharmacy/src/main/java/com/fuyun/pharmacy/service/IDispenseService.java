@@ -30,7 +30,8 @@ public interface IDispenseService {
      *
      * @param dispenseNo 调剂单号
      * @param lines      逐行采集面（prescriptionItemId + 追溯码集，逐盒采集「无码不结」口径）
-     * @throws BizException PH-1008（缺单）/ PH-1009（状态机违例）/ PH-1010（批次不足）
+     * @throws BizException PH-1008（调剂单缺单）/ PH-1009（调剂单状态违例）/ PH-1004（处方缺单）/
+     *                      PH-1005（处方状态违例）/ PH-1010（批次不足）
      */
     void pick(String dispenseNo, java.util.List<com.fuyun.pharmacy.dto.PickLine> lines);
 
@@ -47,7 +48,8 @@ public interface IDispenseService {
      * 发布 pharmacy.dispense.completed（批次摘要）；发药前重申双签守卫。
      *
      * @param dispenseNo 调剂单号
-     * @throws BizException PH-1008 / PH-1009 / PH-1011 / PH-1010（锁定不足违例）
+     * @throws BizException PH-1008 / PH-1009 / PH-1004（处方缺单）/ PH-1005（处方状态违例）/
+     *                      PH-1011 / PH-1010（锁定不足违例）
      */
     void issue(String dispenseNo);
 

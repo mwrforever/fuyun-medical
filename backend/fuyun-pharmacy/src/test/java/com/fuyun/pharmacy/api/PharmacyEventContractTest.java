@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Optional;
@@ -26,13 +27,11 @@ class PharmacyEventContractTest {
      * @return 种子 SQL 全文（UTF-8 解码）
      */
     private static String loadSeedSql() {
-        try {
-            return new String(
-                    Optional.ofNullable(PharmacyEventContractTest.class.getResourceAsStream(
-                                    "/db/migration/pharmacy/V702__seed_pharmacy_event_registry.sql"))
-                            .orElseThrow(() -> new IllegalStateException("V702 种子文件缺失，契约锚失效"))
-                            .readAllBytes(),
-                    StandardCharsets.UTF_8);
+        // try-with-resources 关闭类路径流（静态一次性加载语义不变；缺失/不可读仍快败阻断）
+        try (InputStream seed = Optional.ofNullable(PharmacyEventContractTest.class.getResourceAsStream(
+                        "/db/migration/pharmacy/V702__seed_pharmacy_event_registry.sql"))
+                .orElseThrow(() -> new IllegalStateException("V702 种子文件缺失，契约锚失效"))) {
+            return new String(seed.readAllBytes(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new IllegalStateException("V702 种子文件不可读，契约锚失效", e);
         }

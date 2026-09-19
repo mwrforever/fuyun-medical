@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 药房发药工作台（FU-M06-04）：待发队列（PENDING_DISPENSE）→ 选处方回显发药单 →
 // 配药（追溯码逐码录入）→ 核对（第二药师）→ 发药签名；双签分权由后端硬守卫（PH-1011），
-// 前端以「当前登录名=调配人时禁用核对/发药」为辅助启停面。弹错归响应拦截器。
+// 前端以「当前用户 ID=调配人时禁用核对/发药」为辅助启停面。弹错归响应拦截器。
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage 在模板外使用，按需样式需手动引入（与 billing 三页同款口径）

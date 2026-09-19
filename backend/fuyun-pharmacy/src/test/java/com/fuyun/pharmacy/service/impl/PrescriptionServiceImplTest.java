@@ -244,6 +244,28 @@ class PrescriptionServiceImplTest {
     }
 
     @Test
+    @DisplayName("作废 TOCTOU 收口：读态 APPROVED、读后并发迁移 PENDING_FEE 被 casCancel 命中，port 作废仍发生")
+    void cancelStillInvokesBillingPortWhenPendingFeeMigratesConcurrentlyAfterRead() {
+        PrescriptionServiceImpl impl = newService();
+        Prescription rx = new Prescription();
+        rx.setId(100L);
+        rx.setRxNo("R20260918000001");
+        rx.setPatientId(700101L);
+        rx.setVisitId(VISIT);
+        // 读态 APPROVED：fee.created 消费（APPROVED→PENDING_FEE）尚未到达，读后并发抢先迁移
+        rx.setStatus("APPROVED");
+        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        // casCancel 谓词 status IN ('APPROVED','PENDING_FEE') 恰好命中并发迁移后的 PENDING_FEE
+        when(prescriptionMapper.casCancel(100L, "医生改方")).thenReturn(1);
+
+        impl.cancel("R20260918000001", "医生改方");
+
+        // 资金路径收口：billing 侧 PENDING 费用行必须随本事务作废，否则可经收费窗口结算
+        verify(prescriptionFeePort).cancelPendingBySourceRef("R20260918000001", "医生改方");
+        verify(prescriptionMapper).casCancel(100L, "医生改方");
+    }
+
+    @Test
     @DisplayName("已缴费拒作废：PENDING_DISPENSE 拒 PH-1014 并引导退药/退费链")
     void cancelRejectsChargedRxAsPh1014() {
         PrescriptionServiceImpl impl = newService();
@@ -341,7 +363,7 @@ class PrescriptionServiceImplTest {
     }
 
     @Test
-    @DisplayName("作废并发抢锚：casCancel 0 行（放行/并发作废抢先）拒 PH-1005 且费用零联动")
+    @DisplayName("作废并发抢锚：casCancel 0 行（放行/并发作废抢先）拒 PH-1005（port 联动随事务回滚不落）")
     void cancelRejectsWhenConcurrentCancelWinsCasRace() {
         PrescriptionServiceImpl impl = newService();
         Prescription rx = new Prescription();
@@ -354,7 +376,8 @@ class PrescriptionServiceImplTest {
         assertThatThrownBy(() -> impl.cancel("R20260918000001", "医生改方"))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PharmacyErrorCode.PRESCRIPTION_STATE_NOT_ALLOWED));
-        verify(prescriptionFeePort, never()).cancelPendingBySourceRef(anyString(), anyString());
+        // port 无条件联动（堵 TOCTOU 资金窗口）：CAS 失败抛异常整事务回滚，联动与作废一体不落
+        verify(prescriptionFeePort).cancelPendingBySourceRef("R20260918000001", "医生改方");
     }
 
     @Test
