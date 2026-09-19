@@ -425,6 +425,10 @@ class MessagingGovernanceIT {
     /**
      * 轮询等待死信台账出现指定 eventId 的留痕行并返回。
      *
+     * <p>按来源队列收敛到 it 测试消费者自身行：PR-4 起 pharmacy 亦订阅 system.dict.published（V607
+     * 字典水位消费），同一毒丸 eventId 会在 it 与 pharmacy 两队列各自死信落行（W-9 口径：dead_letter
+     * 无唯一约束，同 eventId 可因不同消费者多次死信），不按 source_queue 过滤将命中他消费者行。
+     *
      * @param eventId 死信所属信封 eventId，非空
      * @return 死信行字段视图（source_queue/routing_key/event_type/event_id/payload_body/fail_reason/status）
      */
@@ -434,8 +438,9 @@ class MessagingGovernanceIT {
         while (System.nanoTime() < deadlineNanos) {
             rows = jdbcTemplate.queryForList(
                     "SELECT source_queue, routing_key, event_type, event_id, payload_body, fail_reason, status"
-                            + " FROM integration.dead_letter WHERE event_id = ?",
-                    eventId);
+                            + " FROM integration.dead_letter WHERE event_id = ? AND source_queue = ?",
+                    eventId,
+                    QUEUE_NAME);
             if (!rows.isEmpty()) {
                 return rows.get(0);
             }
