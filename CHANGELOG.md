@@ -2,6 +2,37 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-18 · P1 PR-4 M06 药事基础：pharmacy 号段登记与门禁适配（先记再改）
+
+- **号段登记**：pharmacy 域占用固定百位段 **V700–V799**（宪法 A.4.1-2「每模块固定百位段」；
+  既分配对 integration V1–99 / patient V100–V199 / outpatient V200–V299 / system V300–V399 /
+  iot V400–V499 / billing V600–V699，V700 段未占用）；首批 V700–V703（V700 药品字典、
+  V701 处方两表、V702 CF-5 事件契约种子 id 24 载荷冻结 UPDATE + id 25–31 登记、V703 发药/批次
+  四表）。V700 > 基线全局已应用最大版本 V606，存量 dev 卷与新库同按序应用，乱序守卫双保险；
+  `scripts/check-migration-governance.py` `_SEGMENTS` 同步增
+  `"pharmacy": ((700, 799), (500, None))`。**V605（billing）文件禁改**——id 24 载荷冻结经 V702
+  对 integration.event_registry 数据行 UPDATE 承载（数据契约演进非 DDL 变更）。
+- **CF-5 事件 id 排定**（全局递增按迁移执行序）：id 25 outpatient.order.charged（占位，producer=
+  outpatient，生产发布方随 PR-5）、id 26 pharmacy.prescription.cancelled、id 27
+  pharmacy.prescription.rejected（P3 审方引擎接入前无发布点）、id 28 pharmacy.dispense.completed、
+  id 29 pharmacy.dispense.returned、id 30 pharmacy.drug.changed、id 31 outpatient.order.cancelled
+  （占位，终态确认 PR-5 回切）；MessagingGovernanceIT 总行断言 24→31 与 V702 同任务落改（PR-3
+  「种子+断言同任务」Task 17 先例）。
+- **JaCoCo 核心包扩名单**：父 POM 规则二增 `com.fuyun.pharmacy.service.impl`（发药/退药状态机
+  直接驱动计费占用回写与退费收敛=资金链路延伸，命中全局规范「核心业务状态机」LINE=1.00，
+  2026-09-18 主控裁决；包不存在时零包平凡通过，首个 impl 落码即生效）。
+- **M01 给药途径/用药频次字典预置改判**（PR-4 前置项 P-3；用户 2026-09-19 追加裁决「PR-4 顺手预置」，
+  推翻 2026-09-18「V304 被乱序守卫阻断→随 M01 交付」结论）：改用 system 段通用号 V607（607>基线全局
+  最大版本 V606，号段 (500,None) 合法、执行序先于 pharmacy V700–V703）预置两类 PUBLISHED 字典各 v1
+  （medication.route 15 条/medication.frequency 10 条），迁移全文随 Task 2 Step 1b 落文件；校验分工=
+  给药途径主校验维持 drug.route_codes 院内途径集（PH-1015 不变），字典供前端下拉与 M01 管理面维护，
+  频次维持非空校验（条目级消费随 P3 审方引擎，W-8 同款前置注记）；`system.dict.published` 订阅
+  在 PR-4 承载版本水位缓存刷新（部署期种子不发该事件，M01 管理面后续变更经广播刷新——语义顺承）。
+- **billing 占用回写零迁移结论**（前置项 P-6）：billing 侧零行变更不落迁移、不占版本号（V607 号位
+  由 system 段字典种子 V607 使用；pharmacy
+  dispense 两事件行由 V702 登记 id 28/29；billing 订阅经治理构件 declareConsumerQueue 副作用
+  registerSubscriber 运行期自动回填 subscriber_modules，PR-3 BillingSettlementFlowIT 实证先例）。
+
 ## 2026-09-18 · P1 PR-3 评审修复轮：退费二级审批实装（D，含 V606）+ 调价定时生效（E）登记（用户裁决=本 PR 内完整实现）
 
 - **D 退费二级审批实装**（Spec FU-M13-03 P0，`docs/specs/modules/13-billing.md:136` 分级口径）：分级判定

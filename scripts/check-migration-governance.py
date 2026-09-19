@@ -34,6 +34,8 @@ _SEGMENTS = {
     "iot": ((400, 499), (500, None)),
     # billing 固定百位段（PR-3 首批 V600–V605，CHANGELOG 2026-09-17 条目先记再改）
     "billing": ((600, 699), (500, None)),
+    # pharmacy 固定百位段（PR-4 首批 V700–V703，CHANGELOG 2026-09-18 条目先记再改）
+    "pharmacy": ((700, 799), (500, None)),
 }
 
 # 未登记号段模块的唯一合法区间（V500+ 通用段）
