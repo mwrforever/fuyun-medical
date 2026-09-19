@@ -84,6 +84,23 @@ public class DispenseController {
     }
 
     /**
+     * 执行占用查询（供 M13 位；billing 不切注记维持，P3 接入）。
+     *
+     * @param patientId 患者 id，必填
+     * @param visitId   就诊号，可空
+     * @param itemCode  收费项目 code，可空
+     * @return 占用行集
+     */
+    @Operation(summary = "执行占用查询")
+    @GetMapping("/api/v1/pharmacy/medication-occupancy")
+    public java.util.List<com.fuyun.pharmacy.vo.OccupancyVO> occupancy(
+            @RequestParam long patientId,
+            @RequestParam(required = false) String visitId,
+            @RequestParam(required = false) String itemCode) {
+        return dispenseService.occupancy(patientId, visitId, itemCode);
+    }
+
+    /**
      * 按处方号查发药单（工作台单处方维度检回；无单为空数组，禁单行 null 出网）。
      *
      * @param rxNo 处方号，必填

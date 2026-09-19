@@ -10,6 +10,7 @@ import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import com.fuyun.pharmacy.internal.PharmacyBillingSyncListener;
 import com.fuyun.pharmacy.internal.PharmacyChargedOrderListener;
 import com.fuyun.pharmacy.internal.PharmacyEventPublisher;
+import com.fuyun.pharmacy.internal.PharmacyMasterDataListener;
 import com.fuyun.pharmacy.internal.PharmacyOrderCancelledListener;
 import com.fuyun.pharmacy.internal.PharmacyRefundApprovedListener;
 import java.util.Arrays;
@@ -31,7 +32,8 @@ import org.springframework.context.annotation.Import;
     PharmacyChargedOrderListener.class,
     PharmacyBillingSyncListener.class,
     PharmacyRefundApprovedListener.class,
-    PharmacyOrderCancelledListener.class
+    PharmacyOrderCancelledListener.class,
+    PharmacyMasterDataListener.class
 })
 public class PharmacyMessagingConfig {
 

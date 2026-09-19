@@ -10,6 +10,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.pharmacy.api.DispenseCompletedPayload;
 import com.fuyun.pharmacy.api.DispenseReturnedPayload;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import com.fuyun.pharmacy.cache.PharmacyMasterDataCache;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.dto.PickLine;
@@ -29,6 +30,7 @@ import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispenseVO;
+import com.fuyun.pharmacy.vo.OccupancyVO;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -44,7 +46,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 发药服务实现：放行链（charged→PENDING_DISPENSE+入队）、费用链（fee.created→PENDING_FEE）、
  * 调剂三段闭环（pick FEFO 批次锁定+追溯码采集 → verify 双签核对 → issue 发药签名+批次扣减+
  * 出库流水+completed 事件）与退药受理两时点（ISSUED_RETURN 实物退批次回补+returned 事件 /
- * DISPENSING_CANCEL 发药中明细退场释放锁定）及 refund.approved 终态收敛。状态机 CAS 收口：
+ * DISPENSING_CANCEL 发药中明细退场释放锁定）、refund.approved 终态收敛与执行占用查询
+ * （读侧经主数据缓存患者归一，供 M13 位）。状态机 CAS 收口：
  * 0 行=并发被抢/状态违例一律显式拒绝（无负库存，未锁先发即 PH-1010）；双签分权（调配/核对
  * 同人 PH-1011，Spec :226）为法定留痕硬守卫；退药追溯码逐码核验防回流（PH-1012，Spec §10）。
  * 事件消费幂等双层：eventId 构件幂等之外，业务级「CAS 0 行→重读定性：已达目标态幂等跳过、
@@ -82,9 +85,12 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     /** 追溯码 JSON 读写（dispense_item.trace_codes 文本承载），非空 */
     private final ObjectMapper objectMapper;
 
+    /** 主数据读侧缓存（occupancy 读侧患者归一唯一消费方），非空 */
+    private final PharmacyMasterDataCache masterDataCache;
+
     /**
-     * 全参构造器（装配归 PharmacyWebConfig @Import；Task 6 起扩九参——batchSelectService/events/
-     * objectMapper 承载调剂三段依赖）。
+     * 全参构造器（装配归 PharmacyWebConfig @Import；Task 10 起扩十参——masterDataCache 承载
+     * 占用查询读侧患者归一）。
      *
      * @param dispenseMapper         调剂单 mapper（ServiceImpl 继承 baseMapper 同源），非空
      * @param dispenseItemMapper     调剂明细 mapper，非空
@@ -95,6 +101,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
      * @param batchSelectService     FEFO 选批服务，非空
      * @param events                 应用事件发布器，非空
      * @param objectMapper           追溯码 JSON 读写器，非空
+     * @param masterDataCache        主数据读侧缓存（merged/split 订阅写、occupancy 读），非空
      */
     public DispenseServiceImpl(
             DispenseMapper dispenseMapper,
@@ -105,7 +112,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             PrescriptionItemMapper prescriptionItemMapper,
             IBatchSelectService batchSelectService,
             ApplicationEventPublisher events,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            PharmacyMasterDataCache masterDataCache) {
         this.dispenseMapper = dispenseMapper;
         this.dispenseItemMapper = dispenseItemMapper;
         this.drugBatchMapper = drugBatchMapper;
@@ -115,6 +123,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         this.batchSelectService = batchSelectService;
         this.events = events;
         this.objectMapper = objectMapper;
+        this.masterDataCache = masterDataCache;
     }
 
     @Override
@@ -476,6 +485,32 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 log.warn("退费终态确认跳过（未发药处方终态确认随 PR-5 回切）：rxNo={}，status={}", d.getRxNo(), rx.getStatus());
             }
         }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<OccupancyVO> occupancy(long patientId, String visitId, String itemCode) {
+        // 读侧归一：merged 从档入参经缓存映射主档（未命中原样返回；M-25 订阅闭环的查询侧兑现）
+        long pid = masterDataCache.resolveSurvivor(patientId);
+        // 数据库读操作：该患者处方清单（visitId 可选过滤；占用行集无命中即空集出网）
+        List<Prescription> rxs = prescriptionMapper.selectList(Wrappers.<Prescription>lambdaQuery()
+                .eq(Prescription::getPatientId, pid)
+                .eq(visitId != null && !visitId.isBlank(), Prescription::getVisitId, visitId)
+                .orderByAsc(Prescription::getId));
+        List<OccupancyVO> rows = new ArrayList<>();
+        for (Prescription rx : rxs) {
+            // 数据库读操作：处方明细按计费行快照出占用行（itemCode 可选过滤）
+            List<PrescriptionItem> items = prescriptionItemMapper.selectList(Wrappers.<PrescriptionItem>lambdaQuery()
+                    .eq(PrescriptionItem::getPrescriptionId, rx.getId())
+                    .eq(itemCode != null && !itemCode.isBlank(), PrescriptionItem::getItemCode, itemCode)
+                    .orderByAsc(PrescriptionItem::getId));
+            // 数据库读操作：一处方一张活动单（uk_dispense_rx_active）；未配药为 null，占用行仍出
+            Dispense d = baseMapper.selectOne(Wrappers.<Dispense>lambdaQuery().eq(Dispense::getRxNo, rx.getRxNo()));
+            for (PrescriptionItem item : items) {
+                rows.add(OccupancyVO.from(rx, item, d));
+            }
+        }
+        return rows;
     }
 
     @Override

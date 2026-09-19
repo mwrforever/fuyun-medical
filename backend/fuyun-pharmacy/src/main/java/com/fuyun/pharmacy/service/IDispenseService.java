@@ -3,8 +3,8 @@ package com.fuyun.pharmacy.service;
 /**
  * 发药服务（FU-M06-04 门诊发药闭环）：Task 5 交付缴费放行与费用回执两消费入口；
  * Task 6 补齐调剂三段（pick/verify/issue）与工作台回显；Task 7 扩展退药受理两时点
- * （acceptReturn）与 refund.approved 终态收敛（confirmRefundTerminal）
- * （接口方法只增不改形）。
+ * （acceptReturn）与 refund.approved 终态收敛（confirmRefundTerminal）；Task 10 追加
+ * 执行占用查询（occupancy，供 M13 位）（接口方法只增不改形）。
  */
 public interface IDispenseService {
 
@@ -84,6 +84,17 @@ public interface IDispenseService {
      * @param patientId 患者主索引，非空；来源：billing.refund.approved 载荷
      */
     void confirmRefundTerminal(long patientId);
+
+    /**
+     * 执行占用查询（供 M13 退费前置校验调用位，Spec :172；billing 不切——BILL-1017 维持
+     * exec_occupy_status 列口径，本 API 为 P3 切换面）。
+     *
+     * @param patientId 患者 id（读侧经归一缓存映射主档），非空
+     * @param visitId   就诊号，可空
+     * @param itemCode  收费项目 code，可空
+     * @return 占用行集（处方×明细×发药单三维投影；无命中返回空集）
+     */
+    java.util.List<com.fuyun.pharmacy.vo.OccupancyVO> occupancy(long patientId, String visitId, String itemCode);
 
     /**
      * 按处方号查发药单（前端工作台回显）。

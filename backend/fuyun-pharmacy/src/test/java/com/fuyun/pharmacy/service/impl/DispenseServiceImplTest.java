@@ -65,6 +65,10 @@ class DispenseServiceImplTest {
     @Mock
     private ApplicationEventPublisher events;
 
+    /** Task 10 起构造器扩十参：主数据读侧缓存补位（占用查询读侧归一，本类两入口不触达） */
+    @Mock
+    private com.fuyun.pharmacy.cache.PharmacyMasterDataCache masterDataCache;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Dispense.class);
@@ -76,7 +80,7 @@ class DispenseServiceImplTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器九参直注（Task 6 起扩三参；objectMapper 用真实例，与本域三段单测同款）
+        // 构造器十参直注（Task 6 起扩三参、Task 10 扩第十参 masterDataCache；objectMapper 用真实例，与本域三段单测同款）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
@@ -86,7 +90,8 @@ class DispenseServiceImplTest {
                 prescriptionItemMapper,
                 batchSelectService,
                 events,
-                new ObjectMapper());
+                new ObjectMapper(),
+                masterDataCache);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         return impl;
     }
