@@ -8,8 +8,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.pharmacy.api.DispenseCompletedPayload;
+import com.fuyun.pharmacy.api.DispenseReturnedPayload;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
+import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.dto.PickLine;
 import com.fuyun.pharmacy.entity.Dispense;
 import com.fuyun.pharmacy.entity.DispenseItem;
@@ -27,6 +29,7 @@ import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispenseVO;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -38,10 +41,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 发药服务实现：放行链（charged→PENDING_DISPENSE+入队）、费用链（fee.created→PENDING_FEE）与
+ * 发药服务实现：放行链（charged→PENDING_DISPENSE+入队）、费用链（fee.created→PENDING_FEE）、
  * 调剂三段闭环（pick FEFO 批次锁定+追溯码采集 → verify 双签核对 → issue 发药签名+批次扣减+
- * 出库流水+completed 事件）。三段状态机 CAS 收口：0 行=并发被抢/状态违例一律显式拒绝（无负库存，
- * 未锁先发即 PH-1010）；双签分权（调配/核对同人 PH-1011，Spec :226）为法定留痕硬守卫。
+ * 出库流水+completed 事件）与退药受理两时点（ISSUED_RETURN 实物退批次回补+returned 事件 /
+ * DISPENSING_CANCEL 发药中明细退场释放锁定）及 refund.approved 终态收敛。状态机 CAS 收口：
+ * 0 行=并发被抢/状态违例一律显式拒绝（无负库存，未锁先发即 PH-1010）；双签分权（调配/核对
+ * 同人 PH-1011，Spec :226）为法定留痕硬守卫；退药追溯码逐码核验防回流（PH-1012，Spec §10）。
  * 事件消费幂等双层：eventId 构件幂等之外，业务级「CAS 0 行→重读定性：已达目标态幂等跳过、
  * 其余状态 warn 跳过不上抛」（charged 重复投递仅放行一次，Spec §10 异常项）。uk_dispense_rx_active
  * 兜底防重复建单。装配归 PharmacyWebConfig @Import。
@@ -308,6 +313,169 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                         d.getDispenseType(),
                         summary)));
         log.info("发药签名完成：dispenseNo={}，issuer={}，rxNo={}，行数={}", dispenseNo, operator, d.getRxNo(), items.size());
+    }
+
+    @Override
+    @Transactional
+    public void acceptReturn(DispenseReturnRequest req) {
+        Dispense d = requireByNo(req.dispenseNo());
+        String operator = OperatorContextHolder.get();
+        if ("DISPENSING_CANCEL".equals(req.mode())) {
+            returnDuringDispensing(d, req, operator);
+            return;
+        }
+        if (!"ISSUED_RETURN".equals(req.mode())) {
+            throw new BizException(
+                    PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED, HttpStatus.BAD_REQUEST, "未知退药受理模式：" + req.mode());
+        }
+        // 时点①（R2-13）：发药后实物退——ISSUED（或既往部分退后的 PART_RETURNED）可继续受理
+        if (!"ISSUED".equals(d.getStatus()) && !"PART_RETURNED".equals(d.getStatus())) {
+            throw new BizException(
+                    PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "调剂单状态不允许实物退药：" + d.getStatus());
+        }
+        List<DispenseItem> items = dispenseItemMapper.selectList(Wrappers.<DispenseItem>lambdaQuery()
+                .eq(DispenseItem::getDispenseId, d.getId())
+                .eq(DispenseItem::getItemStatus, "NORMAL")
+                .orderByAsc(DispenseItem::getId));
+        boolean allReturned = true;
+        // 退药行摘要（随 returned 事件携出——id 29 desc 冻结 lines[] 非空，billing/退费联动读此面）
+        List<DispenseReturnedPayload.Line> summary = new ArrayList<>(items.size());
+        for (DispenseItem item : items) {
+            DispenseReturnRequest.ReturnLine line = req.items().stream()
+                    .filter(l -> String.valueOf(item.getPrescriptionItemId()).equals(l.prescriptionItemId()))
+                    .findFirst()
+                    .orElseThrow(() -> new BizException(
+                            PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                            HttpStatus.BAD_REQUEST,
+                            "退药受理缺行：prescriptionItemId=" + item.getPrescriptionItemId()));
+            BigDecimal returnQty = new BigDecimal(line.returnQuantity());
+            BigDecimal returnable = item.getIssuedQty().subtract(item.getReturnedQty());
+            // 数量守卫：累计退药不得超实发（PH-1013）；追溯码逐码核验与发药采集一致（PH-1012 防回流药）
+            if (returnQty.signum() <= 0 || returnQty.compareTo(returnable) > 0) {
+                throw new BizException(
+                        PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                        HttpStatus.CONFLICT,
+                        "退药数量超可退余额：itemCode=" + item.getItemCode());
+            }
+            List<String> issuedTraces = fromJson(item.getTraceCodes());
+            if (line.traceCodes() == null || !issuedTraces.containsAll(line.traceCodes())) {
+                throw new BizException(
+                        PharmacyErrorCode.TRACE_CODE_MISMATCH,
+                        HttpStatus.CONFLICT,
+                        "追溯码与发药记录不一致（防回流药核验拒）：itemCode=" + item.getItemCode());
+            }
+            // 数据库写操作：批次回补 + 回补流水（红线 2：与批次变更同事务；回补同一批次保批号勾稽）
+            if (drugBatchMapper.restock(item.getBatchId(), returnQty) != 1) {
+                throw new BizException(
+                        PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                        HttpStatus.CONFLICT,
+                        "批次回补失败：batchId=" + item.getBatchId());
+            }
+            StockLedger ledger = new StockLedger();
+            ledger.setStorehouse(d.getStorehouse());
+            ledger.setDrugId(item.getDrugId());
+            ledger.setBatchId(item.getBatchId());
+            ledger.setAction("RETURN_RESTOCK");
+            ledger.setQuantity(returnQty);
+            ledger.setRefDoc(d.getDispenseNo());
+            ledger.setOperator(operator);
+            stockLedgerMapper.insert(ledger);
+            item.setReturnedQty(item.getReturnedQty().add(returnQty));
+            dispenseItemMapper.updateById(item);
+            summary.add(new DispenseReturnedPayload.Line(
+                    item.getItemCode(), item.getBatchNo(), returnQty.toPlainString(), issuedTraces));
+            if (item.getReturnedQty().compareTo(item.getIssuedQty()) != 0) {
+                allReturned = false;
+            }
+        }
+        // 数据库写操作：发药单终态（受理完成即置——Spec :134；处方终态归 refund.approved，Spec :132）
+        String target = allReturned ? "FULL_RETURNED" : "PART_RETURNED";
+        String from = "ISSUED".equals(d.getStatus()) ? "ISSUED" : "PART_RETURNED";
+        if (dispenseMapper.casStatus(d.getId(), from, target) != 1) {
+            throw new BizException(
+                    PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "退药终态迁移并发被抢：" + d.getDispenseNo());
+        }
+        // 事务内发应用事件：退药受理完成（billing 占用回退与退费联动依据；lines 摘要与 id 29 desc 对齐）
+        events.publishEvent(new PharmacyDomainEvent(
+                PharmacyMessagingConstants.EVENT_DISPENSE_RETURNED,
+                new DispenseReturnedPayload(
+                        d.getDispenseNo(),
+                        d.getRxNo(),
+                        d.getRxNo(),
+                        d.getPatientId(),
+                        d.getVisitId(),
+                        allReturned,
+                        summary)));
+        log.info(
+                "退药受理完成：dispenseNo={}，mode={}，allReturned={}，lines={}，operator={}",
+                d.getDispenseNo(),
+                req.mode(),
+                allReturned,
+                summary.size(),
+                operator);
+    }
+
+    /** 时点②（R2-13）：发药中明细退场——释放锁定批次（不落流水不发事件），处方保持 DISPENSING */
+    private void returnDuringDispensing(Dispense d, DispenseReturnRequest req, String operator) {
+        if (!"PICKING".equals(d.getStatus())) {
+            throw new BizException(
+                    PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "仅配药中的发药单可明细退场：" + d.getStatus());
+        }
+        List<DispenseItem> items = dispenseItemMapper.selectList(Wrappers.<DispenseItem>lambdaQuery()
+                .eq(DispenseItem::getDispenseId, d.getId())
+                .eq(DispenseItem::getItemStatus, "NORMAL")
+                .orderByAsc(DispenseItem::getId));
+        for (DispenseItem item : items) {
+            DispenseReturnRequest.ReturnLine line = req.items().stream()
+                    .filter(l -> String.valueOf(item.getPrescriptionItemId()).equals(l.prescriptionItemId()))
+                    .findFirst()
+                    .orElseThrow(() -> new BizException(
+                            PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                            HttpStatus.BAD_REQUEST,
+                            "明细退场缺行：prescriptionItemId=" + item.getPrescriptionItemId()));
+            BigDecimal qty = new BigDecimal(line.returnQuantity());
+            // 数据库写操作：释放锁定（锁定数非数量流水，不落 stock_ledger；明细退场标记）
+            if (drugBatchMapper.releaseLock(item.getBatchId(), qty) != 1) {
+                throw new BizException(
+                        PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                        HttpStatus.CONFLICT,
+                        "批次锁定释放失败：batchId=" + item.getBatchId());
+            }
+            item.setItemStatus("CANCELLED");
+            dispenseItemMapper.updateById(item);
+        }
+        log.warn("发药中明细退场：dispenseNo={}，处方保持 DISPENSING 继续剩余明细；operator={}", d.getDispenseNo(), operator);
+    }
+
+    @Override
+    @Transactional
+    public void confirmRefundTerminal(long patientId) {
+        // 数据库读操作：该患者受理已终态的发药单（终态在受理完成即置——镜像源）
+        List<Dispense> returned = baseMapper.selectList(Wrappers.<Dispense>lambdaQuery()
+                .eq(Dispense::getPatientId, patientId)
+                .in(Dispense::getStatus, "PART_RETURNED", "FULL_RETURNED")
+                .orderByAsc(Dispense::getId));
+        for (Dispense d : returned) {
+            Prescription rx = prescriptionMapper.selectOne(
+                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, d.getRxNo()));
+            if (rx == null) {
+                log.warn("退费终态确认无法定位处方：rxNo={}", d.getRxNo());
+                continue;
+            }
+            if ("DISPENSED".equals(rx.getStatus())) {
+                // 数据库写操作：处方终态镜像发药单受理终态（Spec :132：billing.refund.approved 后终态）
+                String target = "FULL_RETURNED".equals(d.getStatus()) ? "FULL_RETURNED" : "PART_RETURNED";
+                prescriptionMapper.casStatus(rx.getId(), "DISPENSED", target);
+                log.info("退费终态收敛：rxNo={}→{}（以 M13 回执为退费权威）", d.getRxNo(), target);
+            } else if ("PART_RETURNED".equals(rx.getStatus()) || "FULL_RETURNED".equals(rx.getStatus())) {
+                log.info("退费终态确认幂等跳过（已终态）：rxNo={}，status={}", d.getRxNo(), rx.getStatus());
+            } else {
+                // 未发药退费（PENDING_DISPENSE/DISPENSING）：终态确认归 outpatient.order.cancelled，PR-5 回切
+                log.warn("退费终态确认跳过（未发药处方终态确认随 PR-5 回切）：rxNo={}，status={}", d.getRxNo(), rx.getStatus());
+            }
+        }
     }
 
     @Override

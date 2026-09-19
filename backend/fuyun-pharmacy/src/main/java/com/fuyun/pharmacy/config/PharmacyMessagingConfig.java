@@ -10,6 +10,8 @@ import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import com.fuyun.pharmacy.internal.PharmacyBillingSyncListener;
 import com.fuyun.pharmacy.internal.PharmacyChargedOrderListener;
 import com.fuyun.pharmacy.internal.PharmacyEventPublisher;
+import com.fuyun.pharmacy.internal.PharmacyOrderCancelledListener;
+import com.fuyun.pharmacy.internal.PharmacyRefundApprovedListener;
 import java.util.Arrays;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -24,7 +26,13 @@ import org.springframework.context.annotation.Import;
  * 监听器类同步追加进 @Import（先登记后订阅红线）。
  */
 @Configuration
-@Import({PharmacyEventPublisher.class, PharmacyChargedOrderListener.class, PharmacyBillingSyncListener.class})
+@Import({
+    PharmacyEventPublisher.class,
+    PharmacyChargedOrderListener.class,
+    PharmacyBillingSyncListener.class,
+    PharmacyRefundApprovedListener.class,
+    PharmacyOrderCancelledListener.class
+})
 public class PharmacyMessagingConfig {
 
     /**

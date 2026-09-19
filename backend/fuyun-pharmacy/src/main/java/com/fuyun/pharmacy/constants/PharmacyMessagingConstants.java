@@ -50,12 +50,15 @@ public final class PharmacyMessagingConstants {
     public static final String EVENT_SUB_PATIENT_SPLIT = "patient.patient.split";
 
     /**
-     * 订阅事件全集（队列声明与监听器同源）：Task 5 补 charged/fee.created（监听器同任务落改），
+     * 订阅事件全集（队列声明与监听器同源）：Task 5 补 charged/fee.created，
      * Task 7 补 refund.approved/order.cancelled、Task 10 补 dict.published/merged/split
      * （先登记后订阅红线）。
      */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
-        EVENT_SUB_OUTPATIENT_ORDER_CHARGED, EVENT_SUB_BILLING_FEE_CREATED
+        EVENT_SUB_OUTPATIENT_ORDER_CHARGED,
+        EVENT_SUB_OUTPATIENT_ORDER_CANCELLED,
+        EVENT_SUB_BILLING_FEE_CREATED,
+        EVENT_SUB_BILLING_REFUND_APPROVED
     };
 
     /** 私有构造器（A.2-6） */
