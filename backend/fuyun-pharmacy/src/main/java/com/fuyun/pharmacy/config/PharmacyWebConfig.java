@@ -1,5 +1,6 @@
 package com.fuyun.pharmacy.config;
 
+import com.fuyun.pharmacy.controller.DispenseController;
 import com.fuyun.pharmacy.controller.DrugController;
 import com.fuyun.pharmacy.controller.PrescriptionController;
 import com.fuyun.pharmacy.service.impl.BatchSelectServiceImpl;
@@ -21,6 +22,7 @@ import org.springframework.context.annotation.Import;
     BatchSelectServiceImpl.class,
     DispenseServiceImpl.class,
     DrugController.class,
-    PrescriptionController.class
+    PrescriptionController.class,
+    DispenseController.class
 })
 public class PharmacyWebConfig {}

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.pharmacy.entity.Dispense;
 import com.fuyun.pharmacy.entity.DispenseItem;
 import com.fuyun.pharmacy.entity.Prescription;
@@ -18,6 +19,7 @@ import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
 import com.fuyun.pharmacy.mapper.StockLedgerMapper;
+import com.fuyun.pharmacy.service.IBatchSelectService;
 import java.math.BigDecimal;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -28,11 +30,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 发药服务单测（charged 放行 / fee.created 迁移两入口）：状态 CAS + 幂等重读定性 +
- * 发药单明细入队；pick/verify/issue/退药用例随 Task 6/7 追加。
+ * 发药单明细入队；调剂三段用例归 DispenseThreeStepTest（Task 6），退药用例随 Task 7 追加。
  */
 @ExtendWith(MockitoExtension.class)
 class DispenseServiceImplTest {
@@ -55,6 +58,13 @@ class DispenseServiceImplTest {
     @Mock
     private PrescriptionItemMapper prescriptionItemMapper;
 
+    /** Task 6 起构造器扩九参：调剂三段依赖补位（放行/费用链两入口不触达，仅满足构造） */
+    @Mock
+    private IBatchSelectService batchSelectService;
+
+    @Mock
+    private ApplicationEventPublisher events;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Dispense.class);
@@ -66,13 +76,17 @@ class DispenseServiceImplTest {
     }
 
     private DispenseServiceImpl newService() {
+        // 构造器九参直注（Task 6 起扩三参；objectMapper 用真实例，与本域三段单测同款）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
                 drugBatchMapper,
                 stockLedgerMapper,
                 prescriptionMapper,
-                prescriptionItemMapper);
+                prescriptionItemMapper,
+                batchSelectService,
+                events,
+                new ObjectMapper());
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         return impl;
     }
