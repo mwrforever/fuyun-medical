@@ -65,26 +65,26 @@
 
 仓库层：
 
-| 目录 | 边界 |
-| --- | --- |
-| `web/pnpm-workspace.yaml` | workspace 根声明（必须在根目录），glob 圈定 apps/packages + catalog 共享版本 |
-| `web/apps/{workstation,portal,bigscreen}` | 三个可独立构建应用（与部署挂载路径一一对应） |
-| `web/packages/shared` | 纯 TS 类型与工具（含 openapi 契约生成物），**禁依赖 vue/element-plus** |
-| `web/packages/ui` | 跨 app 组件封装（依赖 element-plus 等 UI 库），被多 app 复用的业务组件 |
+| 目录                                        | 边界                                                         |
+| ----------------------------------------- | ---------------------------------------------------------- |
+| `web/pnpm-workspace.yaml`                 | workspace 根声明（必须在根目录），glob 圈定 apps/packages + catalog 共享版本 |
+| `web/apps/{workstation,portal,bigscreen}` | 三个可独立构建应用（与部署挂载路径一一对应）                                     |
+| `web/packages/shared`                     | 纯 TS 类型与工具（含 openapi 契约生成物），**禁依赖 vue/element-plus**       |
+| `web/packages/ui`                         | 跨 app 组件封装（依赖 element-plus 等 UI 库），被多 app 复用的业务组件          |
 
 单 app 内 `src/` 目录职责（三 app 一致）：
 
-| 目录 | 职责边界 |
-| --- | --- |
-| `views/` | 路由级页面，按业务域分子目录；只做组装与布局，业务逻辑下沉 composables |
-| `components/` | 可复用组件：通用件 `common/` 与业务件 `{domain}/` 分目录；页面私有组件就近放 views 对应目录 |
-| `api/` | API 模块（按业务域），唯一出网出口（A.3）；禁在组件/composable 直接 axios |
-| `stores/` | Pinia store（Setup Store），跨页面共享状态；文件名与 store id 一致 |
-| `router/` | 路由（`modules/` 按业务域拆分）+ 导航守卫（认证/权限，B.3-2） |
-| `composables/` | 复用逻辑（`use` 前缀）：数据获取、轮询、STOMP 订阅等；无渲染逻辑复用一律在此 |
-| `types/` | env 类型增补（ImportMetaEnv）+ openapi 契约生成物引用；纯类型无运行时 |
-| `utils/` | 纯函数工具（格式化、校验等）；禁持有业务状态、禁依赖 vue 组件 |
-| `assets/` `styles/` `directives/` | 静态资源 / 全局样式与主题变量 / 自定义指令 |
+| 目录                                | 职责边界                                                          |
+| --------------------------------- | ------------------------------------------------------------- |
+| `views/`                          | 路由级页面，按业务域分子目录；只做组装与布局，业务逻辑下沉 composables                     |
+| `components/`                     | 可复用组件：通用件 `common/` 与业务件 `{domain}/` 分目录；页面私有组件就近放 views 对应目录 |
+| `api/`                            | API 模块（按业务域），唯一出网出口（A.3）；禁在组件/composable 直接 axios             |
+| `stores/`                         | Pinia store（Setup Store），跨页面共享状态；文件名与 store id 一致             |
+| `router/`                         | 路由（`modules/` 按业务域拆分）+ 导航守卫（认证/权限，B.3-2）                      |
+| `composables/`                    | 复用逻辑（`use` 前缀）：数据获取、轮询、STOMP 订阅等；无渲染逻辑复用一律在此                  |
+| `types/`                          | env 类型增补（ImportMetaEnv）+ openapi 契约生成物引用；纯类型无运行时              |
+| `utils/`                          | 纯函数工具（格式化、校验等）；禁持有业务状态、禁依赖 vue 组件                             |
+| `assets/` `styles/` `directives/` | 静态资源 / 全局样式与主题变量 / 自定义指令                                      |
 
 ### B.2 层级依赖（强制）
 
@@ -126,22 +126,22 @@ pnpm monorepo 三前端应用：workstation（医护工作站，Element Plus 管
 
 ### C.2 技术栈选型（版本唯一权威：docs/language/2026-09-07-技术栈选型.md v1.1）
 
-| 职责 | 技术 | 版本 | 约束 |
-| --- | --- | --- | --- |
-| 运行时 | Node.js | 24 LTS | CI 与本机一致，禁混用其他大版本 |
-| 包管理 | pnpm | 12.3.4 | packageManager 字段锁死；workspace 单根 lockfile |
-| 框架 / 语言 | Vue 3.5.42 / TypeScript 5.9.3 | 定稿 | 禁升 TS 7（生态未收敛） |
-| 构建 | Vite | 8.2.2 | 产物目录 dist 不变 |
-| 组件库 | Element Plus | 2.14.5 | 仅 workstation；按需引入 |
-| 状态 / 路由 | Pinia 4.0.3 / Vue Router 5.3.1 | 定稿 | Setup Store / 全懒加载 |
-| HTTP | Axios | 1.20.0 | 单实例 + 拦截器 |
-| 可视化 | ECharts | 6.1.0 | 仅 bigscreen；按需注册 |
-| 实时推送 | @stomp/stompjs | 7.3.0 | 单例 + 库内建重连 |
-| 类型契约 | openapi-typescript | 7.13.0 | 生成物入库 |
-| 按需插件 | unplugin-vue-components 32.1.0 / unplugin-auto-import 21.1.0 | 锁定 | engines Node ≥20.19 |
-| 单测 | Vitest 4.1.11 / @vue/test-utils 2.5.0 / jsdom 30.0.1 | 锁定 | 禁升 Vitest 5（GA 不足一季度，演进路径） |
-| lint / 格式 | ESLint 10.10.0 / eslint-plugin-vue 10.10.0 / typescript-eslint 8.69.0 / @vue/eslint-config-typescript 14.9.0 / Prettier 3.9.6 / eslint-config-prettier 10.1.8 | 锁定 | flat config；格式归 Prettier |
-| 类型检查 | vue-tsc | 3.3.10 | --noEmit |
+| 职责        | 技术                                                                                                                                                            | 版本     | 约束                                        |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------- |
+| 运行时       | Node.js                                                                                                                                                       | 24 LTS | CI 与本机一致，禁混用其他大版本                         |
+| 包管理       | pnpm                                                                                                                                                          | 12.3.4 | packageManager 字段锁死；workspace 单根 lockfile |
+| 框架 / 语言   | Vue 3.5.42 / TypeScript 5.9.3                                                                                                                                 | 定稿     | 禁升 TS 7（生态未收敛）                            |
+| 构建        | Vite                                                                                                                                                          | 8.2.2  | 产物目录 dist 不变                              |
+| 组件库       | Element Plus                                                                                                                                                  | 2.14.5 | 仅 workstation；按需引入                        |
+| 状态 / 路由   | Pinia 4.0.3 / Vue Router 5.3.1                                                                                                                                | 定稿     | Setup Store / 全懒加载                        |
+| HTTP      | Axios                                                                                                                                                         | 1.20.0 | 单实例 + 拦截器                                 |
+| 可视化       | ECharts                                                                                                                                                       | 6.1.0  | 仅 bigscreen；按需注册                          |
+| 实时推送      | @stomp/stompjs                                                                                                                                                | 7.3.0  | 单例 + 库内建重连                                |
+| 类型契约      | openapi-typescript                                                                                                                                            | 7.13.0 | 生成物入库                                     |
+| 按需插件      | unplugin-vue-components 32.1.0 / unplugin-auto-import 21.1.0                                                                                                  | 锁定     | engines Node ≥20.19                       |
+| 单测        | Vitest 4.1.11 / @vue/test-utils 2.5.0 / jsdom 30.0.1                                                                                                          | 锁定     | 禁升 Vitest 5（GA 不足一季度，演进路径）                |
+| lint / 格式 | ESLint 10.10.0 / eslint-plugin-vue 10.10.0 / typescript-eslint 8.69.0 / @vue/eslint-config-typescript 14.9.0 / Prettier 3.9.6 / eslint-config-prettier 10.1.8 | 锁定     | flat config；格式归 Prettier                  |
+| 类型检查      | vue-tsc                                                                                                                                                       | 3.3.10 | --noEmit                                  |
 
 ### C.3 目录结构
 
@@ -208,3 +208,53 @@ pnpm audit
 2. 提交信息遵循 conventional commits（`feat: ...` / `fix(scope): ...`），CI commitlint job 校验（push 用 `--last`、PR 用 base..head 区间）；本地由 husky + commitlint 同规则前置。
 3. pnpm 严格依赖：幽灵依赖（未声明即引用）在 pnpm 下默认不可用，属预期行为——缺依赖必须显式声明到对应 package.json；禁用 shamefully-hoist 全局提升。
 4. 浏览器兼容基线与 PDA 适配为产品决策，遵循对应模块 Spec；本宪法不约束视觉与交互设计（归 specs/ 与设计稿）。
+
+## C.7 UI 设计思想 · 谋建琢三段律
+
+> 凡涉 UI 工作，必循「谋 → 建 → 琢」三段闭环，顺序不可逆，缺一即违律。
+
+**谋 · 谋局定策**
+
+```text
+────────────────────────────────────
+ 谋局定策 ｜ 前置思考 · 全局蓝图
+────────────────────────────────────
+ 核心工具：@ui-ux-pro-max
+ 阶段职责：全局审视，敲定唯一最优方案
+ · 通盘考量布局 / 样式 / 交互 / 动画四大维度
+ · 持续思考、多轮推演、比较取舍
+ · 拒绝第一直觉草率定案，方案成形方可推进
+ ▸ 红线：未定蓝图，不得动工
+```
+
+**建 · 依图营造**
+
+```text
+────────────────────────────────────
+ 依图营造 ｜ 忠实实现 · 方案落地
+────────────────────────────────────
+ 施工依据：谋局阶段产出的设计方案
+ 阶段职责：将既定方案完整转化为代码
+ · 忠实执行设计决策，不偏移、不擅自降级
+ · 结构清晰，为后续精修预留打磨空间
+ · 以蓝图为唯一依据，不凭感觉发挥
+ ▸ 红线：落地 ≠ 完成，粗成品严禁交付
+```
+
+**琢 · 琢玉成器**
+
+```text
+────────────────────────────────────
+ 琢玉成器 ｜ 深度打磨 · 精修收口
+────────────────────────────────────
+ 核心工具：@taste-skill
+ 阶段职责：对成品全面深度打磨，逼近极致
+ · 逐层打磨组件 / 样式 / 交互 / 动画
+ · 剔除粗糙细节，雕琢质感与韵律
+ · 四维验收：高级视觉 / 高级交互 /
+             流畅动画 / 高性能渲染
+ ▸ 红线：四维标准缺一，视为未完成
+```
+
+> **协作纪律**：凡派遣 subagent，必须在其指令中明确要求加载 `@ui-ux-pro-max` 与 `@taste-skill` 方可开工。
+> **核心精神**：倾尽设计灵感、持续思考、拒绝模板化机械输出。
