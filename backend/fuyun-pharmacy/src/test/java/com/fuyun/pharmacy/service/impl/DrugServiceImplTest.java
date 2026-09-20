@@ -115,6 +115,41 @@ class DrugServiceImplTest {
     }
 
     @Test
+    @DisplayName("建档守卫：拆分比例非数字串拒 PH-1016（400 显式拒，禁 NumberFormatException 直穿 500）")
+    void createRejectsNonNumericSplitRatioAsPh1016() {
+        DrugServiceImpl impl = newService();
+        when(drugMapper.selectCount(any())).thenReturn(0L);
+        // 同 request() 全量面仅 splitRatio 换非数字串（W-22⑦ 格式守卫靶点）
+        DrugSaveRequest badRatio = new DrugSaveRequest(
+                "D-IT-001",
+                "阿莫西林胶囊",
+                "阿莫仙",
+                "AMXLJN",
+                "胶囊剂",
+                "0.25g×24粒",
+                "华东医药",
+                List.of("ORAL", "IV"),
+                "盒",
+                "1:3",
+                false,
+                "UNRESTRICTED",
+                "NONE",
+                false,
+                "NORMAL",
+                "C0131230900157",
+                null,
+                "用于敏感菌所致感染",
+                "成人一日不超过4g",
+                "青霉素过敏者禁用",
+                "密封，置阴凉处保存");
+
+        assertThatThrownBy(() -> impl.create(badRatio))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.NUMERIC_FIELD_MALFORMED));
+        verify(drugMapper, never()).insert(any(Drug.class));
+    }
+
+    @Test
     @DisplayName("医保对照维护：映射字段落行且 changeType=MAPPING 语义在出参可见（对照后可结算）")
     void mapInsurancePersistsMapping() {
         DrugServiceImpl impl = newService();

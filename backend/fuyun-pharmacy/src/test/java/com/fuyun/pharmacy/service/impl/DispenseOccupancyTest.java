@@ -141,7 +141,7 @@ class DispenseOccupancyTest {
         when(masterDataCache.resolveSurvivor(700101L)).thenReturn(700101L);
         when(prescriptionMapper.selectList(any())).thenReturn(List.of(rxDISPENSED()));
         when(prescriptionItemMapper.selectList(any())).thenReturn(List.of(rxItem()));
-        when(dispenseMapper.selectOne(any())).thenReturn(dispenseIssued());
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(dispenseIssued()));
 
         List<OccupancyVO> rows = newService().occupancy(700101L, "O2026091800001", "C0131230900157");
 
@@ -174,7 +174,8 @@ class DispenseOccupancyTest {
         when(masterDataCache.resolveSurvivor(700101L)).thenReturn(700101L);
         when(prescriptionMapper.selectList(any())).thenReturn(List.of(rxDISPENSED()));
         when(prescriptionItemMapper.selectList(any())).thenReturn(List.of(rxItem()));
-        when(dispenseMapper.selectOne(any())).thenReturn(null);
+        // 批量面：发药单 in 批查无命中（空清单）→ 映射缺位，占用行仍出（单据与数量字段 null）
+        when(dispenseMapper.selectList(any())).thenReturn(List.of());
 
         List<OccupancyVO> rows = newService().occupancy(700101L, "O2026091800001", "C0131230900157");
 
@@ -193,7 +194,7 @@ class DispenseOccupancyTest {
         when(masterDataCache.resolveSurvivor(700101L)).thenReturn(700101L);
         when(prescriptionMapper.selectList(any())).thenReturn(List.of(rxDISPENSED()));
         when(prescriptionItemMapper.selectList(any())).thenReturn(List.of(rxItem()));
-        when(dispenseMapper.selectOne(any())).thenReturn(dispenseIssued());
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(dispenseIssued()));
 
         List<OccupancyVO> rows = newService().occupancy(700101L, null, null);
 

@@ -4,6 +4,7 @@ import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.dto.PickRequest;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispenseVO;
+import com.fuyun.pharmacy.vo.OccupancyVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
 import io.swagger.v3.oas.annotations.Operation;
@@ -93,7 +94,7 @@ public class DispenseController {
      */
     @Operation(summary = "执行占用查询")
     @GetMapping("/api/v1/pharmacy/medication-occupancy")
-    public java.util.List<com.fuyun.pharmacy.vo.OccupancyVO> occupancy(
+    public List<OccupancyVO> occupancy(
             @RequestParam long patientId,
             @RequestParam(required = false) String visitId,
             @RequestParam(required = false) String itemCode) {

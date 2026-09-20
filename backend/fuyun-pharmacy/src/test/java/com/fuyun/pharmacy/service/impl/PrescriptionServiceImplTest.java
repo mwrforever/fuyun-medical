@@ -9,8 +9,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.billing.api.PrescriptionFeePort;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -36,6 +39,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -68,6 +73,9 @@ class PrescriptionServiceImplTest {
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Prescription.class);
+        // MP 3.5.17 单测范式：list 批量装载谓词断言需手工注册明细实体表信息
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), PrescriptionItem.class);
     }
 
     private PrescriptionServiceImpl newService() {
@@ -112,9 +120,13 @@ class PrescriptionServiceImplTest {
             return 1;
         });
         when(prescriptionMapper.casApprove(100L)).thenReturn(1);
-        when(prescriptionItemMapper.insert(any(PrescriptionItem.class))).thenReturn(1);
 
-        PrescriptionVO vo = impl.create(request(VISIT, "OUTPATIENT", "ORAL"));
+        PrescriptionVO vo;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            vo = impl.create(request(VISIT, "OUTPATIENT", "ORAL"));
+            // A.4.3-16：明细一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐条 insert 通道已下线
+            mockedDb.verify(() -> Db.saveBatch(any()));
+        }
 
         assertThat(vo.rxNo())
                 .startsWith("R"
@@ -151,9 +163,11 @@ class PrescriptionServiceImplTest {
         });
         when(prescriptionMapper.casApprove(100L)).thenReturn(0);
 
-        assertThatThrownBy(() -> impl.create(request(VISIT, "OUTPATIENT", "ORAL")))
-                .isInstanceOf(IllegalStateException.class);
-        verify(prescriptionItemMapper, never()).insert(any(PrescriptionItem.class)); // 明细零落库（异常即整事务回滚语义）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.create(request(VISIT, "OUTPATIENT", "ORAL")))
+                    .isInstanceOf(IllegalStateException.class);
+            mockedDb.verify(() -> Db.saveBatch(any()), never()); // 明细零落库（异常即整事务回滚语义）
+        }
     }
 
     @Test
@@ -343,9 +357,11 @@ class PrescriptionServiceImplTest {
             return 1;
         });
         when(prescriptionMapper.casApprove(100L)).thenReturn(1);
-        when(prescriptionItemMapper.insert(any(PrescriptionItem.class))).thenReturn(1);
 
-        PrescriptionVO vo = impl.create(request(VISIT, "OUTPATIENT", "ORAL"));
+        PrescriptionVO vo;
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            vo = impl.create(request(VISIT, "OUTPATIENT", "ORAL"));
+        }
 
         assertThat(vo.rxCategory()).isEqualTo("NARCOTIC"); // maxNarcotic 升级分支：候选严格高于现值才替换
     }
@@ -403,5 +419,88 @@ class PrescriptionServiceImplTest {
         assertThat(result.content()).hasSize(1);
         assertThat(result.content().get(0).rxNo()).isEqualTo("R20260918000001");
         assertThat(result.content().get(0).items()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("开方守卫：数量非数字串拒 PH-1006（400 显式拒，禁 NumberFormatException 直穿 500）")
+    void createRejectsNonNumericQuantityAsPh1006() {
+        PrescriptionServiceImpl impl = newService();
+        // 数量守卫在读库前置的请求面校验段：不打药品桩（strict stubs 禁无用打桩）
+        PrescriptionCreateRequest badQty = new PrescriptionCreateRequest(
+                700101L,
+                VISIT,
+                "OUTPATIENT",
+                "NEIKE",
+                List.of("J06.900"),
+                false,
+                List.of(new RxItemRequest(11L, "2盒", "盒", "0.5g", "ORAL", "TID", 3, "饭后服")));
+
+        assertThatThrownBy(() -> impl.create(badQty))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.PRESCRIPTION_LINE_INVALID));
+        verify(prescriptionMapper, never()).insert(any(Prescription.class));
+    }
+
+    @Test
+    @DisplayName("list 批量装载与逐行装载等价：一次 in 批查明细按处方分组（组内相对序与逐行单查一致）")
+    void listLoadsItemsInOneBatchedQueryWithPerPrescriptionOrderPreserved() {
+        PrescriptionServiceImpl impl = newService();
+        Prescription rx1 = new Prescription();
+        rx1.setId(100L);
+        rx1.setRxNo("R20260918000001");
+        rx1.setStatus("APPROVED");
+        Prescription rx2 = new Prescription();
+        rx2.setId(101L);
+        rx2.setRxNo("R20260918000002");
+        rx2.setStatus("APPROVED");
+        Page<Prescription> page = new Page<>(1, 20);
+        page.setRecords(List.of(rx1, rx2));
+        page.setTotal(2);
+        when(prescriptionMapper.selectPage(any(), any())).thenReturn(page);
+        // 批查返回按 prescription_id+id 升序（与实现约定一致）：100 两行、101 一行
+        when(prescriptionItemMapper.selectList(any()))
+                .thenReturn(List.of(rxItem(1L, 100L), rxItem(2L, 100L), rxItem(3L, 101L)));
+
+        PageResult<PrescriptionVO> result = impl.list(null, 700101L, null, null, 0, 20);
+
+        assertThat(result.total()).isEqualTo(2);
+        // 逐行装载同构：每处方仅见自己名下明细，组内相对序保持（原单查 orderByAsc(id) 语义）
+        assertThat(result.content().get(0).items()).hasSize(2);
+        assertThat(result.content().get(0).items().get(0).id()).isEqualTo(1L);
+        assertThat(result.content().get(0).items().get(1).id()).isEqualTo(2L);
+        assertThat(result.content().get(1).items()).hasSize(1);
+        assertThat(result.content().get(1).items().get(0).id()).isEqualTo(3L);
+        // N+1 消除断言：明细仅一次批查，谓词落 prescription_id IN（本页处方 id 集）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<PrescriptionItem>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(prescriptionItemMapper).selectList(captor.capture());
+        LambdaQueryWrapper<PrescriptionItem> wrapper = (LambdaQueryWrapper<PrescriptionItem>) captor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("IN");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(100L, 101L);
+    }
+
+    @Test
+    @DisplayName("list 空页短路：无记录时不发起明细批查（空 id 集不出网）")
+    void listShortCircuitsItemBatchLoadWhenPageEmpty() {
+        PrescriptionServiceImpl impl = newService();
+        Page<Prescription> page = new Page<>(1, 20);
+        page.setRecords(List.of());
+        page.setTotal(0);
+        when(prescriptionMapper.selectPage(any(), any())).thenReturn(page);
+
+        PageResult<PrescriptionVO> result = impl.list(null, null, null, null, 0, 20);
+
+        assertThat(result.total()).isZero();
+        assertThat(result.content()).isEmpty();
+        verify(prescriptionItemMapper, never()).selectList(any());
+    }
+
+    /** 造处方明细行（id 与所属处方 id 指定，list 分组序断言用） */
+    private PrescriptionItem rxItem(long id, long prescriptionId) {
+        PrescriptionItem item = new PrescriptionItem();
+        item.setId(id);
+        item.setPrescriptionId(prescriptionId);
+        item.setItemCode("C0131230900157");
+        return item;
     }
 }

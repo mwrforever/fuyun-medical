@@ -20,7 +20,7 @@ public enum PharmacyErrorCode implements ErrorCode {
     PRESCRIPTION_NOT_FOUND("PH-1004"),
     /** 处方状态不允许该操作（409；状态机违例：非待审态作废、终态再迁移等） */
     PRESCRIPTION_STATE_NOT_ALLOWED("PH-1005"),
-    /** 处方明细非法（400；数量≤0/药品未对照收费项目/途径集外等开方入参违例） */
+    /** 处方明细非法（400；数量≤0/数量非数字串/药品未对照收费项目/途径集外等开方入参违例） */
     PRESCRIPTION_LINE_INVALID("PH-1006"),
     /** 就诊号格式非法（400；CF-3 定长 14 位校验失败，复用 patient VisitIdValidator 语义） */
     VISIT_ID_MALFORMED("PH-1007"),
@@ -39,7 +39,12 @@ public enum PharmacyErrorCode implements ErrorCode {
     /** 已缴费处方拒作废（409；PENDING_DISPENSE 及之后须走退药/退费链，响应提示语引导） */
     RX_CANCEL_BLOCKED_AFTER_CHARGE("PH-1014"),
     /** 给药途径不在药品途径集（400；route_code ∉ drug.route_codes） */
-    ROUTE_NOT_ALLOWED("PH-1015");
+    ROUTE_NOT_ALLOWED("PH-1015"),
+    /**
+     * 数值字段格式非法（400；退药数量/药品拆分比例等 DECIMAL string 入参非数字串——W-22⑦ 引入，
+     * 禁 NumberFormatException 直穿 500 出契约外形态，SettlementServiceImpl 解析守卫同口径）
+     */
+    NUMERIC_FIELD_MALFORMED("PH-1016");
 
     /** 码值（如 PH-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;
