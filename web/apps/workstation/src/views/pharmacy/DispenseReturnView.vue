@@ -35,6 +35,8 @@ const dispense = ref<DispenseVO | null>(null);
 /** 退药行编辑模型（检索回显时重建，防上一单残留） */
 const rows = reactive<ReturnLineRow[]>([]);
 const loading = ref(false);
+/** 提交在途标志（防双击二次出网，根除重复退药受理） */
+const submitting = ref(false);
 
 /** 受理模式：ISSUED_RETURN 发药后实物退 / DISPENSING_CANCEL 发药中明细退场 */
 const mode = ref<'ISSUED_RETURN' | 'DISPENSING_CANCEL'>('ISSUED_RETURN');
@@ -72,8 +74,14 @@ async function handleSearch(): Promise<void> {
   }
 }
 
-/** 提交退药受理：退药数逐行必填；实物退逐码非空前置（无码不结，不出网）。 */
+/**
+ * 提交退药受理：退药数逐行必填；实物退逐码非空前置（无码不结，不出网）。
+ * 入口在途早退守卫：重渲染前到达的第二击直接拦截，根除退药受理重复出网。
+ */
 async function submitReturn(): Promise<void> {
+  if (submitting.value) {
+    return;
+  }
   const sheet = dispense.value;
   if (!sheet) {
     void ElMessage.warning('请先检索发药单');
@@ -88,6 +96,8 @@ async function submitReturn(): Promise<void> {
     void ElMessage.warning('实物退须逐盒录入追溯码（无码不结）');
     return;
   }
+  // 置位在途（finally 必复位）：锁定提交出网窗口，窗口内重复触发零出网
+  submitting.value = true;
   try {
     await createDispenseReturn({
       dispenseNo: sheet.dispenseNo ?? '',
@@ -101,6 +111,8 @@ async function submitReturn(): Promise<void> {
     void ElMessage.success('退药受理完成');
   } catch {
     // 失败弹错归响应拦截器；录入驻留供修正重试
+  } finally {
+    submitting.value = false;
   }
 }
 </script>
@@ -153,7 +165,14 @@ async function submitReturn(): Promise<void> {
           </el-radio-group>
         </div>
         <div class="dispense-return-actions">
-          <el-button type="primary" @click="submitReturn">提交退药</el-button>
+          <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，根除双击重复出网 -->
+          <el-button
+            type="primary"
+            :disabled="submitting"
+            :loading="submitting"
+            @click="submitReturn"
+            >提交退药</el-button
+          >
         </div>
       </template>
     </el-card>

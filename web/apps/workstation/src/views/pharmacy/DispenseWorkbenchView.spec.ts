@@ -1,8 +1,9 @@
 // 药房发药工作台单测（FU-M06-04 前端面）：追溯码为空点配药被前置拦截不出网（「无码不结」
-// 前端面）、配药→核对→发药签名依次出网且都以回传单号调用（单据锚点由后端回传，页面不自造）。
+// 前端面）、配药→核对→发药签名依次出网且都以回传单号调用（单据锚点由后端回传，页面不自造）；
+// 核对在途防抖（W-22⑥）：慢响应窗口内按钮禁用且二次点击零出网，结束后复位可再点。
 // api mock 承载，不打真实网络；双签同人拒绝由后端 PH-1011 硬守卫，不在前端断言。
 import { flushPromises, mount } from '@vue/test-utils';
-import type { VueWrapper } from '@vue/test-utils';
+import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -51,6 +52,15 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
     throw new Error(`未找到按钮：${text}`);
   }
   await button.trigger('click');
+}
+
+/** 按按钮文案定位 el-button 包装（在途断言用；非点击入口） */
+function findButton(wrapper: VueWrapper, text: string): DOMWrapper<Element> {
+  const button = wrapper.findAll('button').find((b) => b.text() === text);
+  if (!button) {
+    throw new Error(`未找到按钮：${text}`);
+  }
+  return button;
 }
 
 /**
@@ -198,6 +208,45 @@ describe('发药工作台', () => {
     expect(vi.mocked(verifyDispense).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(issueDispense).mock.invocationCallOrder[0],
     );
+    wrapper.unmount();
+  });
+
+  it('核对请求在途：按钮禁用且二次点击零出网，结束后复位可再点（W-22⑥ 防抖）', async () => {
+    mockQueueWithPendingRx();
+    // 回显固定 PICKING 单（核对后重刷仍回同态），复位断言不被业务态翻转干扰
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock('PICKING')]);
+    // 慢响应：核对挂起至用例放行，稳定复现「请求在途」窗口（双击的第二个事件必落在窗口内）
+    let releaseVerify: () => void = () => {};
+    vi.mocked(verifyDispense).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseVerify = resolve;
+        }),
+    );
+    const wrapper = mount(DispenseWorkbenchView, { global: { plugins: [pinia] } });
+    await flushPromises();
+
+    // 选队列行 → 回显发药单
+    await wrapper.find('.el-table__row').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('D1');
+
+    await clickButton(wrapper, '核对');
+    await flushPromises();
+
+    // 在途态：按钮原生 disabled 置位（:disabled 组合业务态与在途标志）
+    expect(findButton(wrapper, '核对').attributes('disabled')).toBeDefined();
+    expect(vi.mocked(verifyDispense)).toHaveBeenCalledTimes(1);
+
+    // 在途窗口内二次点击：handler 入口守卫 + 组件 loading 双保险，零第二次出网
+    await clickButton(wrapper, '核对');
+    await flushPromises();
+    expect(vi.mocked(verifyDispense)).toHaveBeenCalledTimes(1);
+
+    // 在途结束后恢复可点（防抖标记须经 finally 复位，禁把按钮永久锁死）
+    releaseVerify();
+    await flushPromises();
+    expect(findButton(wrapper, '核对').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
   });
 });
