@@ -57,6 +57,7 @@
 - **提交规范**：conventional commits、中文 subject、body 每行 ≤100 字符（提交前 python 逐行 len 自查；本地无 commit-msg 钩子）；type 仅 build/chore/ci/docs/feat/fix/perf/refactor/revert/style/test（无 config）。
 - **前端门禁（web C.4/C.5）**：`cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build` 五连全绿；api.d.ts 重生成 diff 为空（新鲜度本地核对，CI 通道登记 PR 描述）；组件 `<script setup lang="ts">` 零例外、禁 any；api.d.ts 生成物唯一来源（A.3-3，禁手写契约类型）；**新页面自带合规形态（W-22⑥/⑦ 教训）**：动作按钮 loading+在途守卫+零出网用例、入参显式格式校验 4xx 提示、禁裸 parse。
 - **前端三应用门禁口径**：workstation 增三页（挂号收费联动/分诊台/门诊医生站）；portal 免登录预约页（裁决 13——portal http 客户端/auth 基座从零建，抄 workstation api/http.ts 形态，无登录页、匿名直连 `/api/v1/outpatient/portal/**` 白名单通道）；bigscreen 候诊叫号页复用 useIotStomp 连接范式（buildBrokerUrl 换 `/ws/outpatient`，订阅 `/topic/outpatient/queue/{deptCode}`）；portal/bigscreen 无权限路由语义（公开页 meta `{ public: true }`）。
+- **UI 设计系统红线**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` 为本 PR 前端视觉唯一权威——token 系统（`--fuy-*` 命名空间，workstation 侧 `:root:root` 双写覆盖 `--el-*` 主色梯度）、五页布局骨架（§3/§8）、组件定制样式（§4：状态标签语义唯一映射/`.fuy-dense` 高密度工具类/表单与确认弹窗/空态骨架）、交互三态（§5 pending/success/fail 统一模式）、动画编排（§6：**动画属性仅 transform/opacity 合成层属性**，`prefers-reduced-motion` 全局兜底，禁引入动画库）；前端落码任务（Task 13 各步与 Task 16）逐项对照设计文档对应节，交付时附「落地自查清单」（§7.6）核对结果；token 样式文件纯新增渐进采用（既有 patient/billing/pharmacy 六页零触碰——设计文档附「兼容声明」裁决）。
 - **WS 自建依赖约束（裁决 12）**：outpatient 自建 `OutpatientWebSocketConfig`（@EnableWebSocketMessageBroker 与 iot 侧重复导入为 Spring 去重 no-op）+ `OutpatientConnectAuthInterceptor`（镜像 `fuyun-iot/internal/StompConnectAuthInterceptor.java` 语义：CONNECT 帧 Bearer 令牌经 `com.fuyun.system.api.TokenVerifier` 校验、拒绝抛 MessagingException、日志不含令牌——iot 侧类在 internal 包禁外引，镜像复制为唯一合法形态，偏差⑥）；broker 复用 `/topic` 前缀（iot 侧已 enableSimpleBroker("/topic")，同值幂等）；通道=`/topic/outpatient/queue/{deptCode}` 与 `/topic/outpatient/doctor/{doctorId}`（Spec :179）；REST 快照 `GET /queues/{queueId}/tickets` 双通道（Spec :153）；推送端到端 ≤2s（Spec :198）。
 - **portal 匿名通道（裁决 13）**：`SystemWebConfig.AUTH_WHITELIST`（:72-77 实测常量）追加 `"/api/v1/outpatient/portal/**"` 单条目——portal 域端点免 401、服务端经介质解析（就诊卡号/证件号 → `patient/api/PatientContextResolver`+标识解析）定 patientId；portal 患者账号体系随 M18/P6 完整化（P1 演示口径注记）；portal 域端点限流/风控随 M18 注记。
 - **真栈环境**：`docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d`（deploy/.env 在位不入库）；后端镜像重建 `docker build -f backend/Dockerfile -t fuyun/backend:dev backend`；backend 不发布宿主端口（容器内 curl 探测）；**outpatient 首批合入后 dev 卷须先重置再起栈**（Task 1 CHANGELOG 登记、Task 13 执行——前移至 api-docs 导出之前，Task 15 真栈复用该重置后卷）。
@@ -78,6 +79,7 @@
 | P-7 | **api.d.ts 重生成流程**（PR-4 Task 12 Step 1 同款）：存量卷重置（down -v+up，Task 1 登记的进入条件）→ mvn package → 镜像重建 → compose 重建 backend → 容器内导出 api-docs → `pnpm gen:api` → diff 核对 | workstation/portal 五连门禁前置 | **Task 13** |
 | P-8 | **门户匿名通道**（裁决 13）：SystemWebConfig.AUTH_WHITELIST 追加 `/api/v1/outpatient/portal/**` 单条目 + portal 域三端点（可约号源查询/预约/退号） | 白名单 + PortalController | **Task 5** |
 | P-9 | **D-16 三态门禁**（裁决 10）：patient/api 新 `CareRelationQuery` SPI（无实现=维持角色豁免单门禁 warn，OngoingVisitQuery 冻结语义同款）+ PrivacyServiceImpl unmask 第二道校验 + M03 实现（在途就诊操作者匹配）+ IT 断言 | SPI + 两端接线 | **Task 2** |
+| P-10 | **UI 设计系统增补**（用户 2026-09-20 增补指令）：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`（ui-ux-pro-max 产出并入库）为 PR-5 前端视觉唯一权威——token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单 | Task 13 Step 0 落 token 文件与 `:root:root` 主题覆盖、Step 2/3 逐页对照 §8.x 页面级设计说明与 §7.6 自查清单；Task 16 taste-skill 全面精修 | **Task 13/16** |
 
 ## 文件结构（本计划全量改动面）
 
@@ -106,8 +108,11 @@
 | 修改 | system `config/SystemWebConfig.java:72-77` | AUTH_WHITELIST 追加 portal 匿名条目（Task 5） |
 | 创建 | `backend/fuyun-app/src/test/java/com/fuyun/app/OutpatientFullFlowIT.java`、`OutpatientRefundRollbackIT.java`、`OutpatientPoolConcurrencyIT.java` | 三验收锚点 IT（Task 12） |
 | 创建/修改 | `web/apps/workstation/src/api/outpatient.ts`、`views/outpatient/`（3 页+specs）、`router/index.ts`、`views/layout/components/AppSidebar.vue`、`web/packages/shared/src/api.d.ts` | workstation 三页（Task 13） |
-| 创建/修改 | `web/apps/portal/src/api/http.ts`、`api/outpatient.ts`、`views/appointment/AppointmentView.vue`（+spec）、`router/index.ts` | portal 预约页（Task 14） |
-| 创建/修改 | `web/apps/bigscreen/src/api/outpatientQueue.ts`、`composables/useQueueStomp.ts`（+spec）、`views/queue/QueueBoardView.vue`（+spec）、`router/index.ts` | bigscreen 叫号页（Task 14） |
+| 创建/修改 | `web/apps/portal/src/api/http.ts`、`api/outpatient.ts`、`views/appointment/AppointmentView.vue`（+spec）、`router/index.ts` | portal 预约页（Task 13 Step 3） |
+| 创建/修改 | `web/apps/bigscreen/src/api/outpatientQueue.ts`、`composables/useQueueStomp.ts`（+spec）、`views/queue/QueueBoardView.vue`（+spec）、`router/index.ts` | bigscreen 叫号页（Task 13 Step 3） |
+| 伴随规范（已入库） | `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` | PR-5 前端视觉唯一权威：token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单（Task 13 落码与 Task 16 打磨逐节对照） |
+| 创建 | `web/apps/workstation/src/styles/`（tokens.css / element-plus.css / motion.css / index.css）、`web/apps/portal/src/styles/` 与 `web/apps/bigscreen/src/styles/`（各 tokens.css / motion.css / index.css）+ 三 app `main.ts` 各一行 import | Task 13 Step 0 设计 token 落位与 `:root:root` 主题覆盖（既有六页零触碰，纯新增渐进采用——设计文档 §2.1/兼容声明） |
+| 修改 | Task 16 打磨面 = 五页视图及其 specs/styles（workstation 三页 + portal 预约页 + bigscreen 叫号页） | UI 深度打磨（taste-skill）：全量走查/组件精修/动效质感/性能复检/specs 回归，终核报告归档 SDD 台账 |
 | 修改 | `docs/specs/modules/03-outpatient.md`、`docs/specs/modules/06-pharmacy.md` §7、`CHANGELOG.md` | 收口注记与变更登记（Task 15） |
 
 ---
@@ -1691,8 +1696,11 @@ git commit -m "test(outpatient): 三验收锚点 IT——全链直线段/退号�
 - Create/Modify: `web/apps/workstation/src/api/outpatient.ts`、`views/outpatient/RegistrationChargeView.vue`（挂号收费联动页）+`.spec.ts`、`views/outpatient/TriageBoardView.vue`（分诊台）+`.spec.ts`、`views/outpatient/DoctorStationView.vue`（门诊医生站）+`.spec.ts`、`router/index.ts`（三路由）、`views/layout/components/AppSidebar.vue`（「门诊服务」菜单组三项）
 - Create/Modify: `web/apps/portal/src/api/http.ts`、`api/outpatient.ts`、`views/appointment/AppointmentView.vue`+`.spec.ts`、`router/index.ts`
 - Create/Modify: `web/apps/bigscreen/src/composables/useQueueStomp.ts`+`.spec.ts`、`views/queue/QueueBoardView.vue`+`.spec.ts`、`router/index.ts`
+- Create: `web/apps/workstation/src/styles/`（tokens.css / element-plus.css / motion.css / index.css）、`web/apps/portal/src/styles/`、`web/apps/bigscreen/src/styles/`（各 tokens.css / motion.css / index.css）——设计文档 §2.1 文件落点（Step 0）
+- Modify: 三 app `main.ts`（各增一行 `import './styles/index.css'`，置于 `createApp` 之前——设计文档 §7.4）
 
 **Interfaces:**
+- **落码对照权威**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`——本任务全部视觉决策唯一来源：token/布局/组件/交互/动画逐节照抄，Step 2/3 按 §8.1–8.5 页面级设计说明落布局骨架与动效编排，交付附 §7.6 落地自查清单核对表。
 - `api/outpatient.ts`（workstation）：类型别名全走生成物 `components['schemas']`（pharmacy.ts :18-30 形态）；函数面=排班模板 CRUD/放号生成/停诊恢复/余量查询/预约/取号/退号/改期/报到/调级/叫号/过号/重呼/队列快照/接诊/诊毕/开单/开方/申请单查询——逐函数 `http.<verb>` 薄封装；金额与数量 string 零运算（A.3-6）。
 - 挂号收费联动页（RegistrationChargeView）：选患者（复用 patient search 组件）→ 选排班/号别（number-pools/available）→ 挂号（WINDOW 渠道，TAKEN 直出 visit_id）→ 挂号费收费（复用 billing.ts manualCharge/preview/settle——资金面全走既有 billing api，零金额运算）→ visit 费用与状态展示；动作按钮 loading+在途守卫+零出网用例（W-22⑥ 合规形态自带）。
 - 分诊台页（TriageBoardView）：队列快照表（脱敏姓名/票号/优先级/状态，REST 轮询 5s）+报到（visitId 输入+显式格式校验）+调级/转队列+叫号/过号/重呼按钮组。
@@ -1700,6 +1708,14 @@ git commit -m "test(outpatient): 三验收锚点 IT——全链直线段/退号�
 - portal（裁决 13 免登录）：`http.ts` 从零建——抄 workstation 形态**去 auth store 依赖**（无 token 注入、无 401 回调注册；保留 X-Trace-Id 注入与 ProblemDetail 错误出口，401 恒不触发于匿名通道）；`AppointmentView`：就诊卡号/证件号二选一输入（显式格式校验：证件 18 位规则/卡号非空，4xx 提示）→ portal 号源查询 → 提交预约 → 出票展示（apptNo+支付时限倒计时文案）。
 - bigscreen：`useQueueStomp` 复用 useIotStomp 连接范式（buildBrokerUrl 改 `/ws/outpatient`、connectHeaders Bearer）；大屏为受控演示面，令牌经构建期 `VITE_BIGSCREEN_TOKEN` 注入（默认空=页面显示「未配置大屏令牌」横幅且零出网——订阅级鉴权/匿名 STOMP 通道随 P2 演进注记）；`QueueBoardView`：输入 deptCode → REST 快照首屏 → 订阅 `/topic/outpatient/queue/{deptCode}` 叫号列表（票号/诊室/状态）≤2s 刷新（Spec :198）。
 - 路由/菜单：workstation 三路由 meta `{ permission: 'outpatient:registration:register' / 'outpatient:triage:manage' / 'outpatient:doctor:consult' }` 语义登记（403 接线 P-later 注记，patient 三页先例）；portal 路由 meta `{ public: true }`。
+
+- [ ] **Step 0: 设计 token 文件与主题覆盖落位（前置步，按设计文档 §2/§7）**
+
+按 `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` §2.1 文件落点新建三 app token 样式（**既有六页零触碰，纯新增渐进采用**——设计文档附「兼容声明」裁决）：
+
+- `web/apps/workstation/src/styles/`：`tokens.css`（primitive 品牌色阶 §2.2.1 + semantic 语义色 §2.2.2）、`element-plus.css`（**`:root:root` 双写覆盖块**：`--el-color-primary` 梯度七值 §2.2.4，无论按需样式注入顺序恒定生效；另承载 `.fuy-dense` 高密度工具类 §4.2 与状态标签 AA 修正辅助类 §4.3）、`motion.css`（动效 token+keyframes+TransitionGroup 类+`prefers-reduced-motion` 全局兜底 §2.6/§6.9）、`index.css`（按 tokens → element-plus → motion 顺序 @import）。
+- `web/apps/portal/src/styles/` 与 `web/apps/bigscreen/src/styles/`：各 `tokens.css`（portal 亮色暖中性语义 §2.2.2 + 字号 +2px 基线 §2.3；bigscreen 暗色语义 §2.2.3 + `:root { font-size: clamp(12px, 0.8333vw, 34px); }` rem 根字号 §2.3）+ `motion.css` + `index.css`。
+- 三 app `main.ts` 各增一行 `import './styles/index.css'`（置于 `createApp` 之前，§7.4）；禁止改 EP 主题 SCSS 编译（B.3-6 先 CSS 变量条款）、禁止引入 tailwind/unocss（零新增依赖红线）。
 
 - [ ] **Step 1: api.d.ts 重生成（P-7，先实测）**
 
@@ -1722,7 +1738,12 @@ Expected: 迁移核验 7 行 success；diff 仅新增 outpatient 域 schema；**
 
 - [ ] **Step 2: workstation 三页 + api 层落码**（`<script setup lang="ts">` 零例外、零 any、生成物类型唯一来源；每页 spec 至少含渲染断言/动作在途守卫断言/零出网断言三件）
 
+  - 按设计文档 §8.1/§8.2/§8.3 页面级设计说明落布局骨架与动效编排（布局树/交互三态/动画参数照抄设计文档对应节，禁自行发挥）：RegistrationChargeView=§3.2 结构树（`.fuy-page` 外框 + 上区 16/8 分栏 + 步骤卡 22px 圆形序标 + 号源卡 min-height 88px）+ §8.1 动效编排表（进场 stagger index 0-3 §6.1/号源骨架→内容 200ms §6.7/点选号源 120ms 色值过渡/缴费完成对勾 240ms `emphasis`）；TriageBoardView=操作条 56px 常驻（轮询状态点三色）+ 17/7 分栏高密度表格（列宽照 §3.2）+ §8.2 动效编排表（轮询 merge 仅真实增删触发 fuy-flip §6.2/状态 tag §6.5 120ms out-in/调级行 FLIP 重排 move 320ms standard）；DoctorStationView=6/12/6 三栏（候诊列表行高 56px + current-row 左缘 3px 品牌色条）+ §8.3 动效编排表（开单表单 `v-show`+scaleY 200ms §6.6/诊毕后中列 fade-out 120ms）；交互三态按 §5.1 统一模式（loading ref 同步置位 + ElMessage + 拦截器统一弹错），确认弹窗带回显摘要按 §5.2 风险分档。
+
 - [ ] **Step 3: portal + bigscreen 落码**（portal http.ts spec：请求头无 Authorization 断言；useQueueStomp spec：未配置令牌零连接断言+brokerURL=`ws://…/ws/outpatient` 形态断言）
+
+  - portal 按设计文档 §8.4 落三步纵流（§3.3：步骤指示条 3 圆点/未完成步 60% 透明度+「先完成上一步」副文案可预览不可操作/完成自动 `scrollIntoView`，reduced-motion 时 `auto` §5.4）+ 原生控件基线（§4.4 portal 段：控件高 48px/圆角 12px/字号 16px/聚焦品牌描边+焦点环/错误文案贴字段 + `aria-describedby`）+ §6.8 出票卡过冲编排（320ms `emphasis` + 顶部色条 scaleX 480ms 延迟 160ms）+ OP-1003/1006/1007 文案映射常量入 `api/outpatient.ts` 导出（§5.4，禁组件内散写）。
+  - bigscreen 按设计文档 §8.5 落暗色三段 grid（§3.4：rows 96px/1fr/1.2fr + 当前叫号卡 bg-elevated+glow+1px 品牌描边）+ 当前叫号 10rem 票号三段动画编排（§6.3：入场 320ms `enter`/身份脉冲 960ms 伪元素 opacity 两波/票号 scale 320ms `standard`，`will-change` 仅此卡与 FLIP 容器）+ rem 根字号缩放（§2.3：页面字号全 rem，1080p/4K 零媒体查询）；候诊榜前 8 条两列 grid + 斑马纹（偶数行 `#0d2132`）。
 
 - [ ] **Step 4: 前端五连门禁**
 
@@ -1730,7 +1751,7 @@ Expected: 迁移核验 7 行 success；diff 仅新增 outpatient 域 schema；**
 cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build
 ```
 
-Expected: 五连全绿。
+Expected: 五连全绿；对照设计文档 §7.6 落地自查清单十项逐项核对，核对表附本任务报告并归档 SDD 台账（Task 16 打磨终核复用同一清单）。
 
 - [ ] **Step 5: 提交**
 
@@ -1799,8 +1820,45 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 
 - [ ] **Step 7: PR 与质量门**
 
-1. PR body 按 `.superpowers/` 既有 body 模板要素（验收锚点三 IT 与真机截图清单；前置项收口对照 P-0~P-9；CF-5 双向评审声明——id 23/25/31 载荷冻结；真栈探针记录含 V200–V204/V704/V705 success、event_registry=40；api.d.ts 新鲜度核对；质量门自证：全量门禁输出摘要+三应用浏览器证据路径）；`gh pr create --base dev`。
+1. PR body 按 `.superpowers/` 既有 body 模板要素（验收锚点三 IT 与真机截图清单；前置项收口对照 P-0~P-10；CF-5 双向评审声明——id 23/25/31 载荷冻结；真栈探针记录含 V200–V204/V704/V705 success、event_registry=40；api.d.ts 新鲜度核对；质量门自证：全量门禁输出摘要+三应用浏览器证据路径）；`gh pr create --base dev`。
 2. `/code-review` 插件审核 findings 清零后方可合并（PR-2 交接 §3，不可跳过）；main/dev 分支保护 required checks 对齐。
+
+---
+
+### Task 16: UI 深度打磨（taste-skill 全面精修，输入=Task 13 落地成果；执行序 14→16→15）
+
+> **强制技能加载（开工第一步，未加载不得开始）**：用 Skill 工具依次加载 `taste-skill:design-taste-frontend`、`taste-skill:high-end-visual-design`、`taste-skill:minimalist-ui`、`taste-skill:redesign-existing-projects`（按需再加 `taste-skill:brandkit`）——与 Task 13 的 ui-ux-pro-max 族同款硬性要求（待批项 10）。
+
+**Files:**
+- Modify: `web/apps/workstation/src/views/outpatient/`（RegistrationChargeView/TriageBoardView/DoctorStationView 三页及其 `.spec.ts`）
+- Modify: `web/apps/portal/src/views/appointment/`（AppointmentView 及 `.spec.ts`）
+- Modify: `web/apps/bigscreen/src/views/queue/`（QueueBoardView 及 `.spec.ts`）
+- Modify: 各页 styles 定制面（workstation `styles/element-plus.css`/`motion.css` 等，视走查结论微调；设计文档仍为唯一权威，微调不得偏离其 token 与参数，确需偏离先登记 TASK.md 待决策）
+
+**Interfaces:**
+- Consumes: Task 13 落地成果（五页视图 + 三 app token 样式文件）+ 设计文档全量（`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`：token §2/布局 §3/组件 §4/交互 §5/动画 §6/性能红线 §7/五页设计说明 §8）。
+- Produces: 打磨后 UI 面 + 落地自查清单终核报告（§7.6 十项核对表归档 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/` 台账）。
+
+- [ ] **Step 1: 全量走查**——对照设计文档逐页走查已落地五页：视觉层级/间距节奏（§2.4 间距系统）/对齐/色彩语义一致性（§2.2 语义色 + §4.3 状态标签唯一映射表，无自造色）；偏差逐条登记并附设计文档节号。
+- [ ] **Step 2: 组件级精修**——状态标签（§4.3 映射与 `.fuy-tag-aa`/`.fuy-tag-strike` 辅助类）/表格密度（`.fuy-dense` §4.2 + 数字列 `.fuy-num`）/表单分区（§4.4 label-width 与确认弹窗 420px 回显摘要）/空态与骨架（§4.4 业务口径 description + §6.7 骨架→内容 min-height 锁定），每处改动引用设计文档节号。
+- [ ] **Step 3: 交互动效质感打磨**——过渡曲线统一性（§2.6 选用规则：进场 `enter`/离场 `exit`/位移 `standard`，`emphasis` 全站仅 portal 出票卡与 workstation 挂号成功两处）/stagger 时序（§6.1 步长 40ms ≤6 档）/加载态编排（§6.7 200ms opacity 单属性）/焦点可见性（§5.3 `:focus-visible` 全站强制 + portal 焦点管理）。
+- [ ] **Step 4: 性能复检**——动画属性白名单核对（仅 transform/opacity，§6 通用铁律 + §7.1 60fps 预算；`will-change` 仅 bigscreen 叫号卡与 FLIP 容器两处）/长列表渲染（§7.2：分诊台 ≤200 行高密度+分页、医生站直渲染、bigscreen 前 8 条 slice）/bigscreen 值守内存面（§7.5：单时钟定时器 onUnmounted 清理、订阅句柄退订、常驻动画仅连接呼吸点）。
+- [ ] **Step 5: 既有 specs 断言回归**——五页 spec 与 useQueueStomp/portal http spec 全绿；视觉改动不得破坏既有断言（断言绑定业务结果非实现细节，确因视觉语义需修正的用例逐条附设计文档节号说明，禁删合规断言凑绿）。
+- [ ] **Step 6: 终核与打磨提交**
+
+```bash
+cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build
+```
+
+Expected: 五连全绿；设计文档 §7.6 落地自查清单十项终核逐项通过，核对表归档 SDD 台账。提交：
+
+```bash
+git add web
+git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设计文档逐节打磨）
+
+- 全量走查/组件级精修/动效质感/性能复检（设计文档 §8.1–8.5 与 §6/§7 对照）
+- 落地自查清单终核通过（核对表归档 SDD 台账）"
+```
 
 ---
 
@@ -1840,9 +1898,11 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 
 **4. recon 14 条裁决落实核对**：范围界定（裁决 0→文档头 not-in-scope+演示终点声明）✓；号段（1→P-1/Task 1，practice_grant 改道 V704 见偏差②）✓；jacoco（2→Task 1）✓；id 23/25/31 冻结（3→P-3/Task 3，双形态见偏差①）✓；放行链回切（4→Task 11，orderId→rxNos 映射取「载荷携带」案）✓；confirmRefundTerminal 收口（5→Task 10 端口+Task 11 替换）✓；refund 映射 M03 自查（6→Task 10）✓；退号退费统一免审档（7→Task 6）✓；凭证载体 settlementNo（8→Task 11 verify）✓；practice/check 真实化（9→Task 2/9）✓；D-16（10→Task 2/8）✓；visit_id Redis 键（11→Task 5）✓；WS 自建（12→Task 7）✓；portal 免登录（13→Task 5 白名单+Task 13）✓；W-22 前置（14→P-0/Task 1）✓。
 
+**5. UI 设计系统增补轮（2026-09-20 用户增补指令）**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`（755 行，ui-ux-pro-max 产出）入库为本 PR 前端视觉唯一权威——本轮增补：Global Constraints 增「UI 设计系统红线」条、前置项增 P-10、文件结构表增三行（设计文档本身/workstation token 样式文件/Task 16 打磨面）、Task 13 增 Step 0（token 落位）与 Step 2/3 页面级引用行及 §7.6 自查清单验证、新增 Task 16（taste-skill 打磨，Handoff 执行序改 14→16→15）。Spec 覆盖对照增一行：**前端视觉规范=设计文档**——token 系统（§2）/布局骨架（§3）/组件定制样式（§4）/交互三态（§5）/动画编排（§6）/性能红线（§7）/五页设计说明（§8.1–8.5）/落地自查清单（§7.6），Task 13 落码与 Task 16 打磨全量对照 ✓。类型一致性增核：计划引用行中的 token 命名（`--fuy-*` 命名空间、`:root:root` 双写覆盖 `--el-*`）与动画参数（120/200/320/960ms、`enter`/`exit`/`standard`/`emphasis` 四曲线、stagger 40ms）与设计文档 §2.2/§2.6 同源逐字核对 ✓；五页↔设计文档 §8.1–8.5 一一对应、Task 16 打磨步 ①–⑥ 与 §7.6 清单十项闭环 ✓；文件结构表 portal/bigscreen 两行残留旧「Task 14」引用已随本轮订正为 Task 13 Step 3（撰写期遗留笔误，非本轮新增）。
+
 ## Execution Handoff
 
-计划已保存：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（15 任务；前置项 P-0~P-9 全映射；任务依赖序 1→2→3→4→5→6→7→8→9→10→11→12→13→14→15，其中 2/4/5/7/8/10/11 涉及跨模块联改面均单任务内闭环、提交全绿）。
+计划已保存：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（**16 任务**；前置项 P-0~P-10 全映射；任务依赖序 1→2→3→4→5→6→7→8→9→10→11→12→13→14→**16（UI 深度打磨，taste-skill）→15（收口）**——Task 16 以 Task 13 落地成果（五页+token 样式文件）为输入，打磨完成并通过设计文档 §7.6 落地自查清单终核后方可进收口；其中 2/4/5/7/8/10/11 涉及跨模块联改面均单任务内闭环、提交全绿）。
 
 ### 一、待批项呈报清单（超出 recon 14 条裁决的特别标注项，逐条附依据；批准计划即批准以下条目）
 
@@ -1855,6 +1915,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 7. **billing 两 api 端口 + pharmacy 开方端口**：`OutpatientBillingPort`（feesByVisit/applyRefund/cancelPendingFee——裁决 7 免审档进程内承载）、`SettlementQueryPort`（sourceRefsOfSettlement/settledUnder——裁决 5/6/8 反查唯一载体，CF-4 载荷零变更）、`PracticeCheckPort`（system，check REST 契约的进程内镜像）、`PrescriptionOpenPort`/`PrescriptionCancelPort`（pharmacy，禁 HTTP 自调用——PR-4 偏差⑤ PrescriptionFeePort 先例）。
 8. **诊区队列口径**（Spec queue_id「诊区/医生队列」二选一）：P1 取 queue_id=dept_code 诊区单队列（ticket.doctor_id 辅助定向），医生级队列与跨院区随 P2 注记——叫号/大屏/分诊台三面演示最短路径。
 9. **收费工作台前端直调 billing 面**：就诊费用划价/结算为 CF-4 同步 REST 人机面，M03 后端零收费编排 REST（资金无涉红线）；挂号收费联动页复用 PR-3 交付的 billing.ts（manualCharge/preview/settle）。
+10. **UI 设计系统采纳与 taste-skill 打磨任务设定**（用户 2026-09-20 增补指令）：ui-ux-pro-max 产出并入库的 `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` 为 PR-5 前端视觉唯一权威（token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单），Task 13 逐节落地、Task 16 以 taste-skill 族（design-taste-frontend/high-end-visual-design/minimalist-ui/redesign-existing-projects，按需 brandkit）全面深度打磨；两技能族均为 subagent 开工强制加载项（未加载不得开始）。
 
 ### 二、与 recon/调研的偏差清单（执行与评审对照）
 
@@ -1862,4 +1923,4 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 
 ### 三、SDD 执行方式
 
-**Subagent-Driven（推荐）**——`superpowers:subagent-driven-development`：每任务全新 subagent + 任务间 spec/quality 双结论审查；台账落 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/`（跨会话续接按 PR-2/PR-3/PR-4 先例）。备选 **Inline Execution**——`superpowers:executing-plans`（本会话批量执行+检查点复核）。执行期质量门（不可跳过）：实现类 PR = 全量门禁 + 真栈（Task 15 Step 5 探针——存量卷重置已前移 Task 13 Step 1）+ 浏览器真机（三应用 UI 面，Task 15 Step 6）→ 建 PR → `/code-review` findings 清零 → 合并。**进入条件**：W-22 fix PR 已合入（P-0，Task 1 Step 1 核验）。
+**Subagent-Driven（推荐）**——`superpowers:subagent-driven-development`：每任务全新 subagent + 任务间 spec/quality 双结论审查；台账落 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/`（跨会话续接按 PR-2/PR-3/PR-4 先例）。备选 **Inline Execution**——`superpowers:executing-plans`（本会话批量执行+检查点复核）。执行期质量门（不可跳过）：实现类 PR = 全量门禁 + 真栈（Task 15 Step 5 探针——存量卷重置已前移 Task 13 Step 1）+ 浏览器真机（三应用 UI 面，Task 15 Step 6）→ 建 PR → `/code-review` findings 清零 → 合并。**进入条件**：W-22 fix PR 已合入（P-0，Task 1 Step 1 核验）。**Task 13/16 派发时 dispatch prompt 必须明确要求实现者先加载对应设计技能（13=ui-ux-pro-max 族——设计文档方法论来源、16=taste-skill 族），未加载不得开始落码/打磨。**
