@@ -2,6 +2,24 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-20 · P1 PR-5 计划定稿：M03 门诊主流程实施计划（docs-only）
+
+- **计划本体**：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（1865 行/15 任务/
+  前置项 P-0~P-9；撰写链=两路调研（Spec 语义+dev 现状）→主控 14 条裁决固化
+  `.superpowers/pr5-recon.md`→初稿 1708 行→R1 FAIL（P1×5：PortImpl 单测缺口/演示医师
+  身份链断裂/存量卷重置时点/处方引用行 CHARGED 缺失/叫号队列重启恢复）→修复收敛
+  （P1×5+P2×6）→R2 窄域复审「收敛可交付」）。
+- **范围**：FU-M03-01~08 全 P0+practice/check 真实化（practice_grant V704+管理端点+种子）
+  +D-16 unmask 三态门禁接入+PR-4 三占位事件回切（id 23/25/31 载荷冻结经 V204
+  UPDATE+兜底 INSERT 双形态）+新事件 id 32–40 登记（总行 31→40）+前端三应用
+  （workstation 三页/portal 免登录预约页/bigscreen 候诊叫号页）。
+- **关键裁决**（recon 14 条，详 `.superpowers/pr5-recon.md`）：号段 outpatient V200–V204
+  （初始化豁免+存量 dev 卷一次性重置，重置点前移 Task 13 api-docs 导出前）；practice_grant
+  改道 system 通用段 V704（V608<V703 被乱序守卫拦截）；门诊字典种子 V705（19 条）；
+  confirmRefundTerminal 误伤面走 billing api 端口单据化收口（CF-4 载荷零变更）；
+  退号退费统一 M13 免审档；取药凭证载体=settlementNo；W-22 fix PR 为 SDD 进入条件（P-0）。
+- **待批 9 条+偏差①–⑩**：见计划 Execution Handoff；批复后落档（PR-4 批复记录同款）。
+
 ## 2026-09-18 · P1 PR-4 M06 药事基础收口：药品字典+门诊发药闭环交付（CF-5 冻结载体）
 
 - **交付面**：给药途径/用药频次字典预置（V607 两类 PUBLISHED 各 v1 共 25 条，前置项 P-3 改判载体）、
