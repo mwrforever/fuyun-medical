@@ -73,6 +73,12 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>
     </dependency>
+    <!-- 门诊自建 STOMP/WS 面（裁决 12：/ws/outpatient 端点+CONNECT 帧鉴权镜像，禁依赖 fuyun-iot）：
+         OutpatientWebSocketConfig 与叫号 SimpMessagingTemplate 推送编译依赖，版本 BOM 托管零声明 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
     <dependency>
       <groupId>com.baomidou</groupId>
       <artifactId>mybatis-plus-spring-boot3-starter</artifactId>

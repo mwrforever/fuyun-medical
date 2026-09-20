@@ -20,6 +20,7 @@ import com.fuyun.patient.service.impl.MergeRecordServiceImpl;
 import com.fuyun.patient.service.impl.PatientIdentifierServiceImpl;
 import com.fuyun.patient.service.impl.PatientIdentityQueryImpl;
 import com.fuyun.patient.service.impl.PatientMatchingServiceImpl;
+import com.fuyun.patient.service.impl.PatientNameQueryImpl;
 import com.fuyun.patient.service.impl.PatientRegistrationServiceImpl;
 import com.fuyun.patient.service.impl.PatientServiceImpl;
 import com.fuyun.patient.service.impl.PossibleDuplicateServiceImpl;
@@ -45,6 +46,7 @@ import org.springframework.context.annotation.Import;
     PatientServiceImpl.class,
     PatientIdentifierServiceImpl.class,
     PatientIdentityQueryImpl.class,
+    PatientNameQueryImpl.class,
     PrivacyAuthServiceImpl.class,
     PatientMatchingServiceImpl.class,
     PatientRegistrationServiceImpl.class,
