@@ -49,4 +49,20 @@ public interface AppointmentMapper extends BaseMapper<Appointment> {
             + "updated_at = now() WHERE id = #{id} AND deleted = 0 AND status = 'RESERVED' "
             + "AND (pay_deadline IS NULL OR pay_deadline > now())")
     int casTake(@Param("id") long id, @Param("visitId") String visitId);
+
+    /**
+     * 挂号费退费终态 CAS（PAID→REFUNDED 条件迁移，Task 6 回执驱动）：仅已缴（PAID）行迁 REFUNDED
+     * ——重复回执/费态漂移（非 PAID）0 行命中由调用方 warn 留痕不阻断（回执即终态权威，退号取消
+     * 与回池先行完成）。
+     *
+     * <p>fee_status 字面量与 {@link com.fuyun.outpatient.enums.FeeStatusType} code 同源；
+     * deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）；updated_by 固定 'system'（系统回执定性，
+     * 操作者留痕经审计切面与 visit_status_log 承载）。
+     *
+     * @param id 预约单主键；来源：refund.approved 回执按 fee_settlement_id 定位的预约行
+     * @return 影响行数：1=费态已迁 REFUNDED；0=非 PAID（重复回执/漂移）或行不存在
+     */
+    @Update("UPDATE outpatient.appointment SET fee_status = 'REFUNDED', updated_by = 'system', updated_at = now() "
+            + "WHERE id = #{id} AND deleted = 0 AND fee_status = 'PAID'")
+    int casMarkRefunded(@Param("id") long id);
 }

@@ -11,6 +11,7 @@ import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
 import com.fuyun.outpatient.internal.DelayEnvelopeSender;
 import com.fuyun.outpatient.internal.OutpatientAppointmentTimeoutListener;
 import com.fuyun.outpatient.internal.OutpatientEventPublisher;
+import com.fuyun.outpatient.internal.OutpatientRefundApprovedListener;
 import com.fuyun.outpatient.properties.OutpatientProperties;
 import java.util.Arrays;
 import org.springframework.amqp.core.Declarables;
@@ -27,7 +28,12 @@ import org.springframework.context.annotation.Import;
  * 监听器类同步追加进 @Import（先登记后订阅红线）。
  */
 @Configuration
-@Import({OutpatientEventPublisher.class, DelayEnvelopeSender.class, OutpatientAppointmentTimeoutListener.class})
+@Import({
+    OutpatientEventPublisher.class,
+    DelayEnvelopeSender.class,
+    OutpatientAppointmentTimeoutListener.class,
+    OutpatientRefundApprovedListener.class
+})
 @EnableConfigurationProperties(OutpatientProperties.class)
 public class OutpatientMessagingConfig {
 

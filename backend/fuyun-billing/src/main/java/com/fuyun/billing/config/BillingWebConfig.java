@@ -25,6 +25,7 @@ import com.fuyun.billing.service.impl.DailyListServiceImpl;
 import com.fuyun.billing.service.impl.DepositServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceCallLogServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceMappingServiceImpl;
+import com.fuyun.billing.service.impl.OutpatientBillingPortImpl;
 import com.fuyun.billing.service.impl.PrescriptionFeePortImpl;
 import com.fuyun.billing.service.impl.PricingEngineServiceImpl;
 import com.fuyun.billing.service.impl.PricingRuleServiceImpl;
@@ -58,6 +59,7 @@ import org.springframework.context.annotation.Import;
     DepositServiceImpl.class,
     DailyListServiceImpl.class,
     InsuranceCallLogServiceImpl.class,
+    OutpatientBillingPortImpl.class,
     ChargeItemController.class,
     InsuranceMappingController.class,
     PricingRuleController.class,

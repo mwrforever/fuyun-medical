@@ -70,7 +70,8 @@ public final class OutpatientMessagingConstants {
      * （先登记后订阅红线）。prescription.created 不订阅：M03 经 PrescriptionOpenPort 同步登记引用
      * （事件订阅为重复面，偏差注记），登记一致性由 Task 12 IT 断言 ext_ref 在位承载。
      */
-    public static final String[] SUBSCRIBED_EVENT_TYPES = {EVENT_APPOINTMENT_TIMEOUT};
+    public static final String[] SUBSCRIBED_EVENT_TYPES = {EVENT_APPOINTMENT_TIMEOUT, EVENT_SUB_BILLING_REFUND_APPROVED
+    };
 
     /** 私有构造器（A.2-6） */
     private OutpatientMessagingConstants() {}

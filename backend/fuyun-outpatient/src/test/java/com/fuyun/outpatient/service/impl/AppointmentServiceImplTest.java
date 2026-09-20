@@ -19,6 +19,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.billing.api.OutpatientBillingPort;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.messaging.EventEnvelope;
@@ -51,6 +52,7 @@ import com.fuyun.outpatient.mapper.ApptCreditRecordMapper;
 import com.fuyun.outpatient.mapper.ApptNumberPoolMapper;
 import com.fuyun.outpatient.mapper.ScheduleMapper;
 import com.fuyun.outpatient.mapper.VisitMapper;
+import com.fuyun.outpatient.mapper.VisitStatusLogMapper;
 import com.fuyun.outpatient.properties.OutpatientProperties;
 import com.fuyun.outpatient.service.IVisitIdIssuer;
 import com.fuyun.outpatient.vo.AppointmentVO;
@@ -118,6 +120,9 @@ class AppointmentServiceImplTest {
     private VisitMapper visitMapper;
 
     @Mock
+    private VisitStatusLogMapper visitStatusLogMapper;
+
+    @Mock
     private ApptCreditRecordMapper apptCreditRecordMapper;
 
     @Mock
@@ -131,6 +136,9 @@ class AppointmentServiceImplTest {
 
     @Mock
     private RabbitTemplate rabbitTemplate;
+
+    @Mock
+    private OutpatientBillingPort billingPort;
 
     @Mock
     private ApplicationEventPublisher events;
@@ -163,10 +171,12 @@ class AppointmentServiceImplTest {
                 scheduleMapper,
                 appointmentMapper,
                 visitMapper,
+                visitStatusLogMapper,
                 apptCreditRecordMapper,
                 poolRedisGate,
                 redisTemplate,
                 delayEnvelopeSender,
+                billingPort,
                 events,
                 properties);
         OperatorContextHolder.set("admin001");

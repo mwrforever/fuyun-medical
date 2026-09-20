@@ -3,6 +3,7 @@ package com.fuyun.outpatient.controller;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.dto.AppointmentCreateRequest;
+import com.fuyun.outpatient.dto.CancelAppointmentRequest;
 import com.fuyun.outpatient.dto.PortalAppointmentRequest;
 import com.fuyun.outpatient.enums.ApptChannel;
 import com.fuyun.outpatient.service.IAppointmentService;
@@ -20,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -85,5 +87,20 @@ public class PortalAppointmentController {
         long patientId = patientIdentityQuery.resolveActivePatientId(request.credentialType(), request.credentialNo());
         return appointmentService.book(
                 new AppointmentCreateRequest(patientId, request.poolId(), ApptChannel.PORTAL.getCode()));
+    }
+
+    /**
+     * portal 退号（免登录，Task 5 移交随退号四分支统一交付）：与工作站退号共用四分支语义
+     * （线上退号时限 OP-1010/已付退费回执驱动终态），匿名链路不经审计切面（裁决 13——操作者
+     * 留痕取哨兵值 PORTAL；限流/风控随 M18 注记）。
+     *
+     * @param no      预约单业务号（路径参数）
+     * @param request 退号请求（reason 必填留痕），非空
+     * @return 预约单出参（分支 1=CANCELLED；分支 2=RESERVED 待退费回执），非空
+     */
+    @Operation(summary = "portal 退号（免登录）")
+    @PostMapping("/appointments/{no}/cancel")
+    public AppointmentVO cancel(@PathVariable("no") String no, @Valid @RequestBody CancelAppointmentRequest request) {
+        return appointmentService.cancel(no, request.reason());
     }
 }

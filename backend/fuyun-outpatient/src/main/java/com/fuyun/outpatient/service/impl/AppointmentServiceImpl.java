@@ -1,20 +1,29 @@
 package com.fuyun.outpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fuyun.billing.api.OutpatientBillingPort;
+import com.fuyun.billing.api.RefundApprovedPayload;
+import com.fuyun.billing.api.VisitFeeView;
+import com.fuyun.billing.api.VisitRefundCommand;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.AppointmentBookedPayload;
+import com.fuyun.outpatient.api.AppointmentCancelledPayload;
+import com.fuyun.outpatient.api.AppointmentRescheduledPayload;
 import com.fuyun.outpatient.api.AppointmentTimeoutPayload;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
+import com.fuyun.outpatient.api.VisitCancelledPayload;
 import com.fuyun.outpatient.api.VisitRegisteredPayload;
 import com.fuyun.outpatient.cache.PoolRedisGate;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
 import com.fuyun.outpatient.dto.AppointmentCreateRequest;
+import com.fuyun.outpatient.dto.RescheduleRequest;
 import com.fuyun.outpatient.entity.Appointment;
 import com.fuyun.outpatient.entity.ApptCreditRecord;
 import com.fuyun.outpatient.entity.ApptNumberPool;
 import com.fuyun.outpatient.entity.Schedule;
 import com.fuyun.outpatient.entity.Visit;
+import com.fuyun.outpatient.entity.VisitStatusLog;
 import com.fuyun.outpatient.enums.ApptChannel;
 import com.fuyun.outpatient.enums.ApptStatus;
 import com.fuyun.outpatient.enums.ApptType;
@@ -29,10 +38,12 @@ import com.fuyun.outpatient.mapper.ApptCreditRecordMapper;
 import com.fuyun.outpatient.mapper.ApptNumberPoolMapper;
 import com.fuyun.outpatient.mapper.ScheduleMapper;
 import com.fuyun.outpatient.mapper.VisitMapper;
+import com.fuyun.outpatient.mapper.VisitStatusLogMapper;
 import com.fuyun.outpatient.properties.OutpatientProperties;
 import com.fuyun.outpatient.service.IAppointmentService;
 import com.fuyun.outpatient.service.IVisitIdIssuer;
 import com.fuyun.outpatient.vo.AppointmentVO;
+import com.fuyun.outpatient.vo.ApptCreditVO;
 import com.fuyun.outpatient.vo.VisitVO;
 import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
@@ -53,15 +64,18 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 预约/当日挂号服务实现（M03 FU-M03-02/03，Task 5 写路径唯一入口）：统一预约主流程七步——①患者
- * 归一+冻结拦截（PatientContextResolver，业务以 resolvedPatientId 关联）→②爽约限约拦截（信用窗口
- * NO_SHOW 计数达阈值且限约区间覆盖今日）→③限购拦截（同日同科 RESERVED/TAKEN 命中即拒，uk_appt_patient
- * 为最终防线）→④池行复核（ACTIVE+余量谓词，停诊 OP-1004）→⑤Redis 预扣（双道闸第一道：Lua 余量不足
- * -1 判 OP-1003 直接拒绝不降级——余量谓词旁路即超卖面；仅键缺失/Redis 异常走 DB 条件更新降级，warn
- * 留痕）→⑥appointment 落库+池行 casOccupy（同事务双道闸第二道，0 行重读重试 ≤2 次后判 OP-1003 并
- * 回补 Redis 持有）→⑦渠道分流：PORTAL 写 pay_deadline 占位+延迟信封入队（事务内直发例外，见
- * DelayEnvelopeSender 裁决链）+发布 appointment.booked；WINDOW/KIOSK 一步直达 TAKEN（同事务签发
- * visit+casTake+发布 visit.registered）。事件发布走事务内 publishEvent → AFTER_COMMIT 出 MQ（A.4.2-7）。
+ * 预约/当日挂号服务实现（M03 FU-M03-02/03，Task 5 写路径唯一入口；Task 6 扩退号退费联动与改期）：
+ * 统一预约主流程七步——①患者归一+冻结拦截（PatientContextResolver，业务以 resolvedPatientId 关联）
+ * →②爽约限约拦截（信用窗口 NO_SHOW 计数达阈值且限约区间覆盖今日）→③限购拦截（同日同科
+ * RESERVED/TAKEN 命中即拒，uk_appt_patient 为最终防线）→④池行复核（ACTIVE+余量谓词，停诊 OP-1004）
+ * →⑤Redis 预扣（双道闸第一道：Lua 余量不足 -1 判 OP-1003 直接拒绝不降级——余量谓词旁路即超卖面；
+ * 仅键缺失/Redis 异常走 DB 条件更新降级，warn 留痕）→⑥appointment 落库+池行 casOccupy（同事务
+ * 双道闸第二道，0 行重读重试 ≤2 次后判 OP-1003 并回补 Redis 持有）→⑦渠道分流：PORTAL 写
+ * pay_deadline 占位+延迟信封入队（事务内直发例外，见 DelayEnvelopeSender 裁决链）+发布
+ * appointment.booked；WINDOW/KIOSK 一步直达 TAKEN（同事务签发 visit+casTake+发布 visit.registered）。
+ * Task 6：退号四分支（未支付免退费直取消/已付退费申请待回执/已取号退费待回执/已报到拒线上退，
+ * 终态一律 billing.refund.approved 回执后置——资金无涉红线裁决 7）、改期先占新后退旧（reschedule_of
+ * 链）与爽约信用管理面。事件发布走事务内 publishEvent → AFTER_COMMIT 出 MQ（A.4.2-7）。
  * 资金无涉红线（裁决 7）：本类零金额逻辑。线程安全：无状态单例。装配归 OutpatientWebConfig
  *
  * @Import；com.fuyun.outpatient.service.impl 包 = JaCoCo PACKAGE LINE 1.00 覆盖对象。
@@ -72,6 +86,15 @@ public class AppointmentServiceImpl implements IAppointmentService {
     /** P1 开放预约渠道面（窗口/自助=当日挂号一步 TAKEN；portal=支付时限占位），其余词表位拒绝 */
     private static final Set<ApptChannel> P1_BOOK_CHANNELS =
             Set.of(ApptChannel.WINDOW, ApptChannel.KIOSK, ApptChannel.PORTAL);
+
+    /** 线上渠道面（P1 唯一线上预约渠道 PORTAL；退号时限 OP-1010 判定域——窗口/自助渠道不受限） */
+    private static final Set<ApptChannel> ONLINE_CHANNELS = Set.of(ApptChannel.PORTAL);
+
+    /** billing 可退费用行状态词表（与 RefundServiceImpl.apply 行态守卫同源：SETTLED/PART_REFUND） */
+    private static final Set<String> REFUNDABLE_FEE_STATUSES = Set.of("SETTLED", "PART_REFUND");
+
+    /** 挂号费整号退数量（DECIMAL string，D-18 同源；P1 挂号费单次计费 quantity=1 口径） */
+    private static final String REGISTRATION_REFUND_QUANTITY = "1";
 
     /** portal 匿名链路操作者哨兵值（裁决 13：不经 OperatorContextHolder，留痕取 PORTAL） */
     private static final String PORTAL_SENTINEL = "PORTAL";
@@ -115,6 +138,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
 
     private final VisitMapper visitMapper;
 
+    private final VisitStatusLogMapper visitStatusLogMapper;
+
     private final ApptCreditRecordMapper apptCreditRecordMapper;
 
     private final PoolRedisGate poolRedisGate;
@@ -122,6 +147,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private final StringRedisTemplate redisTemplate;
 
     private final DelayEnvelopeSender delayEnvelopeSender;
+
+    private final OutpatientBillingPort billingPort;
 
     private final ApplicationEventPublisher events;
 
@@ -134,14 +161,17 @@ public class AppointmentServiceImpl implements IAppointmentService {
      * @param visitIdIssuer          就诊号签发器，非空；CF-3 O 型 14 位签发
      * @param apptNumberPoolMapper   号源池行 mapper，非空；复核/占用 CAS/回补 CAS
      * @param scheduleMapper         排班日历 mapper，非空；dept_code/session/doctor_id 关联读
-     * @param appointmentMapper      预约单 mapper，非空；落库/状态 CAS/取号 CAS
-     * @param visitMapper            就诊记录 mapper，非空；挂号落库/就诊号定位
-     * @param apptCreditRecordMapper 爽约信用 mapper，非空；窗口计数/信用行落库
+     * @param appointmentMapper      预约单 mapper，非空；落库/状态 CAS/取号 CAS/费态回写 CAS
+     * @param visitMapper            就诊记录 mapper，非空；挂号落库/就诊号定位/退号回滚 CAS
+     * @param visitStatusLogMapper   就诊状态迁移日志 mapper，非空；红线 5 每迁必记（退号回执回滚）
+     * @param apptCreditRecordMapper 爽约信用 mapper，非空；窗口计数/信用行落库/手工解除
      * @param poolRedisGate          号源 Redis 预扣闸，非空；双道闸第一道
      * @param redisTemplate          Redis 字符串模板，非空；预约单号流水键与支付占位键
      * @param delayEnvelopeSender    延迟信封发送器，非空；支付时限占位登记
+     * @param billingPort            billing 对接端口（billing api 契约），非空；退号退费统一免审档与
+     *                               费用行定位（裁决 7 进程内承载，禁 HTTP 自调用）
      * @param events                 Spring 应用事件发布器，非空；事务内发布 AFTER_COMMIT 出 MQ
-     * @param properties             门诊域参数，非空；支付时限/爽约窗口/阈值/限约天数
+     * @param properties             门诊域参数，非空；支付时限/线上退号时限/爽约窗口/阈值/限约天数
      */
     public AppointmentServiceImpl(
             PatientContextResolver patientContextResolver,
@@ -150,10 +180,12 @@ public class AppointmentServiceImpl implements IAppointmentService {
             ScheduleMapper scheduleMapper,
             AppointmentMapper appointmentMapper,
             VisitMapper visitMapper,
+            VisitStatusLogMapper visitStatusLogMapper,
             ApptCreditRecordMapper apptCreditRecordMapper,
             PoolRedisGate poolRedisGate,
             StringRedisTemplate redisTemplate,
             DelayEnvelopeSender delayEnvelopeSender,
+            OutpatientBillingPort billingPort,
             ApplicationEventPublisher events,
             OutpatientProperties properties) {
         this.patientContextResolver = patientContextResolver;
@@ -162,10 +194,12 @@ public class AppointmentServiceImpl implements IAppointmentService {
         this.scheduleMapper = scheduleMapper;
         this.appointmentMapper = appointmentMapper;
         this.visitMapper = visitMapper;
+        this.visitStatusLogMapper = visitStatusLogMapper;
         this.apptCreditRecordMapper = apptCreditRecordMapper;
         this.poolRedisGate = poolRedisGate;
         this.redisTemplate = redisTemplate;
         this.delayEnvelopeSender = delayEnvelopeSender;
+        this.billingPort = billingPort;
         this.events = events;
         this.properties = properties;
     }
@@ -419,31 +453,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     payload.apptNo());
             return;
         }
-        // 池行回池（version 乐观锁条件更新，防并发双回补）：0 行=并发已回池（version 前移）或池行状态漂移，
-        // 重读定性后终止本轮回池——禁负余量、禁重复回补 Redis（Task 4 casRelease 谓词与本消费点配套）
-        ApptNumberPool pool = apptNumberPoolMapper.selectById(payload.poolId());
-        if (pool == null) {
-            log.warn("预约支付超时回池跳过（池行不存在）：apptNo={}，poolId={}", payload.apptNo(), payload.poolId());
-        } else {
-            int released =
-                    apptNumberPoolMapper.casRelease(pool.getId(), pool.getVersion() == null ? 0 : pool.getVersion());
-            if (released == 1) {
-                Schedule schedule = scheduleMapper.selectById(pool.getScheduleId());
-                if (schedule == null) {
-                    log.warn("超时回池 Redis 快路径跳过（排班定位失败，交日对账）：apptNo={}，poolId={}", payload.apptNo(), pool.getId());
-                } else {
-                    releasePoolKeyQuietly(
-                            pool.getId(), pool.getTotalQuota(), schedule.getSchedDate(), payload.apptNo());
-                }
-            } else {
-                ApptNumberPool latest = apptNumberPoolMapper.selectById(payload.poolId());
-                log.warn(
-                        "超时回池并发落败，终止本轮回池（重读定性 poolStatus={}）：apptNo={}，poolId={}",
-                        latest == null ? "UNKNOWN" : latest.getStatus().getCode(),
-                        payload.apptNo(),
-                        payload.poolId());
-            }
-        }
+        // 池行回池（version 乐观锁条件更新，防并发双回补；Task 6 退号/回执路径共用同一释放面）
+        releasePoolConditionally(payload.poolId(), payload.apptNo());
         deletePayHoldQuietly(payload.apptNo());
         recordNoShowCredit(payload.patientId());
         log.warn(
@@ -451,6 +462,289 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 payload.apptNo(),
                 payload.patientId(),
                 payload.poolId());
+    }
+
+    // ---------------------------------------------------------------- 退号退费联动（Task 6）
+
+    /**
+     * 退号（四分支锁死，裁决 7——退费一律经 billing 端口免审档，appointment/visit 终态一律
+     * billing.refund.approved 回执后置）：入口守卫（存在性/终态/线上退号时限）后按状态分流——
+     * TAKEN 先核 visit 态（非 REGISTERED 即已报到/已接诊，OP-1010 拒线上退）再走退费链；
+     * RESERVED 按费态分流（已付有结算锚走退费链保持占位待回执，否则免退费直取消+回池）。
+     *
+     * @param apptNo 预约单业务号，非空
+     * @param reason 退号原因，非空白
+     * @return 预约单出参（分支 1=CANCELLED；分支 2/3=原态占位待回执），非空
+     * @throws BizException OP-1009（预约单不存在/终态不可退）/ OP-1010（线上时限外/已报到拒线上退）/
+     *                      M13 退费守卫（BILL-*，端口原样透传）时触发
+     */
+    @Override
+    @Transactional
+    public AppointmentVO cancel(String apptNo, String reason) {
+        // 数据库读操作：按业务号定位预约单
+        Appointment appointment =
+                appointmentMapper.selectOne(Wrappers.<Appointment>lambdaQuery().eq(Appointment::getApptNo, apptNo));
+        if (appointment == null) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "预约单不存在：apptNo=" + apptNo);
+        }
+        ApptStatus status = appointment.getStatus();
+        if (status != ApptStatus.RESERVED && status != ApptStatus.TAKEN) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "预约单状态不允许退号（当前态 " + status.getCode() + "）：apptNo=" + apptNo);
+        }
+        // 线上退号时限校验（窗口/自助渠道不受限——逾窗转窗口口径，Spec :137）：截止日=就诊日往前推
+        // onlineCancelBeforeDays 天，当日（不足提前天数）线上退号关闭（北京/杭州调研依据 4 同款口径）
+        if (ONLINE_CHANNELS.contains(appointment.getChannel())
+                && appointment
+                        .getSchedDate()
+                        .minusDays(properties.onlineCancelBeforeDays())
+                        .isBefore(LocalDate.now())) {
+            log.warn(
+                    "线上退号时限外拒绝：apptNo={}，schedDate={}，onlineCancelBeforeDays={}",
+                    apptNo,
+                    appointment.getSchedDate(),
+                    properties.onlineCancelBeforeDays());
+            throw new BizException(
+                    OutpatientErrorCode.CANCEL_WINDOW_CLOSED, HttpStatus.CONFLICT, "线上退号时限已过，请到院窗口办理：apptNo=" + apptNo);
+        }
+        if (status == ApptStatus.TAKEN) {
+            return cancelTaken(appointment, reason);
+        }
+        return cancelReserved(appointment, reason);
+    }
+
+    /**
+     * 改期（退旧号新，reschedule_of 链；「先占新后退旧防两头空」Spec :137）：新池行全套预扣+CAS+
+     * 新 appointment 行（RESERVED、reschedule_of=旧单号），成功后旧单 CAS→CANCELLED+回池+删占位键；
+     * 任一步失败整体回滚（事务+Redis 持有/占位键对称回补），成功发布 appointment.rescheduled。
+     * 改期仅承载未支付占位迁移：已支付单拒（防资金面绕过退费链静默作废，资金无涉红线裁决 7）。
+     *
+     * @param apptNo  旧预约单业务号，非空
+     * @param request 改期请求（newPoolId），非空
+     * @return 新预约单出参（RESERVED），非空
+     * @throws BizException OP-1002/OP-1003/OP-1004/OP-1005/OP-1009（语义见接口 javadoc）时触发
+     */
+    @Override
+    @Transactional
+    public AppointmentVO reschedule(String apptNo, RescheduleRequest request) {
+        // 数据库读操作：旧单定位与改期资格守卫（仅 RESERVED 未支付占位可改期）
+        Appointment old =
+                appointmentMapper.selectOne(Wrappers.<Appointment>lambdaQuery().eq(Appointment::getApptNo, apptNo));
+        if (old == null) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "预约单不存在：apptNo=" + apptNo);
+        }
+        if (old.getStatus() != ApptStatus.RESERVED) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "仅未取号占位单可改期（当前态 " + old.getStatus().getCode() + "，TAKEN 走退号链）：apptNo=" + apptNo);
+        }
+        if (old.getFeeStatus() == FeeStatusType.PAID) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "已支付预约单不支持改期，请先退号退费后重新预约：apptNo=" + apptNo);
+        }
+        // 新池行复核（与预约主链 ④ 同口径）：ACTIVE+余量谓词，停诊 OP-1004/不足 OP-1003
+        ApptNumberPool newPool = apptNumberPoolMapper.selectById(request.newPoolId());
+        if (newPool == null) {
+            throw new BizException(
+                    OutpatientErrorCode.POOL_NOT_FOUND, HttpStatus.NOT_FOUND, "号源池不存在：poolId=" + request.newPoolId());
+        }
+        Schedule newSchedule = scheduleMapper.selectById(newPool.getScheduleId());
+        if (newSchedule == null) {
+            throw new BizException(
+                    OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "排班不存在或已删除：scheduleId=" + newPool.getScheduleId());
+        }
+        if (newPool.getStatus() != PoolStatus.ACTIVE) {
+            throw new BizException(
+                    OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "号源已停用（停诊联动），不可改期：poolId=" + newPool.getId());
+        }
+        if (newPool.getUsedCount() >= newPool.getTotalQuota()) {
+            throw new BizException(
+                    OutpatientErrorCode.POOL_EXHAUSTED, HttpStatus.CONFLICT, "号源不足：poolId=" + newPool.getId());
+        }
+        // ① 新池 Redis 预扣（双道闸第一道，-1 拒绝不降级；键缺失/异常降级 DB CAS，warn 留痕）
+        boolean redisHeld = false;
+        try {
+            int remain = poolRedisGate.deduct(
+                    newPool.getId(), newPool.getTotalQuota(), poolKeyTtl(newSchedule.getSchedDate()));
+            if (remain == REDIS_DEDUCT_EXHAUSTED) {
+                throw new BizException(
+                        OutpatientErrorCode.POOL_EXHAUSTED, HttpStatus.CONFLICT, "号源不足：poolId=" + newPool.getId());
+            }
+            if (remain >= 0) {
+                redisHeld = true;
+            } else {
+                log.warn("Redis 池键缺失，降级直连 DB 条件更新：poolId={}，扣减返回={}", newPool.getId(), remain);
+            }
+        } catch (DataAccessException e) {
+            log.warn("Redis 预扣异常，降级直连 DB 条件更新（功能不中断）：poolId={}，原因={}", newPool.getId(), e.getMessage());
+        }
+        // ② 新 appointment 行落库（reschedule_of 链锚定旧单号）——同日同科目标与既有有效单冲突由
+        // uk_appt_patient 兜底，DuplicateKey 映射 OP-1005（先占新语义下同日同科改期须先退旧再约新）
+        Appointment fresh = buildRescheduledAppointment(old, newPool, newSchedule);
+        try {
+            appointmentMapper.insert(fresh);
+        } catch (DuplicateKeyException e) {
+            releaseRedisHoldQuietly(newPool, newSchedule, redisHeld);
+            log.warn("改期并发限购冲突回滚：apptNo={}，patientId={}，newPoolId={}", apptNo, old.getPatientId(), newPool.getId());
+            throw new BizException(
+                    OutpatientErrorCode.DUPLICATE_APPOINTMENT,
+                    HttpStatus.CONFLICT,
+                    "改期目标与既有预约限购冲突（同日同科），请先退号后重新预约：apptNo=" + apptNo);
+        }
+        // ③ 新池行 CAS 占用（双道闸第二道，重读重试 ≤2 次后判 OP-1003 并回补 Redis 持有）——旧单零写
+        occupyPoolCasWithRetry(newPool, newSchedule, redisHeld);
+        // ④ PORTAL 占位登记（占位键+延迟信封随新单号，占位时限重置为完整支付时限；失败对称回补整单回滚）
+        if (old.getChannel() == ApptChannel.PORTAL) {
+            registerRescheduledHold(fresh, newPool, newSchedule, redisHeld);
+        }
+        // ⑤ 后放旧：旧单 CAS→CANCELLED（0 行=并发已迁移，对称回补新面后 fail-fast 整单回滚）
+        if (appointmentMapper.casStatus(old.getId(), ApptStatus.RESERVED.getCode(), ApptStatus.CANCELLED.getCode())
+                == 0) {
+            releaseRedisHoldQuietly(newPool, newSchedule, redisHeld);
+            deletePayHoldQuietly(fresh.getApptNo());
+            throw new IllegalStateException("改期失败：旧单并发状态迁移（CAS 落败）：apptNo=" + apptNo);
+        }
+        // ⑥ 旧池回池+旧占位键清理（version 谓词条件回池，与超时释放/退号取消共用释放面）
+        releasePoolConditionally(old.getPoolId(), old.getApptNo());
+        deletePayHoldQuietly(old.getApptNo());
+        // ⑦ 发布改期链事件（事务内 publishEvent → AFTER_COMMIT 出 MQ）
+        events.publishEvent(new OutpatientDomainEvent(
+                OutpatientMessagingConstants.EVENT_APPOINTMENT_RESCHEDULED,
+                new AppointmentRescheduledPayload(
+                        old.getApptNo(),
+                        fresh.getApptNo(),
+                        old.getPatientId(),
+                        newSchedule.getSchedDate().format(SEQ_DATE),
+                        newPool.getSlotStart().toString())));
+        log.info(
+                "改期完成（先占新后退旧）：oldApptNo={}，newApptNo={}，patientId={}，newPoolId={}，newSchedDate={}",
+                apptNo,
+                fresh.getApptNo(),
+                old.getPatientId(),
+                newPool.getId(),
+                newSchedule.getSchedDate());
+        return toAppointmentVO(fresh);
+    }
+
+    /**
+     * 退费回执消费业务（billing.refund.approved → 退号终态，appointment 分支）：按结算锚定位
+     * RESERVED/TAKEN 单→状态 CAS 置 CANCELLED→费态 REFUNDED→回池→（TAKEN 态）visit 回滚→发布
+     * cancelled（feeRefundTriggered=true）。无命中/并发落败幂等跳过（回执可重投，终态幂等收敛）。
+     *
+     * @param payload 退费回执载荷（V605 id 20 七组件），非空
+     * @throws IllegalStateException 回执链路数据异常（TAKEN 单 visit 缺失，交死信留痕）
+     */
+    @Override
+    @Transactional
+    public void confirmRefundedCancel(RefundApprovedPayload payload) {
+        // 数据库读操作：按结算锚定位退号链预约单（仅 RESERVED/TAKEN——已终态单零命中即幂等跳过）
+        Appointment appointment = appointmentMapper.selectOne(Wrappers.<Appointment>lambdaQuery()
+                .eq(Appointment::getFeeSettlementId, payload.settlementId())
+                .in(Appointment::getStatus, ApptStatus.RESERVED, ApptStatus.TAKEN));
+        if (appointment == null) {
+            log.info(
+                    "退费回执幂等跳过（无退号链预约单命中结算锚，非退号退费或已终态）：settlementId={}，refundNo={}",
+                    payload.settlementId(),
+                    payload.refundNo());
+            return;
+        }
+        // 状态 CAS 幂等守卫：重复回执/并发已迁移 0 行即跳过（禁二次回池/二次终态事件）
+        String from = appointment.getStatus().getCode();
+        if (appointmentMapper.casStatus(appointment.getId(), from, ApptStatus.CANCELLED.getCode()) == 0) {
+            log.info("退费回执幂等跳过（预约单状态 CAS 落败，并发已迁移）：apptNo={}，from={}", appointment.getApptNo(), from);
+            return;
+        }
+        // 费态条件回写 PAID→REFUNDED（0 行=费态漂移，warn 留痕不阻断——退号取消与回池已先行完成）
+        if (appointmentMapper.casMarkRefunded(appointment.getId()) == 0) {
+            log.warn("退费回执费态回写落败（非 PAID 漂移）：apptNo={}，refundNo={}", appointment.getApptNo(), payload.refundNo());
+        }
+        // 号源回池+占位键清理（version 谓词条件回池，防并发双回补）
+        releasePoolConditionally(appointment.getPoolId(), appointment.getApptNo());
+        deletePayHoldQuietly(appointment.getApptNo());
+        String reason = "退费回执驱动退号，refundNo=" + payload.refundNo();
+        if (appointment.getStatus() == ApptStatus.TAKEN) {
+            rollbackTakenVisit(appointment, reason);
+        }
+        events.publishEvent(new OutpatientDomainEvent(
+                OutpatientMessagingConstants.EVENT_APPOINTMENT_CANCELLED,
+                new AppointmentCancelledPayload(appointment.getApptNo(), appointment.getPatientId(), reason, true)));
+        log.info(
+                "退号退费回执终态完成：apptNo={}，patientId={}，refundNo={}，from={}，visitId={}",
+                appointment.getApptNo(),
+                appointment.getPatientId(),
+                payload.refundNo(),
+                from,
+                appointment.getVisitId());
+    }
+
+    // ---------------------------------------------------------------- 爽约信用管理（Task 6）
+
+    /**
+     * 爽约信用记录查询（按患者维度，id 降序最新在前）：工作站信用管理列表消费面。
+     *
+     * @param patientId 患者主索引，非空
+     * @return 信用记录出参列表（id 降序）；无记录返回空列表
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<ApptCreditVO> creditsByPatient(long patientId) {
+        // 数据库读操作：患者维度信用台账（id 降序=A.4.3-17 唯一顺序，最新在前）
+        return apptCreditRecordMapper
+                .selectList(Wrappers.<ApptCreditRecord>lambdaQuery()
+                        .eq(ApptCreditRecord::getPatientId, patientId)
+                        .orderByDesc(ApptCreditRecord::getId))
+                .stream()
+                .map(AppointmentServiceImpl::toCreditVO)
+                .toList();
+    }
+
+    /**
+     * 爽约限约手工解除：restrict_to 提前至今日-1（即时失效）+release_reason 留痕（@AuditLog WRITE
+     * 端点承载审计，updated_by 取操作者上下文）。仅在效限约可解除（无限约区间/已过期拒绝）。
+     *
+     * @param id     信用记录主键，非空
+     * @param reason 解除理由，非空白
+     * @return 解除后的信用记录出参，非空
+     * @throws BizException OP-1009（404 记录不存在 / 409 无在效限约区间）时触发
+     */
+    @Override
+    @Transactional
+    public ApptCreditVO releaseCredit(long id, String reason) {
+        // 数据库读操作：信用行定位
+        ApptCreditRecord record = apptCreditRecordMapper.selectById(id);
+        if (record == null) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED, HttpStatus.NOT_FOUND, "信用记录不存在：id=" + id);
+        }
+        if (record.getRestrictTo() == null || record.getRestrictTo().isBefore(LocalDate.now())) {
+            throw new BizException(
+                    OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "无限约区间或限约已失效，无需解除：id=" + id);
+        }
+        // 数据库写操作：提前解除（restrict_to 拨至今日-1 即时失效）+解除理由留痕
+        record.setRestrictTo(LocalDate.now().minusDays(1));
+        record.setReleaseReason(reason);
+        record.setUpdatedBy(OperatorContextHolder.get());
+        apptCreditRecordMapper.updateById(record);
+        log.info(
+                "爽约限约手工解除：creditId={}，patientId={}，原限约至={}，reason={}",
+                id,
+                record.getPatientId(),
+                record.getRestrictTo(),
+                reason);
+        return toCreditVO(record);
     }
 
     // ---------------------------------------------------------------- 私有辅助
@@ -778,6 +1072,275 @@ public class AppointmentServiceImpl implements IAppointmentService {
             throw new IllegalStateException("booked 事件组装失败：排班定位缺失，scheduleId=" + appointment.getScheduleId());
         }
         return schedule;
+    }
+
+    // ---------------------------------------------------------------- 退号/改期私有辅助（Task 6）
+
+    /**
+     * 已取号未报到退号（分支 3）：visit 必须仍处 REGISTERED（已报到/已接诊拒线上退 OP-1010，窗口
+     * 人工「未诊即退」线下承载 Spec :137）——命中即走退费链并保持 TAKEN 占位待回执（visit 回滚随
+     * billing.refund.approved 回执，{@link #rollbackTakenVisit} 承载）。
+     *
+     * @param appointment 已取号预约单，非空
+     * @param reason      退号原因，非空白
+     * @return 预约单出参（TAKEN 占位待回执），非空
+     * @throws BizException OP-1010（visit 非 REGISTERED——已报到/已接诊）时触发
+     * @throws IllegalStateException visit 按 visit_id 定位失败（数据异常，交事务回滚留痕）
+     */
+    private AppointmentVO cancelTaken(Appointment appointment, String reason) {
+        // 数据库读操作：visit 态核验（TAKEN 单必有 visit 锚，缺失即数据异常 fail-fast）
+        Visit visit =
+                visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, appointment.getVisitId()));
+        if (visit == null) {
+            throw new IllegalStateException("退号失败：就诊记录缺失（数据异常）：apptNo=" + appointment.getApptNo());
+        }
+        if (visit.getStatus() != VisitStatus.REGISTERED) {
+            log.warn(
+                    "已报到/已接诊拒线上退：apptNo={}，visitId={}，visitStatus={}",
+                    appointment.getApptNo(),
+                    visit.getVisitId(),
+                    visit.getStatus().getCode());
+            throw new BizException(
+                    OutpatientErrorCode.CANCEL_WINDOW_CLOSED,
+                    HttpStatus.CONFLICT,
+                    "已报到/已接诊不可线上退号，请到窗口按「未诊即退」规则办理：apptNo=" + appointment.getApptNo());
+        }
+        triggerRegistrationRefund(appointment, reason);
+        return toAppointmentVO(appointment);
+    }
+
+    /**
+     * 已预约占位退号（分支 1/2 分流）：已支付且有结算锚→分支 2 退费链（保持 RESERVED 待回执，占位
+     * 不动）；否则→分支 1 免退费直取消（状态 CAS+回池+删占位键+cancelled 事件，无结算可退不涉
+     * billing——裁决 7 字面）。
+     *
+     * @param appointment RESERVED 预约单，非空
+     * @param reason      退号原因，非空白
+     * @return 预约单出参，非空
+     */
+    private AppointmentVO cancelReserved(Appointment appointment, String reason) {
+        if (appointment.getFeeStatus() == FeeStatusType.PAID && appointment.getFeeSettlementId() != null) {
+            triggerRegistrationRefund(appointment, reason);
+            return toAppointmentVO(appointment);
+        }
+        // 分支 1：状态 CAS 幂等守卫（0 行=并发已迁移/已超时释放，info 跳过禁二次回池）
+        int flipped = appointmentMapper.casStatus(
+                appointment.getId(), ApptStatus.RESERVED.getCode(), ApptStatus.CANCELLED.getCode());
+        if (flipped == 0) {
+            Appointment current = appointmentMapper.selectById(appointment.getId());
+            log.info(
+                    "退号幂等跳过（当前态 {}）：apptNo={}",
+                    current == null ? "UNKNOWN" : current.getStatus().getCode(),
+                    appointment.getApptNo());
+            return toAppointmentVO(appointment);
+        }
+        appointment.setStatus(ApptStatus.CANCELLED);
+        releasePoolConditionally(appointment.getPoolId(), appointment.getApptNo());
+        deletePayHoldQuietly(appointment.getApptNo());
+        events.publishEvent(new OutpatientDomainEvent(
+                OutpatientMessagingConstants.EVENT_APPOINTMENT_CANCELLED,
+                new AppointmentCancelledPayload(appointment.getApptNo(), appointment.getPatientId(), reason, false)));
+        log.info(
+                "退号完成（免退费路径）：apptNo={}，patientId={}，poolId={}，reason={}",
+                appointment.getApptNo(),
+                appointment.getPatientId(),
+                appointment.getPoolId(),
+                reason);
+        return toAppointmentVO(appointment);
+    }
+
+    /**
+     * 触发挂号费退费（分支 2/3 共用退费链）：可退行勾选后经 billing 端口 applyRefund（统一免审档，
+     * 裁决 7）——appointment 保持原态占位待回执，号源/占位键均不动（终态一律 refund.approved 后置，
+     * 回执前重复退号发起由 M13 超可退守卫拦截）。
+     *
+     * @param appointment 已支付预约单（RESERVED/TAKEN），非空
+     * @param reason      退号原因，非空白（透传 M13 退费理由留痕）
+     */
+    private void triggerRegistrationRefund(Appointment appointment, String reason) {
+        long refundId = billingPort.applyRefund(
+                new VisitRefundCommand(appointment.getFeeSettlementId(), refundableLines(appointment), reason));
+        log.info(
+                "退号退费申请已触发，预约单保持 {} 待 refund.approved 回执：apptNo={}，refundId={}，settlementId={}",
+                appointment.getStatus().getCode(),
+                appointment.getApptNo(),
+                refundId,
+                appointment.getFeeSettlementId());
+    }
+
+    /**
+     * 可退费用行勾选（visit 维度全状态查询→结算锚+可退态过滤）：行态词表与 M13 退费守卫同源
+     * （SETTLED/PART_REFUND）；挂号费整号退=逐行数量 "1"（P1 挂号费单次计费口径）。无可退行即
+     * 数据异常 fail-fast（PAID 单必有可退行，禁静默零退费）。
+     *
+     * @param appointment 已支付预约单，非空
+     * @return 退费明细行清单（非空）
+     * @throws IllegalStateException 可退行为空（数据异常）时触发
+     */
+    private List<VisitRefundCommand.Line> refundableLines(Appointment appointment) {
+        List<VisitFeeView> fees = billingPort.feesByVisit(appointment.getVisitId());
+        List<VisitRefundCommand.Line> lines = fees.stream()
+                .filter(fee -> appointment.getFeeSettlementId().equals(fee.settlementId())
+                        && REFUNDABLE_FEE_STATUSES.contains(fee.status()))
+                .map(fee -> new VisitRefundCommand.Line(fee.feeId(), REGISTRATION_REFUND_QUANTITY))
+                .toList();
+        if (lines.isEmpty()) {
+            throw new IllegalStateException("已支付预约单无可退费用行（数据异常）：apptNo=" + appointment.getApptNo() + "，settlementId="
+                    + appointment.getFeeSettlementId());
+        }
+        return lines;
+    }
+
+    /**
+     * 构建改期新预约单（RESERVED+reschedule_of 链锚）：patient/渠道承继旧单，排班/号段/冗余列取
+     * 新池与新排班，费态回 UNPAID（改期仅承载未支付占位迁移），PORTAL 渠道重置完整支付时限。
+     *
+     * @param old         旧预约单，非空
+     * @param newPool     新号源池行，非空
+     * @param newSchedule 新排班日历，非空
+     * @return 新预约单实体（未落库），非空
+     */
+    private Appointment buildRescheduledAppointment(Appointment old, ApptNumberPool newPool, Schedule newSchedule) {
+        Appointment fresh = new Appointment();
+        fresh.setApptNo(issueApptNo());
+        fresh.setPatientId(old.getPatientId());
+        fresh.setScheduleId(newSchedule.getId());
+        fresh.setPoolId(newPool.getId());
+        fresh.setDeptCode(newSchedule.getDeptCode());
+        fresh.setApptType(newPool.getApptType());
+        fresh.setSchedDate(newSchedule.getSchedDate());
+        fresh.setSlotStart(newPool.getSlotStart());
+        fresh.setSlotEnd(newPool.getSlotEnd());
+        fresh.setChannel(old.getChannel());
+        fresh.setFeeStatus(FeeStatusType.UNPAID);
+        fresh.setPayDeadline(
+                old.getChannel() == ApptChannel.PORTAL
+                        ? OffsetDateTime.now().plus(properties.appointmentTimeout())
+                        : null);
+        fresh.setRescheduleOf(old.getApptNo());
+        fresh.setStatus(ApptStatus.RESERVED);
+        fresh.setCreatedBy(operatorOf(old.getChannel()));
+        fresh.setUpdatedBy(operatorOf(old.getChannel()));
+        return fresh;
+    }
+
+    /**
+     * 改期 PORTAL 占位登记（占位键+延迟信封随新单号，占位时限=完整支付时限+缓冲）：登记失败对称
+     * 回补（Redis 持有+新占位键）后原样上抛交事务回滚——与预约主链 holdPortalSlot 同款裁决面
+     * （延迟信封是占位超时释放的权威载体，入队失败即槽位泄漏面）。旧单延迟信封到期时旧单已
+     * CANCELLED，markTimeout 状态 CAS 守卫幂等跳过，零二次释放。
+     *
+     * @param fresh       已落库新预约单，非空
+     * @param newPool     新号源池行，非空
+     * @param newSchedule 新排班日历，非空（失败回补 TTL 锚）
+     * @param redisHeld   第一道闸是否已扣减（true 时失败路径须 release 回补）
+     */
+    private void registerRescheduledHold(
+            Appointment fresh, ApptNumberPool newPool, Schedule newSchedule, boolean redisHeld) {
+        try {
+            // 缓存写操作：新单支付占位键（辅助标记，权威时限守卫在延迟档位与 casTake 谓词）
+            redisTemplate
+                    .opsForValue()
+                    .set(
+                            payHoldKey(fresh.getApptNo()),
+                            fresh.getApptNo(),
+                            properties.appointmentTimeout().plus(PAY_HOLD_BUFFER));
+            // 事务内直发延迟信封（A.4.2-7 例外注记，见 DelayEnvelopeSender 裁决链）
+            delayEnvelopeSender.send(
+                    new AppointmentTimeoutPayload(fresh.getApptNo(), fresh.getPatientId(), newPool.getId()));
+        } catch (RuntimeException e) {
+            releaseRedisHoldQuietly(newPool, newSchedule, redisHeld);
+            deletePayHoldQuietly(fresh.getApptNo());
+            log.error(
+                    "改期占位登记失败，整单回滚：apptNo={}，newPoolId={}，exception={}，原因={}",
+                    fresh.getApptNo(),
+                    newPool.getId(),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
+            throw e;
+        }
+    }
+
+    /**
+     * 退号回执 visit 回滚（TAKEN 单，红线 5）：REGISTERED→CANCELLED 合法迁移对经 visit CAS 单步
+     * 原子，命中后 visit_status_log 每迁必记+visit.cancelled 事件发布；并发落败 warn 跳过（后续
+     * 重复回执对 CANCELLED 后的 appointment 零命中即自然幂等收敛）。
+     *
+     * @param appointment 已置 CANCELLED 的 TAKEN 预约单，非空
+     * @param reason      迁移原因（回执锚），非空
+     * @throws IllegalStateException visit 按 visit_id 定位失败（数据异常，交死信留痕）
+     */
+    private void rollbackTakenVisit(Appointment appointment, String reason) {
+        // 数据库读操作：visit 锚定位（TAKEN 单必有 visit，缺失即数据异常）
+        Visit visit =
+                visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, appointment.getVisitId()));
+        if (visit == null) {
+            throw new IllegalStateException("退号回执回滚失败：就诊记录缺失（数据异常）：apptNo=" + appointment.getApptNo());
+        }
+        // visit 状态机合法迁移 REGISTERED→CANCELLED：CAS 命中才记日志与事件（并发已迁移幂等跳过）
+        if (visitMapper.casStatus(visit.getId(), VisitStatus.REGISTERED.getCode(), VisitStatus.CANCELLED.getCode())
+                == 0) {
+            log.warn("退号回执 visit 回滚 CAS 落败（并发已迁移）：visitId={}，apptNo={}", visit.getVisitId(), appointment.getApptNo());
+            return;
+        }
+        VisitStatusLog statusLog = new VisitStatusLog();
+        statusLog.setVisitId(visit.getVisitId());
+        statusLog.setFromStatus(VisitStatus.REGISTERED);
+        statusLog.setToStatus(VisitStatus.CANCELLED);
+        statusLog.setReason(reason);
+        statusLog.setOperator(SYSTEM_OPERATOR);
+        // 数据库写操作：迁移日志每迁必记（红线 5）
+        visitStatusLogMapper.insert(statusLog);
+        events.publishEvent(new OutpatientDomainEvent(
+                OutpatientMessagingConstants.EVENT_VISIT_CANCELLED,
+                new VisitCancelledPayload(visit.getVisitId(), visit.getPatientId(), reason)));
+        log.info("退号回执 visit 回滚完成：visitId={}，apptNo={}，reason={}", visit.getVisitId(), appointment.getApptNo(), reason);
+    }
+
+    /**
+     * 池行条件回池（超时释放/退号取消/改期放旧/退费回执四处共用释放面）：casRelease 带重读 version
+     * 谓词（防并发双回补），1 行后回补 Redis 快路径（排班定位失败交日对账）；0 行重读定性后终止
+     * 本轮回池——禁负余量、禁重复回补 Redis（Task 4 casRelease 谓词口径）。
+     *
+     * @param poolId 池行主键，非空
+     * @param apptNo 预约单号（日志业务锚点），非空
+     */
+    private void releasePoolConditionally(long poolId, String apptNo) {
+        ApptNumberPool pool = apptNumberPoolMapper.selectById(poolId);
+        if (pool == null) {
+            log.warn("回池跳过（池行不存在）：apptNo={}，poolId={}", apptNo, poolId);
+            return;
+        }
+        int released = apptNumberPoolMapper.casRelease(pool.getId(), pool.getVersion() == null ? 0 : pool.getVersion());
+        if (released != 1) {
+            ApptNumberPool latest = apptNumberPoolMapper.selectById(poolId);
+            log.warn(
+                    "回池并发落败，终止本轮回池（重读定性 poolStatus={}）：apptNo={}，poolId={}",
+                    latest == null ? "UNKNOWN" : latest.getStatus().getCode(),
+                    apptNo,
+                    poolId);
+            return;
+        }
+        Schedule schedule = scheduleMapper.selectById(pool.getScheduleId());
+        if (schedule == null) {
+            log.warn("回池 Redis 快路径跳过（排班定位失败，交日对账）：apptNo={}，poolId={}", apptNo, poolId);
+            return;
+        }
+        releasePoolKeyQuietly(pool.getId(), pool.getTotalQuota(), schedule.getSchedDate(), apptNo);
+    }
+
+    /** 实体 → 信用记录出参投影（Task 6 管理面）。 */
+    private static ApptCreditVO toCreditVO(ApptCreditRecord record) {
+        return new ApptCreditVO(
+                record.getId(),
+                record.getPatientId(),
+                record.getAction(),
+                record.getOccurredAt(),
+                record.getWindowDays(),
+                record.getRestrictFrom(),
+                record.getRestrictTo(),
+                record.getReleaseReason());
     }
 
     /**
