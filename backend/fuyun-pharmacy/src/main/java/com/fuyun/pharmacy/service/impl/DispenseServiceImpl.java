@@ -1,6 +1,7 @@
 package com.fuyun.pharmacy.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -37,6 +38,9 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -363,7 +367,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                             PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
                             HttpStatus.BAD_REQUEST,
                             "退药受理缺行：prescriptionItemId=" + item.getPrescriptionItemId()));
-            BigDecimal returnQty = new BigDecimal(line.returnQuantity());
+            BigDecimal returnQty = parseReturnQuantity(line.returnQuantity());
             BigDecimal returnable = item.getIssuedQty().subtract(item.getReturnedQty());
             // 数量守卫：累计退药不得超实发（PH-1013）；追溯码逐码核验与发药采集一致（PH-1012 防回流药）
             if (returnQty.signum() <= 0 || returnQty.compareTo(returnable) > 0) {
@@ -459,7 +463,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                             PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
                             HttpStatus.BAD_REQUEST,
                             "明细退场缺行：prescriptionItemId=" + item.getPrescriptionItemId()));
-            BigDecimal qty = new BigDecimal(line.returnQuantity());
+            BigDecimal qty = parseReturnQuantity(line.returnQuantity());
             // 数据库写操作：释放锁定（锁定数非数量流水，不落 stock_ledger；明细退场标记）
             if (drugBatchMapper.releaseLock(item.getBatchId(), qty) != 1) {
                 throw new BizException(
@@ -512,17 +516,37 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 .eq(Prescription::getPatientId, pid)
                 .eq(visitId != null && !visitId.isBlank(), Prescription::getVisitId, visitId)
                 .orderByAsc(Prescription::getId));
+        if (rxs.isEmpty()) {
+            // 空集短路（语义同原「占用行集无命中即空集出网」）：不发起明细/发药单 in 批查（空 id 集不出网）
+            return List.of();
+        }
+        // 数据库读操作：本集处方明细一次 in 批装载（itemCode 可选过滤；prescription_id+id 升序保住
+        //   每处方内明细相对序与原逐行单查等价，A.4.3-14 循环单查改批量拒绝 N+1）
+        List<Long> rxIds = rxs.stream().map(Prescription::getId).toList();
+        Map<Long, List<PrescriptionItem>> itemsByRx = prescriptionItemMapper
+                .selectList(Wrappers.<PrescriptionItem>lambdaQuery()
+                        .in(PrescriptionItem::getPrescriptionId, rxIds)
+                        .eq(itemCode != null && !itemCode.isBlank(), PrescriptionItem::getItemCode, itemCode)
+                        .orderByAsc(PrescriptionItem::getPrescriptionId)
+                        .orderByAsc(PrescriptionItem::getId))
+                .stream()
+                .collect(Collectors.groupingBy(PrescriptionItem::getPrescriptionId));
+        // 数据库读操作：本集发药单一次 in 批取，谓词排除 CANCELLED 与 uk_dispense_rx_active 配套互锁
+        //   （V703 部分唯一索引仅约束活动行唯一，status<>CANCELLED 排除「取消单+重建活动单」共存的
+        //   取消态历史行——一处方一张活动单，每 rxNo 至多 1 行命中，不重蹈原逐行 selectOne 多行抛错），
+        //   按 rxNo 建映射供投影消费；未配药处方映射缺位→null（占用行仍出，退费前置）
+        List<String> rxNos = rxs.stream().map(Prescription::getRxNo).toList();
+        Map<String, Dispense> dispenseByRxNo = baseMapper
+                .selectList(Wrappers.<Dispense>lambdaQuery()
+                        .in(Dispense::getRxNo, rxNos)
+                        .ne(Dispense::getStatus, "CANCELLED")
+                        .orderByAsc(Dispense::getId))
+                .stream()
+                .collect(Collectors.toMap(Dispense::getRxNo, Function.identity(), (first, duplicate) -> first));
         List<OccupancyVO> rows = new ArrayList<>();
         for (Prescription rx : rxs) {
-            // 数据库读操作：处方明细按计费行快照出占用行（itemCode 可选过滤）
-            List<PrescriptionItem> items = prescriptionItemMapper.selectList(Wrappers.<PrescriptionItem>lambdaQuery()
-                    .eq(PrescriptionItem::getPrescriptionId, rx.getId())
-                    .eq(itemCode != null && !itemCode.isBlank(), PrescriptionItem::getItemCode, itemCode)
-                    .orderByAsc(PrescriptionItem::getId));
-            // 数据库读操作：一处方一张活动单（uk_dispense_rx_active）；未配药为 null，占用行仍出
-            Dispense d = baseMapper.selectOne(Wrappers.<Dispense>lambdaQuery().eq(Dispense::getRxNo, rx.getRxNo()));
-            for (PrescriptionItem item : items) {
-                rows.add(OccupancyVO.from(rx, item, d));
+            for (PrescriptionItem item : itemsByRx.getOrDefault(rx.getId(), List.of())) {
+                rows.add(OccupancyVO.from(rx, item, dispenseByRxNo.get(rx.getRxNo())));
             }
         }
         return rows;
@@ -557,11 +581,12 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         dispense.setStatus("CREATED");
         // 数据库写操作：发药单落库（唯一索引兜底 charged 重投并发建单）
         baseMapper.insert(dispense);
-        // 数据库读操作+写操作：处方明细快照入队（应发数=处方数量，批次/追溯码随 pick 回填）
+        // 数据库读操作：处方明细快照取行（应发数=处方数量，批次/追溯码随 pick 回填）
         List<PrescriptionItem> items = prescriptionItemMapper.selectList(Wrappers.<PrescriptionItem>lambdaQuery()
                 .eq(PrescriptionItem::getPrescriptionId, rx.getId())
                 .eq(PrescriptionItem::getStatus, "NORMAL")
                 .orderByAsc(PrescriptionItem::getId));
+        List<DispenseItem> rows = new ArrayList<>(items.size());
         for (PrescriptionItem item : items) {
             DispenseItem row = new DispenseItem();
             row.setDispenseId(dispense.getId());
@@ -570,8 +595,11 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             row.setItemCode(item.getItemCode());
             row.setRequestedQty(item.getQuantity());
             row.setItemStatus("NORMAL");
-            dispenseItemMapper.insert(row);
+            rows.add(row);
         }
+        // 数据库写操作：明细一次批插（A.4.3-16 saveBatch：JDBC 批处理 + ASSIGN_ID 自动填充 ID，
+        //   调用方 releaseByVisit @Transactional 事务内承载）
+        Db.saveBatch(rows);
         log.info("缴费放行入队：rxNo={}，dispenseNo={}，明细数={}", rx.getRxNo(), dispense.getDispenseNo(), items.size());
     }
 
@@ -604,6 +632,24 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             throw new BizException(PharmacyErrorCode.PRESCRIPTION_NOT_FOUND, HttpStatus.NOT_FOUND, "处方不存在：" + rxNo);
         }
         return rx;
+    }
+
+    /**
+     * 退药数量解析守卫（PH-1016，W-22⑦）：returnQuantity 为 DECIMAL string 承载，非数字串显式
+     * 拒 400（禁 NumberFormatException 直穿 500 出契约外形态）；数值合法性（&gt;0、不超可退余额）
+     * 仍归 PH-1013 服务层后续守卫，本守卫只管格式。
+     *
+     * @param returnQuantity 退药数量 DECIMAL string，非空（DTO @NotBlank 承载）
+     * @return 已解析数量
+     * @throws BizException PH-1016（400）：非数字串
+     */
+    private static BigDecimal parseReturnQuantity(String returnQuantity) {
+        try {
+            return new BigDecimal(returnQuantity);
+        } catch (NumberFormatException e) {
+            throw new BizException(
+                    PharmacyErrorCode.NUMERIC_FIELD_MALFORMED, HttpStatus.BAD_REQUEST, "退药数量须为数字串：" + returnQuantity);
+        }
     }
 
     /**

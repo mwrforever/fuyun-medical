@@ -114,8 +114,14 @@ function openEdit(row: DrugVO): void {
   saveVisible.value = true;
 }
 
-/** 提交建档/变更：必填前置校验（药码/通用名/抗菌分级/危险级/麻精分级），成功后关窗重刷。 */
+/**
+ * 提交建档/变更：必填前置校验（药码/通用名/抗菌分级/危险级/麻精分级），成功后关窗重刷。
+ * 入口在途早退守卫：saveSubmitting 置位到 Vue 重渲染存在间隙，重渲染前到达的第二击在入口即被拦截。
+ */
 async function submitSave(): Promise<void> {
+  if (saveSubmitting.value) {
+    return;
+  }
   if (
     saveForm.drugCode.trim() === '' ||
     saveForm.genericName.trim() === '' ||
@@ -169,8 +175,14 @@ function openMapping(row: DrugVO): void {
   mappingVisible.value = true;
 }
 
-/** 提交医保对照：三字段必填前置，成功后关窗重刷（对照后 insuredSettleable 翻转）。 */
+/**
+ * 提交医保对照：三字段必填前置，成功后关窗重刷（对照后 insuredSettleable 翻转）。
+ * 入口在途早退守卫：mappingSubmitting 置位到 Vue 重渲染存在间隙，重渲染前到达的第二击在入口即被拦截。
+ */
 async function submitMapping(): Promise<void> {
+  if (mappingSubmitting.value) {
+    return;
+  }
   if (
     mappingForm.nhsaCode.trim() === '' ||
     mappingForm.catalogVersion.trim() === '' ||

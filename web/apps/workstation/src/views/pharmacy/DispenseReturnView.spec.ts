@@ -1,8 +1,9 @@
 // 退药受理页单测（FU-M06-05 前端面）：实物退缺追溯码被前端前置拦截不出网（「无码不结」
 // 受理面）、提交以回传单号+受理模式+逐行集调 createDispenseReturn（单号与明细锚点均由
-// 后端回传承载，页面不自造）。api mock 承载，不打真实网络。
+// 后端回传承载，页面不自造）；提交在途防抖（W-22⑥）：慢响应窗口内按钮禁用且二次点击零出网。
+// api mock 承载，不打真实网络。
 import { flushPromises, mount } from '@vue/test-utils';
-import type { VueWrapper } from '@vue/test-utils';
+import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
 import { createDispenseReturn, listDispenses } from '@/api/pharmacy';
@@ -39,6 +40,15 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
     throw new Error(`未找到按钮：${text}`);
   }
   await button.trigger('click');
+}
+
+/** 按按钮文案定位 el-button 包装（在途断言用；非点击入口） */
+function findButton(wrapper: VueWrapper, text: string): DOMWrapper<Element> {
+  const button = wrapper.findAll('button').find((b) => b.text() === text);
+  if (!button) {
+    throw new Error(`未找到按钮：${text}`);
+  }
+  return button;
 }
 
 /** 构造已检回的发药单（明细一行；单号/处方号/明细 id 定值承载回传出参） */
@@ -123,6 +133,39 @@ describe('退药受理页', () => {
         },
       ],
     });
+    wrapper.unmount();
+  });
+
+  it('提交退药在途：按钮禁用且二次点击零出网，结束后复位可再点（W-22⑥ 防抖）', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    // 慢响应：提交挂起至用例放行，稳定复现「请求在途」窗口（双击的第二个事件必落在窗口内）
+    let releaseSubmit: () => void = () => {};
+    vi.mocked(createDispenseReturn).mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSubmit = resolve;
+        }),
+    );
+    const wrapper = await mountWithSheet();
+
+    // 逐码录入齐备（退药数量保持默认 1）→ 首击提交（在途窗开启）
+    await wrapper.find('input[placeholder="逐盒扫码，逗号分隔"]').setValue('T1,T2');
+    await clickButton(wrapper, '提交退药');
+    await flushPromises();
+
+    // 在途态：按钮原生 disabled 置位（:disabled 与 :loading 同挂在途标志）
+    expect(findButton(wrapper, '提交退药').attributes('disabled')).toBeDefined();
+    expect(vi.mocked(createDispenseReturn)).toHaveBeenCalledTimes(1);
+
+    // 在途窗口内二次点击：handler 入口守卫 + 组件 loading 双保险，零第二次出网
+    await clickButton(wrapper, '提交退药');
+    await flushPromises();
+    expect(vi.mocked(createDispenseReturn)).toHaveBeenCalledTimes(1);
+
+    // 在途结束后恢复可点（防抖标记须经 finally 复位，禁把按钮永久锁死）
+    releaseSubmit();
+    await flushPromises();
+    expect(findButton(wrapper, '提交退药').attributes('disabled')).toBeUndefined();
     wrapper.unmount();
   });
 });

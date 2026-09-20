@@ -2,6 +2,7 @@ package com.fuyun.pharmacy.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.billing.api.PrescriptionFeePort;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -29,6 +30,8 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -85,8 +88,9 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     public PrescriptionVO create(PrescriptionCreateRequest req) {
         // TODO(PR-5): 接入执业授权校验（POST /api/v1/system/practice/check 真实化后，处方权/麻精权/抗菌药分级纵深防御——M03 入口校验之外的第二道）
         validateVisitAndType(req);
-        // 请求面数量守卫（读库前置）：数量口径属请求自证，无需药品信息，禁未校验先落库
-        validateQuantities(req.items());
+        // 请求面数量守卫（读库前置）：数量口径属请求自证，无需药品信息，禁未校验先落库；
+        //   解析结果随行带回（W-22⑦：非数字串显式拒 400），明细落库复用禁二次 parse
+        List<BigDecimal> quantities = parseQuantities(req.items());
         // 数据库写操作：处方主行落库（状态 CREATED，随即同事务 APPROVED——Spec :132 预检通过级同步完成）
         Prescription rx = new Prescription();
         rx.setRxNo(nextRxNo());
@@ -106,11 +110,13 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         }
         // 内存态与 DB 迁移同步：出参 VO status 口径取迁移后终态（APPROVED），防出参与库不一致
         rx.setStatus("APPROVED");
-        // 明细落库 + 计费行快照（item_code+数量+用法摘要，created 事件唯一携带源，M-4 裁决）
+        // 明细行装配 + 计费行快照（item_code+数量+用法摘要，created 事件唯一携带源，M-4 裁决）；
+        //   数量取读库前置段已解析结果（同位置对应），单次解析
         List<PrescriptionItem> items = new ArrayList<>(req.items().size());
         boolean skinRequired = Boolean.TRUE.equals(req.skinTestRequired());
         String topNarcotic = "NORMAL";
-        for (RxItemRequest itemReq : req.items()) {
+        for (int i = 0; i < req.items().size(); i++) {
+            RxItemRequest itemReq = req.items().get(i);
             Drug drug = drugMapper.selectById(itemReq.drugId());
             validateLine(drug, itemReq);
             PrescriptionItem row = new PrescriptionItem();
@@ -118,7 +124,7 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
             row.setDrugId(drug.getId());
             row.setDrugCode(drug.getDrugCode());
             row.setItemCode(drug.getItemCode());
-            row.setQuantity(new BigDecimal(itemReq.quantity()));
+            row.setQuantity(quantities.get(i));
             row.setUnit(itemReq.unit() == null ? drug.getUnit() : itemReq.unit());
             row.setSingleDose(itemReq.singleDose());
             row.setRouteCode(itemReq.routeCode());
@@ -127,17 +133,22 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
             row.setUsageNote(itemReq.usageNote());
             row.setUsageSummary(buildUsageSummary(itemReq));
             row.setSkinTestFlag(Boolean.TRUE.equals(drug.getSkinTestFlag()));
-            prescriptionItemMapper.insert(row);
             items.add(row);
             // 皮试要求聚合 + 处方类别随最高毒麻级别派生（红处方口径，Spec :106）
             skinRequired = skinRequired || Boolean.TRUE.equals(drug.getSkinTestFlag());
             topNarcotic = maxNarcotic(topNarcotic, drug.getNarcoticClass());
         }
+        // 数据库写操作：明细一次批插（A.4.3-16 saveBatch：JDBC 批处理 + ASSIGN_ID 自动填充 ID，
+        //   本方法 @Transactional 事务内承载；前置 validateLine 逐行逻辑不受批插影响）
+        Db.saveBatch(items);
         rx.setSkinTestRequired(skinRequired);
         rx.setRxCategory(topNarcotic);
         baseMapper.updateById(rx);
-        // 事务内发应用事件：处方生效即发布（携计费行，M-4 裁决；事件与生效同事务落 outbox 语义
-        //   由 AFTER_COMMIT 发布器承载——处方生效但事件丢失的窗口被事务提交序消除）
+        // 事务内发应用事件：处方生效即发布（携计费行，M-4 裁决）。可靠投递链路（宪法 B.3-3，D-2 裁决）：
+        //   Spring Modulith 事件发布注册表在本事务内同步落 event_publication，与处方业务变更原子提交
+        //   ——处方生效与事件可投递记录同生共死，丢失窗口已消除；事务提交后 PharmacyEventPublisher
+        //   以 @TransactionalEventListener(AFTER_COMMIT) 直发 MQ，监听器失败或实例宕机遗留的未完成
+        //   发布由 EventOpsJob 定时重投（卡住超 5 分钟，重启重发默认关闭），残余风险仅剩消费侧幂等
         events.publishEvent(new PharmacyDomainEvent(
                 PharmacyMessagingConstants.EVENT_PRESCRIPTION_CREATED,
                 new PrescriptionCreatedPayload(
@@ -211,8 +222,23 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
                         .eq(rxNo != null && !rxNo.isBlank(), Prescription::getRxNo, rxNo)
                         .eq(status != null && !status.isBlank(), Prescription::getStatus, status)
                         .orderByAsc(Prescription::getId));
-        List<PrescriptionVO> content = result.getRecords().stream()
-                .map(rx -> PrescriptionVO.from(rx, loadItems(rx.getId())))
+        List<Prescription> records = result.getRecords();
+        if (records.isEmpty()) {
+            // 空页短路：不发起明细 in 批查（空 id 集不出网）
+            return PageResult.of(List.of(), page, size, result.getTotal());
+        }
+        // 数据库读操作：本页明细一次 in 批装载（A.4.3-14 循环单查改批量拒绝 N+1）；prescription_id+id
+        //   升序保住每处方内明细相对序（与原逐处方单查 orderByAsc(id) 等价），groupingBy 保组内遇序
+        List<Long> rxIds = records.stream().map(Prescription::getId).toList();
+        Map<Long, List<PrescriptionItem>> itemsByRx = prescriptionItemMapper
+                .selectList(Wrappers.<PrescriptionItem>lambdaQuery()
+                        .in(PrescriptionItem::getPrescriptionId, rxIds)
+                        .orderByAsc(PrescriptionItem::getPrescriptionId)
+                        .orderByAsc(PrescriptionItem::getId))
+                .stream()
+                .collect(Collectors.groupingBy(PrescriptionItem::getPrescriptionId));
+        List<PrescriptionVO> content = records.stream()
+                .map(rx -> PrescriptionVO.from(rx, toItemVOs(itemsByRx.getOrDefault(rx.getId(), List.of()))))
                 .toList();
         return PageResult.of(content, page, size, result.getTotal());
     }
@@ -255,20 +281,35 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     }
 
     /**
-     * 请求面数量守卫（PH-1006，落库前置）：quantity 为 DECIMAL string 承载，逐行判定 >0，
-     * 0 与负数均不得生成计费行。
+     * 请求面数量解析守卫（PH-1006，落库前置）：quantity 为 DECIMAL string 承载，非数字串显式拒
+     * 400（W-22⑦：禁 NumberFormatException 直穿 500 出契约外形态），逐行判定 &gt;0——0 与负数
+     * 均不得生成计费行。解析结果随行返回供明细落库复用，保持单次解析。
      *
      * @param items 处方明细入参，非空
+     * @return 与入参同序同位的已解析数量清单（落库直接复用，禁二次 parse）
+     * @throws BizException PH-1006（400）：任一行数量非数字串或 ≤0
      */
-    private void validateQuantities(List<RxItemRequest> items) {
+    private List<BigDecimal> parseQuantities(List<RxItemRequest> items) {
+        List<BigDecimal> quantities = new ArrayList<>(items.size());
         for (RxItemRequest itemReq : items) {
-            if (new BigDecimal(itemReq.quantity()).signum() <= 0) {
+            BigDecimal parsed;
+            try {
+                parsed = new BigDecimal(itemReq.quantity());
+            } catch (NumberFormatException e) {
+                throw new BizException(
+                        PharmacyErrorCode.PRESCRIPTION_LINE_INVALID,
+                        HttpStatus.BAD_REQUEST,
+                        "处方数量须为数字串：" + itemReq.quantity());
+            }
+            if (parsed.signum() <= 0) {
                 throw new BizException(
                         PharmacyErrorCode.PRESCRIPTION_LINE_INVALID,
                         HttpStatus.BAD_REQUEST,
                         "处方数量须大于 0：" + itemReq.quantity());
             }
+            quantities.add(parsed);
         }
+        return quantities;
     }
 
     /** 用法摘要拼装（created 事件计费行与药袋展示共用口径；备注非空追加尾段） */
@@ -305,25 +346,8 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
                 + String.format("%06d", Math.floorMod(System.nanoTime(), 1_000_000L));
     }
 
-    /** 实体明细→出参清单（create 返回面共用映射） */
+    /** 实体明细→出参清单（create 返回面与 list 分页共用映射） */
     private List<PrescriptionItemVO> toItemVOs(List<PrescriptionItem> items) {
         return items.stream().map(PrescriptionItemVO::from).toList();
-    }
-
-    /**
-     * 明细装载（查询随行：按处方 id 取明细行并转出参，明细只读 Spec :107）。
-     *
-     * @param prescriptionId 处方 id，非空
-     * @return 明细出参清单，非空（无明细时空清单）
-     */
-    private List<PrescriptionItemVO> loadItems(Long prescriptionId) {
-        // 数据库读操作：所属明细行（id 升序与开方写入序一致）
-        return prescriptionItemMapper
-                .selectList(Wrappers.<PrescriptionItem>lambdaQuery()
-                        .eq(PrescriptionItem::getPrescriptionId, prescriptionId)
-                        .orderByAsc(PrescriptionItem::getId))
-                .stream()
-                .map(PrescriptionItemVO::from)
-                .toList();
     }
 }

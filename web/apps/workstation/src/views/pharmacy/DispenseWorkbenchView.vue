@@ -24,6 +24,11 @@ const dispense = ref<DispenseVO | null>(null);
 const traceInputs = reactive<Record<string, string>>({});
 const loading = ref(false);
 const auth = useAuthStore();
+/**
+ * 发药动作在途标志：配药/核对/发药签名三按钮按单据状态互斥启用（CREATED/PICKING/PICKED
+ * 任一时刻至多一个动作可发），共用一标志即可全覆盖；防双击二次出网与发药确认弹窗双开。
+ */
+const dispensing = ref(false);
 
 /**
  * 加载工作台队列（发药签名成功后重刷）：待发（PENDING_DISPENSE）与调剂中（DISPENSING）
@@ -72,8 +77,14 @@ function isPicker(): boolean {
   return !!dispense.value && dispense.value.picker === auth.user?.userId;
 }
 
-/** 配药：逐码非空前置（无码不结），出网后回显刷新。 */
+/**
+ * 配药：逐码非空前置（无码不结），出网后回显刷新。
+ * 入口在途早退守卫：重渲染前到达的第二击直接拦截，根除配药重复出网。
+ */
 async function onPick(): Promise<void> {
+  if (dispensing.value) {
+    return;
+  }
   const sheet = dispense.value;
   if (!sheet) return;
   const items = (sheet.items ?? []).map((i) => {
@@ -84,45 +95,68 @@ async function onPick(): Promise<void> {
     void ElMessage.warning('逐盒追溯码采集为空（无码不结）');
     return;
   }
+  // 置位在途（finally 必复位）：锁定配药出网窗口，窗口内重复触发零出网
+  dispensing.value = true;
   try {
     await pickDispense(sheet.dispenseNo ?? '', { items });
     void ElMessage.success('配药锁定完成');
     await onSelect({ rxNo: sheet.rxNo });
   } catch {
     // 失败弹错归响应拦截器；录入驻留供补码重试
+  } finally {
+    dispensing.value = false;
   }
 }
 
-/** 核对：按钮启停仅辅助，同人双签由后端拒。 */
+/**
+ * 核对：按钮启停仅辅助，同人双签由后端拒。
+ * 入口在途早退守卫：重渲染前到达的第二击直接拦截，根除核对重复出网。
+ */
 async function onVerify(): Promise<void> {
+  if (dispensing.value) {
+    return;
+  }
   const sheet = dispense.value;
   if (!sheet) return;
+  // 置位在途（finally 必复位）：锁定核对出网窗口，窗口内重复触发零出网
+  dispensing.value = true;
   try {
     await verifyDispense(sheet.dispenseNo ?? '');
     void ElMessage.success('核对通过');
     await onSelect({ rxNo: sheet.rxNo });
   } catch {
     // 失败弹错归响应拦截器
+  } finally {
+    dispensing.value = false;
   }
 }
 
-/** 发药签名：确认弹框后出网（终笔，费用占用生效）；取消驻留不重刷。 */
+/**
+ * 发药签名：确认弹框后出网（终笔，费用占用生效）；取消驻留不重刷。
+ * 在途守卫必须先于确认弹框置位：弹窗未决窗口内到达的第二击在入口即被拦截，防弹双窗二次出网。
+ */
 async function onIssue(): Promise<void> {
-  const sheet = dispense.value;
-  if (!sheet) return;
-  try {
-    await ElMessageBox.confirm('发药签名后药品出库且不可逆，确认发药？', '发药签名');
-  } catch {
-    // 用户取消：发药单驻留，可再次点击发药
+  if (dispensing.value) {
     return;
   }
+  const sheet = dispense.value;
+  if (!sheet) return;
+  dispensing.value = true;
   try {
+    try {
+      await ElMessageBox.confirm('发药签名后药品出库且不可逆，确认发药？', '发药签名');
+    } catch {
+      // 用户取消：发药单驻留，可再次点击发药（在途复位交外层 finally）
+      return;
+    }
     await issueDispense(sheet.dispenseNo ?? '');
     void ElMessage.success('发药完成');
     dispense.value = null;
     await loadQueue();
   } catch {
     // 失败弹错归响应拦截器；单据驻留供重试
+  } finally {
+    dispensing.value = false;
   }
 }
 
@@ -166,18 +200,25 @@ onMounted(loadQueue);
             </el-table-column>
           </el-table>
           <div class="dispense-workbench-actions">
-            <el-button type="primary" :disabled="dispense.status !== 'CREATED'" @click="onPick"
+            <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，三动作互斥共用 dispensing -->
+            <el-button
+              type="primary"
+              :disabled="dispense.status !== 'CREATED' || dispensing"
+              :loading="dispensing"
+              @click="onPick"
               >配药</el-button
             >
             <el-button
               type="warning"
-              :disabled="dispense.status !== 'PICKING' || isPicker()"
+              :disabled="dispense.status !== 'PICKING' || isPicker() || dispensing"
+              :loading="dispensing"
               @click="onVerify"
               >核对</el-button
             >
             <el-button
               type="success"
-              :disabled="dispense.status !== 'PICKED' || isPicker()"
+              :disabled="dispense.status !== 'PICKED' || isPicker() || dispensing"
+              :loading="dispensing"
               @click="onIssue"
               >发药签名</el-button
             >

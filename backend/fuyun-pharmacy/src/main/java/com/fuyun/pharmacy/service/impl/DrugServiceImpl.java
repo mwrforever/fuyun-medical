@@ -173,6 +173,23 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         return wrapper.orderByAsc(Drug::getId);
     }
 
+    /**
+     * 药品拆分比例解析守卫（PH-1016，W-22⑦）：splitRatio 为 DECIMAL string 承载，非数字串显式
+     * 拒 400（禁 NumberFormatException 直穿 500 出契约外形态）；可空字段缺省不入本守卫。
+     *
+     * @param splitRatio 拆分比例 DECIMAL string，非空（可空性由调用方三元承载）
+     * @return 已解析比例值
+     * @throws BizException PH-1016（400）：非数字串
+     */
+    private static BigDecimal parseSplitRatio(String splitRatio) {
+        try {
+            return new BigDecimal(splitRatio);
+        } catch (NumberFormatException e) {
+            throw new BizException(
+                    PharmacyErrorCode.NUMERIC_FIELD_MALFORMED, HttpStatus.BAD_REQUEST, "药品拆分比例须为数字串：" + splitRatio);
+        }
+    }
+
     /** 请求面应用到实体（对照三列与 status 不在覆盖面） */
     private void applyRequest(Drug row, DrugSaveRequest req) {
         row.setDrugCode(req.drugCode());
@@ -184,7 +201,7 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         row.setManufacturer(req.manufacturer());
         row.setRouteCodes(req.routeCodes() == null ? null : String.join(ROUTE_SEPARATOR, req.routeCodes()));
         row.setUnit(req.unit());
-        row.setSplitRatio(req.splitRatio() == null ? null : new BigDecimal(req.splitRatio()));
+        row.setSplitRatio(req.splitRatio() == null ? null : parseSplitRatio(req.splitRatio()));
         row.setEssentialFlag(req.essentialFlag());
         row.setAntibioClass(req.antibioClass());
         row.setHazardLevel(req.hazardLevel());

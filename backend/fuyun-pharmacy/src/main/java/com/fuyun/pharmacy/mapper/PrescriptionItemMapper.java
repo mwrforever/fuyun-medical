@@ -18,7 +18,8 @@ public interface PrescriptionItemMapper extends BaseMapper<PrescriptionItem> {
      * 退药累计回写（退药受理 ISSUED_RETURN 时点专用，服务端原子累加禁读值覆写）：
      * {@code returned_quantity = returned_quantity + #{returnQty}}。口径依据 V701 列注释——
      * 「退药回写」指退药受理链（发后退药）累计；DISPENSING_CANCEL 发药中明细退场不计数
-     * （该时点明细未实发，其写面为 status=CANCELLED，见同表 status 列注释）。
+     * （该时点明细未实发，退场写面在 dispense_item.item_status=CANCELLED；prescription_item
+     * 的 status 列零写入点——发后退药链仅经本语句回写 returned_quantity）。
      * deleted=0 显式补齐（注解 SQL 不继承 @TableLogic，与 FeeRecordMapper.casMarkFeesSettled 同范式）。
      *
      * @param prescriptionItemId 处方明细行 id（dispense_item.prescription_item_id 引用）；来源：退药明细行

@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.pharmacy.entity.Dispense;
 import com.fuyun.pharmacy.entity.DispenseItem;
@@ -29,6 +30,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -131,7 +134,15 @@ class DispenseServiceImplTest {
             return 1;
         });
 
-        impl.releaseByVisit("O2026091800001");
+        // A.4.3-16：明细一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐条 insert 通道已下线
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.releaseByVisit("O2026091800001");
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue()).hasSize(1);
+            assertThat(rowsCaptor.getValue().get(0).getRequestedQty()).isEqualByComparingTo("2");
+        }
 
         ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
         verify(dispenseMapper).insert(dispenseCaptor.capture());
@@ -140,9 +151,6 @@ class DispenseServiceImplTest {
         assertThat(created.getRxNo()).isEqualTo("R20260918000001");
         assertThat(created.getDispenseType()).isEqualTo("OUTPATIENT");
         assertThat(created.getStorehouse()).isEqualTo("OUTP_PHARM");
-        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper).insert(itemCaptor.capture());
-        assertThat(itemCaptor.getValue().getRequestedQty()).isEqualByComparingTo("2");
     }
 
     @Test
@@ -197,10 +205,12 @@ class DispenseServiceImplTest {
         drifted.setStatus("CANCELLED");
         when(prescriptionMapper.selectById(100L)).thenReturn(drifted);
 
-        impl.releaseByVisit("O2026091800001");
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.releaseByVisit("O2026091800001");
 
-        verify(dispenseMapper, never()).insert(any(Dispense.class));
-        verify(dispenseItemMapper, never()).insert(any(DispenseItem.class));
+            verify(dispenseMapper, never()).insert(any(Dispense.class));
+            mockedDb.verify(() -> Db.saveBatch(any()), never()); // 明细零批插（warn 分支零写面）
+        }
     }
 
     @Test

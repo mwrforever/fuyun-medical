@@ -11,7 +11,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * 收费域回执消费侧（billing.fee.created，V605 id 17 既有登记）：PENDING 费用生成驱动
- * 处方 APPROVED→PENDING_FEE（Spec R2-14）。refund.approved 消费随 Task 7 追加本类。
+ * 处方 APPROVED→PENDING_FEE（Spec R2-14）；refund.approved 消费由独立类
+ * PharmacyRefundApprovedListener 承载（不落本类）。
  *
  * <p>归 internal/，Bean 注册点 PharmacyMessagingConfig @Import。
  */

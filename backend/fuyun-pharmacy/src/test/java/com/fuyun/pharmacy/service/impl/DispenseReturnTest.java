@@ -399,6 +399,24 @@ class DispenseReturnTest {
     }
 
     @Test
+    @DisplayName("退药数量非数字串拒 PH-1016（400 显式拒，禁 NumberFormatException 直穿 500——零资金动作/零状态迁移）")
+    void acceptReturnRejectsNonNumericReturnQuantityAsPh1016() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("ISSUED"));
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\"]")));
+
+        assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("两盒", List.of("TR-A1B2"))))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.NUMERIC_FIELD_MALFORMED));
+        // 格式守卫在全部写面之前拦截：零回补/零流水/零回写/零终态迁移/零事件
+        verify(drugBatchMapper, never()).restock(anyLong(), any());
+        verify(stockLedgerMapper, never()).insert(any(StockLedger.class));
+        verify(prescriptionItemMapper, never()).accumulateReturnedQuantity(anyLong(), any());
+        verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        verify(events, never()).publishEvent(any());
+    }
+
+    @Test
     @DisplayName("批次回补零行：restock 条件更新 0 行拒 PH-1013（批次状态漂移，整事务回滚）")
     void acceptReturnRejectsWhenRestockAffectsZeroRows() {
         DispenseServiceImpl impl = newService();
