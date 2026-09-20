@@ -86,7 +86,7 @@
 | 动作 | 文件 | 职责 |
 | --- | --- | --- |
 | 修改 | `CHANGELOG.md` | Task 1 先记再改（号段初始化/存量卷重置/V704 改道/事件 id 排定/jacoco 扩名单/W-22 前置）；Task 15 收口条目 |
-| 修改 | `TASK.md` | Task 1 核验 W-22 已闭合（fix PR 外部完成）；Task 15 回填删除本 PR 新登记项 |
+| 修改 | `TASK.md` | Task 1 核验 W-22 已闭合（fix PR 外部完成）+ 登记 W-20 转产品待办（附澄清两问，批复补充约束 2）；Task 7 登记 WS 拦截器镜像收敛技术债工单（待批 6）；Task 15 回填删除本 PR 新登记工程类条目（W-20 产品待办与技术债工单不回填） |
 | 修改 | `backend/pom.xml`（父 POM） | Task 1 JaCoCo 规则二 includes 增 `com.fuyun.outpatient.service.impl` |
 | 修改 | `backend/fuyun-outpatient/pom.xml`、`backend/fuyun-app/pom.xml` | Task 1 依赖面扩展与 app 挂接 |
 | 修改 | `backend/fuyun-system/src/main/resources/db/migration/system/V704__create_practice_grant.sql` | Task 2 practice_grant 建表+演示医师种子（含 sys_user/sys_employee/sys_user_role 最小行） |
@@ -108,12 +108,13 @@
 | 修改 | system `config/SystemWebConfig.java:72-77` | AUTH_WHITELIST 追加 portal 匿名条目（Task 5） |
 | 创建 | `backend/fuyun-app/src/test/java/com/fuyun/app/OutpatientFullFlowIT.java`、`OutpatientRefundRollbackIT.java`、`OutpatientPoolConcurrencyIT.java` | 三验收锚点 IT（Task 12） |
 | 创建/修改 | `web/apps/workstation/src/api/outpatient.ts`、`views/outpatient/`（3 页+specs）、`router/index.ts`、`views/layout/components/AppSidebar.vue`、`web/packages/shared/src/api.d.ts` | workstation 三页（Task 13） |
+| 创建 | `docs/migrations/flyway-version-registry.md` | Flyway 版本占用登记表（V1 起全部已占用版本+归属模块+用途一览；新迁移落文件前对照查重，与 `_SEGMENTS` 守卫互补——待批 3 执行条件，Task 13 Step 1b） |
 | 创建/修改 | `web/apps/portal/src/api/http.ts`、`api/outpatient.ts`、`views/appointment/AppointmentView.vue`（+spec）、`router/index.ts` | portal 预约页（Task 13 Step 3） |
 | 创建/修改 | `web/apps/bigscreen/src/api/outpatientQueue.ts`、`composables/useQueueStomp.ts`（+spec）、`views/queue/QueueBoardView.vue`（+spec）、`router/index.ts` | bigscreen 叫号页（Task 13 Step 3） |
 | 伴随规范（已入库） | `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` | PR-5 前端视觉唯一权威：token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单（Task 13 落码与 Task 16 打磨逐节对照） |
 | 创建 | `web/apps/workstation/src/styles/`（tokens.css / element-plus.css / motion.css / index.css）、`web/apps/portal/src/styles/` 与 `web/apps/bigscreen/src/styles/`（各 tokens.css / motion.css / index.css）+ 三 app `main.ts` 各一行 import | Task 13 Step 0 设计 token 落位与 `:root:root` 主题覆盖（既有六页零触碰，纯新增渐进采用——设计文档 §2.1/兼容声明） |
 | 修改 | Task 16 打磨面 = 全站页面及其 specs/styles（新五页 + Task 17 产出的存量 12 面：布局壳/Home/Login/存量 9 业务页/portal·bigscreen 存量） | UI 深度打磨（taste-skill 全站精修）：全量走查/组件精修/动效质感/性能复检/specs 回归，终核报告归档 SDD 台账 |
-| 修改 | Task 17 存量改造面 = workstation `views/layout/`（MainLayout/AppSidebar/AppHeader）、HomeView/LoginView、存量 9 业务页（patient×3/billing×3/pharmacy×3）、`styles/` 收编（element-plus.css 增收编工具类+`.gitkeep` 删除）、App.vue（zh-cn locale）、`utils/patientDisplay.ts`（F-8 词表）、bigscreen `views/home/`、portal `views/home/`（零改动确认）；各页 specs 零断言改动 | 存量前端基建全面优化（设计文档 §9 落地）：批次 0-5 分批改造（§9.8.1），22 个既有 spec 用例断言零回退（回归红线） |
+| 修改 | Task 17 存量改造面 = workstation `views/layout/`（MainLayout/AppSidebar/AppHeader）、HomeView/LoginView、存量 9 业务页（patient×3/billing×3/pharmacy×3）、`styles/` 收编（element-plus.css 增收编工具类+`.gitkeep` 删除）、App.vue（zh-cn locale）、`utils/patientDisplay.ts`（F-8 词表）、bigscreen `views/home/`、portal `views/home/`（零改动确认）；各页 specs 零断言改动 | 存量前端基建全面优化（设计文档 §9 落地）：批次 0-5 分批改造（§9.8.1），22 个既有 spec 用例断言零回退（回归红线）；**六批次子 PR 形态**（独立分支 `feat/p1-pr5-ui-batch-0..5`+独立 PR，批次 0 前置 Task 13，合入硬门槛=五连绿+22 spec 断言 diff=0+可独立 revert——2026-09-20 批复回归护栏） |
 | 修改 | `docs/specs/modules/03-outpatient.md`、`docs/specs/modules/06-pharmacy.md` §7、`CHANGELOG.md` | 收口注记与变更登记（Task 15） |
 
 ---
@@ -122,6 +123,7 @@
 
 **Files:**
 - Modify: `CHANGELOG.md`（头部说明块之后插入新条目）
+- Modify: `TASK.md`（W-20 转产品待办登记——2026-09-20 批复补充约束 2）
 - Modify: `backend/pom.xml:277`（JaCoCo 规则二 `<includes>` 段——先实测行号）
 - Modify: `backend/fuyun-outpatient/pom.xml`（依赖面整体替换）
 - Modify: `backend/fuyun-app/pom.xml`（fuyun-pharmacy 依赖块后追加 outpatient 依赖块）
@@ -164,7 +166,9 @@ find backend/fuyun-outpatient/src -name "*.java" | wc -l       # 预期：0（ap
   首批 V200–V204 低于基线全局最大已应用版本 V703，Flyway outOfOrder=false 对存量卷拒绝应用
   （守卫脚本 docstring :7-11 与 PR-1a 真栈实证）；处置=`docker compose -f deploy/docker-compose.yml
   --env-file deploy/.env down -v && up -d` 全新卷按版本升序一次应用（本条目即登记载体；
-  Testcontainers IT 每次全新库不受影响）。
+  Testcontainers IT 每次全新库不受影响）。**团队广播警示（待批 3 执行条件）**：重置=存量 dev 库
+  一次性清空重建（down -v 清卷），执行前须在团队渠道广播警示——「存量 dev 库将一次性清空重建，
+  未入库数据先行导出」；广播记录随执行台账归档。
 - **practice_grant 改道 system 通用段 V704**（recon 裁决 9 原拟 V608 经守卫算术改道，偏差②）：
   system schema 基线非零迁移（V300–V303/V607），新迁移必须 > V703——V608 必被乱序守卫拦截；
   V704∈(500,None) 合法（V607 先例）。**V705**=门诊三类字典种子（appt-type/visit-type/disposition，
@@ -184,6 +188,18 @@ find backend/fuyun-outpatient/src -name "*.java" | wc -l       # 预期：0（ap
 - **W-22 前置**：PR-4 九条合规遗留 fix PR 已先行合入（裁决 14，TASK.md W-22 行由其回填删除），
   本 PR 新增页面/DTO 自带合规形态（loading+在途守卫+零出网用例；入参显式格式校验 4xx）。
 ```
+
+- [ ] **Step 2b: TASK.md 登记 W-20 转产品待办（批复补充约束 2，偏差⑩处置落档）**
+
+W-20 行（billing `PaymentLine.amount` @Positive 使 0 元结算收窄为 400）由「工程遗留待修」转为
+**产品待办**：条目处置说明改写为「转产品待办，待业务澄清后裁决——不再作为工程修复工单追改」，
+并附澄清问题清单两问（业务方答复前保持现状，挂号费>0 演示数据规避路径维持）：
+
+1. 0 元挂号是否合法存在（0 元挂号费是否为合法业务面——决定 billing 0 元费用行口径）；
+2. 0 元处方组合结算口径（0 价项目与正价项目同单组合结算的金额/审批口径）。
+
+该条目转产品待办后**不随 Task 15 收口回填删除**（产品待办独立于工程工单生命周期，Task 15 仅
+回填删除本 PR 新登记的工程类条目）。
 
 - [ ] **Step 3: 父 POM JaCoCo 规则二 includes 增 outpatient**
 
@@ -333,11 +349,12 @@ Expected: 守卫 exit 0（35 个迁移文件）；BUILD SUCCESS——ModulithBou
 - [ ] **Step 7: 提交**
 
 ```bash
-git add CHANGELOG.md backend/pom.xml backend/fuyun-outpatient/pom.xml backend/fuyun-app/pom.xml backend/fuyun-app/src/main/java/com/fuyun/app/config/OutpatientConfig.java
+git add CHANGELOG.md TASK.md backend/pom.xml backend/fuyun-outpatient/pom.xml backend/fuyun-app/pom.xml backend/fuyun-app/src/main/java/com/fuyun/app/config/OutpatientConfig.java
 git commit -m "chore(gate): outpatient 号段 V200–V299 初始化登记与工程前置收口（PR-5 前置）
 
-- CHANGELOG 先记再改：号段初始化批次 + 存量卷一次性重置 + V704/V705 通用段改道
-  + 事件 id 23/25/31 冻结与 32–40 排定 + JaCoCo 核心包扩名单 + W-22 前置核验
+- CHANGELOG 先记再改：号段初始化批次 + 存量卷一次性重置（含团队广播警示）
+  + V704/V705 通用段改道 + 事件 id 23/25/31 冻结与 32–40 排定 + JaCoCo 扩名单 + W-22 前置核验
+- TASK.md：W-20 转产品待办（附 0 元挂号/0 元组合结算两问澄清清单）
 - fuyun-outpatient/app 父 POM 依赖面扩展与 OutpatientConfig 空壳挂接"
 ```
 
@@ -603,7 +620,9 @@ git commit -m "feat(system,patient): 执业授权 practice/check 真实化与 D-
 
 - [ ] **Step 1: V204 迁移（id 23/25/31 冻结双形态 + id 32–40 登记）**
 
-创建 `backend/fuyun-outpatient/src/main/resources/db/migration/outpatient/V204__seed_outpatient_event_registry.sql`：
+创建 `backend/fuyun-outpatient/src/main/resources/db/migration/outpatient/V204__seed_outpatient_event_registry.sql`（落文件前先实测幂等键——待批 4 执行条件）：
+
+> **兜底 INSERT 幂等形态先实测**：`docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T postgres psql -U fuyun -d fuyun -c "\d integration.event_registry"` 确认唯一键形态（id 主键/event_type 唯一约束何者在位）再定写法——`WHERE NOT EXISTS` 或 `ON CONFLICT DO NOTHING` 二选一，**幂等键=事件 id 唯一约束**；若实测仅有 id 主键而无 event_type 唯一约束，下方 SQL 的判存谓词改按 id（`WHERE NOT EXISTS (SELECT 1 FROM integration.event_registry WHERE id = 23)`）或 `ON CONFLICT (id) DO NOTHING`，禁凭本文照抄。
 
 ```sql
 -- V204：outpatient 事件契约种子（CF-3/CF-5 冻结载体；V605/V702 先例）。
@@ -865,6 +884,17 @@ JAVA_HOME=/d/code/java/jdk/jdk17 mvn -B -ntp -f backend/pom.xml -pl fuyun-app -a
 
 Expected: 两侧 BUILD SUCCESS——契约测试 3 例全绿；MessagingGovernanceIT 40/40 断言通过（V204 在 IT 库随 Flyway 应用，新库序下 V204 先插冻结行、V605/V702 跳过）；SmokeStackIT 全上下文启动通过（outpatient 装配链在位：outpatientEventSender/outpatientConsumerSupport 多候选定绑成立——@Qualifier 缺失即启动抛 NoUniqueBeanDefinitionException 被该 IT 捕获；延迟档位队列声明在 V204 id 39 已登记前提下通过注册校验）。
 
+**双时序迁移自检（待批 4 执行条件——新旧库两种时序各跑一次，断言两序终态 desc 逐字一致）**：在 dev 卷 postgres 内建两张一次性探针表（`CREATE TABLE probe_a AS SELECT * FROM integration.event_registry WHERE false;`，probe_b 同），各回放一次 id 23/25/31 三行语句后比对——
+
+- 时序 A（模拟存量卷）：先执行 V605 id 23 与 V702 id 25/31 占位 INSERT 原文（从 `V605__*.sql`/`V702__*.sql` 摘取，禁凭记忆重写；表名换 probe_a），再回放 V204 三组「UPDATE + WHERE NOT EXISTS 兜底 INSERT」（表名换 probe_a）——UPDATE 命中占位行、兜底 INSERT 不触发；
+- 时序 B（模拟全新卷）：先回放 V204 全文（表名换 probe_b——UPDATE 命中 0 行、兜底 INSERT 落冻结行），再执行 V605/V702 占位 INSERT 原文（WHERE NOT EXISTS 全跳过）；
+- 断言（两序终态逐字一致）：
+
+```bash
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T postgres psql -U fuyun -d fuyun -c "SELECT count(*) FROM probe_a a FULL OUTER JOIN probe_b b ON a.id = b.id AND a.payload_desc = b.payload_desc WHERE a.id IS NULL OR b.id IS NULL"
+# 预期：0 行（id 集与 payload_desc 两序完全一致）；自检完毕 DROP TABLE probe_a, probe_b
+```
+
 - [ ] **Step 7: 提交**
 
 ```bash
@@ -1095,6 +1125,8 @@ git commit -m "feat(outpatient): 号源池域——V200 三表+V705 字典种子
 - Modify: `backend/fuyun-system/src/main/java/com/fuyun/system/config/SystemWebConfig.java:72-77`（AUTH_WHITELIST 追加 `"/api/v1/outpatient/portal/**"`）
 - Create: `src/test/java/com/fuyun/outpatient/service/impl/VisitIdIssuerImplTest.java`、`AppointmentServiceImplTest.java`
 
+> **声明态枚举边界（2026-09-20 批复补充约束 1，偏差⑦）**：`VisitStatus` 的 IN_EXECUTION/PENDING_MEDICATION/NO_SHOW（visit 维度声明态）等声明态枚举值仅注册状态机迁移对+javadoc 标注 P3 触发点（触发事件源与阶段），**不写任何无触发的处理逻辑**（无分支/无消费/无定时器）——预留而非死代码的边界。
+
 **Interfaces:**
 - Consumes: Task 4 池行 CAS/PoolRedisGate；patient `PatientContextResolver.resolve`（冻结拦截 blocked=true→OP-1007、从档归一 resolvedPatientId）；`VisitIdValidator`（结构自检）；common OperatorContextHolder（窗口/诊间渠道操作者）。
 - Produces（Task 6/7/8/12 依赖的冻结面）:
@@ -1105,7 +1137,7 @@ git commit -m "feat(outpatient): 号源池域——V200 三表+V705 字典种子
   - `AppointmentServiceImpl` 核心签名：
     - `AppointmentVO book(AppointmentCreateRequest req)`（req：`@NotNull Long patientId, @NotNull Long poolId, @NotNull String channel`）——主流程七步锁死：①PatientContextResolver 归一+冻结拦截；②爽约限约拦截（appt_credit_record 窗口内 NO_SHOW 计数 ≥ properties.noShowThreshold() 且 restrict_to ≥ 今日 → OP-1006；窗口=noShowWindowDays 天）；③限购拦截（uk_appt_patient 命中→OP-1005）；④池行重读（ACTIVE+余量谓词，停诊→OP-1004）；⑤Redis 预扣 `poolRedisGate.deduct` 返回 -2/-3 类异常或 -1→降级/失败（-1=OP-1003）；⑥事务内 `appointment INSERT` + `poolMapper.casOccupy`（0 行→重读重试 ≤2 次→OP-1003，并回补 Redis `release`）；⑦RESERVED 且 channel=PORTAL 时写 pay_deadline=now()+appointmentTimeout、投递延迟信封（`rabbitTemplate.convertAndSend("fy.delay", "delay.appointment-timeout", codec envelope of AppointmentTimeoutPayload)`——经 `internal/` 轻封装类 `DelayEnvelopeSender`，禁事务内直发的例外注记：延迟信封入队属「占位登记」动作、消费侧 CAS 定性幂等，javadoc 说明与裁决链）+ 发布 `EVENT_APPOINTMENT_BOOKED`；当日挂号（channel=WINDOW/KIOSK）一步直达 TAKEN：同事务 `visit INSERT`（visit_id 签发）+ `casTake` + 发布 `EVENT_VISIT_REGISTERED`。
     - `VisitVO take(String apptNo)`——预约取号：`casTake` 0 行→状态重读（TAKEN 幂等返回/CANCELLED/NO_SHOW→OP-1009、pay_deadline 过→OP-1008）；同事务签发 visit + 删 `fy:outpatient:pay-hold:{apptNo}` + 发布 visit.registered。
-    - `markTimeout(AppointmentTimeoutPayload payload)`（timeout 消费业务）——`casStatus(appt.id,"RESERVED","NO_SHOW")` 1 行才执行：池行 `casRelease`+Redis `release`+删占位键+`appt_credit_record INSERT`（action=NO_SHOW，窗口/阈值取 properties，命中阈值即写 restrict_from=今日、restrict_to=今日+restrictDays）+ warn 日志含 apptNo；0 行=已支付/已取消，info 幂等跳过。
+    - `markTimeout(AppointmentTimeoutPayload payload)`（timeout 消费业务——待批 5 执行条件：幂等守卫+防并发回池双加强）——消费幂等三段式之外再加**业务态校验幂等守卫**：同一预约重复超时消息不双释放——`casStatus(appt.id,"RESERVED","NO_SHOW")` **1 行才执行释放面**；0 行=已支付 TAKEN/已取消 CANCELLED/**已释放 NO_SHOW**（含重复超时消息）→ info 幂等 ACK 跳过，禁二次回池/二次 credit 行。1 行时：池行回池必须走既有 version 乐观锁条件更新——`casRelease` 调用前重读池行 version，SQL 谓词补 `AND version = #{version}`（Task 4 Interfaces 的 `casRelease` 注解 SQL 随本任务首个消费点补该谓词，Task 6 回池同 SQL 继承），**并发抢占以影响行数判定**（0 行=并发已回池/池行状态漂移，重读定性后终止本轮回池，禁负余量、禁重复回补 Redis）+Redis `release`+删占位键+`appt_credit_record INSERT`（action=NO_SHOW，窗口/阈值取 properties，命中阈值即写 restrict_from=今日、restrict_to=今日+restrictDays）+ warn 日志含 apptNo。
   - portal 两端点（免登录，P-8）：`GET /api/v1/outpatient/portal/schedules?deptCode=&date=`（可约号源聚合）、`POST /api/v1/outpatient/portal/appointments`（body `@NotBlank String credentialType（ID_CARD|VISIT_CARD）, @NotBlank String credentialNo, @NotNull Long poolId`——经标识解析定 patientId，操作者哨兵 `PORTAL`）；portal 退号端点 `POST /api/v1/outpatient/portal/appointments/{no}/cancel` 随 Task 6 与退号四分支统一交付（禁空实现）。
   - `SystemWebConfig.AUTH_WHITELIST` 追加单条目 `"/api/v1/outpatient/portal/**"`（:72-77 实测常量 List.of 追加）。
 
@@ -1117,7 +1149,7 @@ git commit -m "feat(outpatient): 号源池域——V200 三表+V705 字典种子
 2. `issueSeqOneSetsTtlFortyEightHours`——INCR 返回 1 时 expire(48h) 被调；返回 2 时不调。
 3. `issueFailsFastWhenSeqExceedsDailyCap`——INCR 返回 100000（超 5 位）：IllegalStateException（签发自检红线）。
 
-`AppointmentServiceImplTest` 用例全集（核心 12 例，断言值冻结）：
+`AppointmentServiceImplTest` 用例全集（核心 12 例 + 批复新增 2 例=14 例，断言值冻结）：
 
 1. `windowRegistrationIssuesVisitAndMarksTaken`——WINDOW 渠道：appointment TAKEN+visit REGISTERED+visit_id 形态 `O+今日+00001`+visit.registered 发布断言（eventType/五组件）。
 2. `portalBookingHoldsSlotWithPayDeadline`——PORTAL 渠道：RESERVED+pay_deadline≈now()+15m（±2s）+延迟信封入队断言（捕获 routing key=`delay.appointment-timeout`）+appointment.booked 发布。
@@ -1131,12 +1163,14 @@ git commit -m "feat(outpatient): 号源池域——V200 三表+V705 字典种子
 10. `takeIssuesVisitWithinPayDeadline`——casTake 1 行：visit 签发+占位键删除断言。
 11. `takeRejectsWhenDeadlinePassed`——casTake 0 行且库态 RESERVED+pay_deadline<now：OP-1008。
 12. `timeoutMarksNoShowReleasesPoolAndRecordsCredit`——casStatus 1 行：NO_SHOW+casRelease 调用+credit 行 action=NO_SHOW+restrict 写入断言；`timeoutIdempotentWhenAlreadyTaken`——0 行：零回池零 credit。
+13. `timeoutRepeatDeliverySkipsAfterReleaseWithoutDoubleRelease`（待批 5 执行条件）——同一预约第二条超时消息：appt 已 NO_SHOW（已释放态业务校验）→ 直接 ACK 跳过，零二次 casRelease/零二次 credit/零二次 Redis release。
+14. `poolReleaseRaceGuardedByVersionConditionalUpdate`（待批 5 执行条件）——并发释放竞态：casRelease 带 version 谓词，模拟并发消费者已回池使 version 前移→影响行数 0：不产生负余量、不重复回补 Redis（以影响行数判定重读定性的行为断言）。
 
 Run（预期红）：编译错误（IAppointmentService 等不存在）。
 
 - [ ] **Step 2: V201 迁移 + 实现落码**
 
-V201 按 Interfaces DDL 全文落文件（uk_appt_patient 需 dept_code 冗余列入 appointment——DDL 已含）。`AppointmentServiceImpl` 按七步主流程落码；`OutpatientOngoingVisitQuery` 实现 `com.fuyun.patient.api.OngoingVisitQuery`（`hasOngoingVisit`：visit 表 status IN ('REGISTERED','WAITING','IN_CONSULT','PENDING_FEE') 命中即 true——合并阻断随本实现注册自动收紧）；`CareRelationQuery` 实现随 Task 8（操作者维度查询，需接诊留痕 doctor_id 语义）。timeout 监听器照 `PharmacyRefundApprovedListener` 三段式（@RabbitListener 队列 `q.outpatient.outpatient.appointment.timeout` + consume + payload 三字段非空守卫 → `appointmentService.markTimeout`）。
+V201 按 Interfaces DDL 全文落文件（uk_appt_patient 需 dept_code 冗余列入 appointment——DDL 已含）。`AppointmentServiceImpl` 按七步主流程落码；`OutpatientOngoingVisitQuery` 实现 `com.fuyun.patient.api.OngoingVisitQuery`（`hasOngoingVisit`：visit 表 status IN ('REGISTERED','WAITING','IN_CONSULT','PENDING_FEE') 命中即 true——合并阻断随本实现注册自动收紧）；`CareRelationQuery` 实现随 Task 8（操作者维度查询，需接诊留痕 doctor_id 语义）。timeout 监听器照 `PharmacyRefundApprovedListener` 三段式（@RabbitListener 队列 `q.outpatient.outpatient.appointment.timeout` + consume + payload 三字段非空守卫 → `appointmentService.markTimeout`）；`markTimeout` 落码按 Interfaces 双加强执行（业务态幂等守卫+`casRelease` version 谓词与影响行数判定——用例 13/14 可执行锚），`ApptNumberPoolMapper.casRelease` 注解 SQL 随本任务补 `AND version = #{version}` 谓词（先重读 version 再条件更新）。
 
 - [ ] **Step 3: 跑绿 + 守卫 + 提交**
 
@@ -1145,7 +1179,7 @@ JAVA_HOME=/d/code/java/jdk/jdk17 mvn -B -ntp -f backend/pom.xml -pl fuyun-outpat
 python scripts/check-migration-governance.py
 ```
 
-Expected: 15 用例绿 + 守卫 39 文件绿。
+Expected: 17 用例绿（15 既有 + 用例 13/14 两新增——超时重复消息幂等与并发释放竞态）+ 守卫 39 文件绿。
 
 ```bash
 git add backend/fuyun-outpatient backend/fuyun-system/src/main/java/com/fuyun/system/config/SystemWebConfig.java
@@ -1249,16 +1283,17 @@ git commit -m "feat(outpatient,billing): 退号退费联动与改期——统一
 - Modify: `config/OutpatientWebConfig.java`（@Import 增 impl/controller）
 - Modify: `backend/fuyun-app/src/main/java/com/fuyun/app/config/OutpatientConfig.java`（@Import 增 OutpatientWebSocketConfig）
 - Create: `src/test/java/com/fuyun/outpatient/service/impl/TriageServiceImplTest.java`、`src/test/java/com/fuyun/outpatient/internal/OutpatientConnectAuthInterceptorTest.java`
+- Modify: `TASK.md`（WS 鉴权拦截器镜像收敛技术债工单登记——待批 6 执行条件，Step 2b）
 
 **Interfaces:**
 - Consumes: Task 5 visit CAS（REGISTERED→WAITING）；OperatorContextHolder（护士/医生操作者）。
 - Produces（Task 8/13/14 依赖的冻结面）:
   - V202 DDL：`triage_record(id / visit_id VARCHAR(14) NOT NULL / station_id VARCHAR(64) NOT NULL（分诊台/自助终端标识）/ action VARCHAR(16) NOT NULL（CHECK_IN/RE_TRIAGE/LEVEL_ADJUST/QUEUE_TRANSFER）/ triage_level INT NULL / target_queue VARCHAR(64) NOT NULL（=dept_code 诊区队列）/ doctor_id VARCHAR(64) NULL（二次分诊定医生）/ priority_factor VARCHAR(255) NULL（急/老幼残/回诊因子 JSON）/ nurse_id VARCHAR(64) NOT NULL / reason VARCHAR(255) NULL / 审计五列)`；`queue_ticket(id / visit_id VARCHAR(14) NOT NULL / queue_id VARCHAR(64) NOT NULL（=dept_code，P1 诊区队列口径，偏差⑧）/ ticket_no VARCHAR(16) NOT NULL（队列内当日序号，如 A007）/ ticket_type VARCHAR(16) NOT NULL（FIRST/VISIT/RETURN/EXTRA）/ doctor_id VARCHAR(64) NULL / priority_score INT NOT NULL / queue_seq INT NOT NULL（当日序） / queue_time TIMESTAMPTZ NOT NULL / called_count INT NOT NULL DEFAULT 0 / call_time TIMESTAMPTZ NULL / serve_time TIMESTAMPTZ NULL / status VARCHAR(16) NOT NULL DEFAULT 'WAITING'（WAITING/CALLED/SERVING/SERVED/PASSED/CANCELLED）/ 审计五列；uk_ticket_visit UNIQUE(visit_id, queue_seq)；uk_ticket_queue UNIQUE(queue_id, ticket_no) WHERE deleted=0)`。
-  - 优先级公式（冻结，偏差⑨）：`priority_score = 100（基础）+ 绿通 900（P1 恒不触发，声明值）+ 急诊分级（triage_level 1/2/3/4 → 800/700/600/500，非急诊 0）+ 回诊/复诊 300（ticket_type=RETURN/REVISIT 来源）+ 老幼残 200（分诊台人工设定 priority_factor 含 "ELDERLY"/"CHILD"/"DISABLED" 任一）`；同分序=queue_seq 升序；ZSET score = `priority_score * 100000000L + queue_seq`（量级 3e11 < 2^53 安全）。
+  - 优先级公式（冻结，偏差⑨经 2026-09-20 用户裁决细化）：`priority_score = min(999, 100（基础分）+ max(绿通 900〔P1 恒不触发，声明值〕, 急诊分级（triage_level 1/2/3/4 → 800/700/600/500，非急诊 0）, 回诊/复诊 300（ticket_type=RETURN/REVISIT 来源）) + 老幼残 200（分诊台人工设定 priority_factor 含 "ELDERLY"/"CHILD"/"DISABLED" 任一）)`——**类别分（绿通/急诊分级/回诊）取最高单项、不叠加**；老幼残 200 跨类叠加（可与任一类别分并存）；**封顶值=999**（明确定义，防溢出 ZSET score 编码位）。同分排序=queue_ticket 建行时间（`queue_time` 数据库 now() 时间戳）升序，**禁用应用服务器时钟**（防多实例漂移）；ZSET score 编码 = `priority_score * 100000000L + queue_seq`（封顶后量级 999×1e8+seq < 2^53 安全；queue_seq 为建行事务内当日序列、单调递增与 queue_time 建行时序一致——并列出队/快照复核以 queue_time 为权威）。
   - `QueueZsetStore`（`fy:outpatient:queue:{deptCode}`，TTL=当日末+2h）：`void enqueue(String deptCode, long ticketPk, int score)`、`Long pollTop(String deptCode, String doctorId)`（ZRANGELIST 首个匹配 doctor 未指派或指派一致者，经 Lua 原子出队并返回 ticketPk；无匹配 null）、`void remove(String deptCode, long ticketPk)`、`java.util.List<java.lang.Long> snapshot(String deptCode, int limit)`、`int rebuildIfMissing(String deptCode, java.util.Map<Long, Integer> ticketScores)`（**重启恢复**：键缺失时按 WAITING 权威行整体 ZADD 重建+TTL、返回重建票数；键在位返回 -1 零写——Spec :210「叫号服务重启后队列从排队表完整恢复」）。
   - 队列语义：`checkIn(CheckInRequest{visitId, stationId})`——visit `casStatus("REGISTERED","WAITING")` + visit.checked_in_at 回填（国标报到时间）+ triage_record(action=CHECK_IN) + queue_ticket 建行（ticket_no=A+%03d 队列当日序）+ ZSET 入队 + 已约取号即报到可配置（appointment 已 TAKEN 直接可 check-in）；`adjust(TriageAdjustRequest{visitId, action, targetQueue?, doctorId?, triageLevel?, priorityFactors?})`——跨队列转接（换 dept=旧 ZSET remove+新队建票重算分）、调级（重算分 ZSET 更新 score，票号不变——过号降级重排不改号 Spec :106）；`call(QueueCallRequest{deptCode, doctorId})`——前置惰性重建（`queueTicketMapper.selectWaiting(deptCode)` 取当日 WAITING 权威行→`rebuildIfMissing(deptCode, 票→score 公式映射)`；幂等：键在位零重建，禁回灌已出队票）→ZSET 原子出队→ticket CAS WAITING→CALLED+called_count+1+call_time；叫号≠接诊：visit 保持 WAITING，接诊由 Task 8 `/visits/{visitId}/admit` 承载（ticket CALLED→SERVING 由 admit 联动）+ WS 推送 `{type:"CALLED", ticketNo, visitId(脱敏为 ticketNo+姓名脱敏), doctorId, room}` 至 `/topic/outpatient/queue/{deptCode}` 与 `/topic/outpatient/doctor/{doctorId}`；`pass(ticketId)`——CALLED→PASSED+ZSET 以降级分（priority_score-100，下限 0）重排（WAITING 语义经 PASSED 再入）；`recall(ticketId)`——PASSED→CALLED 重复叫（called_count+1）；`GET /queues/{queueId}/tickets?status=`——REST 快照（脱敏：患者姓名掩码+无证件号）。
   - `OutpatientWebSocketConfig`（裁决 12）：`@Configuration @EnableWebSocketMessageBroker`（与 IotWebSocketConfig 重复导入为 Spring 去重 no-op，注记）实现 WebSocketMessageBrokerConfigurer——`registerStompEndpoints` 增端点 `/ws/outpatient`（纯 WebSocket 无 SockJS）；`configureClientInboundChannel` 挂 `OutpatientConnectAuthInterceptor`；`configureMessageBroker` 幂等 `enableSimpleBroker("/topic")`（同值，两 configurer 共存依据：DelegatingWebSocketMessageBrokerConfiguration 收集全部 configurer，各 registerStompEndpoints 叠加生效——执行时 SmokeStackIT 启动实证双端点在位）。
-  - `OutpatientConnectAuthInterceptor`：镜像 `fuyun-iot/internal/StompConnectAuthInterceptor.java` 全语义（CONNECT 帧 Bearer→`TokenVerifier.verifyAccessToken` 布尔校验；拒绝抛 MessagingException 固定摘要防枚举；日志不含令牌；仅拦 CONNECT）——包名/javadoc/TRACE_ID MDC 键改 `traceId`（common TraceIdFilter 同源），偏差⑥。
+  - `OutpatientConnectAuthInterceptor`：镜像 `fuyun-iot/internal/StompConnectAuthInterceptor.java` 全语义（CONNECT 帧 Bearer→`TokenVerifier.verifyAccessToken` 布尔校验；拒绝抛 MessagingException 固定摘要防枚举；日志不含令牌；仅拦 CONNECT）——包名/javadoc/TRACE_ID MDC 键改 `traceId`（common TraceIdFilter 同源），偏差⑥。**待批 6 执行条件**：①**只复制不顺手重构**——逐字保留语义，仅包名/常量引用适配（禁改方法名/判断逻辑/异常语义/日志措辞）；②**文件头注释三要素**——镜像来源（`fuyun-iot/src/main/java/com/fuyun/iot/internal/StompConnectAuthInterceptor.java` 全路径+来源 commit 哈希，复制时 `git log -1 --format=%H -- <源文件>` 取实况）、行为等价承诺（与 iot 侧逐字等价、差异仅包名与 MDC 键）、收敛任务锚（TASK.md 技术债工单号，见 Step 2b）。
 
 - [ ] **Step 1: 写测试（先红后绿）**
 
@@ -1277,6 +1312,9 @@ git commit -m "feat(outpatient,billing): 退号退费联动与改期——统一
 11. `snapshotMasksPatientName`——快照 VO 姓名=`张*`（掩码；证件号不出网）。
 12. `callRebuildsQueueFromWaitingTicketsWhenZsetKeyMissing`——重启恢复场景（Spec :210）：hasKey=false+库中两张 WAITING 票：rebuildIfMissing 返回 2（ZADD score=100*1e8+seq 公式）+call 正常出队首票。
 13. `callSkipsRebuildWhenZsetKeyPresent`——键在位：rebuildIfMissing 返回 -1 零重建（幂等，正常出队态不回灌）。
+14. `sameScoreTicketsOrderByQueueTimeNotAppClock`（同分场景，偏差⑨裁决细化）——两票同分（同类别同因子）：并列出队/快照序按 queue_ticket 建行时间（`queue_time` 数据库时间戳）升序，断言排序入参零应用服务器时钟取值。
+15. `categoryScoreTakesMaxWhileFrailtyOverlays`（跨类叠加场景，偏差⑨裁决细化）——triage_level=3（600）与 ticket_type=RETURN（300）并存：类别分取最高单项=600 不叠加（若叠加将触封顶边界），老幼残 200 跨类叠加仍生效：priority_score=900（100+600+200）。
+16. `priorityScoreCapsAt999WhenFactorsStack`（封顶场景，偏差⑨裁决细化）——急诊 800+老幼残 200+基础 100=1100 超顶：断言 priority_score=min(999,1100)=999（ZSET score 编码位不溢出）。
 
 `OutpatientConnectAuthInterceptorTest` 用例全集（镜像 iot 侧同名单——先实测 `sed -n '1,106p' backend/fuyun-iot/src/main/java/com/fuyun/iot/internal/StompConnectAuthInterceptor.java` 对齐，iot 侧既有测试为模板）：`connectPassesWithValidBearerToken`/`connectRejectsWithoutAuthorizationHeader`/`connectRejectsWithNonBearerScheme`/`connectRejectsWithInvalidToken`/`nonConnectFramePassesThrough`/`rejectionThrowsMessagingExceptionWithFixedMessage` 六例。
 
@@ -1310,7 +1348,15 @@ V202 全文落文件；`TriageServiceImpl` 按语义落码（WS 推送经构造�
     }
 ```
 
-）；`OutpatientWebSocketConfig`/`OutpatientConnectAuthInterceptor` 落码；OutpatientConfig @Import 增 WS 配置类。
+）；`OutpatientWebSocketConfig`/`OutpatientConnectAuthInterceptor` 落码（拦截器按 Interfaces 待批 6 执行条件：只复制不顺手重构+文件头注释三要素）；OutpatientConfig @Import 增 WS 配置类。
+
+- [ ] **Step 2b: TASK.md 技术债工单登记（待批 6 执行条件，本任务内一并落）**
+
+TASK.md 工单表新增一行（编号顺延现有 W 序列——撰写期实证最大 W-22、取 W-23；执行时以 TASK.md
+实况顺延，禁硬编码本计划数字）：**「WS 鉴权拦截器镜像收敛——outpatient/iot 两份等价实现
+（`OutpatientConnectAuthInterceptor`/`StompConnectAuthInterceptor`），上收 common 或模板提炼时统一」**，
+工单正文注记两镜像文件路径与收敛触发时机（后续 PR 模板基类提炼范式收敛时）；该技术债工单随
+Task 15 收口**不回填删除**（技术债生命周期独立于本 PR，同 Task 1 Step 2b W-20 产品待办口径）。
 
 - [ ] **Step 3: 跑绿 + 提交**
 
@@ -1318,15 +1364,16 @@ V202 全文落文件；`TriageServiceImpl` 按语义落码（WS 推送经构造�
 JAVA_HOME=/d/code/java/jdk/jdk17 mvn -B -ntp -f backend/pom.xml -pl fuyun-outpatient -am test -Dsurefire.failIfNoSpecifiedTests=false -Dtest='TriageServiceImplTest,OutpatientConnectAuthInterceptorTest'
 ```
 
-Expected: 19 用例绿（13 分诊/队列 + 6 拦截器）。
+Expected: 22 用例绿（16 分诊/队列——含同分/跨类叠加/封顶三新例 + 6 拦截器）。
 
 ```bash
-git add backend/fuyun-outpatient backend/fuyun-app
+git add backend/fuyun-outpatient backend/fuyun-app TASK.md
 git commit -m "feat(outpatient): 分诊台与候诊队列——V202+优先级 ZSET+自建 STOMP 通道
 
 - 报到/二次分诊/调级/跨队列转接全留痕；过号降级重排不改号
-- priority_score 冻结公式（绿通/急诊分级/回诊/老幼残因子）+ZSET 当日序并列序
+- priority_score 冻结公式（类别分取最高单项+老幼残跨类叠加+封顶 999+同分按建行时间序）
 - 自建 OutpatientWebSocketConfig+/ws/outpatient 端点+CONNECT 帧鉴权镜像（禁依赖 fuyun-iot）
+- TASK.md 技术债工单：WS 拦截器镜像收敛锚（W 序列顺延）
 - 队列 REST 快照双通道（脱敏出网）；/topic/outpatient/queue|doctor 双 topic 推送"
 ```
 
@@ -1349,6 +1396,9 @@ git commit -m "feat(outpatient): 分诊台与候诊队列——V202+优先级 ZS
 - Modify: `config/OutpatientMessagingConfig.java`（@Import 增监听器）、`config/OutpatientWebConfig.java`（@Import 增 impl/controller 面）
 - Create: `src/test/java/com/fuyun/outpatient/service/impl/VisitServiceImplTest.java`、`ClinicOrderServiceImplTest.java`
 - Create: `backend/fuyun-system/src/test/java/com/fuyun/system/service/impl/PracticeCheckPortImplTest.java`（跨模块 PortImpl 转调单测——system impl 包 LINE=1.00 行覆盖承载）
+
+> **声明态枚举边界（2026-09-20 批复补充约束 1，偏差⑦）**：`OrderStatus` 的 IN_EXECUTION/COMPLETED 为状态机合法迁移对登记（javadoc 标注 P3 执行回执事件源触发点），**不写任何无触发的处理逻辑**（无分支/无消费/无定时器）——预留而非死代码的边界。
+> **结算衔接报错红线（批复补充约束 2，W-20 关联面）**：本任务费用衔接路径（cancel 费用作废/RX_REF 作废引导/计费端口调用）的 0 元/异常结算拒绝报错必须可读可定位——业务错误码（OP-xxxx）+中文可读 message（ProblemDetail `properties.errorCode`），禁裸抛底层异常（billing 端口异常一律转译为业务错误码）。
 
 **Interfaces:**
 - Consumes: `POST /api/v1/system/practice/check` 为 CF-2 REST 契约，但跨模块进程内调用仅经 api 包合法（B.2）——本任务落 `backend/fuyun-system/src/main/java/com/fuyun/system/api/PracticeCheckPort.java`（`PracticeCheckResult check(long employeeId, String grantType)`，`api/PracticeCheckResult.java` record `(boolean passed, String reason)`）+ `service/impl/PracticeCheckPortImpl.java`（转调 IPracticeService.check）+ SystemWebConfig @Import 增 PortImpl；Task 4 池行 CAS；OperatorContextHolder。
@@ -1492,6 +1542,8 @@ git commit -m "feat(pharmacy,outpatient): 开方衔接与 practice/check 双端�
 - Create: `src/test/java/com/fuyun/outpatient/service/impl/ChargingServiceImplTest.java`
 - Create: `backend/fuyun-billing/src/test/java/com/fuyun/billing/service/impl/SettlementQueryPortImplTest.java`（跨模块 PortImpl 转调单测——billing impl 包 LINE=1.00 行覆盖承载）
 
+> **结算衔接报错红线（2026-09-20 批复补充约束 2，W-20 关联面）**：`ChargingServiceImpl` 消费链的 0 元/异常结算拒绝路径（载荷字段缺失/visit 缺失/0 元组合越界）报错必须可读可定位——业务错误码+中文可读 message（ProblemDetail `properties.errorCode` 口径），禁裸抛底层异常（payload 解析/端口调用异常一律转译；W-20 两问澄清前 0 元结算拒绝沿用既有 400 可读语义，不放开不收窄）。
+
 **Interfaces:**
 - **收费同步面裁决（裁决 7/资金无涉红线推论）**：就诊费用的划价/预结算/结算为 M13 同步 REST 契约（CF-4「预结算/结算/退费 API」人机面）——收费工作台前端**直调 `/api/v1/billing/**` 既有端点**（workstation 划价结算页同构，PR-3 已交付前端 billing.ts），M03 后端零收费编排 REST、零资金逻辑；本任务后端编排面=事件消费+状态推进+挂号费收费回填。
 - Consumes: `SettlementCompletedPayload(Long settlementId, String settleNo, Long patientId, String visitId, String settleType, ...)`（V605 id 19）；`PrescriptionCancelledPayload/DispenseCompletedPayload/DispenseReturnedPayload`（pharmacy api 既有）；Task 8 clinic_order CAS 面。
@@ -1608,6 +1660,14 @@ JAVA_HOME=/d/code/java/jdk/jdk17 mvn -B -ntp -f backend/pom.xml -pl fuyun-pharma
 
 - [ ] **Step 2: 实现落码**
 
+**旧签名删除前置（偏差⑤执行条件）**：删除动作执行前先全局检索确认引用面收敛——
+
+```bash
+grep -rn "releaseByVisit\|confirmRefundTerminal(" backend web/packages --include="*.java" --include="*.ts"
+# 预期：仅剩本任务新端口（releaseByRxNos/confirmRefundTerminalByRx）及其用例与既有 javadoc 预告行；
+# 存在残余调用方即先改引再删，禁带引用强删（确认仅剩本任务新端口引用后才可删）
+```
+
 按 Interfaces 五点逐一落码；两既有 IT 的合成信封注入函数同步演进（payload 增 rxNos 数组、退费断言改单据化口径——两 IT 随本任务保持绿，Task 12 三 IT 新建不复用其容器）。
 
 - [ ] **Step 3: 跑绿 + pharmacy 门禁复验 + 提交**
@@ -1629,6 +1689,8 @@ git commit -m "refactor(pharmacy): PR-4 四点回切——单据精确放行/退
 - verify 可选凭证核验（settlementNo 与处方归属一致性，裁决 8；PH-1017）
 - order.cancelled 实装未发药作废/批次锁释放（注记⑥回切）"
 ```
+
+**偏差⑤执行条件（提交面随附）**：本任务 PR 描述（或提交 body）附**删除清单**供 review——旧签名两条（`releaseByVisit(String visitId)`、`confirmRefundTerminal(long patientId)`）与全部旧用例（`releaseByVisit*`/`confirmRefundTerminal*` 系列，逐个列用例名）逐一列出，对照确认删除面与新建面一一对应、无静默丢失断言语义。
 
 ---
 
@@ -1694,6 +1756,7 @@ git commit -m "test(outpatient): 三验收锚点 IT——全链直线段/退号�
 
 **Files:**
 - Modify: `web/packages/shared/src/api.d.ts`（`pnpm gen:api` 重生成——P-7 流程）
+- Create: `docs/migrations/flyway-version-registry.md`（Flyway 版本占用登记表——待批 3 执行条件，Step 1b 建档）
 - Create/Modify: `web/apps/workstation/src/api/outpatient.ts`、`views/outpatient/RegistrationChargeView.vue`（挂号收费联动页）+`.spec.ts`、`views/outpatient/TriageBoardView.vue`（分诊台）+`.spec.ts`、`views/outpatient/DoctorStationView.vue`（门诊医生站）+`.spec.ts`、`router/index.ts`（三路由）、`views/layout/components/AppSidebar.vue`（「门诊服务」菜单组三项）
 - Create/Modify: `web/apps/portal/src/api/http.ts`、`api/outpatient.ts`、`views/appointment/AppointmentView.vue`+`.spec.ts`、`router/index.ts`
 - Create/Modify: `web/apps/bigscreen/src/composables/useQueueStomp.ts`+`.spec.ts`、`views/queue/QueueBoardView.vue`+`.spec.ts`、`router/index.ts`
@@ -1710,7 +1773,7 @@ git commit -m "test(outpatient): 三验收锚点 IT——全链直线段/退号�
 - bigscreen：`useQueueStomp` 复用 useIotStomp 连接范式（buildBrokerUrl 改 `/ws/outpatient`、connectHeaders Bearer）；大屏为受控演示面，令牌经构建期 `VITE_BIGSCREEN_TOKEN` 注入（默认空=页面显示「未配置大屏令牌」横幅且零出网——订阅级鉴权/匿名 STOMP 通道随 P2 演进注记）；`QueueBoardView`：输入 deptCode → REST 快照首屏 → 订阅 `/topic/outpatient/queue/{deptCode}` 叫号列表（票号/诊室/状态）≤2s 刷新（Spec :198）。
 - 路由/菜单：workstation 三路由 meta `{ permission: 'outpatient:registration:register' / 'outpatient:triage:manage' / 'outpatient:doctor:consult' }` 语义登记（403 接线 P-later 注记，patient 三页先例）；portal 路由 meta `{ public: true }`。
 
-- [ ] **Step 0: 设计 token 文件与主题覆盖落位（前置步，按设计文档 §2/§7）**
+- [ ] **Step 0: 设计 token 文件与主题覆盖落位（前置步，按设计文档 §2/§7；2026-09-20 批复执行序修订注记——token 四文件改由 Task 17 批次 0 子 PR 先行落盘，本步执行时核验其在位与内容一致即可，缺失才补落）**
 
 按 `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` §2.1 文件落点新建三 app token 样式（**既有六页零触碰，纯新增渐进采用**——设计文档附「兼容声明」裁决）：
 
@@ -1724,18 +1787,30 @@ git commit -m "test(outpatient): 三验收锚点 IT——全链直线段/退号�
 # 存量 dev 卷一次性重置（Task 1 CHANGELOG 登记的进入条件，执行时点前移至本步——api-docs 导出
 # 要求 backend 在含 V200–V204 的新卷上启动，旧卷 Flyway outOfOrder=false 必拒 pending 迁移；
 # 重置后全新卷按版本升序一次应用 V200–V204/V704/V705，Task 15 真栈复用该卷）
+# 重置执行前两件事（待批 3 执行条件）：①团队广播警示已发（Task 1 CHANGELOG 登记语——存量 dev 库
+#   将一次性清空重建）；②未入库数据已先行导出。广播与导出记录随 SDD 台账归档，缺一不放行 down -v
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env down -v
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 JAVA_HOME=/d/code/java/jdk/jdk17 mvn -B -ntp -f backend/pom.xml -pl fuyun-app -am package -DskipTests
 docker build -f backend/Dockerfile -t fuyun/backend:dev backend
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --force-recreate backend
 sleep 30
-docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T postgres psql -U fuyun -d fuyun -c "SELECT count(*) FROM flyway_schema_history WHERE (script LIKE 'V2%' OR script LIKE 'V70%') AND success = true;"   # 预期：7（V200–V204/V704/V705 全部应用成功——重置生效前提）
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T postgres psql -U fuyun -d fuyun -c "SELECT count(*) FROM flyway_schema_history WHERE (script LIKE 'V2%' OR script LIKE 'V70%') AND success = true;"   # 预期：7（V200–V204/V704/V705 全部应用成功——第一关 迁移计数探针）
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T postgres psql -U fuyun -d fuyun -c "SELECT script FROM flyway_schema_history WHERE success = true AND script ~ '^V(2|7)' ORDER BY installed_rank;"   # 第二关 版本连续性探针——预期 V200→V204 连续五条 + V704/V705，无缺号无乱序（全量迁移回放完整性）
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backend sh -c "curl -s http://localhost:8080/v3/api-docs" > web/api-docs.json
 cd web && pnpm gen:api && git diff --stat packages/shared/src/api.d.ts
 ```
 
-Expected: 迁移核验 7 行 success；diff 仅新增 outpatient 域 schema；**载荷 record 是否进生成物先实测**：`grep -c "FeeCreatedPayload" web/packages/shared/src/api.d.ts`——若 billing 载荷未出现（springdoc 只收 controller 引用面），outpatient 载荷同样不会；若出现则与 PR-3 口径一致接受并登记 PR 描述。
+Expected: **三关全过才算重置闭环（待批 3 执行条件）**——①迁移回放核验：计数探针=7、版本连续性探针=V200→V204 无缺号连续+V704/V705 在位；②后端正常启动：`curl /v3/api-docs` 有响应（容器内探针，启动失败即回查 backend 日志）；③api-docs 成功导出：diff 仅新增 outpatient 域 schema。**载荷 record 是否进生成物先实测**：`grep -c "FeeCreatedPayload" web/packages/shared/src/api.d.ts`——若 billing 载荷未出现（springdoc 只收 controller 引用面），outpatient 载荷同样不会；若出现则与 PR-3 口径一致接受并登记 PR 描述。
+
+- [ ] **Step 1b: Flyway 版本占用登记表建档（待批 3 执行条件，docs 层治理文档）**
+
+创建 `docs/migrations/flyway-version-registry.md`：V1 起全部已占用版本一览表（版本号/迁移文件名/
+归属 schema 与模块/用途一句话），数据源=`ls backend/*/src/main/resources/db/migration/*/*.sql`
+与 `flyway_schema_history` 实况逐条录入（禁凭记忆写版本号）；本 PR 落地的 V200–V204/V704/V705
+随本步一并登记。表格维护规则写入文档头——**后续任何新迁移落文件前先对照本表查重，杜绝撞号**
+（机制上与 `scripts/check-migration-governance.py` 的 `_SEGMENTS` 段守卫互补：守卫拦乱序与段越界，
+本表供落文件前人工查重）；本表为活文档，后续 PR 新增迁移时同 PR 更新（先记再改同款纪律）。
 
 - [ ] **Step 2: workstation 三页 + api 层落码**（`<script setup lang="ts">` 零例外、零 any、生成物类型唯一来源；每页 spec 至少含渲染断言/动作在途守卫断言/零出网断言三件）
 
@@ -1757,12 +1832,13 @@ Expected: 五连全绿；对照设计文档 §7.6 落地自查清单十项逐项
 - [ ] **Step 5: 提交**
 
 ```bash
-git add web
+git add web docs/migrations/flyway-version-registry.md
 git commit -m "feat(web): 门诊三前端——workstation 三页+portal 免登录预约+bigscreen 叫号
 
 - api.d.ts 重生成（outpatient 域 schema 新鲜度核对登记 PR 描述）
 - 挂号收费联动/分诊台/医生站三页（W-22⑥⑦ 合规形态自带）
-- portal 免登录基座（无 token 注入）+介质解析预约页；bigscreen /ws/outpatient 订阅"
+- portal 免登录基座（无 token 注入）+介质解析预约页；bigscreen /ws/outpatient 订阅
+- docs/migrations/flyway-version-registry.md 建档（Flyway 版本占用登记，待批 3 执行条件）"
 ```
 
 ---
@@ -1826,7 +1902,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 
 ---
 
-### Task 16: UI 深度打磨（taste-skill 全站全面精修，输入=Task 13/17 落地成果；执行序 13→17→14→16→15）
+### Task 16: UI 深度打磨（taste-skill 全站全面精修，输入=Task 13 落地成果与 Task 17 六批次子 PR 全合入后的 dev 最新态；执行序 批次 0→1→…→12→13→批次 1–5→14→16→15）
 
 > **强制技能加载（开工第一步，未加载不得开始）**：用 Skill 工具依次加载 `taste-skill:design-taste-frontend`、`taste-skill:high-end-visual-design`、`taste-skill:minimalist-ui`、`taste-skill:redesign-existing-projects`（按需再加 `taste-skill:brandkit`）——与 Task 13 的 ui-ux-pro-max 族同款硬性要求（待批项 10）。
 
@@ -1845,7 +1921,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 - [ ] **Step 2: 组件级精修**——状态标签（§4.3 映射与 `.fuy-tag-aa`/`.fuy-tag-strike` 辅助类）/表格密度（`.fuy-dense` §4.2 + 数字列 `.fuy-num`）/表单分区（§4.4 label-width 与确认弹窗 420px 回显摘要）/空态与骨架（§4.4 业务口径 description + §6.7 骨架→内容 min-height 锁定），每处改动引用设计文档节号。
 - [ ] **Step 3: 交互动效质感打磨**——过渡曲线统一性（§2.6 选用规则：进场 `enter`/离场 `exit`/位移 `standard`，`emphasis` 全站仅 portal 出票卡与 workstation 挂号成功两处）/stagger 时序（§6.1 步长 40ms ≤6 档）/加载态编排（§6.7 200ms opacity 单属性）/焦点可见性（§5.3 `:focus-visible` 全站强制 + portal 焦点管理）。
 - [ ] **Step 4: 性能复检**——动画属性白名单核对（仅 transform/opacity，§6 通用铁律 + §7.1 60fps 预算；`will-change` 仅 bigscreen 叫号卡与 FLIP 容器两处）/长列表渲染（§7.2：分诊台 ≤200 行高密度+分页、医生站直渲染、bigscreen 前 8 条 slice）/bigscreen 值守内存面（§7.5：单时钟定时器 onUnmounted 清理、订阅句柄退订、常驻动画仅连接呼吸点）。
-- [ ] **Step 5: 既有 specs 断言回归**——五页 spec、存量 22 用例（§9.8.2 零回退红线延续）与 useQueueStomp/portal http spec 全绿；视觉改动不得破坏既有断言（断言绑定业务结果非实现细节，确因视觉语义需修正的用例逐条附设计文档节号说明，禁删合规断言凑绿）。
+- [ ] **Step 5: 既有 specs 断言回归**——五页 spec、存量 22 用例（§9.8.2 零回退红线延续）与 useQueueStomp/portal http spec 全绿；视觉改动不得破坏既有断言（断言绑定业务结果非实现细节，确因视觉语义需修正的用例逐条附设计文档节号说明，禁删合规断言凑绿）。**打磨发现的存量回归同样以「22 spec 断言 diff=0」为硬门槛**（批复回归护栏）——回归即阻断打磨收尾，修复后方可进入终核，与 Task 17 各批次合入门槛同源。
 - [ ] **Step 6: 终核与打磨提交**
 
 ```bash
@@ -1864,7 +1940,9 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 
 ---
 
-### Task 17: 存量前端基建全面优化（ui-ux-pro-max 方案 §9 落地；输入=Task 13 落地成果，执行序 13→17→14→16→15）
+### Task 17: 存量前端基建全面优化（ui-ux-pro-max 方案 §9 落地；**六批次子 PR 形态**——批次 0 前置于 Task 13，批次 1–5 于 Task 13 之后串行；各批次独立分支独立 PR 可独立 revert）
+
+> **执行形态（2026-09-20 批复回归护栏）**：本任务由单一落码任务改为**六批次子 PR**——批次 0（全局地基）至批次 5（bigscreen/portal）各自独立分支 `feat/p1-pr5-ui-batch-0..5` + 独立 PR 合入 dev，链式依赖（批次 N 基于批次 N-1 合入后的 dev）；**每批次合入硬门槛=五连门禁绿 + 22 个组件测试断言 diff=0 + 可独立 revert**；主 PR（feat/p1-pr5-m03-outpatient）不再承载存量改造面。
 
 > **强制技能加载（开工第一步，未加载不得开工）**：与 Task 13 同款——用 Skill 工具依次加载 `ui-ux-pro-max:ui-ux-pro-max`、`ui-ux-pro-max:design`、`ui-ux-pro-max:design-system`、`ui-ux-pro-max:ui-styling`（待批项 11）。
 
@@ -1883,17 +1961,17 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 - Consumes: 设计文档 §9 全量（现状审计 §9.1 F-1~F-9 / 迁移策略 §9.2 / 布局壳升级 §9.3 / 存量 9 页逐页规格 §9.4 / bigscreen·portal 存量 §9.5 / 交互动效统一 §9.6 / 性能治理 §9.7 / 实施分期与回归保障 §9.8 / 落地自查清单 §9.9）+ Task 13 落地的 token 文件（三 app styles 四文件与 main.ts import）。
 - Produces: 视觉统一的存量前端面（布局壳/存量 9 业务页/Home/Login/portal·bigscreen 存量全部并入设计系统）+ 审计痛点清零（F-1~F-8 修复、F-9 预防性治理）。
 
-- [ ] **Step 1: 批次 0 全局地基（§9.2/§9.1）**——token 四文件（Task 13 已落盘，本批并入验收；主色全局统一 `#409eff`→`#0369a1` 属 Task 13 交付的预期全局视觉变化 §9.2.3）+ element-plus.css 增存量收编工具类三枚（§9.2.2 精确规格逐字落死）与 `.gitkeep` 删除 + App.vue `<el-config-provider :locale="zhCn">`（按需路径 import，F-2 分页/日期面板中文化）+ F-1 缺陷修复（PatientCreate/PricingSettle/RefundApproval/DispenseWorkbench 四页 message-box 样式手动补引各 1 行）；跑五连门禁+spec 零 diff 核对（本批零断言风险）。
-- [ ] **Step 2: 批次 1 布局壳升级（§9.3）**——菜单数据化（AppSidebar 组件内常量数组 `{index,label,abbr,group}` 模板 `v-for` 渲染）；高亮修复（`default-active` 改 `activeIndex` 计算属性：路径精确相等→前缀最长匹配→空串回落，F-3）；折叠（MainLayout 持 `ref(false)` props 下行/事件上行；aside 宽度瞬切零动画+EP `:collapse-transition="false"`；菜单项高 40px/分组标题/选中态左缘 3px 品牌色条照 §9.3.1 布局树）；AppHeader 纯 CSS 汉堡折叠按钮（32×32 点击域）+ 用户区 hover 态（下拉逻辑零改动）；HomeView h1 删除（「医护工作站」锚点由 AppHeader 承载）+ LoginView 品牌化（gray-50 背景/radius-xl/shadow-md/顶部 3px 品牌色条，表单逻辑零改动）；存量 9 页根节点挂 `.fuy-page`（仅骨架类不动页内）；复核 App.spec 冒烟锚点断言路径。
-- [ ] **Step 3: 批次 2-4 存量业务页逐批改造（§9.4+§9.6）**——批次 2 患者域（检索：`fuy-dense`+「详情」link 按钮列键盘通道 F-4+空态 el-empty+`.fuy-toolbar`；建档：11 字段三分节+建档成功 ElMessage 反馈+message-box 引入；详情：冻结/解冻补 loading+`freezing` 在途守卫+枚举中文词表 F-8+descriptions `:column="3"`+首屏骨架）→ 批次 3 收费域（划价：`.fuy-toolbar`/`.fuy-section-title`+划价行软上限 20 行+金额列 `.fuy-num`；退费：状态 tag §4.3 全表映射替换二值；一日清单：未查询引导空态+`.fuy-total-strip` 合计强调条）→ 批次 4 药房域（字典：弹窗 `:rules` 声明式校验+两分节+医保 tag aa 修正；工作台：`:md/:lg` 响应断点+单据状态 tag+发药 confirm 单号回显+「选择」link 列；退药：`.fuy-section-title` 显式标题+radio 组件类型保持）；逐页交互动效按 §9.6 清单补齐（进场 stagger/内容显隐 `fuy-content-fade`/空态/骨架——零新 keyframes，全部复用 motion.css 既有类）。
-- [ ] **Step 4: 批次 5 bigscreen/portal 存量升级（§9.5）**——bigscreen 两文件暗色化：12 处硬编码 hex 按四值映射 token（`#909399`→text-secondary/`#dcdfe6`→border-hairline/`#e6a23c`→warn/`#67c23a`→ok）+原生控件暗色基线+连接状态呼吸点+遥测表暗色化（斑马纹 `#0d2132`）；h1「富云数据大屏」与连接/订阅逻辑零触碰；portal 零改动确认（§9.5.2）。
+- [ ] **Step 1: 批次 0 全局地基（§9.2/§9.1；独立分支 `feat/p1-pr5-ui-batch-0` + 独立 PR，执行序前置于 Task 13）**——token 四文件在本批**落盘**（2026-09-20 批复执行序修订：批次 0 前置于 Task 13，新五页依赖 token 地基；设计文档 §2.1 落点与内容规格同 Task 13 Step 0，落盘主体动作由本批承担；主色全局统一 `#409eff`→`#0369a1` 属本批交付的预期全局视觉变化 §9.2.3）+ element-plus.css 增存量收编工具类三枚（§9.2.2 精确规格逐字落死）与 `.gitkeep` 删除 + App.vue `<el-config-provider :locale="zhCn">`（按需路径 import，F-2 分页/日期面板中文化）+ F-1 缺陷修复（PatientCreate/PricingSettle/RefundApproval/DispenseWorkbench 四页 message-box 样式手动补引各 1 行）；跑五连门禁+spec 零 diff 核对（本批零断言风险）；批次 0 PR 先行合入 dev 后方可开工 Task 13（Task 13 Step 0 相应变为核验 token 在位与内容一致，缺失才补落）。
+- [ ] **Step 2: 批次 1 布局壳升级（§9.3；独立分支 `feat/p1-pr5-ui-batch-1` + 独立 PR，于 Task 13 合入后开工）**——菜单数据化（AppSidebar 组件内常量数组 `{index,label,abbr,group}` 模板 `v-for` 渲染）；高亮修复（`default-active` 改 `activeIndex` 计算属性：路径精确相等→前缀最长匹配→空串回落，F-3）；折叠（MainLayout 持 `ref(false)` props 下行/事件上行；aside 宽度瞬切零动画+EP `:collapse-transition="false"`；菜单项高 40px/分组标题/选中态左缘 3px 品牌色条照 §9.3.1 布局树）；AppHeader 纯 CSS 汉堡折叠按钮（32×32 点击域）+ 用户区 hover 态（下拉逻辑零改动）；HomeView h1 删除（「医护工作站」锚点由 AppHeader 承载）+ LoginView 品牌化（gray-50 背景/radius-xl/shadow-md/顶部 3px 品牌色条，表单逻辑零改动）；存量 9 页根节点挂 `.fuy-page`（仅骨架类不动页内）；复核 App.spec 冒烟锚点断言路径。
+- [ ] **Step 3: 批次 2-4 存量业务页逐批改造（§9.4+§9.6；批次 2/3/4 各自独立分支 `feat/p1-pr5-ui-batch-2..4` + 独立 PR，串行）**——批次 2 患者域（检索：`fuy-dense`+「详情」link 按钮列键盘通道 F-4+空态 el-empty+`.fuy-toolbar`；建档：11 字段三分节+建档成功 ElMessage 反馈+message-box 引入；详情：冻结/解冻补 loading+`freezing` 在途守卫+枚举中文词表 F-8+descriptions `:column="3"`+首屏骨架）→ 批次 3 收费域（划价：`.fuy-toolbar`/`.fuy-section-title`+划价行软上限 20 行+金额列 `.fuy-num`；退费：状态 tag §4.3 全表映射替换二值；一日清单：未查询引导空态+`.fuy-total-strip` 合计强调条）→ 批次 4 药房域（字典：弹窗 `:rules` 声明式校验+两分节+医保 tag aa 修正；工作台：`:md/:lg` 响应断点+单据状态 tag+发药 confirm 单号回显+「选择」link 列；退药：`.fuy-section-title` 显式标题+radio 组件类型保持）；逐页交互动效按 §9.6 清单补齐（进场 stagger/内容显隐 `fuy-content-fade`/空态/骨架——零新 keyframes，全部复用 motion.css 既有类）。
+- [ ] **Step 4: 批次 5 bigscreen/portal 存量升级（§9.5；独立分支 `feat/p1-pr5-ui-batch-5` + 独立 PR，末批串行）**——bigscreen 两文件暗色化：12 处硬编码 hex 按四值映射 token（`#909399`→text-secondary/`#dcdfe6`→border-hairline/`#e6a23c`→warn/`#67c23a`→ok）+原生控件暗色基线+连接状态呼吸点+遥测表暗色化（斑马纹 `#0d2132`）；h1「富云数据大屏」与连接/订阅逻辑零触碰；portal 零改动确认（§9.5.2）。
 - [ ] **Step 5: 性能治理（§9.7）**——CLS 锁定三项（表格容器 min-height 240px/检索条区 48px/详情 descriptions 区 200px）；金额/数量/计数列 `.fuy-num` 全量核对（数字滚动补间不扩容）；划价行编辑软上限生效复核；新增动效仅 transform/opacity 且全部复用 motion.css 既有类；ConfigProvider 经 resolver 按需（禁全量 import 复核）；存量表未达虚拟化阈值确认（不引 el-table-v2）。
-- [ ] **Step 6: 每批门禁与 spec 零 diff 核对**——每批完成即跑 `cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build` 五连全绿 + `git diff --stat` 确认 spec 文件零改动 + §9.9 存量优化版自查清单十项逐项核对（含 `prefers-reduced-motion` 降级抽检，核对表归档 SDD 台账）。
-- [ ] **Step 7: 提交（分批提交）**——每批一个 commit（conventional commits 中文 subject；批次 5 与 Step 5 性能治理可并入同批提交面），message 形如 `refactor(web): 存量前端基建全面优化批次 N——<范围>（设计文档 §9.x 对照）`。
+- [ ] **Step 6: 每批门禁与 spec 零 diff 核对**——每批完成即跑 `cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build` 五连全绿 + `git diff --stat` 确认 spec 文件零改动 + §9.9 存量优化版自查清单十项逐项核对（含 `prefers-reduced-motion` 降级抽检，核对表归档 SDD 台账）。**每批次合入硬门槛（批复回归护栏）=五连门禁绿 + 22 个组件测试断言 diff=0 + 可独立 revert，三条件缺一不合入。**
+- [ ] **Step 7: 提交与子 PR（六批次子 PR 形态，批复回归护栏）**——每批次独立分支 `feat/p1-pr5-ui-batch-0..5`（自最新 dev 切出）+ 独立 PR 合入 dev：批次 0 先行合入（前置于 Task 13），批次 1–5 于 Task 13 之后按序串行（批次 N 基于批次 N-1 合入后的 dev，链式依赖）；每批 commit conventional 中文 subject（批次 5 与 Step 5 性能治理可并入同批提交面），message 形如 `refactor(web): 存量前端基建全面优化批次 N——<范围>（设计文档 §9.x 对照）`；**主 PR（feat/p1-pr5-m03-outpatient）不再承载存量改造面**；单批次 revert 不影响其余批次合入态（独立回滚保证）。
 
 **回归红线（specs 断言零回退，§9.8.2）**：22 个既有 spec 用例断言零改动（§9.1 审计实证——全部锁业务行为：出网调用与参数/前置拦截零出网/在途守卫/状态映射语义/文案锚点，零样式断言）；视觉改造与断言冲突时**改实现不改断言**；文本锚点（「医护工作站」「富云患者门户」「富云数据大屏」等）与 `findComponent` 定位组件类型（ElSelect/ElDatePicker/ElRadio 等）禁替换，确需换型即停止并登记 TASK.md 待决策；W-22⑥⑦ 同文件交叠面按 §9.8.3 协调（fix PR 先行合入或同 PR 分 commit，本任务改造面不实现不移除不重构其修复形态）。
 
-验证：每批五连门禁全绿 + `git diff --stat` 确认 spec 文件零改动 + §9.9 自查清单十项通过。
+验证：每批五连门禁全绿 + `git diff --stat` 确认 spec 文件零改动 + §9.9 自查清单十项通过 + 每批次独立 PR 合入 dev 且可独立 revert（合入硬门槛三条件：五连绿/22 spec 断言 diff=0/可独立 revert）。
 
 ---
 
@@ -1937,9 +2015,30 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 
 **6. 存量优化增补轮（2026-09-20 用户第二次增补指令）**：设计文档 §9（:753-1194，存量前端全面优化方案）增补入库为本轮执行权威——本轮增补：新增 Task 17（存量前端基建全面优化，批次 0-5 分批落地，插于 Task 16 之后）；Task 16 范围扩为全站（新 5 页+存量 12 面）；Global Constraints「UI 设计系统红线」/「前端三应用门禁口径」两行补存量约束；前置项 P-10 扩写（§9 存量优化方案，落点 Task 13/17/16）；文件结构表增 Task 17 存量改造面行、Task 16 打磨面行扩全站；Execution Handoff 任务数 16→17、依赖序 13→17→14→16→15、待批项增第 11 条、SDD 派发声明补 Task 17 同款技能强制加载。Spec 覆盖对照增：**存量前端=设计文档 §9**——现状审计（§9.1，F-1~F-9）/迁移策略（§9.2）/布局壳升级（§9.3）/存量 9 页逐页规格（§9.4）/bigscreen·portal（§9.5）/交互动效统一（§9.6）/性能治理（§9.7）/实施分期与回归保障（§9.8）/落地自查清单（§9.9），Task 17 Steps ①-⑦ 与 §9.8.1 批次表 0-5 一一对应、Task 16 全站走查范围与之闭环 ✓。spec 零回退红线核验=§9.1 审计实证：存量 22 个视图 spec 用例全部锁业务行为（出网调用与参数/前置拦截/在途守卫/状态映射/文案锚点）、零样式断言——视觉改造与断言天然解耦，断言文件理想态零 diff ✓。类型一致性增核：Task 17 引用的收编工具类名（`.fuy-toolbar`/`.fuy-section-title`/`.fuy-total-strip`）、hex 映射四值（`#909399`/`#dcdfe6`/`#e6a23c`/`#67c23a`）、斑马纹常量 `#0d2132`、主色切换值（`#409eff`→`#0369a1`）与 §9.2.2/§9.2.3/§9.5.1 同源逐字核对 ✓；Task 16 标题内嵌执行序同步订正（旧「14→16→15」已随 Task 17 插入失效，属执行序事实订正非实质内容变更）✓。
 
+**7. 批复落档轮（2026-09-20 用户逐项批复：11 项待批/10 项偏差全部批准认可）**：6 项执行条件 + 2 项补充约束 + 回归护栏融入对照表——
+
+- **待批 3（存量 dev 卷清库重建）→ Task 1/13**：Task 1 Step 2 登记文本补「团队广播」警示语（清空重建前团队渠道广播+未入库数据先行导出）；Task 13 Step 1 补重置三点闭环（①迁移回放核验=计数 7+版本连续性探针 → ②后端正常启动 → ③api-docs 成功导出）；Task 13 新增 Step 1b 建立 Flyway 版本占用登记表（`docs/migrations/flyway-version-registry.md`，新迁移落文件前查重，与 `_SEGMENTS` 守卫互补）✓。
+- **待批 4/偏差①（事件行双写幂等）→ Task 3**：Step 1 补幂等键先实测注记（`WHERE NOT EXISTS` 或 `ON CONFLICT DO NOTHING` 以 event_registry 唯一键实测形态为准，幂等键=事件 id 唯一约束）；Step 6 补新旧库双时序迁移自检（存量卷=V204 UPDATE 命中；全新卷=兜底 INSERT 后 V605/V702 跳过；断言两序终态 desc 逐字一致）✓。
+- **待批 5（事件 39 幂等+防并发）→ Task 5**：markTimeout 补业务态幂等守卫（已释放态直接 ACK 跳过，同一预约重复超时消息不双释放）+ casRelease 补 version 乐观锁谓词（并发抢占以影响行数判定）+ 新增用例 13/14（重复超时消息/并发释放竞态）✓。
+- **待批 6/偏差⑥（WS 拦截器镜像）→ Task 7**：Interfaces 补只复制不顺手重构+文件头注释三要素（镜像来源全路径+来源 commit/行为等价承诺/收敛任务锚）；新增 Step 2b TASK.md 技术债工单登记（编号顺延 W 序列）✓。
+- **偏差⑤（删药房旧签名）→ Task 11**：Step 2 补删除前置全局检索（确认仅剩本任务新端口引用后才可删）；Step 3 补 PR 描述/提交 body 附删除清单（旧签名+旧用例逐一列出）✓。
+- **偏差⑨（优先级公式细化）→ Task 7**：公式改用户裁决版（类别分绿通 900/急诊分级 800-500/回诊 300 取最高单项，老幼残 200 跨类叠加，基础分 100，封顶 999，同分按 queue_ticket 建行时间排序禁应用时钟）+ZSET score 编码说明同步+新增用例 14/15/16（同分/跨类叠加/封顶三例）；既有用例 2/3 分值在裁决版下不变（900/600）✓。
+- **补充约束 1（偏差⑦ 声明态边界）→ 相关任务注记**：Task 5（VisitStatus/ApptStatus 声明态处）与 Task 8（OrderStatus IN_EXECUTION/COMPLETED 声明态处）统一注记「仅注册状态机迁移对+javadoc 标注 P3 触发点，不写任何无触发的处理逻辑（无分支/无消费/无定时器）」✓（正文实际声明态枚举落点为 Task 5/8 两处——Task 4/7 无偏差⑦枚举面，未加冗余注记）。
+- **补充约束 2（偏差⑩ W-20 产品待办）→ Task 1/8/10**：Task 1 新增 Step 2b TASK.md 登记转产品待办+澄清两问（0 元挂号合法性/0 元处方组合结算口径）；Task 8/10 补结算衔接报错红线（业务错误码+中文可读 message，禁裸抛底层异常）✓。
+- **回归护栏（Task 16/17）**：Task 17 改六批次子 PR 形态（批次 0 前置 Task 13、批次 1–5 串行，独立分支 `feat/p1-pr5-ui-batch-0..5`+独立 PR，合入硬门槛=五连门禁绿+22 spec 断言 diff=0+可独立 revert，主 PR 不承载存量面）；Task 13 Step 0 与 Task 17 Step 1 的 token 落盘归属随执行序同步注记；Task 16 补打磨存量回归同以「spec 断言 diff=0」为硬门槛 ✓。
+
+Handoff 批复记录段已插于「一、待批项呈报清单」之前；「三、SDD 执行方式」进入条件（P-0+本批复已落档）与 Task 17 六批次子 PR 派发形态同步更新 ✓。
+
 ## Execution Handoff
 
-计划已保存：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（**17 任务**；前置项 P-0~P-10 全映射；任务依赖序 1→2→3→4→5→6→7→8→9→10→11→12→13→**17（存量前端基建全面优化）→14（全量门禁）→16（全站深度打磨，taste-skill）→15（收口）**——Task 17 以 Task 13 落地成果（token 样式文件）为输入对存量 12 面分批改造；Task 16 以 Task 13/17 落地成果（新五页+存量 12 面+token 样式文件）为输入全站打磨，打磨完成并通过设计文档 §7.6/§9.9 落地自查清单终核后方可进收口；其中 2/4/5/7/8/10/11 涉及跨模块联改面均单任务内闭环、提交全绿）。
+计划已保存：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（**17 任务**；前置项 P-0~P-10 全映射；任务依赖序（2026-09-20 批复修订）**批次 0 子 PR（前置）→ 1→2→…→12→13 → 批次 1–5 子 PR 串行（Task 17 承载编排）→ 14（全量门禁）→ 16（全站深度打磨，taste-skill）→ 15（收口）**——Task 17 改为六批次子 PR 形态：批次 0（全局地基，token 四文件）独立子 PR **前置于 Task 13**（新页依赖 token 地基），批次 1–5 于 Task 13 之后串行，各自独立分支+独立 PR 可独立 revert，主 PR（feat/p1-pr5-m03-outpatient）不再承载存量改造面；Task 16 以批次全合入后的 dev 最新态（新五页+存量 12 面+token 样式文件）为输入全站打磨，打磨完成并通过设计文档 §7.6/§9.9 落地自查清单终核后方可进收口；其中 2/4/5/7/8/10/11 涉及跨模块联改面均单任务内闭环、提交全绿）。
+
+> **批复记录（2026-09-20，用户逐项批复）**：待批 1–11 全部批准；偏差①–⑩全部认可。其中
+> 待批 3/4/5/6 与偏差⑤/⑨ 附执行条件（已融入对应任务步骤，逐条对照：待批 3→Task 1/13、
+> 待批 4→Task 3、待批 5→Task 5、待批 6→Task 7、偏差⑤→Task 11、偏差⑨→Task 7）；两点
+> 补充约束（偏差⑦ 声明态边界、偏差⑩ W-20 产品待办登记）已融入对应任务；Task 16/17
+> 回归护栏（22 spec 断言 diff=0 每批次合入硬门槛；六批次独立成 PR 可独立回滚——Task 17
+> 改为六批次子 PR 形态）已落。计划自此具备 SDD 执行条件（进入条件 P-0=W-22 fix PR 先行）。
 
 ### 一、待批项呈报清单（超出 recon 14 条裁决的特别标注项，逐条附依据；批准计划即批准以下条目）
 
@@ -1961,4 +2060,4 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 
 ### 三、SDD 执行方式
 
-**Subagent-Driven（推荐）**——`superpowers:subagent-driven-development`：每任务全新 subagent + 任务间 spec/quality 双结论审查；台账落 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/`（跨会话续接按 PR-2/PR-3/PR-4 先例）。备选 **Inline Execution**——`superpowers:executing-plans`（本会话批量执行+检查点复核）。执行期质量门（不可跳过）：实现类 PR = 全量门禁 + 真栈（Task 15 Step 5 探针——存量卷重置已前移 Task 13 Step 1）+ 浏览器真机（三应用 UI 面，Task 15 Step 6）→ 建 PR → `/code-review` findings 清零 → 合并。**进入条件**：W-22 fix PR 已合入（P-0，Task 1 Step 1 核验）。**Task 13/17/16 派发时 dispatch prompt 必须明确要求实现者先加载对应设计技能（13=ui-ux-pro-max 族——设计文档方法论来源、17=ui-ux-pro-max 族同款——§9 存量方案落地、16=taste-skill 族），未加载不得开始落码/打磨。**
+**Subagent-Driven（推荐）**——`superpowers:subagent-driven-development`：每任务全新 subagent + 任务间 spec/quality 双结论审查；台账落 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/`（跨会话续接按 PR-2/PR-3/PR-4 先例）。备选 **Inline Execution**——`superpowers:executing-plans`（本会话批量执行+检查点复核）。执行期质量门（不可跳过）：实现类 PR = 全量门禁 + 真栈（Task 15 Step 5 探针——存量卷重置已前移 Task 13 Step 1）+ 浏览器真机（三应用 UI 面，Task 15 Step 6）→ 建 PR → `/code-review` findings 清零 → 合并。**进入条件**：W-22 fix PR 已合入（P-0，Task 1 Step 1 核验）+ 本批复已落档（2026-09-20 用户逐项批复，见上方批复记录——11 项待批/10 项偏差全部批准认可，执行条件已融入任务步骤）。**Task 13/17/16 派发时 dispatch prompt 必须明确要求实现者先加载对应设计技能（13=ui-ux-pro-max 族——设计文档方法论来源、17=ui-ux-pro-max 族同款——§9 存量方案落地、16=taste-skill 族），未加载不得开始落码/打磨。Task 17 派发形态为六批次子 PR 派发（批次 0 前置于 Task 13；批次 1–5 于 Task 13 之后按序逐批派发，每批一个独立分支 `feat/p1-pr5-ui-batch-0..5` + 独立 PR，合入硬门槛=五连门禁绿+22 spec 断言 diff=0+可独立 revert；主 PR 不承载存量改造面）。**
