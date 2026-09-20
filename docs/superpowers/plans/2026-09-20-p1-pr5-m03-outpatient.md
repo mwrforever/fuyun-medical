@@ -56,8 +56,8 @@
 - **注释/日志/编码**：注释与日志全中文（业务意图与「为什么」）；标识符英文；UTF-8 无 BOM、LF、文件末单换行（pre-commit/CI hygiene 同源）；提交前 `JAVA_HOME=/d/code/java/jdk/jdk17 mvn -B -ntp -f backend/pom.xml spotless:apply`。
 - **提交规范**：conventional commits、中文 subject、body 每行 ≤100 字符（提交前 python 逐行 len 自查；本地无 commit-msg 钩子）；type 仅 build/chore/ci/docs/feat/fix/perf/refactor/revert/style/test（无 config）。
 - **前端门禁（web C.4/C.5）**：`cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build` 五连全绿；api.d.ts 重生成 diff 为空（新鲜度本地核对，CI 通道登记 PR 描述）；组件 `<script setup lang="ts">` 零例外、禁 any；api.d.ts 生成物唯一来源（A.3-3，禁手写契约类型）；**新页面自带合规形态（W-22⑥/⑦ 教训）**：动作按钮 loading+在途守卫+零出网用例、入参显式格式校验 4xx 提示、禁裸 parse。
-- **前端三应用门禁口径**：workstation 增三页（挂号收费联动/分诊台/门诊医生站）；portal 免登录预约页（裁决 13——portal http 客户端/auth 基座从零建，抄 workstation api/http.ts 形态，无登录页、匿名直连 `/api/v1/outpatient/portal/**` 白名单通道）；bigscreen 候诊叫号页复用 useIotStomp 连接范式（buildBrokerUrl 换 `/ws/outpatient`，订阅 `/topic/outpatient/queue/{deptCode}`）；portal/bigscreen 无权限路由语义（公开页 meta `{ public: true }`）。
-- **UI 设计系统红线**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` 为本 PR 前端视觉唯一权威——token 系统（`--fuy-*` 命名空间，workstation 侧 `:root:root` 双写覆盖 `--el-*` 主色梯度）、五页布局骨架（§3/§8）、组件定制样式（§4：状态标签语义唯一映射/`.fuy-dense` 高密度工具类/表单与确认弹窗/空态骨架）、交互三态（§5 pending/success/fail 统一模式）、动画编排（§6：**动画属性仅 transform/opacity 合成层属性**，`prefers-reduced-motion` 全局兜底，禁引入动画库）；前端落码任务（Task 13 各步与 Task 16）逐项对照设计文档对应节，交付时附「落地自查清单」（§7.6）核对结果；token 样式文件纯新增渐进采用（既有 patient/billing/pharmacy 六页零触碰——设计文档附「兼容声明」裁决）。
+- **前端三应用门禁口径**：workstation 增三页（挂号收费联动/分诊台/门诊医生站）；portal 免登录预约页（裁决 13——portal http 客户端/auth 基座从零建，抄 workstation api/http.ts 形态，无登录页、匿名直连 `/api/v1/outpatient/portal/**` 白名单通道）；bigscreen 候诊叫号页复用 useIotStomp 连接范式（buildBrokerUrl 换 `/ws/outpatient`，订阅 `/topic/outpatient/queue/{deptCode}`）；portal/bigscreen 无权限路由语义（公开页 meta `{ public: true }`）；存量前端 12 面（存量 9 业务页+布局壳+login/home+portal/bigscreen 存量）随 Task 17 并入设计系统（设计文档 §9 迁移策略）。
+- **UI 设计系统红线**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` 为本 PR 前端视觉唯一权威——token 系统（`--fuy-*` 命名空间，workstation 侧 `:root:root` 双写覆盖 `--el-*` 主色梯度）、五页布局骨架（§3/§8）、组件定制样式（§4：状态标签语义唯一映射/`.fuy-dense` 高密度工具类/表单与确认弹窗/空态骨架）、交互三态（§5 pending/success/fail 统一模式）、动画编排（§6：**动画属性仅 transform/opacity 合成层属性**，`prefers-reduced-motion` 全局兜底，禁引入动画库）；前端落码任务（Task 13 各步与 Task 16）逐项对照设计文档对应节，交付时附「落地自查清单」（§7.6）核对结果；token 样式文件纯新增渐进采用（既有 patient/billing/pharmacy 六页零触碰——设计文档附「兼容声明」裁决）；存量前端全面优化（Task 17）同受本红线约束，按设计文档 §9 执行（§9 起「兼容声明」的「零触碰」条款收窄为过程性约束，存量分批改造不再受其禁止）。
 - **WS 自建依赖约束（裁决 12）**：outpatient 自建 `OutpatientWebSocketConfig`（@EnableWebSocketMessageBroker 与 iot 侧重复导入为 Spring 去重 no-op）+ `OutpatientConnectAuthInterceptor`（镜像 `fuyun-iot/internal/StompConnectAuthInterceptor.java` 语义：CONNECT 帧 Bearer 令牌经 `com.fuyun.system.api.TokenVerifier` 校验、拒绝抛 MessagingException、日志不含令牌——iot 侧类在 internal 包禁外引，镜像复制为唯一合法形态，偏差⑥）；broker 复用 `/topic` 前缀（iot 侧已 enableSimpleBroker("/topic")，同值幂等）；通道=`/topic/outpatient/queue/{deptCode}` 与 `/topic/outpatient/doctor/{doctorId}`（Spec :179）；REST 快照 `GET /queues/{queueId}/tickets` 双通道（Spec :153）；推送端到端 ≤2s（Spec :198）。
 - **portal 匿名通道（裁决 13）**：`SystemWebConfig.AUTH_WHITELIST`（:72-77 实测常量）追加 `"/api/v1/outpatient/portal/**"` 单条目——portal 域端点免 401、服务端经介质解析（就诊卡号/证件号 → `patient/api/PatientContextResolver`+标识解析）定 patientId；portal 患者账号体系随 M18/P6 完整化（P1 演示口径注记）；portal 域端点限流/风控随 M18 注记。
 - **真栈环境**：`docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d`（deploy/.env 在位不入库）；后端镜像重建 `docker build -f backend/Dockerfile -t fuyun/backend:dev backend`；backend 不发布宿主端口（容器内 curl 探测）；**outpatient 首批合入后 dev 卷须先重置再起栈**（Task 1 CHANGELOG 登记、Task 13 执行——前移至 api-docs 导出之前，Task 15 真栈复用该重置后卷）。
@@ -79,7 +79,7 @@
 | P-7 | **api.d.ts 重生成流程**（PR-4 Task 12 Step 1 同款）：存量卷重置（down -v+up，Task 1 登记的进入条件）→ mvn package → 镜像重建 → compose 重建 backend → 容器内导出 api-docs → `pnpm gen:api` → diff 核对 | workstation/portal 五连门禁前置 | **Task 13** |
 | P-8 | **门户匿名通道**（裁决 13）：SystemWebConfig.AUTH_WHITELIST 追加 `/api/v1/outpatient/portal/**` 单条目 + portal 域三端点（可约号源查询/预约/退号） | 白名单 + PortalController | **Task 5** |
 | P-9 | **D-16 三态门禁**（裁决 10）：patient/api 新 `CareRelationQuery` SPI（无实现=维持角色豁免单门禁 warn，OngoingVisitQuery 冻结语义同款）+ PrivacyServiceImpl unmask 第二道校验 + M03 实现（在途就诊操作者匹配）+ IT 断言 | SPI + 两端接线 | **Task 2** |
-| P-10 | **UI 设计系统增补**（用户 2026-09-20 增补指令）：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`（ui-ux-pro-max 产出并入库）为 PR-5 前端视觉唯一权威——token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单 | Task 13 Step 0 落 token 文件与 `:root:root` 主题覆盖、Step 2/3 逐页对照 §8.x 页面级设计说明与 §7.6 自查清单；Task 16 taste-skill 全面精修 | **Task 13/16** |
+| P-10 | **UI 设计系统增补**（用户 2026-09-20 增补指令，同日第二次增补扩存量面）：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`（ui-ux-pro-max 产出并入库）为 PR-5 前端视觉唯一权威——token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单；**§9 存量优化方案**（现状审计 F-1~F-9/迁移策略/布局壳升级/存量 9 页逐页规格/交互动效统一/性能治理/实施分期/自查清单 §9.9）覆盖存量前端 12 面 | Task 13 Step 0 落 token 文件与 `:root:root` 主题覆盖、Step 2/3 逐页对照 §8.x 页面级设计说明与 §7.6 自查清单；Task 17 批次 0-5 存量分批改造（§9.8.1）；Task 16 taste-skill 全站全面精修 | **Task 13/17/16** |
 
 ## 文件结构（本计划全量改动面）
 
@@ -112,7 +112,8 @@
 | 创建/修改 | `web/apps/bigscreen/src/api/outpatientQueue.ts`、`composables/useQueueStomp.ts`（+spec）、`views/queue/QueueBoardView.vue`（+spec）、`router/index.ts` | bigscreen 叫号页（Task 13 Step 3） |
 | 伴随规范（已入库） | `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` | PR-5 前端视觉唯一权威：token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单（Task 13 落码与 Task 16 打磨逐节对照） |
 | 创建 | `web/apps/workstation/src/styles/`（tokens.css / element-plus.css / motion.css / index.css）、`web/apps/portal/src/styles/` 与 `web/apps/bigscreen/src/styles/`（各 tokens.css / motion.css / index.css）+ 三 app `main.ts` 各一行 import | Task 13 Step 0 设计 token 落位与 `:root:root` 主题覆盖（既有六页零触碰，纯新增渐进采用——设计文档 §2.1/兼容声明） |
-| 修改 | Task 16 打磨面 = 五页视图及其 specs/styles（workstation 三页 + portal 预约页 + bigscreen 叫号页） | UI 深度打磨（taste-skill）：全量走查/组件精修/动效质感/性能复检/specs 回归，终核报告归档 SDD 台账 |
+| 修改 | Task 16 打磨面 = 全站页面及其 specs/styles（新五页 + Task 17 产出的存量 12 面：布局壳/Home/Login/存量 9 业务页/portal·bigscreen 存量） | UI 深度打磨（taste-skill 全站精修）：全量走查/组件精修/动效质感/性能复检/specs 回归，终核报告归档 SDD 台账 |
+| 修改 | Task 17 存量改造面 = workstation `views/layout/`（MainLayout/AppSidebar/AppHeader）、HomeView/LoginView、存量 9 业务页（patient×3/billing×3/pharmacy×3）、`styles/` 收编（element-plus.css 增收编工具类+`.gitkeep` 删除）、App.vue（zh-cn locale）、`utils/patientDisplay.ts`（F-8 词表）、bigscreen `views/home/`、portal `views/home/`（零改动确认）；各页 specs 零断言改动 | 存量前端基建全面优化（设计文档 §9 落地）：批次 0-5 分批改造（§9.8.1），22 个既有 spec 用例断言零回退（回归红线） |
 | 修改 | `docs/specs/modules/03-outpatient.md`、`docs/specs/modules/06-pharmacy.md` §7、`CHANGELOG.md` | 收口注记与变更登记（Task 15） |
 
 ---
@@ -1825,7 +1826,7 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 
 ---
 
-### Task 16: UI 深度打磨（taste-skill 全面精修，输入=Task 13 落地成果；执行序 14→16→15）
+### Task 16: UI 深度打磨（taste-skill 全站全面精修，输入=Task 13/17 落地成果；执行序 13→17→14→16→15）
 
 > **强制技能加载（开工第一步，未加载不得开始）**：用 Skill 工具依次加载 `taste-skill:design-taste-frontend`、`taste-skill:high-end-visual-design`、`taste-skill:minimalist-ui`、`taste-skill:redesign-existing-projects`（按需再加 `taste-skill:brandkit`）——与 Task 13 的 ui-ux-pro-max 族同款硬性要求（待批项 10）。
 
@@ -1833,17 +1834,18 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T backe
 - Modify: `web/apps/workstation/src/views/outpatient/`（RegistrationChargeView/TriageBoardView/DoctorStationView 三页及其 `.spec.ts`）
 - Modify: `web/apps/portal/src/views/appointment/`（AppointmentView 及 `.spec.ts`）
 - Modify: `web/apps/bigscreen/src/views/queue/`（QueueBoardView 及 `.spec.ts`）
+- Modify: 存量面（Task 17 产出）：`web/apps/workstation/src/views/layout/`（MainLayout/AppSidebar/AppHeader）+ HomeView/LoginView + 存量 9 业务页（patient×3/billing×3/pharmacy×3）+ `web/apps/portal/src/views/home/`、`web/apps/bigscreen/src/views/home/`
 - Modify: 各页 styles 定制面（workstation `styles/element-plus.css`/`motion.css` 等，视走查结论微调；设计文档仍为唯一权威，微调不得偏离其 token 与参数，确需偏离先登记 TASK.md 待决策）
 
 **Interfaces:**
-- Consumes: Task 13 落地成果（五页视图 + 三 app token 样式文件）+ 设计文档全量（`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`：token §2/布局 §3/组件 §4/交互 §5/动画 §6/性能红线 §7/五页设计说明 §8）。
+- Consumes: Task 13 落地成果（五页视图 + 三 app token 样式文件）+ Task 17 落地成果（存量 12 面：布局壳/Home/Login/存量 9 业务页/portal·bigscreen 存量）+ 设计文档全量（`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`：token §2/布局 §3/组件 §4/交互 §5/动画 §6/性能红线 §7/五页设计说明 §8；存量侧另对照 §9——逐页规格 §9.4 与自查清单 §9.9）。
 - Produces: 打磨后 UI 面 + 落地自查清单终核报告（§7.6 十项核对表归档 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/` 台账）。
 
-- [ ] **Step 1: 全量走查**——对照设计文档逐页走查已落地五页：视觉层级/间距节奏（§2.4 间距系统）/对齐/色彩语义一致性（§2.2 语义色 + §4.3 状态标签唯一映射表，无自造色）；偏差逐条登记并附设计文档节号。
+- [ ] **Step 1: 全量走查**——对照设计文档逐页走查全部页面（新 5 页+存量 12 面）：视觉层级/间距节奏（§2.4 间距系统）/对齐/色彩语义一致性（§2.2 语义色 + §4.3 状态标签唯一映射表，无自造色；存量侧含 §9.3 布局壳与 §9.5.1 暗色面）；偏差逐条登记并附设计文档节号。
 - [ ] **Step 2: 组件级精修**——状态标签（§4.3 映射与 `.fuy-tag-aa`/`.fuy-tag-strike` 辅助类）/表格密度（`.fuy-dense` §4.2 + 数字列 `.fuy-num`）/表单分区（§4.4 label-width 与确认弹窗 420px 回显摘要）/空态与骨架（§4.4 业务口径 description + §6.7 骨架→内容 min-height 锁定），每处改动引用设计文档节号。
 - [ ] **Step 3: 交互动效质感打磨**——过渡曲线统一性（§2.6 选用规则：进场 `enter`/离场 `exit`/位移 `standard`，`emphasis` 全站仅 portal 出票卡与 workstation 挂号成功两处）/stagger 时序（§6.1 步长 40ms ≤6 档）/加载态编排（§6.7 200ms opacity 单属性）/焦点可见性（§5.3 `:focus-visible` 全站强制 + portal 焦点管理）。
 - [ ] **Step 4: 性能复检**——动画属性白名单核对（仅 transform/opacity，§6 通用铁律 + §7.1 60fps 预算；`will-change` 仅 bigscreen 叫号卡与 FLIP 容器两处）/长列表渲染（§7.2：分诊台 ≤200 行高密度+分页、医生站直渲染、bigscreen 前 8 条 slice）/bigscreen 值守内存面（§7.5：单时钟定时器 onUnmounted 清理、订阅句柄退订、常驻动画仅连接呼吸点）。
-- [ ] **Step 5: 既有 specs 断言回归**——五页 spec 与 useQueueStomp/portal http spec 全绿；视觉改动不得破坏既有断言（断言绑定业务结果非实现细节，确因视觉语义需修正的用例逐条附设计文档节号说明，禁删合规断言凑绿）。
+- [ ] **Step 5: 既有 specs 断言回归**——五页 spec、存量 22 用例（§9.8.2 零回退红线延续）与 useQueueStomp/portal http spec 全绿；视觉改动不得破坏既有断言（断言绑定业务结果非实现细节，确因视觉语义需修正的用例逐条附设计文档节号说明，禁删合规断言凑绿）。
 - [ ] **Step 6: 终核与打磨提交**
 
 ```bash
@@ -1859,6 +1861,39 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 - 全量走查/组件级精修/动效质感/性能复检（设计文档 §8.1–8.5 与 §6/§7 对照）
 - 落地自查清单终核通过（核对表归档 SDD 台账）"
 ```
+
+---
+
+### Task 17: 存量前端基建全面优化（ui-ux-pro-max 方案 §9 落地；输入=Task 13 落地成果，执行序 13→17→14→16→15）
+
+> **强制技能加载（开工第一步，未加载不得开工）**：与 Task 13 同款——用 Skill 工具依次加载 `ui-ux-pro-max:ui-ux-pro-max`、`ui-ux-pro-max:design`、`ui-ux-pro-max:design-system`、`ui-ux-pro-max:ui-styling`（待批项 11）。
+
+**Files:**
+- Modify: `web/apps/workstation/src/views/layout/`（MainLayout/AppSidebar/AppHeader——布局壳升级 §9.3：菜单数据化/折叠瞬切零动画/高亮修复）
+- Modify: 存量 9 业务页（patient×3：PatientSearchView/PatientCreateView/PatientDetailView；billing×3：PricingSettleView/RefundApprovalView/DailyListView；pharmacy×3：DrugDictView/DispenseWorkbenchView/DispenseReturnView——逐页对照 §9.4 规格）
+- Modify: `web/apps/workstation/src/views/HomeView.vue`、`LoginView.vue`（§9.3.3 升级规格）
+- Modify: `web/apps/workstation/src/styles/`（element-plus.css 增存量收编工具类 `.fuy-toolbar`/`.fuy-section-title`/`.fuy-total-strip` §9.2.2；`.gitkeep` 同批删除；token 四文件 Task 13 Step 0 已落盘——本任务即 §9.2.1 阶段二「存量分批消费」，零重写）
+- Modify: `web/apps/workstation/src/App.vue`（根节点包 ElConfigProvider zh-cn locale——F-2）
+- Modify: `web/apps/workstation/src/utils/patientDisplay.ts`（registerChannel/archiveSource 中文词表纯函数增补——F-8）
+- Modify: `web/apps/bigscreen/src/views/home/`（HomeView+TelemetrySummaryPanel 暗色化 §9.5.1）
+- Modify: `web/apps/portal/src/views/home/`（**零改动确认**——§9.5.2 占位页最小维持，仅核验无触碰）
+- **各页 `*.spec.ts` 零断言改动**（回归红线：22 个既有用例理想态零 diff，见下）
+
+**Interfaces:**
+- Consumes: 设计文档 §9 全量（现状审计 §9.1 F-1~F-9 / 迁移策略 §9.2 / 布局壳升级 §9.3 / 存量 9 页逐页规格 §9.4 / bigscreen·portal 存量 §9.5 / 交互动效统一 §9.6 / 性能治理 §9.7 / 实施分期与回归保障 §9.8 / 落地自查清单 §9.9）+ Task 13 落地的 token 文件（三 app styles 四文件与 main.ts import）。
+- Produces: 视觉统一的存量前端面（布局壳/存量 9 业务页/Home/Login/portal·bigscreen 存量全部并入设计系统）+ 审计痛点清零（F-1~F-8 修复、F-9 预防性治理）。
+
+- [ ] **Step 1: 批次 0 全局地基（§9.2/§9.1）**——token 四文件（Task 13 已落盘，本批并入验收；主色全局统一 `#409eff`→`#0369a1` 属 Task 13 交付的预期全局视觉变化 §9.2.3）+ element-plus.css 增存量收编工具类三枚（§9.2.2 精确规格逐字落死）与 `.gitkeep` 删除 + App.vue `<el-config-provider :locale="zhCn">`（按需路径 import，F-2 分页/日期面板中文化）+ F-1 缺陷修复（PatientCreate/PricingSettle/RefundApproval/DispenseWorkbench 四页 message-box 样式手动补引各 1 行）；跑五连门禁+spec 零 diff 核对（本批零断言风险）。
+- [ ] **Step 2: 批次 1 布局壳升级（§9.3）**——菜单数据化（AppSidebar 组件内常量数组 `{index,label,abbr,group}` 模板 `v-for` 渲染）；高亮修复（`default-active` 改 `activeIndex` 计算属性：路径精确相等→前缀最长匹配→空串回落，F-3）；折叠（MainLayout 持 `ref(false)` props 下行/事件上行；aside 宽度瞬切零动画+EP `:collapse-transition="false"`；菜单项高 40px/分组标题/选中态左缘 3px 品牌色条照 §9.3.1 布局树）；AppHeader 纯 CSS 汉堡折叠按钮（32×32 点击域）+ 用户区 hover 态（下拉逻辑零改动）；HomeView h1 删除（「医护工作站」锚点由 AppHeader 承载）+ LoginView 品牌化（gray-50 背景/radius-xl/shadow-md/顶部 3px 品牌色条，表单逻辑零改动）；存量 9 页根节点挂 `.fuy-page`（仅骨架类不动页内）；复核 App.spec 冒烟锚点断言路径。
+- [ ] **Step 3: 批次 2-4 存量业务页逐批改造（§9.4+§9.6）**——批次 2 患者域（检索：`fuy-dense`+「详情」link 按钮列键盘通道 F-4+空态 el-empty+`.fuy-toolbar`；建档：11 字段三分节+建档成功 ElMessage 反馈+message-box 引入；详情：冻结/解冻补 loading+`freezing` 在途守卫+枚举中文词表 F-8+descriptions `:column="3"`+首屏骨架）→ 批次 3 收费域（划价：`.fuy-toolbar`/`.fuy-section-title`+划价行软上限 20 行+金额列 `.fuy-num`；退费：状态 tag §4.3 全表映射替换二值；一日清单：未查询引导空态+`.fuy-total-strip` 合计强调条）→ 批次 4 药房域（字典：弹窗 `:rules` 声明式校验+两分节+医保 tag aa 修正；工作台：`:md/:lg` 响应断点+单据状态 tag+发药 confirm 单号回显+「选择」link 列；退药：`.fuy-section-title` 显式标题+radio 组件类型保持）；逐页交互动效按 §9.6 清单补齐（进场 stagger/内容显隐 `fuy-content-fade`/空态/骨架——零新 keyframes，全部复用 motion.css 既有类）。
+- [ ] **Step 4: 批次 5 bigscreen/portal 存量升级（§9.5）**——bigscreen 两文件暗色化：12 处硬编码 hex 按四值映射 token（`#909399`→text-secondary/`#dcdfe6`→border-hairline/`#e6a23c`→warn/`#67c23a`→ok）+原生控件暗色基线+连接状态呼吸点+遥测表暗色化（斑马纹 `#0d2132`）；h1「富云数据大屏」与连接/订阅逻辑零触碰；portal 零改动确认（§9.5.2）。
+- [ ] **Step 5: 性能治理（§9.7）**——CLS 锁定三项（表格容器 min-height 240px/检索条区 48px/详情 descriptions 区 200px）；金额/数量/计数列 `.fuy-num` 全量核对（数字滚动补间不扩容）；划价行编辑软上限生效复核；新增动效仅 transform/opacity 且全部复用 motion.css 既有类；ConfigProvider 经 resolver 按需（禁全量 import 复核）；存量表未达虚拟化阈值确认（不引 el-table-v2）。
+- [ ] **Step 6: 每批门禁与 spec 零 diff 核对**——每批完成即跑 `cd web && pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build` 五连全绿 + `git diff --stat` 确认 spec 文件零改动 + §9.9 存量优化版自查清单十项逐项核对（含 `prefers-reduced-motion` 降级抽检，核对表归档 SDD 台账）。
+- [ ] **Step 7: 提交（分批提交）**——每批一个 commit（conventional commits 中文 subject；批次 5 与 Step 5 性能治理可并入同批提交面），message 形如 `refactor(web): 存量前端基建全面优化批次 N——<范围>（设计文档 §9.x 对照）`。
+
+**回归红线（specs 断言零回退，§9.8.2）**：22 个既有 spec 用例断言零改动（§9.1 审计实证——全部锁业务行为：出网调用与参数/前置拦截零出网/在途守卫/状态映射语义/文案锚点，零样式断言）；视觉改造与断言冲突时**改实现不改断言**；文本锚点（「医护工作站」「富云患者门户」「富云数据大屏」等）与 `findComponent` 定位组件类型（ElSelect/ElDatePicker/ElRadio 等）禁替换，确需换型即停止并登记 TASK.md 待决策；W-22⑥⑦ 同文件交叠面按 §9.8.3 协调（fix PR 先行合入或同 PR 分 commit，本任务改造面不实现不移除不重构其修复形态）。
+
+验证：每批五连门禁全绿 + `git diff --stat` 确认 spec 文件零改动 + §9.9 自查清单十项通过。
 
 ---
 
@@ -1900,9 +1935,11 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 
 **5. UI 设计系统增补轮（2026-09-20 用户增补指令）**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`（755 行，ui-ux-pro-max 产出）入库为本 PR 前端视觉唯一权威——本轮增补：Global Constraints 增「UI 设计系统红线」条、前置项增 P-10、文件结构表增三行（设计文档本身/workstation token 样式文件/Task 16 打磨面）、Task 13 增 Step 0（token 落位）与 Step 2/3 页面级引用行及 §7.6 自查清单验证、新增 Task 16（taste-skill 打磨，Handoff 执行序改 14→16→15）。Spec 覆盖对照增一行：**前端视觉规范=设计文档**——token 系统（§2）/布局骨架（§3）/组件定制样式（§4）/交互三态（§5）/动画编排（§6）/性能红线（§7）/五页设计说明（§8.1–8.5）/落地自查清单（§7.6），Task 13 落码与 Task 16 打磨全量对照 ✓。类型一致性增核：计划引用行中的 token 命名（`--fuy-*` 命名空间、`:root:root` 双写覆盖 `--el-*`）与动画参数（120/200/320/960ms、`enter`/`exit`/`standard`/`emphasis` 四曲线、stagger 40ms）与设计文档 §2.2/§2.6 同源逐字核对 ✓；五页↔设计文档 §8.1–8.5 一一对应、Task 16 打磨步 ①–⑥ 与 §7.6 清单十项闭环 ✓；文件结构表 portal/bigscreen 两行残留旧「Task 14」引用已随本轮订正为 Task 13 Step 3（撰写期遗留笔误，非本轮新增）。
 
+**6. 存量优化增补轮（2026-09-20 用户第二次增补指令）**：设计文档 §9（:753-1194，存量前端全面优化方案）增补入库为本轮执行权威——本轮增补：新增 Task 17（存量前端基建全面优化，批次 0-5 分批落地，插于 Task 16 之后）；Task 16 范围扩为全站（新 5 页+存量 12 面）；Global Constraints「UI 设计系统红线」/「前端三应用门禁口径」两行补存量约束；前置项 P-10 扩写（§9 存量优化方案，落点 Task 13/17/16）；文件结构表增 Task 17 存量改造面行、Task 16 打磨面行扩全站；Execution Handoff 任务数 16→17、依赖序 13→17→14→16→15、待批项增第 11 条、SDD 派发声明补 Task 17 同款技能强制加载。Spec 覆盖对照增：**存量前端=设计文档 §9**——现状审计（§9.1，F-1~F-9）/迁移策略（§9.2）/布局壳升级（§9.3）/存量 9 页逐页规格（§9.4）/bigscreen·portal（§9.5）/交互动效统一（§9.6）/性能治理（§9.7）/实施分期与回归保障（§9.8）/落地自查清单（§9.9），Task 17 Steps ①-⑦ 与 §9.8.1 批次表 0-5 一一对应、Task 16 全站走查范围与之闭环 ✓。spec 零回退红线核验=§9.1 审计实证：存量 22 个视图 spec 用例全部锁业务行为（出网调用与参数/前置拦截/在途守卫/状态映射/文案锚点）、零样式断言——视觉改造与断言天然解耦，断言文件理想态零 diff ✓。类型一致性增核：Task 17 引用的收编工具类名（`.fuy-toolbar`/`.fuy-section-title`/`.fuy-total-strip`）、hex 映射四值（`#909399`/`#dcdfe6`/`#e6a23c`/`#67c23a`）、斑马纹常量 `#0d2132`、主色切换值（`#409eff`→`#0369a1`）与 §9.2.2/§9.2.3/§9.5.1 同源逐字核对 ✓；Task 16 标题内嵌执行序同步订正（旧「14→16→15」已随 Task 17 插入失效，属执行序事实订正非实质内容变更）✓。
+
 ## Execution Handoff
 
-计划已保存：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（**16 任务**；前置项 P-0~P-10 全映射；任务依赖序 1→2→3→4→5→6→7→8→9→10→11→12→13→14→**16（UI 深度打磨，taste-skill）→15（收口）**——Task 16 以 Task 13 落地成果（五页+token 样式文件）为输入，打磨完成并通过设计文档 §7.6 落地自查清单终核后方可进收口；其中 2/4/5/7/8/10/11 涉及跨模块联改面均单任务内闭环、提交全绿）。
+计划已保存：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（**17 任务**；前置项 P-0~P-10 全映射；任务依赖序 1→2→3→4→5→6→7→8→9→10→11→12→13→**17（存量前端基建全面优化）→14（全量门禁）→16（全站深度打磨，taste-skill）→15（收口）**——Task 17 以 Task 13 落地成果（token 样式文件）为输入对存量 12 面分批改造；Task 16 以 Task 13/17 落地成果（新五页+存量 12 面+token 样式文件）为输入全站打磨，打磨完成并通过设计文档 §7.6/§9.9 落地自查清单终核后方可进收口；其中 2/4/5/7/8/10/11 涉及跨模块联改面均单任务内闭环、提交全绿）。
 
 ### 一、待批项呈报清单（超出 recon 14 条裁决的特别标注项，逐条附依据；批准计划即批准以下条目）
 
@@ -1916,6 +1953,7 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 8. **诊区队列口径**（Spec queue_id「诊区/医生队列」二选一）：P1 取 queue_id=dept_code 诊区单队列（ticket.doctor_id 辅助定向），医生级队列与跨院区随 P2 注记——叫号/大屏/分诊台三面演示最短路径。
 9. **收费工作台前端直调 billing 面**：就诊费用划价/结算为 CF-4 同步 REST 人机面，M03 后端零收费编排 REST（资金无涉红线）；挂号收费联动页复用 PR-3 交付的 billing.ts（manualCharge/preview/settle）。
 10. **UI 设计系统采纳与 taste-skill 打磨任务设定**（用户 2026-09-20 增补指令）：ui-ux-pro-max 产出并入库的 `docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` 为 PR-5 前端视觉唯一权威（token 系统/布局骨架/组件定制样式/交互三态/动画编排/性能红线/五页设计说明/落地自查清单），Task 13 逐节落地、Task 16 以 taste-skill 族（design-taste-frontend/high-end-visual-design/minimalist-ui/redesign-existing-projects，按需 brandkit）全面深度打磨；两技能族均为 subagent 开工强制加载项（未加载不得开始）。
+11. **存量前端基建全面优化**（用户 2026-09-20 第二次增补裁决）：范围不限于新五页——存量 9 业务页（patient×3/billing×3/pharmacy×3）+布局壳（MainLayout/AppSidebar/AppHeader）+HomeView/LoginView+portal/bigscreen 存量全面并入设计系统；设计文档 §9（现状审计/迁移策略/布局壳升级/存量 9 页逐页规格/交互动效统一/性能治理/实施分期/自查清单）为执行权威；22 个既有 spec 用例断言零回退为回归红线（视觉改造与断言冲突时改实现不改断言）；W-22⑥⑦ 同文件交叠面按 §9.8.3 协调（fix PR 先行，改造不破坏其修复面）。
 
 ### 二、与 recon/调研的偏差清单（执行与评审对照）
 
@@ -1923,4 +1961,4 @@ git commit -m "style(web): taste-skill 全面精修门诊五页 UI（对照设�
 
 ### 三、SDD 执行方式
 
-**Subagent-Driven（推荐）**——`superpowers:subagent-driven-development`：每任务全新 subagent + 任务间 spec/quality 双结论审查；台账落 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/`（跨会话续接按 PR-2/PR-3/PR-4 先例）。备选 **Inline Execution**——`superpowers:executing-plans`（本会话批量执行+检查点复核）。执行期质量门（不可跳过）：实现类 PR = 全量门禁 + 真栈（Task 15 Step 5 探针——存量卷重置已前移 Task 13 Step 1）+ 浏览器真机（三应用 UI 面，Task 15 Step 6）→ 建 PR → `/code-review` findings 清零 → 合并。**进入条件**：W-22 fix PR 已合入（P-0，Task 1 Step 1 核验）。**Task 13/16 派发时 dispatch prompt 必须明确要求实现者先加载对应设计技能（13=ui-ux-pro-max 族——设计文档方法论来源、16=taste-skill 族），未加载不得开始落码/打磨。**
+**Subagent-Driven（推荐）**——`superpowers:subagent-driven-development`：每任务全新 subagent + 任务间 spec/quality 双结论审查；台账落 `.superpowers/sdd/2026-09-20-p1-pr5-m03-outpatient/`（跨会话续接按 PR-2/PR-3/PR-4 先例）。备选 **Inline Execution**——`superpowers:executing-plans`（本会话批量执行+检查点复核）。执行期质量门（不可跳过）：实现类 PR = 全量门禁 + 真栈（Task 15 Step 5 探针——存量卷重置已前移 Task 13 Step 1）+ 浏览器真机（三应用 UI 面，Task 15 Step 6）→ 建 PR → `/code-review` findings 清零 → 合并。**进入条件**：W-22 fix PR 已合入（P-0，Task 1 Step 1 核验）。**Task 13/17/16 派发时 dispatch prompt 必须明确要求实现者先加载对应设计技能（13=ui-ux-pro-max 族——设计文档方法论来源、17=ui-ux-pro-max 族同款——§9 存量方案落地、16=taste-skill 族），未加载不得开始落码/打磨。**

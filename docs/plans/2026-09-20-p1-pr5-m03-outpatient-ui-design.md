@@ -750,6 +750,449 @@ v-loading 挂载的遮罩 spinner 由 EP 内部类渲染，无法逐个加豁免
 
 ---
 
+## 9. 存量前端全面优化方案（第二部分）
+
+> **裁决依据**：用户 2026-09-20 裁决——PR-5 前端优化范围不限于新五页，须对**已有前端基建全面优化**。本节为第二部分：存量页面与样式基建的审计结论与改造规格。
+> **与既有章节的关系**：§1-§8 的 token / 布局 / 组件 / 交互 / 动画 / 性能规范是存量改造的**唯一规范源**，本节只写「存量特有」内容，不重复定义任何 token。§3.1「沿用既有 MainLayout 不改动」与附录「本规范不改动任何既有页面」两条，自本节起**收窄为「新五页交付时不因视觉统一反向阻塞存量改造」的过程性约束**，存量改造按本节批次执行时不再受其禁止（新裁决覆盖旧条款；§1-§8 与附录原文一字不动）。本方案不含 W-22 九条合规遗留的修复（属 fix PR 范围），改造时不得与之冲突（§9.8 边界注记）。
+> **方法论**：同第一部分（ui-ux-pro-max 优先级规则 + design-system 三层 token）；宪法 C.7 谋建琢三段律适用于每一批次（谋=本节，建=批次实现，琢=taste-skill 打磨）。
+
+### 9.1 现状审计
+
+#### 9.1.0 样式基建审计结论（审计对象核存在性）
+
+| 审计对象 | 实际状态 | 结论 |
+| --- | --- | --- |
+| `src/styles/` | 仅 0 字节 `.gitkeep` 占位 | **styles/shared 与 styles/ui 均不存在**——零全局样式、零主题覆盖、零工具类；§2.1 规划的四文件（tokens / element-plus / motion / index）属纯新增，尚未落盘 |
+| `src/assets/`、`src/components/common/`、`src/composables/`、`src/directives/` | 全部空目录 | 共享组件/组合层为空，样式 100% 内联于 14 个 SFC 的 `<style scoped>` 块 |
+| Element Plus 定制现状 | 零定制 | 无 `ElConfigProvider`、无 zh-cn locale、无 `--el-*` 覆盖、无主题 SCSS；`unplugin` resolver 按需引入（§7.3 结论不变）；无 `@element-plus/icons-vue` 依赖 |
+| packages/ui | 占位 `export {}` | 无跨应用组件，本方案不触碰 |
+| packages/shared | 仅 `PageResult` 契约 + `api.d.ts` | 纯 TS 包边界（web B.1）不破，本方案不触碰 |
+| 色值纪律 | workstation 14 个 SFC **零裸 hex**（全走 `var(--el-*)`）；bigscreen 存量 2 文件共 **12 处硬编码 hex**（4 个唯一值，均为 EP 默认色硬拷贝） | workstation 色值基础健康；bigscreen 迁移点见 §9.5 |
+
+#### 9.1.1 审计发现总表（编号 F-x，改造规格回链）
+
+| 编号 | 发现 | 影响 | 回链 |
+| --- | --- | --- | --- |
+| F-1 | **ElMessageBox 按需样式缺口**：患者建档（alert）、划价结算（confirm）、退费审批（prompt）、发药工作台（confirm）四页在 script 中使用 ElMessageBox 但未手动引 `element-plus/es/components/message-box/style/css`（仅患者详情页正确引入）；深链直达这些路由时确认/输入弹窗无样式，SPA 内跳转因其他页面已加载样式而被掩盖 | 高频确认弹窗在直接进入路由时裸渲染 | §9.4 逐页 + §9.2 批次 0 |
+| F-2 | **EP locale 缺口**：无 zh-cn locale 注入，`el-pagination` 渲染英文「Total N」、`el-date-picker` 面板英文月份——违反全中文红线的产品观感 | 患者检索分页、一日清单日期面板 | §9.2 批次 0 |
+| F-3 | **侧栏高亮缺口**：`AppSidebar` 用 `default-active="route.path"`，`/patients/:patientId` 详情路由不匹配任何菜单 index → 患者管理组整组无高亮，位置感断裂 | 详情页丢失导航上下文 | §9.3 |
+| F-4 | **键盘可达性断点**：患者检索、发药工作台两处「行点击」操作（跳详情/选处方）无键盘路径（`tr` 不可聚焦），键盘用户无法完成主流程 | 违 §1.2-4 无障碍底线 | §9.6 |
+| F-5 | **密度失衡**：`size="small"` 表格 9 处 vs 默认密度 3 处（患者检索表、发药工作台队列/明细表）并存；页面容器 max-width 四档并存（720/880/1080/无限制） | 同屏切换页面行高跳变、宽度无预期 | §9.4 统一裁决 |
+| F-6 | **反馈模式不一**：成功反馈三形态并存（ElMessage / el-alert 常驻 / `<p>` 文本）；空态两形态并存（el-empty 零使用，`<p>` 文本 2 处、白板 4 处） | 交互一致性缺失 | §9.6 |
+| F-7 | **动画零覆盖**：存量页无进场、无内容显隐过渡、无行增删反馈——静态正确但无 §1.2-3 要求的「传达业务事实」动效 | 与新三页并存的质感断层 | §9.6 |
+| F-8 | **枚举值直出**：患者详情页建档渠道/档案来源渲染英文枚举原文（`WINDOW`/`STANDARD`）；发药工作台患者列直显雪花 ID | 操作员可读性 | §9.4-3、§9.4-8 |
+| F-9 | **性能面干净**：全量 `watch` 零使用、零 `setInterval`、路由组件全懒加载、无图表、无深 watcher——存量无重大性能违规 | 治理以预防性规范为主 | §9.7 |
+
+#### 9.1.2 逐页审计表（布局结构 / 样式组织 / 交互模式 / 痛点）
+
+体量为 SFC 总行数；「样式组织」一栏均指 `<style scoped>`（下表简写 scoped），选择器前缀惯例健康（`.patient-search-*` 等 BEM 式）。
+
+**① MainLayout（42 行）+ AppSidebar（39 行）+ AppHeader（52 行）——布局壳**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | el-container 三段：aside 220px + header 56px + main（bg `--el-fill-color-lighter`）；侧栏无头部区、无折叠能力；Header 仅「站点名 + 用户下拉」两端布局 |
+| 样式组织 | 三组件各自 scoped，共 5 条规则，色值全走 EP 变量 |
+| 交互模式 | 菜单 `router` 模式导航；用户下拉仅「退出登录」；无折叠、无面包屑、无当前页上下文 |
+| 痛点 | F-3 高亮缺口；菜单项高 56px（EP 默认）偏松（密度优先原则下过高）；选中态仅 EP 默认底色无品牌指示；无折叠交互（1280 小屏挤占内容区） |
+
+**② HomeView · workstation 首页（65 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 纵向文本流：h1 站点名 + 问候区 + 虚线占位卡（与 AppHeader 站点名重复出现） |
+| 样式组织 | scoped 7 条规则，px 字号硬写（18/13px） |
+| 交互模式 | 纯展示零交互（符合「禁伪数据」红线） |
+| 痛点 | h1 与 Header 站点名重复；字号未 token 化；占位卡视觉弱 |
+
+**③ LoginView · 登录页（132 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 全屏居中 el-card 360px：标题 22px + 副标题 + label-position=top 表单 + 全宽提交 |
+| 样式组织 | scoped 5 条规则；背景默认白（无层次） |
+| 交互模式 | 三态齐备（validate 拦截 / submitting loading+守卫 / 拦截器弹错+驻留），回跳防 open redirect——**存量交互质量标杆** |
+| 痛点 | 无品牌视觉锚点（零品牌色）；卡片无圆角/阴影层级；副标题 13px 未 token 化 |
+
+**④ PatientSearchView · 患者检索（163 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 单 el-card（max-width 1080）：卡头页面题 + 检索条（input 360 + 查询钮）+ 表格 + 空态 p + 分页右对齐 |
+| 样式组织 | scoped 5 条；`*-bar` 检索条形态（6 页重复出现的同构块之一） |
+| 交互模式 | 空词前置拦截不出网 ✓、查询 loading ✓、翻页 1 基↔0 基边界转换 ✓、行点击跳详情 |
+| 痛点 | 表格默认密度（F-5）；空态用 p 文本（F-6）；行点击无键盘通道（F-4）；分页英文 Total（F-2）；无进场/翻页过渡（F-7） |
+
+**⑤ PatientCreateView · 患者建档（233 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 单 el-card（max-width 720）：预检 alert（条件）+ 11 行 label-width=140px 平铺长表单 + 底部「匹配预检/建档」双钮 |
+| 样式组织 | scoped 4 条；**无 message-box 样式手动引入（F-1）** |
+| 交互模式 | 双动作各有 loading+守卫 ✓；预检结论 alert 三态文案 ✓；读卡器占位禁用不伪造 ✓ |
+| 痛点 | 11 字段无分节（基础身份/证件介质/建档属性混排，扫描成本高）；F-1 缺口；建档成功跳详情无成功反馈（静默跳转） |
+
+**⑥ PatientDetailView · 患者详情（130 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 单 el-card（max-width 880）：卡头「患者档案 + 冻结/解冻钮」+ descriptions :column=2 border 12 字段 + 空态 p；卡整体 v-loading |
+| 样式组织 | scoped 4 条；message-box 样式**已正确引入**（四页中唯一） |
+| 交互模式 | 冻结 prompt 收集原因留痕 ✓、解冻直发 ✓、成对动作按状态显隐 ✓ |
+| 痛点 | 冻结/解冻按钮**无 loading 无在途守卫**（双击双 POST 面——不属 W-22⑥ 范围，患者域，本方案 §9.6 补齐）；F-8 枚举直出；v-loading 罩整卡导致卡头动作按钮闪烁；无骨架首屏 |
+
+**⑦ PricingSettleView · 划价结算（394 行，存量最大页）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 双 el-card 纵叠（max-width 1080）：检索条（患者号/就诊号+查询费用+手工计费）→ 划价行编辑表（el-input 嵌 el-input-number）→ 划价结果表 / 待收费用表 + 预结算/确认结算钮 + 成功 alert；手工计费 el-dialog 420px |
+| 样式组织 | scoped 8 条（存量最多）；`*-bar` 同构块；**无 message-box 样式手动引入（F-1）** |
+| 交互模式 | 三态完整（四组 loading ref + 前置拦截 + 拦截器弹错 + 草稿驻留）✓；结算 confirm 带总额回显 ✓——金额 string 零运算红线合规 |
+| 痛点 | F-1；金额/数量列无 `.fuy-num` 不等宽（结算场景数字抖动敏感）；小节题 h4 散写；成功 alert 常驻无清理时机说明；划价行数无上限（行编辑组件树随行数线性膨胀） |
+
+**⑧ RefundApprovalView · 退费审批（378 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 双 el-card 纵叠（max-width 1080）：退费申请（结算号检索 → descriptions :column=4 摘要 → 可退明细勾选表 + 退数量列 + 理由输入）/ 审批队列（状态筛选 + 队列表三动作钮） |
+| 样式组织 | scoped 9 条（存量最多）；`*-bar` 同构块 ×2；**无 message-box 样式手动引入（F-1）** |
+| 交互模式 | 在途守卫形态最全（rejecting/executing 入口同步置位防双窗双 POST）✓；按态启停三函数 ✓；PENDING_SECOND_APPROVAL 两段式复用 ✓——**存量交互质量另一标杆** |
+| 痛点 | F-1；状态 tag 映射粗糙（EXECUTED success/其余 info 二值，待审/驳回语义不可辨）；状态词表与筛选项同源词重复散写组件内；金额列无 `.fuy-num` |
+
+**⑨ DailyListView · 一日清单（148 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 单 el-card（max-width 1080）：检索条（就诊号 + 日期 + 查询）→ 条件渲染（明细表 + 大类汇总表 420px + 三分区合计条） |
+| 样式组织 | scoped 7 条；`*-bar` 同构块；ElMessage 样式已引入 ✓ |
+| 交互模式 | 双前置拦截 ✓、BigInt 勾稽佐证展示级合规 ✓、勾稽绿标/红标 |
+| 痛点 | **未查询态整页白板**（无引导，F-6 最重一例）；日期面板英文（F-2）；合计条无视觉强调（三个 14px span 并排，患者费用公开场景不够醒目）；金额无 `.fuy-num` |
+
+**⑩ DrugDictView · 药品字典（338 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 单 el-card（max-width 1080）：检索条（关键词 + 基药/医保对照双 select + 检索 + 建档钮）→ 表格（8 列 + fixed right 操作列）；建档/变更 el-dialog 520px（11 字段）+ 医保对照 el-dialog 420px（3 字段） |
+| 样式组织 | scoped 4 条；`*-bar` 同构块；ElMessage 样式已引入 ✓ |
+| 交互模式 | 建档/变更弹窗复用（editId 空串判别）✓、必填前置校验（submit 内 if 散写形态）、对照后标记翻转 ✓ |
+| 痛点 | 校验散写在提交函数内（错误提示 ElMessage 顶部弹，非字段就近——违 §4.4 表单规范精神）；11 字段弹窗无分节；空结果无空态；tag 无 aa 修正 |
+
+**⑪ DispenseWorkbenchView · 发药工作台（202 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | el-row :gutter=16 左右分栏（:span=10 队列 / :span=14 发药单条件渲染），**写死 span 无响应断点**；队列表 highlight-current-row + 行点击选单 → descriptions（调配/核对）+ 明细表（追溯码逐行录入）+ 配药/核对/发药签名三钮 |
+| 样式组织 | scoped 3 条（存量最少）；**无 message-box 样式手动引入（F-1）** |
+| 交互模式 | 双段队列合并拉起在途单 ✓、同人双签辅助禁用 ✓、配药无码不结前置 ✓、发药 confirm ✓ |
+| 痛点 | F-1；发药确认文案无单号回显（违 §4.4「禁止裸确认」）；单据状态（CREATED/PICKING/PICKED）不可见（仅按钮启停间接表达）；队列空态白板；患者列直显雪花 ID（F-8）；默认密度（F-5） |
+
+**⑫ DispenseReturnView · 退药受理（198 行）**
+
+| 维度 | 现状 |
+| --- | --- |
+| 布局结构 | 单 el-card（max-width 1080）：检索条（处方号）→ 条件渲染（descriptions :title 形态 + 退药行编辑表 + 模式 radio 组 + 提交钮） |
+| 样式组织 | scoped 7 条；`*-bar` 同构块；ElMessage 样式已引入 ✓ |
+| 交互模式 | 处方号前置拦截 ✓、实物退逐码必填前置（无码不结）✓、模式切换 placeholder 联动 ✓；提交钮**无 loading 无守卫** |
+| 痛点 | 提交钮防抖缺口——**属 W-22⑥ 范围（pharmacy 三页），归 fix PR，本方案不含**（边界注记：改造时保留其修复形态，不重复实现不预先实现）；el-descriptions `:title` 属性用法非常规（标题在列表上方弱呈现）；检索无单时 warning 弹错+白板并存 |
+
+**⑬ portal HomeView（14 行）**：纯占位（h1「富云患者门户」+ 一句话），h1 为路由冒烟断言锚点。见 §9.5 处理口径。
+**⑭ bigscreen HomeView（176 行）+ TelemetrySummaryPanel（75 行）**：亮色最小遥测页，原生 input/button/table，12 处硬编码 hex，无暗色底、无品牌感。见 §9.5。
+
+### 9.2 设计系统迁移策略
+
+#### 9.2.1 与「token 纯新增渐进采用」裁决的衔接
+
+既有裁决（§2.1/附录）：token 文件纯新增，仅被显式消费 `--fuy-*` 或工具类的新页面使用。本节将其推进为两阶段：
+
+1. **阶段一（第一部分已裁决，Task 13 交付面）**：三 app `styles/` 四文件落盘 + `main.ts` 各一行 import。存量页零改动，token 已在全局可用。
+2. **阶段二（本节新增，存量分批消费）**：存量页按 §9.8 批次把 scoped 私有样式**逐块替换**为 token 引用与共享工具类。每次替换以「该页五连门禁 + spec 零回退」为闸门，禁止全量一把梭（一次 PR 只动一个域的三页或布局壳一批）。
+
+#### 9.2.2 styles/ 目录文件级方案（收编/重构）
+
+**裁决：不新建 `styles/shared` 与 `styles/ui` 目录**（审计证实其不存在，且「shared/ui」命名与 `packages/shared`、`packages/ui` 语义冲突，违反唯一声明原则）。维持 §2.1 的四文件平铺结构，本节给出每文件的「保留 / 新增」精确清单：
+
+| 文件 | 处置 | 内容 |
+| --- | --- | --- |
+| `tokens.css` | **保留不动** | §2.2-§2.5 已定 primitive + semantic（§9 批次零修改） |
+| `element-plus.css` | **保留 + 新增存量收编工具类** | 保留：§2.2.4 `:root:root` 主色映射、§4.2 `.fuy-dense`、§4.3 `.fuy-tag-aa`/`.fuy-tag-strike`/`.fuy-triage-badge`、`.fuy-num`。新增（本节定义，仅此一次）：`.fuy-page`（§3.1 已定）、`.fuy-toolbar`、`.fuy-section-title`、`.fuy-total-strip`、`.fuy-menu-*` 五个存量收编类（规格见下） |
+| `motion.css` | **保留不动** | §2.6 + §6 全部 keyframes/transition 类 + reduced-motion 兜底 |
+| `index.css` | **保留不动** | @import 链（tokens → element-plus → motion） |
+| `.gitkeep` | **删除** | 四文件落盘同批清理（本次改动产生的死文件，全局规范 §四零容忍） |
+
+**存量收编工具类精确规格（element-plus.css 新增段）：**
+
+```css
+/* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */
+.fuy-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;               /* 窄屏防溢出（存量无换行能力，收编时一并补齐） */
+  gap: var(--fuy-space-3);
+  margin-bottom: var(--fuy-space-3);
+}
+
+/* 卡内小节题：收编划价/退费/一日清单三页散写的 h4 规则 */
+.fuy-section-title {
+  margin: var(--fuy-space-4) 0 var(--fuy-space-2);
+  font-size: var(--fuy-font-size-md);
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+/* 三分区合计强调条：一日清单勾稽佐证条专用（患者费用公开场景的醒目口径） */
+.fuy-total-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--fuy-space-6);
+  margin-top: var(--fuy-space-3);
+  padding: var(--fuy-space-3) var(--fuy-space-4);
+  background: var(--el-fill-color-light);
+  border-radius: var(--fuy-radius-md);
+}
+```
+
+**SFC scoped 块收编映射表**（「过渡期并存」：每页改造批内完成替换并删除对应 scoped 规则，禁止跨批残留半收编态）：
+
+| 存量 scoped 规则 | 去向 | 涉及页 |
+| --- | --- | --- |
+| `.patient-search-bar` / `.pricing-settle-bar` / `.refund-approval-bar` / `.daily-list-bar` / `.drug-dict-bar` / `.dispense-return-bar` | `.fuy-toolbar`（容器挂类）+ 页内保留 input 专属宽度的 1 条 scoped 规则 | 6 页 |
+| `.pricing-settle-section` / `.daily-list-section` | `.fuy-section-title` | 2 页 |
+| `.daily-list-total` | `.fuy-total-strip` | 1 页 |
+| 各页根 `max-width` 720/880/1080 | `.fuy-page` 骨架；**宽度档位四档并两档**：表单/详情卡级 `max-width: 880px` 统一一档（建档 720 并入），列表卡全宽（1080 上限撤销，密度优先全宽利用 §1.2） | 全部业务页 |
+| `font-size: 13px/14px/18px` 等 px 硬写 | `var(--fuy-font-size-sm/md/xl)` | 壳 + 业务页 |
+
+#### 9.2.3 Element Plus 主题与 locale 落点
+
+- 主色梯度：`element-plus.css` `:root:root`（§2.2.4，批次 0 落盘即覆盖存量页——主色变化对存量页是**预期内的全局统一**，EP 默认蓝 `#409eff` → 临床蓝 `#0369a1`，功能四色保留 EP 默认不动，与存量硬编码语义一致）。
+- **zh-cn locale（F-2 修复）**：`App.vue` 根节点包 `<el-config-provider :locale="zhCn">`，`import zhCn from 'element-plus/es/config-provider/locale/zh-cn'`（按需路径）。单实例挂 App 根，分页「共 N 条」与日期面板即时中文化；不引全量 locale 入口文件。
+- 禁改：EP 主题 SCSS 编译、`.el-*` 全局裸覆盖（§4.1 禁令对存量改造同样生效——一切定制走 `--el-*` 变量或挂 `fuy-` 类）。
+
+#### 9.2.4 落地顺序（顺序不可逆，前批是后批的地基）
+
+```
+批次 0 全局地基（styles 四文件 + locale + F-1 缺口修复）
+  → 批次 1 布局壳（MainLayout/Sidebar/Header/Home/Login + fuy-page 全页铺开）
+  → 批次 2 患者域三页 → 批次 3 收费域三页 → 批次 4 药房域三页
+  → 批次 5 bigscreen/portal 存量
+```
+
+每批内统一动作序列：挂 `fuy-page` 骨架 → 工具类收编 → 表格 `fuy-dense` + `.fuy-num` → 空态/加载态补齐 → 动效补齐（§9.6 清单）→ 该页 scoped 死规则清理 → 五连门禁。
+
+### 9.3 布局壳升级
+
+#### 9.3.1 精确布局树（升级后）
+
+```
+.main-layout（el-container horizontal，height: 100dvh，overflow: hidden）
+├── el-aside .main-aside（:width="collapsed ? '64px' : '220px'"；width 瞬切零动画——铁律）
+│   └── AppSidebar :collapsed
+│       ├── .fuy-menu-head（高 48px，flex 居中）
+│       │   ├── 展开态：品牌字标「富云」14px/700 白字，brand-700 底，radius-md，24px 高
+│       │   └── 折叠态：同字标 24×24 缩略（仅「富」单字）
+│       └── el-menu（router 模式；:collapse="collapsed" :collapse-transition="false"）
+│           ├── 菜单项：高 40px（scoped 覆盖 --el-menu-item-height），字号 md
+│           ├── 分组标题：xs/600，letter-spacing 0.5px，次要色（scoped 覆盖）
+│           ├── 选中态：::before 左缘 3px brand 色条 + 底 brand-50 + 文字 brand-700
+│           └── hover 态：底 gray-50（120ms 背景色过渡，单元素状态反馈）
+└── el-container（vertical）
+    ├── el-header .main-header（height 56px，border-bottom hairline）
+    │   └── AppHeader :collapsed @toggle="collapsed = !collapsed"
+    │       ├── 左：折叠按钮（32×32 点击域 ≥24px 下限；纯 CSS 汉堡——三条 2px×16px 横线
+    │       │   span 叠放，aria-label 动态「展开/收起侧边栏」，零图标依赖）
+    │       │   + 站点名「富云医护工作站」16px/600（文本不动——App.spec 冒烟锚点）
+    │       └── 右：用户区（40px 高点击域，hover 底 brand-50 120ms，radius-md）
+    │           └── el-dropdown「显示名 ▾ → 退出登录」（逻辑零改动）
+    └── el-main .main-content（overflow-y auto，bg --el-fill-color-lighter）
+        └── RouterView（各页根节点统一挂 .fuy-page）
+```
+
+#### 9.3.2 导航信息架构与状态反馈
+
+- **菜单数据化**：AppSidebar 菜单从模板硬编码改为组件内常量数组（`{ index, label, abbr, group }`），模板 `v-for` 渲染——一份常量同时解决三件事：分组渲染、折叠态单字缩写（`abbr`，如「患者建档」→「档」）、高亮计算。
+- **高亮修复（F-3）**：`default-active` 改计算属性 `activeIndex`——`route.path` 与菜单 index 精确相等取之；否则取**前缀最长匹配**（`/patients/P123` → `/patients`）。无匹配回落 `''`（不高亮，不误标）。
+- **折叠状态**：MainLayout 持 `ref(false)`，props 下行 / 事件上行（父子直连，不引 provide/store）；**内存态不持久化**（刷新复位，P0 不开 storage 面）。
+- **折叠动画裁决**：aside 宽度变化属 layout 属性，**瞬切零动画**（§6 铁律禁 width 动画）；菜单项文字仅 opacity 120ms 过渡（transform/opacity 豁免面内）；EP `:collapse-transition="false"` 关闭内建宽度动画。
+- **不做**：面包屑（router meta 无 title 字段，加注属 router 面改动且 Header 站点名 + 侧栏高亮已承载位置感——推测性设计不 做）；图标包（零新增依赖红线，文字导航在 8 项规模下清晰足够；icons 归 P2 演进登记）。
+
+#### 9.3.3 HomeView / LoginView 升级规格
+
+| 页 | 规格 |
+| --- | --- |
+| HomeView | 根挂 `.fuy-page`；h1 站点名**删除**（与 AppHeader 重复，App.spec 锚点「医护工作站」由 AppHeader 满足），问候语升为页面题（`--fuy-font-size-xl`/600）；问候区与占位卡入 el-card（占位卡保持虚线弱形态 + `--fuy-space-4` 内边距）；字号全 token 化；**禁预列模块卡片与伪数据红线不变**（注释既有红线） |
+| LoginView | 背景 `--fuy-palette-gray-50`；卡片 `radius-xl` + `shadow-md` + 顶部 3px 品牌色条（静态，入场零动画——§6.8 出票隐喻不外溢）；标题 22px→`--fuy-font-size-xl`、副标题 `sm`；表单逻辑/文案/autocomplete 零改动（存量交互标杆不动） |
+
+### 9.4 存量业务页逐页改造规格
+
+通用落点（9 页共享，不逐页重复）：根节点 `.fuy-page`（§3.1）；页面题 18px/600（`--fuy-font-size-xl`）+ 页头行高 48px；表格容器挂 `fuy-dense`（§4.2）；金额/数量/计数列 `.fuy-num` + 右对齐；空态 el-empty（§4.4，description 业务口径）；首屏数据加载骨架（§4.4 骨架屏条款）；按钮三态（§5.1）；进场 stagger（§6.1，卡组 index 顺序）；内容显隐 `fuy-content-fade`（§6.7）；状态 tag 一律对照 §4.3 映射法 + `.fuy-tag-aa` 修正。以下仅列**该页特有**：
+
+**① 患者检索 PatientSearchView**
+- 表格默认密度 → `fuy-dense`；行点击保留，**新增「详情」link 按钮列（width 60，键盘可达）**与行点击双通道（F-4；spec 仅锁脱敏文本与 0 基转换，安全）。
+- 空态 `<p>` → `<el-empty :image-size="72" description="未检索到匹配患者">`；分页保右对齐 + locale 中文化自动生效。
+- 检索条 → `.fuy-toolbar`；表格容器 `min-height: 240px`（§7.1 CLS）。
+- 一致性保证：状态 tag 走 `patientStatusTagType` 既有 utils（spec 锁 danger 语义）+ aa 修正，与新三页 §4.3 同源。
+
+**② 患者建档 PatientCreateView**
+- 11 字段**三分节**（`fuy-section-title`）：身份基础（姓名/性别/出生日期）→ 证件介质（介质/证件号/手机号/住址 + 读卡占位）→ 建档属性（渠道/来源/知情同意）；label-width 140px 保留。
+- **补 `import 'element-plus/es/components/message-box/style/css'`**（F-1）。
+- 建档成功跳详情前补 `ElMessage.success('建档完成')`（消除静默跳转；成功时刻不加过冲——emphasis 两处允许面不扩容）。
+- 预检 alert 保持三态文案与类型（warning/warning/success），仅色值随全局主色统一。
+- 一致性保证：表单规范（§4.4 label-position/宽度）与挂号页「选择患者」卡同构。
+
+**③ 患者详情 PatientDetailView**
+- 卡头改页头行：患者名（emphasis 18px）+ 状态 tag + 冻结/解冻钮右对齐；descriptions `:column="2"` → `:column="3"`（1440 主流屏密度）。
+- **冻结/解冻补 loading + 在途守卫**（`freezing` ref，`if (freezing.value) return` 先于一切 await——§5.1 形态；患者域不属 W-22⑥，纳入本方案；spec『点击解冻触发成对动作』单次点击断言不受影响）。
+- F-8：`registerChannel`/`archiveSource` 枚举 → `utils/patientDisplay.ts` 增补两组中文词表纯函数（同文件既有映射形态；spec 无锁这两个字段的渲染文本）。
+- v-loading 从整卡移至 descriptions 区（卡头动作不再闪烁）；首屏 `el-skeleton :rows="4"`（数据未达时）。
+- 一致性保证：患者上下文卡形态与医生站 §3.2「患者上下文」卡同源。
+
+**④ 划价结算 PricingSettleView**
+- 双卡纵叠保留（结算流线性语义）；检索条 → `.fuy-toolbar`；三处小节题 h4 → `.fuy-section-title`。
+- 划价行编辑表**软上限 20 行**（增行时超限 `ElMessage.warning('划价行数已达上限 20 行')`，防行编辑组件树膨胀——§9.7-3）。
+- 手工计费弹窗 label-width 90px → 96px（§4.4 统一口径）；弹窗 420px 固定已合规。
+- 结算成功 alert 保留常驻（业务锚点），补语义：新查询结算时随摘要重置——现行为已隐含，仅注记不改逻辑。
+- **补 message-box 样式引入（F-1）**；金额/数量列 `.fuy-num` + 右对齐。
+- 一致性保证：右列「收费联动」新页 §8.1 的结算形态与本页预结算/确认结算两步语义同构（同为 §5.2 高风险档）。
+
+**⑤ 退费审批 RefundApprovalView**
+- 状态 tag 从二值（success/info）→ §4.3 映射法全表：PENDING_APPROVAL=warning+aa、PENDING_SECOND_APPROVAL=warning+aa、APPROVED=primary、EXECUTED=success+aa、REJECTED=danger+aa、DRAFT=info（文案词表不动——spec 锁按钮禁用态不锁 tag type）。
+- 状态词表与筛选项仍同源于组件内 `refundStatusText`（单页使用，简单优先不外移 utils）。
+- 审批队列操作列：按钮 size=small 间距 8px（§8.2 同款）；在途守卫形态（rejecting/executing）**零改动**（存量标杆）。
+- **补 message-box 样式引入（F-1）**；摘要 descriptions :column=4 保留 + 金额 `.fuy-num`。
+- 一致性保证：高风险档确认模式（§5.2 表第三档）与新三页一致。
+
+**⑥ 一日清单 DailyListView**
+- **未查询态补引导空态**：`<el-empty description="输入就诊号与清单日期查询费用明细">`（F-6 最重一例）。
+- 三分区合计条 → `.fuy-total-strip`：Σ明细/Σ大类 次要 14px，合计 emphasis 20px `.fuy-num`；勾稽 tag 走 aa 修正（success/danger 语义保留）。
+- 大类汇总表 `max-width: 420px` 保留；明细表容器 `min-height: 240px`；结果显隐包 `fuy-content-fade`。
+- 日期面板中文随批次 0 locale 生效；金额列 `.fuy-num`。
+- 一致性保证：费用表列序/宽度与划价页「待收费用」表同构（同为收费域展示表）。
+
+**⑦ 药品字典 DrugDictView**
+- 建档/变更弹窗 11 字段**两分节**（基础档案：药码~单位 + switch；管控属性：抗菌/危险/麻精/皮试）；**必填校验从提交函数 if 散写改 el-form `:rules` 声明式**（错误就近字段显示，§4.4 表单规范；提交函数保留 trim 后最终防线上移——spec 锁「以行 id 调 mapInsurance」不锁校验形态）。
+- 医保状态 tag 补 `.fuy-tag-aa`（success/warning 文字色修正）；弹窗 520/420 宽保留；label-width 100px → 96px。
+- 检索空结果补 `el-empty description="未检索到匹配药品"`；操作列 fixed=right 保留。
+- 一致性保证：弹窗规范（§4.4 宽度/回显摘要）与新页开单弹窗同构。
+
+**⑧ 发药工作台 DispenseWorkbenchView**
+- `:span="10/14"` 写死 → `:md="24" :lg="10/14"`（响应折叠，§3.1 断点口径）。
+- **单据状态可视化**：发药单 descriptions 增状态 tag（§4.3 映射法：CREATED=primary 待配药、PICKING=warning 配药中、PICKED=success 待发药签名、ISSUED=info 已发药）——三按钮启停语义显性化。
+- 发药 confirm 文案带单号回显：`发药单 ${dispenseNo} 签名后药品出库且不可逆，确认发药？`（§4.4 禁裸确认；spec 锁出网序列不锁文案）。
+- isPicker 禁用按钮补 `title="调配人不可自行核对/发药"`（禁用原因可见）。
+- **新增「选择」link 按钮列（width 64，键盘可达）**与行点击双通道（F-4 收口；spec 锁「配药→核对→发药」出网序列不锁行点击来源，安全）。
+- 队列空态 `el-empty description="暂无待发/调剂中处方"`；队列表 `fuy-dense`；F-8 患者列直显雪花 ID **保持原样**（PrescriptionVO 无姓名字段，不虚构契约——后端补字段后随 P2 演进，此处仅注记）。
+- **W-22⑥ 边界**：配药/核对/发药按钮的在途 loading/守卫归 fix PR 交付；本页改造若晚于 fix PR 则保留其修复形态，禁止移除或重复实现。
+- **补 message-box 样式引入（F-1）**。
+- 一致性保证：左右分栏 + gutter 16 形态即 §3.2 新页布局树的同源（新页明言「与 DispenseWorkbenchView 形态同源」），本页升级后双向一致。
+
+**⑨ 退药受理 DispenseReturnView**
+- `el-descriptions :title` 非常规用法 → `fuy-section-title` 显式标题「发药单信息」+ descriptions 去 title。
+- 模式 `el-radio-group` **组件类型保持**（spec 断言依赖组件定位，换控件即断言失效——§9.8-3）；退药数量 `el-input` 保持 string 契约 + `inputmode="numeric"`（**W-22⑦ 边界**：不引入 number 转换、不新增裸 parse，数量校验形态归 fix PR）。
+- 检索无单：保留 warning 弹错 + 补 `el-empty description="该处方无发药单"`；结果显隐包 `fuy-content-fade`。
+- 提交钮防抖（W-22⑥ 范围）**不在本方案实现**；本页视觉层改造与其同 PR 时按 fix PR 交付形态合入。
+- 一致性保证：行编辑表 + 逐码录入形态与发药工作台同构（追溯码录入体验两页统一）。
+
+### 9.5 bigscreen / portal 存量升级
+
+#### 9.5.1 bigscreen HomeView + TelemetrySummaryPanel 并入暗色设计语言
+
+前置：`bigscreen/src/styles/tokens.css`（§2.1/§2.2.3 暗色 primitive + semantic）与 `motion.css`、`index.css` 落盘（Task 13 交付面），`main.ts` 增一行 import。存量两文件的升级为**纯消费**：
+
+- **底色**：`.home-view` 增 `background: var(--fuy-screen-bg-base)`、`color: var(--fuy-screen-text-primary)`、`min-height: 100dvh`（存量是亮色默认底——升级后为暗色遥测值守页，与新 QueueBoardView §8.5 同一视觉语言）。
+- **12 处硬编码 hex 映射**（4 个唯一值 → token）：`#909399` → `var(--fuy-screen-text-secondary)`；`#dcdfe6` → `var(--fuy-screen-border-hairline)`；`#e6a23c` → `var(--fuy-screen-warn)`；`#67c23a` → `var(--fuy-screen-ok)`。映射后 scoped 内零裸 hex（§7.6-1 自查项对存量闭环）。
+- **原生控件暗色基线**（§4.4 bigscreen 原生暗色基线引用）：input/button 底 `--fuy-screen-bg-panel`、描边 hairline、radius-md、文本 primary/secondary 两档；focus 描边 `--fuy-screen-brand` + `box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25)`（键盘焦点环可见，暗色版 §5.3）。
+- **连接状态徽标 → 呼吸点 + 文字**：三态徽标改「8px 圆点 + 1.25rem 文字」，圆点走 §6 常驻呼吸动画（opacity 1→.4 alternate 1.2s linear，`.fuy-loading-essential` 豁免面——bigscreen 值守语义与 §8.5 连接状态点同款）；三态色 ok/warn/secondary。
+- **遥测表暗色化**：面板容器 `--fuy-screen-bg-panel` + hairline 描边 + radius 8px；表头 secondary 小字；偶数行斑马纹 `#0d2132`（§8.5 同款值，此处允许字面量——该值已随 §8.5 定稿为 bigscreen 斑马纹唯一常量）；帧计数 `.fuy-num`。
+- **禁改**：h1「富云数据大屏」（App.spec 冒烟锚点，组件注释已声明禁改名）；连接/订阅逻辑与 composable 零触碰；本页仍为「最小遥测页」语义，不升格为 QueueBoardView（大屏正页是 PR-5 新页，两页并存口径：遥测页=运维调试面，队列页=现场展示面）。
+
+#### 9.5.2 portal 占位页处理口径
+
+- **最小维持**：portal 无存量业务页，HomeView 仅为路由冒烟锚点。本 PR 对 portal 仅交付 Task 13 既定面（styles 三文件落盘 + main.ts import），HomeView 自身**零改动**（占位语义 + `padding: 16px` 保留，spec 锚点「富云患者门户」不动）。
+- P1 AppointmentView（§8.4）落地时该占位页由路由承接改造为门户壳（归 P1 计划，不在本方案范围——避免为一个待替换页付出打磨成本）。
+
+### 9.6 交互动效统一化（逐页缺失项与补齐规格）
+
+通用规格全部引用既有定义：三态=§5.1、确认模式=§5.2、进场=§6.1、内容显隐=§6.7、reduced-motion 兜底=§6.9（motion.css 全局生效后存量页动画自动受兜底，无需逐页处理）。逐页缺失清单（「—」=已达标不动）：
+
+| 页 | 交互三态 | 加载态 | 空态 | 过渡动效 |
+| --- | --- | --- | --- | --- |
+| 患者检索 | —（查询已有 loading） | 表格 v-loading ✓ | p → el-empty | 卡组 §6.1 stagger；表格容器 min-height |
+| 患者建档 | —（双动作齐备） | — | —（表单页无空态） | §6.1；预检 alert 显隐 §6.7 |
+| 患者详情 | **补**：冻结/解冻 loading + `freezing` 守卫 | 整卡 v-loading → 局部 + 首屏骨架 | p → el-empty | 骨架→内容 §6.7 |
+| 划价结算 | —（四组齐备，存量标杆） | — | —（条件区自带语义） | §6.1 双卡；划价结果/成功 alert §6.7 |
+| 退费审批 | —（守卫形态标杆） | — | —（队列恒有数据语义） | §6.1 双卡；摘要显隐 §6.7 |
+| 一日清单 | — | 按钮 loading ✓ | **补**：未查询引导空态 | 结果区 §6.7；合计条入场 §6.1 |
+| 药品字典 | — | — | **补**：检索空结果 el-empty | §6.1 |
+| 发药工作台 | —（防抖归 W-22⑥ fix PR） | — | **补**：队列空 el-empty | §6.1 双卡；发药单显隐 §6.7 |
+| 退药受理 | —（防抖归 W-22⑥ fix PR） | — | **补**：无单 el-empty | 单块显隐 §6.7 |
+| 登录页 | —（标杆） | — | — | **零动画**（登录页克制口径，§9.3.3） |
+
+补充裁决：存量页**不加**键盘快捷层（§5.3 快捷键为新页场景定制）；**不加** TransitionGroup 行动画（存量页非轮询刷新场景，REST 手动查询的重挂闪烁可接受——轮询 FLIP 语义属分诊台新页）；页面级路由切换过渡不加（RouterView 包装改变挂载结构风险 > 收益）。§9.4-①⑧新增的「详情/选择」link 按钮列即键盘通道（F-4 收口）。
+
+### 9.7 性能治理
+
+审计结论（F-9）：存量零 `watch`、零 `setInterval`、路由全懒加载、无图表——无重大违规。治理规格（预防性 + 两个具体项）：
+
+| # | 治理项 | 规格 | 依据 |
+| --- | --- | --- | --- |
+| 1 | CLS 锁定 | 表格区容器 `min-height: 240px`、检索条区 `min-height: 48px`、详情 descriptions 区 `min-height: 200px`——加载/空态切换零塌陷 | §7.1 CLS<0.1 |
+| 2 | 数字稳定 | 全部金额/数量/计数列 `.fuy-num`（tabular-nums），页头计数类数字**不做滚动补间**（§6.4 数字滚动仅新页页头一处，存量不扩容） | §2.3/§6.4 |
+| 3 | 行编辑组件树 | 划价行编辑软上限 20 行（§9.4-④），超限前置提示不出网不增行 | §7.1 帧预算 |
+| 4 | 动画铁律适用 | 折叠宽度瞬切（§9.3.2）；一切新增动效仅 transform/opacity；存量补齐动效全部复用 motion.css 既有类，**零新 keyframes** | §6 铁律 |
+| 5 | 懒加载与按需 | 路由懒加载现状保持；批次 0 新增组件（el-config-provider）经 resolver 按需；**禁止**借改造引入任何全量 import | §7.3/§7.4 |
+| 6 | 全局单实例 | ElConfigProvider 仅 App 根一处；工具类为纯 CSS 零运行时；token 为静态自定义属性零计算 | §7.1 |
+| 7 | 列表阈值 | 存量表数据源均为手动查询 + 服务端分页（≤20 行/页），未达 §7.2 虚拟化阈值——不引 el-table-v2，阈值超限属 P2 登记 | §7.2 |
+
+### 9.8 实施分期与回归保障
+
+#### 9.8.1 改造批次（每批一个 PR 域，批内五连门禁）
+
+| 批次 | 范围 | 文件面 | 风险与注记 |
+| --- | --- | --- | --- |
+| 0 全局地基 | styles 四文件落盘（若 Task 13 已交付则并入其验收）+ `.gitkeep` 删除 + App.vue ConfigProvider zh-cn（F-2）+ 四页 message-box 样式补引（F-1） | styles/ 4 新增 1 删除、App.vue、4 个 SFC 各 1 行 import | 零断言风险（无业务行为变化）；主色全局切换为本批唯一全局视觉变化 |
+| 1 布局壳 | MainLayout/AppSidebar/AppHeader/HomeView/LoginView + 存量 9 页根节点挂 `.fuy-page`（仅骨架类，不动页内样式） | 壳 5 文件 + 9 页根节点 1 行 | App.spec 冒烟锚点经 AppHeader 不受影响；HomeView h1 删除需复核 App.spec 断言路径（锚点由 AppHeader 满足） |
+| 2 患者域 | 检索/建档/详情三页全量改造（§9.4-①②③） | 3 SFC + patientDisplay.ts 增词表 | spec：详情页 danger tag 锁定、解冻成对动作断言兼容 loading 守卫 |
+| 3 收费域 | 划价/退费/一日清单三页全量改造（§9.4-④⑤⑥） | 3 SFC | spec 密集区（8 用例）：findComponent 定位的 ElSelect/ElDatePicker 组件类型保持；在途守卫形态零改动 |
+| 4 药房域 | 字典/工作台/退药三页全量改造（§9.4-⑦⑧⑨） | 3 SFC | **与 W-22 fix PR 协调**：fix 先行则本批在其上叠加；同 PR 则 fix 修复面独立 commit；radio 组件类型保持 |
+| 5 尾部 | bigscreen 存量两文件暗色化（§9.5.1）；portal 零改动确认 | bigscreen 2 SFC | App.spec 冒烟锚点「富云数据大屏」禁改名 |
+
+#### 9.8.2 回归红线（specs 断言零回退）
+
+审计背书：存量 22 个视图 spec 用例全部锁**业务行为**（出网调用与参数、前置拦截零出网、在途守卫、状态映射语义、文案锚点），**零样式断言**——视觉改造与断言天然解耦。规则四条：
+
+1. **改实现不改断言为默认**：任何视觉/结构改动不得以「顺手更新断言」收尾；断言文件在改造批次中理想状态是零 diff。
+2. **文本锚点禁改名**：「医护工作站」「富云患者门户」「富云数据大屏」「未登录用户」及各 spec 回显的业务文案（脱敏证件号、冻结原因提示等）——改动即回退。
+3. **组件类型禁替换**：spec 以 `findComponent(ElSelect/ElDatePicker/ElRadio/...)` 定位的控件不得换成原生或他类组件（退药模式 radio、退费状态筛选 select、清单日期 picker 等）；确因交互升级必须换型 → **停止，登记 TASK.md 待决策**，不得自行改断言。
+4. **业务语义映射禁漂移**：`patientStatusTagType`（FROZEN=danger）、分页 0 基转换、金额 string 透传等断言锁定的行为契约，改造只叠加视觉层不修改语义。
+
+断言失效处置序列：先查「是否本批改动破坏了断言锁定的行为」（实现回退修正）；再查「断言是否依赖了本方案明令保持的组件类型/文本」（按第 3 条停止升级）；**不存在**「断言锁的是样式所以改断言」的路径（审计已证断言零样式锁定）。
+
+#### 9.8.3 W-22 边界注记（不冲突声明）
+
+- W-22⑥（pharmacy 三页动作按钮在途防抖）、W-22⑦（quantity/returnQuantity 裸 parse）归 fix PR：批次 4 开工前确认其已合入或同 PR 分 commit；本方案改造面**不实现、不移除、不重构**这两项修复形态，仅叠加视觉/结构层（§9.4-⑧⑨ 已逐处标注）。
+- 其余 W-22 条目（①-⑤⑧⑨）均在后端，与前端改造零交集。
+- 患者详情冻结/解冻守卫、退药检索空态等不在 W-22 清单的缺口，由本方案 §9.4/§9.6 交付（已在逐页规格标注归属）。
+
+#### 9.8.4 每批门禁
+
+五连门禁（web 宪法 C.4/C.5，CI 与本地同源）：`pnpm lint && pnpm format:check && pnpm type-check && pnpm test && pnpm build`（`pnpm audit` 随 frontend job 主链）。批次含视觉验收：`prefers-reduced-motion: reduce` 抽检本批新增动效全部降级直达终态（§7.6-5）。
+
+### 9.9 落地自查清单（存量优化版 self-check）
+
+供各批次实现者与 taste-skill 打磨者对照，每批全部通过方可交付：
+
+1. 本批页面根节点挂 `.fuy-page`；页内 720/880/1080 私有 max-width 已按两档裁决收敛（表单/详情卡 880，列表全宽）。
+2. 本批表格容器挂 `fuy-dense`；金额/数量/计数列 `.fuy-num` 且右对齐；无残留 `size="small"` 与 `fuy-dense` 双轨混用（fuy-dense 唯一）。
+3. 页内颜色零裸 hex（workstation）；一切 `--el-*` 覆盖经 `.fuy-*` 挂类或 `:root:root`，无全局裸改 `.el-*`。
+4. 本批 scoped 块中已被工具类收编的规则（`*-bar`/小节题/合计条）已删除，无半收编残留；无未使用的样式规则与死代码。
+5. ElMessageBox 使用页均已手动引 message-box 样式（F-1 在批次 0 全量闭合，逐页复核）。
+6. 空态 description 为业务口径（非「暂无数据」）；加载态满足「首屏骨架 / 刷新 v-loading」二分（§4.4）。
+7. 每个按钮三态齐全（loading/守卫/错误驻留），双击零二次出网——W-22 范围按钮除外（fix PR 交付，本批不实现不破坏）。
+8. 新增动效全部复用 motion.css 既有类；`prefers-reduced-motion` 下降级直达终态；零新 keyframes、零 width/height 动画。
+9. spec 文件零 diff（理想态）或 diff 仅为 §9.8.2 明令事项的 TASK.md 决策产物；文本锚点与 findComponent 组件类型全部原样。
+10. 五连门禁全绿 + 本批页面键盘可走通主流程（检索→详情；录入→提交；队列→选单）+ 焦点环可见。
+
+---
+
 ## 附：与既有形态的兼容声明
 
 本规范不改动任何既有页面（patient/billing/pharmacy 六页与其 scoped 样式零触碰）；token 文件为纯新增，`main.ts` 各增一行 import 属 Task 13 交付面。三页落地时若与既有组件范式冲突（如患者检索组件行高），**以既有组件为准、新页适配**，禁止为视觉统一反向改造既有页（精准修改原则）。
