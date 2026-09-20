@@ -51,17 +51,20 @@ public interface QueueTicketMapper extends BaseMapper<QueueTicket> {
     int casCall(@Param("id") long id, @Param("fromStatus") String fromStatus, @Param("operator") String operator);
 
     /**
-     * 队列当日 WAITING 权威行整体读取（叫号前置惰性重建数据源，Spec :210「叫号服务重启后队列从
-     * 排队表完整恢复」）：queue_time 下界用库端 date_trunc（禁应用服务器时钟，防多实例漂移），
-     * 隔日键过期后残留 WAITING 行不回灌新队列。
+     * 队列当日待重叫权威行整体读取（叫号前置惰性重建数据源，Spec :210「叫号服务重启后队列从排队表
+     * 完整恢复」）：词表覆盖 WAITING 候诊 + PASSED 过号再入——pass 降级分重入 ZSET 的票在 Redis
+     * 重启/淘汰后不得静默跌出队列（fix round 1 Important-2 主控裁决①；方法名沿 brief 冻结面
+     * selectWaiting 不改，扩展语义由本 javadoc 与词表承载，PASSED 无重叫次数/余量上限语义故不过滤）。
+     * queue_time 下界用库端 date_trunc（禁应用服务器时钟，防多实例漂移），隔日键过期后残留行不回灌
+     * 新队列。
      *
      * @param deptCode 队列标识（=dept_code），非空
-     * @return 当日 WAITING 票据行（queue_time 升序）；无在队票返回空列表
+     * @return 当日待重叫票据行（WAITING/PASSED，queue_time 升序）；无在队票返回空列表
      */
     @Select("SELECT id, visit_id, queue_id, ticket_no, ticket_type, doctor_id, priority_score, queue_seq, "
             + "queue_time, called_count, call_time, serve_time, status "
             + "FROM outpatient.queue_ticket "
-            + "WHERE queue_id = #{deptCode} AND deleted = 0 AND status = 'WAITING' "
+            + "WHERE queue_id = #{deptCode} AND deleted = 0 AND status IN ('WAITING', 'PASSED') "
             + "AND queue_time >= date_trunc('day', now()) ORDER BY queue_time")
     List<QueueTicket> selectWaiting(@Param("deptCode") String deptCode);
 }

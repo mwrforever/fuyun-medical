@@ -62,8 +62,11 @@ CREATE TABLE outpatient.queue_ticket (
     deleted        SMALLINT     NOT NULL DEFAULT 0
 );
 
--- 就诊号+当日序唯一锚（同就诊同队列重复建票防线；跨队列转接=新 queue_id 新行不冲突）
-CREATE UNIQUE INDEX uk_ticket_visit ON outpatient.queue_ticket (visit_id, queue_seq);
+-- 就诊号+队列+当日序唯一锚（同就诊同队列重复建票防线；queue_id 入键——queue_seq 按队列独立签发，
+-- 跨队列转接的新队列新票 seq 从 1 起与本队列既有票自然共存，同队列重复建票仍被拒；
+-- fix round 1 Important-1：原 (visit_id, queue_seq) 两列键使「DEP001 报到→转 DEP002」新票
+-- (visit, seq=1) 撞旧票行致 DuplicateKey 500，且旧注释对本索引失实，一并订正）
+CREATE UNIQUE INDEX uk_ticket_visit ON outpatient.queue_ticket (visit_id, queue_id, queue_seq);
 
 -- 队列内票号唯一锚（逻辑删行不占用唯一性）
 CREATE UNIQUE INDEX uk_ticket_queue ON outpatient.queue_ticket (queue_id, ticket_no) WHERE deleted = 0;

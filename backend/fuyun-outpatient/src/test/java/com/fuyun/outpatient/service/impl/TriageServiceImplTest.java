@@ -459,25 +459,52 @@ class TriageServiceImplTest {
     }
 
     @Test
-    @DisplayName("重启恢复（Spec :210）：ZSET 键缺失——按两张 WAITING 权威行重建（编码公式）后正常出队首票")
+    @DisplayName("重启恢复（Spec :210）：ZSET 键缺失——按待重叫权威行（WAITING+PASSED）重建（编码公式）后正常出队首票")
     void callRebuildsQueueFromWaitingTicketsWhenZsetKeyMissing() {
         QueueTicket first = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
         QueueTicket second = ticket(502L, TicketType.FIRST, 100, 2, TicketStatus.WAITING, 0);
-        when(queueTicketMapper.selectWaiting("DEP001")).thenReturn(List.of(first, second));
+        // PASSED 过号再入票同属待重叫权威行（fix round 1 Important-2 裁决①：重启后不跌出队列）
+        QueueTicket passed = ticket(503L, TicketType.FIRST, 100, 3, TicketStatus.PASSED, 1);
+        when(queueTicketMapper.selectWaiting("DEP001")).thenReturn(List.of(first, second, passed));
         when(queueZsetStore.rebuildIfMissing(eq("DEP001"), scoreMapCaptor.capture()))
-                .thenReturn(2);
+                .thenReturn(3);
         when(queueZsetStore.pollTop("DEP001", "DOC001")).thenReturn(501L);
         when(queueTicketMapper.selectById(501L)).thenReturn(first);
         when(queueTicketMapper.casCall(501L, "WAITING", "nurse001")).thenReturn(1);
 
         QueueTicketVO vo = service.call(new QueueCallRequest("DEP001", "DOC001"));
 
-        // 重建映射=priority_score*1e8+seq 公式逐票核对，返回 2=重建两票
+        // 重建映射=priority_score*1e8+seq 公式逐票核对（PASSED 票同公式同列值），返回 3=重建三票
         assertThat(scoreMapCaptor.getValue())
-                .containsExactlyInAnyOrderEntriesOf(
-                        Map.of(501L, 100 * SCORE_ENCODE_SCALE + 1, 502L, 100 * SCORE_ENCODE_SCALE + 2));
+                .containsExactlyInAnyOrderEntriesOf(Map.of(
+                        501L,
+                        100 * SCORE_ENCODE_SCALE + 1,
+                        502L,
+                        100 * SCORE_ENCODE_SCALE + 2,
+                        503L,
+                        100 * SCORE_ENCODE_SCALE + 3));
         assertThat(vo.ticketNo()).isEqualTo("A001");
         verify(queueTicketMapper).casCall(501L, "WAITING", "nurse001");
+    }
+
+    @Test
+    @DisplayName("队内重叫：出队 PASSED 过号再入票按当前态 CAS→CALLED（called_count 累加+双 topic 推送）")
+    void callRepollsPassedTicketFromQueue() {
+        QueueTicket passed = ticket(501L, TicketType.FIRST, 100, 3, TicketStatus.PASSED, 1);
+        when(queueTicketMapper.selectWaiting("DEP001")).thenReturn(List.of(passed));
+        when(queueZsetStore.rebuildIfMissing(eq("DEP001"), any())).thenReturn(-1);
+        when(queueZsetStore.pollTop("DEP001", "DOC001")).thenReturn(501L);
+        when(queueTicketMapper.selectById(501L)).thenReturn(passed);
+        when(queueTicketMapper.casCall(501L, "PASSED", "nurse001")).thenReturn(1);
+
+        QueueTicketVO vo = service.call(new QueueCallRequest("DEP001", "DOC001"));
+
+        // from=票行当前态 PASSED（WAITING 首叫与 PASSED 队内重叫共用 casCall）
+        verify(queueTicketMapper).casCall(501L, "PASSED", "nurse001");
+        assertThat(vo.status()).isEqualTo(TicketStatus.CALLED);
+        assertThat(vo.calledCount()).isEqualTo(2);
+        verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/queue/DEP001"), any(QueueCalledNotice.class));
+        verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/doctor/DOC001"), any(QueueCalledNotice.class));
     }
 
     @Test

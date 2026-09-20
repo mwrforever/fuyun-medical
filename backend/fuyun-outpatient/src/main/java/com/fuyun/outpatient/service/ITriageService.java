@@ -47,9 +47,11 @@ public interface ITriageService {
     QueueTicketVO adjust(TriageAdjustRequest request);
 
     /**
-     * 叫号：前置惰性重建（当日 WAITING 权威行→ZSET，键在位零写幂等）→ZSET 原子出队（首个未指派
-     * 或指派一致票）→票 CAS→CALLED（called_count+1+call_time）→双 topic WS 推送。叫号≠接诊：
-     * visit 保持 WAITING（接诊由 /visits/{visitId}/admit 承载）。空队/无可叫票返回 null（200 空语义）。
+     * 叫号：前置惰性重建（当日待重叫权威行 WAITING+PASSED→ZSET，键在位零写幂等；PASSED 过号
+     * 再入票重启后不跌出队列——fix round 1 Important-2 裁决①）→ZSET 原子出队（首个未指派或
+     * 指派一致票）→按票行当前态 CAS→CALLED（WAITING 首叫/PASSED 队内重叫共用，called_count+1
+     * +call_time）→双 topic WS 推送。叫号≠接诊：visit 保持 WAITING（接诊由 /visits/{visitId}/admit
+     * 承载）。空队/无可叫票返回 null（200 空语义）。
      *
      * @param request 叫号请求（deptCode/doctorId），非空
      * @return 叫中票据出参；队列空返回 null

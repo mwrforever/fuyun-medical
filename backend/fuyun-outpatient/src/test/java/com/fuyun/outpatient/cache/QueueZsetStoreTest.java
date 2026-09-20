@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fuyun.outpatient.entity.QueueTicket;
+import com.fuyun.outpatient.enums.TicketStatus;
 import com.fuyun.outpatient.enums.TicketType;
 import com.fuyun.outpatient.mapper.QueueTicketMapper;
 import java.util.LinkedHashSet;
@@ -29,10 +30,11 @@ import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 
 /**
- * 候诊队列 Redis ZSET 存储单测（M03 候诊叫号加速视图，Task 7）：键命名（fy:outpatient:queue:
- * {deptCode}，A.5-1+hash tag）、惰性重建三态（键在位 -1 零写/键缺失整体 ZADD+TTL——Spec :210
- * 重启恢复权威面）、原子出队扫描（医生匹配谓词：未指派或指派一致；Lua 守卫败者继续扫描）、
- * 快照解析与移除透传。Lua 脚本本体语义由真栈 IT 验证，本单测锚定门面契约。
+ * 候诊队列 Redis ZSET 存储单测（M03 候诊叫号加速视图，Task 7 + fix round 1）：键命名（fy:
+ * outpatient:queue:{deptCode}，A.5-1+hash tag）、惰性重建三态（键在位 -1 零写/键缺失整体 ZADD+TTL
+ * ——Spec :210 重启恢复权威面）、原子出队扫描（可叫态词表 WAITING/PASSED+医生匹配谓词：未指派或
+ * 指派一致；失效成员清理；Lua 守卫败者继续扫描）、快照解析与移除透传。Lua 脚本本体语义由真栈 IT
+ * 验证，本单测锚定门面契约。
  */
 @ExtendWith(MockitoExtension.class)
 class QueueZsetStoreTest {
@@ -57,12 +59,20 @@ class QueueZsetStoreTest {
         store = new QueueZsetStore(redisTemplate, queueTicketMapper);
     }
 
-    /** 票据行替身（doctorId 可空=未指派）。 */
-    private QueueTicket ticketWithDoctor(String doctorId) {
+    /**
+     * 票据行替身。
+     *
+     * @param id       票据主键
+     * @param status   票据状态
+     * @param doctorId 指派医生（null=未指派）
+     * @return 票据替身，非空
+     */
+    private QueueTicket ticketOf(long id, TicketStatus status, String doctorId) {
         QueueTicket ticket = new QueueTicket();
-        ticket.setId(502L);
+        ticket.setId(id);
         ticket.setDoctorId(doctorId);
         ticket.setTicketType(TicketType.FIRST);
+        ticket.setStatus(status);
         return ticket;
     }
 
@@ -76,11 +86,11 @@ class QueueZsetStoreTest {
     }
 
     @Test
-    @DisplayName("pollTop：首个未指派票匹配——Lua 守卫出队成功返回 ticketPk")
+    @DisplayName("pollTop：首个未指派 WAITING 票匹配——Lua 守卫出队成功返回 ticketPk")
     void pollTopReturnsFirstUnassignedTicketAfterLuaGuard() {
         Set<String> members = new LinkedHashSet<>(List.of("501", "502"));
         when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
-        when(queueTicketMapper.selectById(501L)).thenReturn(ticketWithDoctor(null));
+        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.WAITING, null));
         when(redisTemplate.execute(any(), anyList(), anyString())).thenReturn(1L);
 
         Long polled = store.pollTop("DEP001", "DOC001");
@@ -90,15 +100,42 @@ class QueueZsetStoreTest {
     }
 
     @Test
-    @DisplayName("pollTop：指派不一致票跳过+Lua 败者（0）继续扫描下一位——最终无可叫返回 null")
+    @DisplayName("pollTop：PASSED 过号再入票属可叫态——不跳过、正常出队（fix round 1 Important-2）")
+    void pollTopTreatsPassedTicketAsQueueable() {
+        Set<String> members = new LinkedHashSet<>(List.of("501"));
+        when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
+        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.PASSED, null));
+        when(redisTemplate.execute(any(), anyList(), anyString())).thenReturn(1L);
+
+        assertThat(store.pollTop("DEP001", "DOC001")).isEqualTo(501L);
+    }
+
+    @Test
+    @DisplayName("pollTop：失效成员（已 CALLED 遗留态）原子清理后继续扫描下一位可叫票")
+    void pollTopCleansUpStaleMemberAndSkipsToNextQueueable() {
+        Set<String> members = new LinkedHashSet<>(List.of("501", "502"));
+        when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
+        // 首票已 CALLED（重呼后遗留成员）——清理移除后继续；次票 WAITING 未指派——出队成功
+        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.CALLED, null));
+        when(queueTicketMapper.selectById(502L)).thenReturn(ticketOf(502L, TicketStatus.WAITING, null));
+        when(redisTemplate.execute(any(), anyList(), eq("501"))).thenReturn(1L);
+        when(redisTemplate.execute(any(), anyList(), eq("502"))).thenReturn(1L);
+
+        Long polled = store.pollTop("DEP001", "DOC001");
+
+        assertThat(polled).isEqualTo(502L);
+        // 失效成员清理：对 501 执行过一次 Lua 原子移除
+        verify(redisTemplate).execute(any(), eq(List.of(QUEUE_KEY)), eq("501"));
+    }
+
+    @Test
+    @DisplayName("pollTop：指派不一致票跳过（保留给指派医生）+Lua 败者（0）继续扫描——最终无可叫返回 null")
     void pollTopSkipsAssignedMismatchAndLuaLoserReturningNull() {
         Set<String> members = new LinkedHashSet<>(List.of("501", "502"));
         when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
         // 首票指派 DOC002≠DOC001 跳过；次票未指派但 Lua 返回 0（并发被夺）继续；无后续→null
-        when(queueTicketMapper.selectById(501L)).thenReturn(ticketWithDoctor("DOC002"));
-        QueueTicket unassigned = ticketWithDoctor(null);
-        unassigned.setId(502L);
-        when(queueTicketMapper.selectById(502L)).thenReturn(unassigned);
+        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.WAITING, "DOC002"));
+        when(queueTicketMapper.selectById(502L)).thenReturn(ticketOf(502L, TicketStatus.WAITING, null));
         when(redisTemplate.execute(any(), anyList(), anyString())).thenReturn(0L);
 
         assertThat(store.pollTop("DEP001", "DOC001")).isNull();
@@ -130,7 +167,15 @@ class QueueZsetStoreTest {
     }
 
     @Test
-    @DisplayName("rebuildIfMissing：键在位返回 -1 零写（幂等——禁回灌已出队票）")
+    @DisplayName("snapshot：空队列——空列表返回（零解析）")
+    void snapshotReturnsEmptyListWhenQueueEmpty() {
+        when(zsetOperations.range(QUEUE_KEY, 0, 1L)).thenReturn(null);
+
+        assertThat(store.snapshot("DEP001", 2)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("rebuildIfMissing：键在位返回 -1 零写（幂等——禁回灌非在队票）")
     void rebuildSkipsWhenKeyPresent() {
         when(redisTemplate.hasKey(QUEUE_KEY)).thenReturn(true);
 
@@ -141,7 +186,7 @@ class QueueZsetStoreTest {
     }
 
     @Test
-    @DisplayName("rebuildIfMissing：键缺失——WAITING 权威行整体 ZADD 重建+TTL，返回重建票数（Spec :210）")
+    @DisplayName("rebuildIfMissing：键缺失——待重叫权威行整体 ZADD 重建+TTL，返回重建票数（Spec :210）")
     void rebuildAddsAllWaitingTicketsWhenKeyMissing() {
         when(redisTemplate.hasKey(QUEUE_KEY)).thenReturn(false);
 

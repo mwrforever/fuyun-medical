@@ -317,8 +317,11 @@ public class TriageServiceImpl implements ITriageService {
     }
 
     /**
-     * 叫号（惰性重建→原子出队→CAS→推送）：前置按当日 WAITING 权威行惰性重建 ZSET（键在位零写，
-     * 幂等禁回灌已出队票）；出队首个「未指派或指派一致」票后 CAS→CALLED 并双 topic 推送。叫号≠接诊。
+     * 叫号（惰性重建→原子出队→CAS→推送）：前置按当日待重叫权威行（WAITING 候诊+PASSED 过号
+     * 再入——fix round 1 Important-2 裁决①，PASSED 票重启后不静默跌出队列）惰性重建 ZSET（键在位
+     * 零写，幂等禁回灌非在队票）；出队首个「未指派或指派一致」票后按票行当前态 CAS→CALLED
+     * （WAITING→CALLED 首叫与 PASSED→CALLED 队内重叫共用，called_count+1+call_time）并双 topic
+     * 推送。叫号≠接诊。
      *
      * @param request 叫号请求，非空
      * @return 叫中票据出参；队列空返回 null（200 空语义）
@@ -327,7 +330,8 @@ public class TriageServiceImpl implements ITriageService {
     @Override
     @Transactional
     public QueueTicketVO call(QueueCallRequest request) {
-        // 惰性重建前置（Spec :210 重启恢复）：当日 WAITING 权威行→pk→编码分映射→rebuildIfMissing
+        // 惰性重建前置（Spec :210 重启恢复）：当日待重叫权威行（WAITING+PASSED）→pk→编码分映射
+        // →rebuildIfMissing
         List<QueueTicket> waiting = queueTicketMapper.selectWaiting(request.deptCode());
         Map<Long, Long> ticketScores = waiting.stream()
                 .collect(Collectors.toMap(
@@ -338,7 +342,7 @@ public class TriageServiceImpl implements ITriageService {
                 request.deptCode(),
                 rebuilt,
                 waiting.size());
-        // 缓存读操作：ZSET 原子出队（首个未指派/指派一致票；无匹配=null）
+        // 缓存读操作：ZSET 原子出队（首个可叫态未指派/指派一致票；无匹配=null）
         Long polled = queueZsetStore.pollTop(request.deptCode(), request.doctorId());
         if (polled == null) {
             log.info("叫号空队返回（200 空语义）：deptCode={}，doctorId={}", request.deptCode(), request.doctorId());
@@ -350,9 +354,9 @@ public class TriageServiceImpl implements ITriageService {
             throw new BizException(
                     OutpatientErrorCode.TICKET_NOT_FOUND, HttpStatus.NOT_FOUND, "候诊票据不存在：ticketId=" + polled);
         }
-        // 数据库写操作：叫号 CAS（WAITING→CALLED+called_count 累加+call_time 回填）；0 行=并发已叫/已迁移
-        if (queueTicketMapper.casCall(ticket.getId(), TicketStatus.WAITING.getCode(), OperatorContextHolder.get())
-                == 0) {
+        // 数据库写操作：叫号 CAS（from=票行当前态——WAITING 首叫/PASSED 过号再入重叫共用，至
+        // CALLED+called_count 累加+call_time 回填）；0 行=并发已叫/已迁移
+        if (queueTicketMapper.casCall(ticket.getId(), ticket.getStatus().getCode(), OperatorContextHolder.get()) == 0) {
             log.warn("叫号 CAS 落败（并发已叫/已迁移）：ticketId={}，ticketNo={}", ticket.getId(), ticket.getTicketNo());
             throw new BizException(
                     OutpatientErrorCode.TICKET_STATE_NOT_ALLOWED,

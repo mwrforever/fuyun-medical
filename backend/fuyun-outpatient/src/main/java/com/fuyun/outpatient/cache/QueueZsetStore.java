@@ -1,6 +1,7 @@
 package com.fuyun.outpatient.cache;
 
 import com.fuyun.outpatient.entity.QueueTicket;
+import com.fuyun.outpatient.enums.TicketStatus;
 import com.fuyun.outpatient.mapper.QueueTicketMapper;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -41,6 +42,9 @@ public class QueueZsetStore {
 
     /** 队列键 TTL 锚点时刻：当日末+2h=次日 02:00（与池键对账锚同值，A.5-1 禁无 TTL 键） */
     private static final LocalTime QUEUE_KEY_TTL_ANCHOR = LocalTime.of(2, 0);
+
+    /** 可出队叫号的票态词表（WAITING 候诊/PASSED 过号再入；fix round 1 Important-2 同步口径） */
+    private static final Set<TicketStatus> QUEUEABLE_STATUSES = Set.of(TicketStatus.WAITING, TicketStatus.PASSED);
 
     private final StringRedisTemplate redisTemplate;
 
@@ -83,8 +87,10 @@ public class QueueZsetStore {
     }
 
     /**
-     * 原子出队（按序首个可叫票）：ZRANGE 全量按 score 升序扫描，取首个「未指派或指派一致」的
-     * 票，经 Lua 守卫原子 ZREM（并发双叫仅一方成功，败者继续扫描下一位）；无匹配返回 null。
+     * 原子出队（按序首个可叫票）：ZRANGE 全量按 score 升序扫描，取首个「票态可叫（WAITING 候诊/
+     * PASSED 过号再入）且未指派或指派一致」的票，经 Lua 守卫原子 ZREM（并发双叫仅一方成功，败者
+     * 继续扫描下一位）；票行缺失或票态不可叫（已叫/已接诊/已取消等遗留态成员——如重呼后未再过号的
+     * 票）则原子移除清理后继续扫描；无匹配返回 null。
      *
      * @param deptCode 队列标识，非空
      * @param doctorId 叫号医生 id，非空
@@ -99,9 +105,14 @@ public class QueueZsetStore {
         for (String member : members) {
             long ticketPk = Long.parseLong(member);
             QueueTicket ticket = queueTicketMapper.selectById(ticketPk);
-            // 匹配谓词：票行缺失（已删/脏成员）跳过；未指派或指派一致才可叫
-            if (ticket == null
-                    || (ticket.getDoctorId() != null && !ticket.getDoctorId().equals(doctorId))) {
+            // 失效成员清理：票行缺失或票态不在可叫词表（遗留成员留驻会令后续叫号误触状态冲突）——
+            // Lua 原子移除后继续扫描
+            if (ticket == null || !QUEUEABLE_STATUSES.contains(ticket.getStatus())) {
+                redisTemplate.execute(pollScript, List.of(key), member);
+                continue;
+            }
+            // 匹配谓词：未指派或指派一致才可叫（指派不一致保留成员给指派医生）
+            if (ticket.getDoctorId() != null && !ticket.getDoctorId().equals(doctorId)) {
                 continue;
             }
             // 缓存写操作：Lua 守卫原子出队（ZSCORE 在位才 ZREM，防并发双叫同票）
@@ -141,21 +152,24 @@ public class QueueZsetStore {
 
     /**
      * 队列惰性重建（叫号服务重启后队列从排队表完整恢复，Spec :210）：ZSET 键缺失（Redis 重启/
-     * 淘汰后首访）时按 queue_ticket 的 WAITING 权威行整体重建；键在位零写（幂等——已出队票的
-     * CAS WAITING→CALLED 与 ZSET 移除同步，回灌即重复叫号）。
+     * 淘汰后首访）时按 queue_ticket 待重叫权威行（WAITING 候诊+PASSED 过号再入——调用方经
+     * selectWaiting 取行，fix round 1 Important-2 裁决①）整体重建；键在位零写（幂等——已出队票的
+     * CAS 与 ZSET 移除同步，回灌即重复叫号）。重建分取票据 priority_score 列冻结编码（过号降级分
+     * 不持久化，重启后 PASSED 票按列值回到原优先级相对位次）。
      *
      * @param deptCode     诊区队列标识，非空
-     * @param ticketScores WAITING 票 pk→score（priority_score*1e8+queue_seq，long 编码）映射，
+     * @param ticketScores 待重叫票 pk→score（priority_score*1e8+queue_seq，long 编码）映射，
      *                     调用方由库行计算
      * @return 重建票数；键在位返回 -1（跳过信号）
      */
     public int rebuildIfMissing(String deptCode, Map<Long, Long> ticketScores) {
         String key = keyOf(deptCode);
-        // 键在位=正常态：零写返回，防把已 CALLED/PASSED 出队票回灌队列
+        // 键在位=正常态：零写返回，防把已 CALLED/SERVING 等非在队票回灌队列（在队口径=调用方
+        // selectWaiting 词表：WAITING+PASSED）
         if (Boolean.TRUE.equals(redisTemplate.hasKey(key))) {
             return -1;
         }
-        // 键缺失=重启/淘汰后首访：WAITING 权威行整体 ZADD 重建（score 公式与入队同源）
+        // 键缺失=重启/淘汰后首访：待重叫权威行整体 ZADD 重建（score 公式与入队同源）
         ZSetOperations<String, String> zsetOps = redisTemplate.opsForZSet();
         ticketScores.forEach((ticketPk, score) -> zsetOps.add(key, String.valueOf(ticketPk), score));
         redisTemplate.expire(key, ttlOfTodayEndPlus2h()); // 重建键与常规入队同 TTL 规范（当日末+2h）
