@@ -11,15 +11,15 @@ fuyun-medical：大型医院管理系统（HIS），按业务域划分为 20 个
 
 ## 2. 运行形态
 
-| 服务 | 端口 / 入口 | 职责 |
-| --- | --- | --- |
-| nginx | :80（唯一入口） | 三前端静态资源 + `/api` 反向代理 + `/ws` WebSocket 升级 |
-| backend | :8080（不发布宿主端口） | Spring Boot 模块化单体，无状态，可 `--scale` 多实例 |
-| postgres | :5432 | PostgreSQL 16 + TimescaleDB 单容器：业务库（多 schema）+ 遥测超表 |
-| redis | :6379 | 会话 / 字典缓存 / 号源床位并发锁 / 大屏实时快照 |
-| rabbitmq | :5672、:15672 | 领域事件总线 / 告警分发 / TTL+DLX 延迟消息；管理台仅 dev/test |
-| minio | :9003（宿主映射，容器内 9000；控制台预留 9004） | 对象存储（仅 dev/test；生产为华为云 OBS，应用层 S3 SDK 不感知差异） |
-| iot-simulator | 无 | 模拟设备端（compose profile `sim`），打通 IoTDA→AMQP→库→WebSocket 链路 |
+| 服务            | 端口 / 入口                         | 职责                                                        |
+| ------------- | ------------------------------- | --------------------------------------------------------- |
+| nginx         | :80（唯一入口）                       | 三前端静态资源 + `/api` 反向代理 + `/ws` WebSocket 升级                |
+| backend       | :8080（不发布宿主端口）                  | Spring Boot 模块化单体，无状态，可 `--scale` 多实例                     |
+| postgres      | :5432                           | PostgreSQL 16 + TimescaleDB 单容器：业务库（多 schema）+ 遥测超表       |
+| redis         | :6379                           | 会话 / 字典缓存 / 号源床位并发锁 / 大屏实时快照                              |
+| rabbitmq      | :5672、:15672                    | 领域事件总线 / 告警分发 / TTL+DLX 延迟消息；管理台仅 dev/test                |
+| minio         | :9003（宿主映射，容器内 9000；控制台预留 9004） | 对象存储（仅 dev/test；生产为华为云 OBS，应用层 S3 SDK 不感知差异）              |
+| iot-simulator | 无                               | 模拟设备端（compose profile `sim`），打通 IoTDA→AMQP→库→WebSocket 链路 |
 
 原则：nginx 是唯一公网入口；backend 不暴露端口（联调经 debug profile override）；一切凭据经环境变量注入，禁止硬编码；dev/test 容器镜像版本与 prod 托管服务版本严格对齐。编排查详见 `docs/language/2026-09-07-技术栈选型.md` §6（compose 与 `.env.example` 随 P0 工程骨架落盘于 `deploy/`）。
 
@@ -58,10 +58,10 @@ docker compose -f deploy/docker-compose.yml --profile sim up -d            # 含
 
 ## 5. 子项目宪法索引（必读路由）
 
-| 子项目 | 宪法 | 深度范围（一句话） |
-| --- | --- | --- |
+| 子项目        | 宪法                                     | 深度范围（一句话）                                                                        |
+| ---------- | -------------------------------------- | -------------------------------------------------------------------------------- |
 | `backend/` | [backend/AGENTS.md](backend/AGENTS.md) | Java 17 + Spring Boot 3.5 编码 / API / 数据库 / 中间件基础设施 / 模块化单体分层 / Maven 构建与 CI 后端细则 |
-| `web/` | [web/AGENTS.md](web/AGENTS.md) | Vue 3 + TS + Vite 编码 / 配置 / API 层与类型契约 / monorepo 分层 / pnpm 构建与 CI 前端细则 |
+| `web/`     | [web/AGENTS.md](web/AGENTS.md)         | Vue 3 + TS + Vite 编码 / 配置 / API 层与类型契约 / monorepo 分层 / pnpm 构建与 CI 前端细则          |
 
 ## 6. 约束效力与遵从总则（必含）
 
@@ -86,3 +86,7 @@ docker compose -f deploy/docker-compose.yml --profile sim up -d            # 含
 - 功能设计与业务数据契约 → `docs/specs/`（总 Spec + 模块 Spec）；阶段实施计划 → `docs/plans/`；
 - 技术版本依据 → `docs/language/2026-09-07-技术栈选型.md`；条款调研依据 → `docs/agmds-research/`；
 - 登记 → `TASK.md`；变更 → `CHANGELOG.md`；CI 机制与门禁语义 → `.github/workflows/` 与各子宪法 C.5。
+
+## 9. 问题处理
+
+- zcode派发subagent遇到 `Idle-time tasks do not support background agents. Run this agent in the foreground.` 时，去掉后台标记，改为前台子智能体重发。
