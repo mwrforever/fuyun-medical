@@ -21,10 +21,11 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.core.script.RedisScript;
 
 /**
- * 号源池 Redis 预扣闸单测（M03 Spec 3.2 双道闸第一道，Task 4 冻结用例集）：deduct 三态返回
- * （扣减后余量 / -1 余量不足 / -2 键缺失=调用方降级信号）、release 越界封顶透传、每次执行必携
- * TTL（EXPIRE 生效前提）、prime 预热 SET total+TTL。Lua 脚本本体语义由真栈集成测试验证，
- * 本单测锚定门面契约（脚本返回值透传 + 键命名 + 参数序列化）。
+ * 号源池 Redis 预扣闸单测（M03 Spec 3.2 双道闸第一道，Task 4 冻结用例集 + R1 增补）：deduct 三态
+ * 返回（扣减后余量 / -1 余量不足 / -2 键缺失=调用方降级信号）、release 越界封顶透传、increase
+ * 加号快路径同步（INCRBY+续期 TTL+键缺失不造凭空键）、每次执行必携 TTL（EXPIRE 生效前提）、
+ * prime 预热 SET total+TTL。Lua 脚本本体语义由真栈集成测试验证，本单测锚定门面契约
+ * （脚本返回值透传 + 键命名 + 参数序列化）。
  */
 @ExtendWith(MockitoExtension.class)
 class PoolRedisGateTest {
@@ -117,6 +118,42 @@ class PoolRedisGateTest {
         // EXPIRE 生效前提：TTL 秒参数与请求 TTL 同值且为正（禁无过期键，A.5-1）
         assertThat(Long.parseLong(ttlCaptor.getValue())).isEqualTo(TTL.toSeconds());
         assertThat(Long.parseLong(ttlCaptor.getValue())).isPositive();
+    }
+
+    @Test
+    @DisplayName("increase：加号快路径同步 INCRBY 5 并续期 TTL——封顶锚=新总量 9，参数透传断言")
+    void increaseAddsQuotaAndRenewsTtl() {
+        when(redisTemplate.execute(any(), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(8L);
+
+        assertThat(gate.increase(POOL_ID, 5L, 9L, TTL)).isEqualTo(8);
+
+        ArgumentCaptor<List<String>> keysCaptor = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<String> amountCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> totalCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> ttlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(redisTemplate)
+                .execute(
+                        any(RedisScript.class),
+                        keysCaptor.capture(),
+                        amountCaptor.capture(),
+                        totalCaptor.capture(),
+                        ttlCaptor.capture());
+        assertThat(keysCaptor.getValue()).containsExactly(POOL_KEY);
+        assertThat(amountCaptor.getValue()).isEqualTo("5");
+        assertThat(totalCaptor.getValue()).isEqualTo("9");
+        // 续期 TTL 与请求同值且为正（禁无过期键，A.5-1）
+        assertThat(Long.parseLong(ttlCaptor.getValue())).isEqualTo(TTL.toSeconds());
+        assertThat(Long.parseLong(ttlCaptor.getValue())).isPositive();
+    }
+
+    @Test
+    @DisplayName("increase：键缺失透传 -1 不造凭空键——脚本零写操作，待放号 prime 全量预热自然含加号量")
+    void increaseSkipsWhenKeyMissing() {
+        when(redisTemplate.execute(any(), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(-1L);
+
+        assertThat(gate.increase(POOL_ID, 5L, 9L, TTL)).isEqualTo(-1);
     }
 
     @Test

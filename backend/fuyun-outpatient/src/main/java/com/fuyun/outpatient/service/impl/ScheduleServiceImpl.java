@@ -17,6 +17,7 @@ import com.fuyun.outpatient.entity.Schedule;
 import com.fuyun.outpatient.entity.ScheduleTemplate;
 import com.fuyun.outpatient.enums.ApptType;
 import com.fuyun.outpatient.enums.ScheduleStatus;
+import com.fuyun.outpatient.enums.SessionType;
 import com.fuyun.outpatient.internal.OutpatientDomainEvent;
 import com.fuyun.outpatient.mapper.ApptNumberPoolMapper;
 import com.fuyun.outpatient.mapper.ScheduleMapper;
@@ -31,18 +32,22 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 排班与号源池服务实现（M03 FU-M03-01，Task 4 号源池域写路径唯一入口）：放号生成（模板
- * week_pattern 位串×日期区间展开，uk_schedule 幂等跳过，池键预热）、停诊（schedule CAS+整池
- * 联动+schedule.stopped 事务内发布，经 OutpatientEventPublisher AFTER_COMMIT 出 MQ——事务内
- * 禁 MQ 发送红线 A.4.2-7）、恢复（过期排班拒绝）、加号（total_quota 增量 CAS）与余量查询。
- * 资金无涉红线（裁决 7）：本类零金额字段。线程安全：无状态单例。装配归 OutpatientWebConfig
+ * week_pattern 位串×日期区间展开，窗口内已存在排班键预过滤幂等跳过、并发 uk 冲突整批回滚，
+ * 池键预热）、停诊（schedule CAS+整池联动+schedule.stopped 事务内发布，经 OutpatientEventPublisher
+ * AFTER_COMMIT 出 MQ——事务内禁 MQ 发送红线 A.4.2-7）、恢复（过期排班拒绝）、加号（total_quota
+ * 增量 CAS+池键快路径同步 INCRBY）与余量查询。资金无涉红线（裁决 7）：本类零金额字段。线程安全：
+ * 无状态单例。装配归 OutpatientWebConfig
  *
  * @Import；com.fuyun.outpatient.service.impl 包 = JaCoCo PACKAGE LINE 1.00 覆盖对象。
  */
@@ -167,11 +172,30 @@ public class ScheduleServiceImpl implements IScheduleService {
         // 仅 ACTIVE 模板参与放号展开（停用模板不生成新排班）
         List<ScheduleTemplate> templates = scheduleTemplateMapper.selectList(
                 Wrappers.<ScheduleTemplate>lambdaQuery().eq(ScheduleTemplate::getStatus, TEMPLATE_STATUS_ACTIVE));
+        // 放号幂等预过滤：循环前一次取回窗口内已存在排班键——PG 事务 aborted 语义下任一语句失败即
+        // 整事务拒续，禁止循环内「捕获 uk 冲突后继续」（重放场景必须在本循环前完成零插入跳过）
+        Set<String> existingKeys = scheduleMapper
+                .selectList(Wrappers.<Schedule>lambdaQuery()
+                        .select(Schedule::getTemplateId, Schedule::getSchedDate, Schedule::getSession)
+                        .ge(Schedule::getSchedDate, start)
+                        .le(Schedule::getSchedDate, end))
+                .stream()
+                .map(s -> scheduleKey(s.getTemplateId(), s.getSchedDate(), s.getSession()))
+                .collect(Collectors.toSet());
         String operator = OperatorContextHolder.get();
         int generated = 0;
         for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
             for (ScheduleTemplate template : templates) {
                 if (!matchesWeekAndValidity(template, date)) {
+                    continue;
+                }
+                if (existingKeys.contains(scheduleKey(template.getId(), date, template.getSession()))) {
+                    // uk_schedule 命中=同模板同日同时段已生成：预过滤幂等跳过（warn 留痕），不中断整批
+                    log.warn(
+                            "放号幂等跳过已存在排班：templateId={}，schedDate={}，session={}",
+                            template.getId(),
+                            date,
+                            template.getSession());
                     continue;
                 }
                 Schedule schedule = new Schedule();
@@ -187,15 +211,20 @@ public class ScheduleServiceImpl implements IScheduleService {
                 schedule.setCreatedBy(operator);
                 schedule.setUpdatedBy(operator);
                 try {
-                    // 数据库写操作：排班日历行落库；uk_schedule 冲突=同模板同日同时段已生成（幂等跳过）
+                    // 数据库写操作：排班日历行落库；此处 uk 冲突=预过滤后的并发放号抢先落行（窗口外竞态）
                     scheduleMapper.insert(schedule);
                 } catch (DuplicateKeyException e) {
+                    // PG 事务 aborted 语义：冲突后本事务后续语句全部拒续，不得继续循环——抛业务异常
+                    // 整批回滚（@Transactional 生效），调用方重试即走预过滤幂等路径
                     log.warn(
-                            "放号幂等跳过已存在排班：templateId={}，schedDate={}，session={}",
+                            "放号并发冲突整批回滚：templateId={}，schedDate={}，session={}",
                             template.getId(),
                             date,
                             template.getSession());
-                    continue;
+                    throw new BizException(
+                            OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
+                            HttpStatus.CONFLICT,
+                            "放号并发冲突，整批已回滚请重试：schedDate=" + date);
                 }
                 ApptNumberPool pool = new ApptNumberPool();
                 pool.setScheduleId(schedule.getId());
@@ -342,7 +371,29 @@ public class ScheduleServiceImpl implements IScheduleService {
             throw new BizException(
                     OutpatientErrorCode.POOL_NOT_FOUND, HttpStatus.NOT_FOUND, "号源池不存在或已停用：poolId=" + poolId);
         }
+        // 快路径同步推进第一道闸（R1 修复，计划全局口径：预约侧余量不足即判 OP-1003 拒绝、不降级
+        // ——池键滞后会造成真实可约号被误拒）：INCRBY 加号量并续期 TTL；键缺失由脚本原样跳过不造凭空键
+        refreshPoolKeyAfterExtraQuota(poolId, count);
         log.info("加号完成：poolId={}，加号数量={}", poolId, count);
+    }
+
+    /**
+     * 加号后池键同步刷新：INCRBY 加号量并续期 TTL（sched_date 次日 02:00 对账窗口锚，A.5-1）。
+     * Redis 异常不回滚加号（库为权威库存，A.5-2 一致性红线口径）：error 留痕交日对账兜底收敛。
+     *
+     * @param poolId 池行主键；来源：加号端点路径参数（CAS 已命中，行必存在）
+     * @param count  加号数量；来源：已过 1~50 守卫的端点入参
+     */
+    private void refreshPoolKeyAfterExtraQuota(long poolId, int count) {
+        ApptNumberPool pool = apptNumberPoolMapper.selectById(poolId);
+        Schedule schedule = scheduleMapper.selectById(pool.getScheduleId());
+        try {
+            int remain =
+                    poolRedisGate.increase(poolId, count, pool.getTotalQuota(), poolKeyTtl(schedule.getSchedDate()));
+            log.info("加号池键已刷新：poolId={}，增量={}，池键余量={}（-1=键缺失已跳过，待放号 prime 全量预热）", poolId, count, remain);
+        } catch (DataAccessException e) {
+            log.error("加号后池键刷新失败（日对账兜底）：poolId={}，加号数量={}，原因={}", poolId, count, e.getMessage(), e);
+        }
     }
 
     /**
@@ -359,6 +410,19 @@ public class ScheduleServiceImpl implements IScheduleService {
             return false;
         }
         return template.getWeekPattern().charAt(date.getDayOfWeek().getValue() - 1) == '1';
+    }
+
+    /**
+     * 排班唯一键文本（templateId|schedDate|session，与 uk_schedule 三列同构）：放号幂等预过滤的
+     * 判重键——集合 contains 判定替代循环内捕获冲突（PG 事务 aborted 语义禁循环续跑）。
+     *
+     * @param templateId 模板 id，非空
+     * @param schedDate  排班日期，非空
+     * @param session    门诊时段，非空
+     * @return 判重键文本，非空
+     */
+    private String scheduleKey(Long templateId, LocalDate schedDate, SessionType session) {
+        return templateId + "|" + schedDate + "|" + session;
     }
 
     /**

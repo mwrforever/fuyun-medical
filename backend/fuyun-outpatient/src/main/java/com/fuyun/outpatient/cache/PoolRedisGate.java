@@ -49,10 +49,14 @@ public class PoolRedisGate {
     /**
      * 原子预扣（余量校验+DECRBY+EXPIRE 单步原子）：返回扣减后余量。
      *
+     * <p>计划全局口径（R1 修复裁定，Task 5 预约侧按此对齐）：返回 -1（余量不足）由调用方判
+     * OP-1003 <b>直接拒绝，不降级直连 DB</b>（余量谓词旁路即超卖面）；仅 Redis 异常（连接/超时，
+     * 本方法原样上抛）走 DB 条件更新降级。
+     *
      * @param poolId 池行主键；来源：预约请求定位的号源行
      * @param total  池总量（脚本签名对称预留位）；来源：池行 total_quota 读回
      * @param ttl    池键 TTL（sched_date 次日 02:00 对账窗口缓冲）；来源：调用方按排班日计算
-     * @return 扣减后余量；-1 余量不足（调用方判 OP-1003）；-2 键缺失（未预热/已过期降级信号）
+     * @return 扣减后余量；-1 余量不足（调用方判 OP-1003 拒绝）；-2 键缺失（未预热/已过期降级信号）
      * @throws org.springframework.data.redis.RedisSystemException Redis 不可用时原样上抛（调用方降级直连 DB）
      */
     public int deduct(long poolId, long total, Duration ttl) {
@@ -67,7 +71,7 @@ public class PoolRedisGate {
     }
 
     /**
-     * 原子回补（INCRBY+越界封顶+EXPIRE 单步原子）：退号/取消/超时释放回池唯一入口。
+     * 原子回补（退号/取消/超时释放回池唯一入口）：单次回补量恒为 1，语义见 {@link #increase}。
      *
      * @param poolId 池行主键；来源：退号/释放载荷定位的号源行
      * @param total  池总量（越界封顶锚，对账防漂移）；来源：池行 total_quota 读回
@@ -76,11 +80,27 @@ public class PoolRedisGate {
      * @throws org.springframework.data.redis.RedisSystemException Redis 不可用时原样上抛（调用方降级直连 DB）
      */
     public int release(long poolId, long total, Duration ttl) {
+        return increase(poolId, 1L, total, ttl);
+    }
+
+    /**
+     * 原子增量（INCRBY amount+越界封顶+EXPIRE 单步原子，pool_release.lua）：回补（amount=1）与
+     * 加号快路径同步（amount=授权数量）的通用底座——加号仅增 DB total_quota 时第一道闸余量滞后，
+     * 计划口径下余量不足即 OP-1003 误拒真实可约号，故加号必须同步 INCRBY。键缺失（返回 -1）
+     * <b>不造凭空键</b>（脚本零写操作返回）——后续放号 prime 以 DB 全量预热自然含加号量。
+     *
+     * @param poolId 池行主键；来源：加号端点路径参数/退号载荷定位的号源行
+     * @param amount 增量（退号回补恒为 1、加号=授权数量）；来源：业务语义定值
+     * @param total  池总量（越界封顶锚，对账防漂移）；来源：CAS 后池行 total_quota 读回（含加号增量）
+     * @param ttl    池键 TTL（操作后续期，维持对账窗口覆盖）；来源：调用方按排班日计算
+     * @return 封顶后余量；-1 键缺失（未预热/已过期，脚本不落键）
+     * @throws org.springframework.data.redis.RedisSystemException Redis 不可用时原样上抛（调用方定夺降级）
+     */
+    public int increase(long poolId, long amount, long total, Duration ttl) {
         Long remain = redisTemplate.execute(
                 releaseScript,
                 List.of(poolKey(poolId)),
-                // 回补量恒为 1（单次退号回一号）；total 为越界封顶锚；TTL 秒交脚本 EXPIRE
-                "1",
+                String.valueOf(amount),
                 String.valueOf(total),
                 String.valueOf(ttl.toSeconds()));
         return remain.intValue();

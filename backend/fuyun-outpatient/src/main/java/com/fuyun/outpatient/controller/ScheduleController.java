@@ -163,8 +163,8 @@ public class ScheduleController {
     }
 
     /**
-     * 加号授权（审计留痕）：池行 total_quota 增量（1~50，越界 OP-1019），加号占用计数走
-     * extra_used（Task 5 挂号时按号段归入）。
+     * 加号授权（审计留痕）：池行 total_quota 增量（1~50，越界 OP-1019）并同步刷新 Redis 快路径
+     * 余量（INCRBY+续期 TTL）；加号占用计数走 extra_used（Task 5 挂号时按号段归入）。
      *
      * @param id      池行主键（路径参数）
      * @param request 加号数量请求，非空

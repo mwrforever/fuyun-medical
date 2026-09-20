@@ -40,10 +40,13 @@ public interface IScheduleService {
 
     /**
      * T+N 放号生成：ACTIVE 模板按 week_pattern 位串×日期区间 [endDate-(days-1), endDate] 展开
-     * 排班日历与号源池行，uk_schedule 命中日期幂等跳过（warn 留痕），池键预热 prime。
+     * 排班日历与号源池行。幂等语义两段（R1 修复裁定）：窗口内已存在排班键（uk_schedule 三列）
+     * 循环前预过滤跳过（warn 留痕，重放零插入）；预过滤后的并发 uk 冲突抛 OP-1004 整批回滚
+     * （PG 事务 aborted 语义禁循环内捕获续跑）。池键预热 prime。
      *
      * @param request 放号请求，非空；endDate 为窗口截止日、days 为窗口天数
-     * @return 本次实际生成排班行数（幂等跳过不计入）
+     * @return 本次实际生成排班行数（预过滤跳过不计入）
+     * @throws com.fuyun.common.exception.BizException OP-1004/409 并发放号冲突（整批已回滚，重试即幂等）
      */
     int generate(ScheduleGenerateRequest request);
 
@@ -87,7 +90,8 @@ public interface IScheduleService {
 
     /**
      * 加号授权：池行 total_quota 增量 count（预约余量谓词自然放行加号段），加号占用计数走
-     * extra_used（Task 5 挂号时按号段归入）。
+     * extra_used（Task 5 挂号时按号段归入）；CAS 命中后同步对池键 INCRBY count 并续期 TTL
+     * （快路径立即可约，R1 修复——键缺失跳过不造凭空键，Redis 异常不回滚加号交日对账兜底）。
      *
      * @param poolId 池行主键；来源：extra-quota 端点路径参数
      * @param count  加号数量（1~50，契约与服务端双层校验）

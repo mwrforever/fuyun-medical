@@ -60,6 +60,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -191,6 +192,8 @@ class ScheduleServiceImplTest {
         // endDate=2026-09-27（周日）、days=7 → 窗口 09-21（周一）~09-27（周日）；week_pattern=1100000 命中周一/周二
         LocalDate endDate = LocalDate.of(2026, 9, 27);
         when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1100000")));
+        // 幂等预过滤读回：窗口内无已存在排班
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
         AtomicLong scheduleSeq = new AtomicLong(100);
         doAnswer(inv -> {
                     Schedule inserting = inv.getArgument(0);
@@ -258,15 +261,33 @@ class ScheduleServiceImplTest {
     }
 
     @Test
-    @DisplayName("generate：uk_schedule 命中日期幂等跳过（warn 留痕）——返回生成计数 0，池行与预热零触达")
+    @DisplayName("generate：窗口内已存在排班键（uk_schedule 三列）预过滤幂等跳过——返回 0、零插入零预热（重放语义）")
     void generateSkipsExistingScheduleDateIdempotently() {
         when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
-        when(scheduleMapper.insert(any(Schedule.class))).thenThrow(new DuplicateKeyException("uk_schedule 冲突"));
+        // 预过滤读回：周一（09-21）排班已在库（templateId=1 + MORNING 与模板同键）——重放在此处零插入跳过
+        when(scheduleMapper.selectList(any()))
+                .thenReturn(List.of(schedule(51L, LocalDate.of(2026, 9, 21), ScheduleStatus.NORMAL)));
 
         int generated = service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7));
 
         assertThat(generated).isZero();
+        verify(scheduleMapper, never()).insert(any(Schedule.class));
         verify(apptNumberPoolMapper, never()).insert(any(ApptNumberPool.class));
+        verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("generate：预过滤后并发 uk 冲突抛 OP-1004 整批回滚——PG 事务 aborted 语义禁捕获续跑（并发语义）")
+    void generateAbortsBatchOnConcurrentUkConflict() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        when(scheduleMapper.insert(any(Schedule.class))).thenThrow(new DuplicateKeyException("uk_schedule 冲突"));
+
+        assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
         verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
     }
 
@@ -350,14 +371,25 @@ class ScheduleServiceImplTest {
     }
 
     @Test
-    @DisplayName("extraQuota：加号 count=5 走 casAddExtraQuota（total_quota 增量）；count>50 与 0 拒 OP-1019")
+    @DisplayName("extraQuota：加号 count=5 走 casAddExtraQuota 并同步 INCRBY 池键续期；count>50 与 0 拒 OP-1019")
     void extraQuotaIncrementsPoolQuotaAndCapsAtLimit() {
         when(apptNumberPoolMapper.casAddExtraQuota(31L, 5)).thenReturn(1);
+        // CAS 后读回：total_quota=4+5=9（池键封顶锚取新总量）
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool(31L, LocalTime.of(8, 0), 9, 1));
+        when(scheduleMapper.selectById(11L))
+                .thenReturn(schedule(11L, LocalDate.of(2026, 9, 23), ScheduleStatus.NORMAL));
 
         service.extraQuota(31L, 5);
 
         verify(apptNumberPoolMapper).casAddExtraQuota(31L, 5);
-        // 上限外（count=51）与零数量（count=0）：入参显式格式校验拒绝，池行零触达
+        // R1 快路径同步：池键 INCRBY 5、封顶锚=新总量 9、TTL 续期至排班次日 02:00
+        ArgumentCaptor<Duration> refreshTtlCaptor = ArgumentCaptor.forClass(Duration.class);
+        verify(poolRedisGate).increase(eq(31L), eq(5L), eq(9L), refreshTtlCaptor.capture());
+        Duration expectedTtl =
+                Duration.between(LocalDateTime.now(), LocalDate.of(2026, 9, 24).atTime(2, 0));
+        assertThat(Math.abs(refreshTtlCaptor.getValue().minus(expectedTtl).toSeconds()))
+                .isLessThan(60);
+        // 上限外（count=51）与零数量（count=0）：入参显式格式校验拒绝，池行与池键零触达
         assertThatThrownBy(() -> service.extraQuota(31L, 51)).isInstanceOfSatisfying(BizException.class, e -> {
             assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
             assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -367,6 +399,24 @@ class ScheduleServiceImplTest {
             assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
         });
         verify(apptNumberPoolMapper, times(1)).casAddExtraQuota(anyLong(), anyInt());
+        verify(poolRedisGate, times(1)).increase(anyLong(), anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("extraQuota：Redis 刷新异常不回滚加号（库为权威库存）——error 留痕交日对账兜底")
+    void extraQuotaKeepsQuotaWhenRedisRefreshFails() {
+        when(apptNumberPoolMapper.casAddExtraQuota(31L, 5)).thenReturn(1);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool(31L, LocalTime.of(8, 0), 9, 1));
+        when(scheduleMapper.selectById(11L))
+                .thenReturn(schedule(11L, LocalDate.of(2026, 9, 23), ScheduleStatus.NORMAL));
+        when(poolRedisGate.increase(eq(31L), eq(5L), eq(9L), any(Duration.class)))
+                .thenThrow(new RedisSystemException("redis 不可用", new IllegalStateException("connection refused")));
+
+        // 不抛=加号授权保留（DB 权威），池键滞后交日对账收敛
+        service.extraQuota(31L, 5);
+
+        verify(apptNumberPoolMapper).casAddExtraQuota(31L, 5);
+        verify(poolRedisGate).increase(eq(31L), eq(5L), eq(9L), any(Duration.class));
     }
 
     @Test
