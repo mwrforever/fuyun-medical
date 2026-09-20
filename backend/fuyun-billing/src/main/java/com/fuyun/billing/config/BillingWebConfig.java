@@ -1,5 +1,6 @@
 package com.fuyun.billing.config;
 
+import com.fuyun.billing.api.PrescriptionFeePort;
 import com.fuyun.billing.controller.ChargeItemController;
 import com.fuyun.billing.controller.DailyListController;
 import com.fuyun.billing.controller.DepositController;
@@ -12,16 +13,19 @@ import com.fuyun.billing.controller.RefundController;
 import com.fuyun.billing.controller.SettlementController;
 import com.fuyun.billing.gateway.InsuranceGateway;
 import com.fuyun.billing.gateway.InsuranceSimulatorAdapter;
+import com.fuyun.billing.mapper.FeeRecordMapper;
 import com.fuyun.billing.properties.BillingProperties;
 import com.fuyun.billing.properties.BillingRefundProperties;
 import com.fuyun.billing.service.IChargeItemService;
 import com.fuyun.billing.service.IInsuranceMappingService;
+import com.fuyun.billing.service.IPricingEngineService;
 import com.fuyun.billing.service.impl.ChargeItemServiceImpl;
 import com.fuyun.billing.service.impl.ChargePriceServiceImpl;
 import com.fuyun.billing.service.impl.DailyListServiceImpl;
 import com.fuyun.billing.service.impl.DepositServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceCallLogServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceMappingServiceImpl;
+import com.fuyun.billing.service.impl.PrescriptionFeePortImpl;
 import com.fuyun.billing.service.impl.PricingEngineServiceImpl;
 import com.fuyun.billing.service.impl.PricingRuleServiceImpl;
 import com.fuyun.billing.service.impl.RefundServiceImpl;
@@ -92,5 +96,17 @@ public class BillingWebConfig {
     @Bean
     public InsuranceGateway insuranceGateway() {
         return new InsuranceSimulatorAdapter();
+    }
+
+    /**
+     * 处方联动费用作废端口（M06 进程内对接面）：引擎 cancel 语义复用装配点。
+     *
+     * @param feeRecordMapper 费用行 mapper，非空
+     * @param engine          计价引擎，非空
+     * @return 端口实现，singleton
+     */
+    @Bean
+    public PrescriptionFeePort prescriptionFeePort(FeeRecordMapper feeRecordMapper, IPricingEngineService engine) {
+        return new PrescriptionFeePortImpl(feeRecordMapper, engine);
     }
 }

@@ -69,7 +69,13 @@ public enum BillingErrorCode implements ErrorCode {
     /** 计价规则项目集合 JSON 非法（400；item_scope 解析失败=配置错误显式暴露，禁静默） */
     PRICING_RULE_SCOPE_INVALID("BILL-1027"),
     /** 价格状态不允许该操作（409；publish 非 DRAFT 行/重复发布） */
-    PRICE_STATE_NOT_ALLOWED("BILL-1028");
+    PRICE_STATE_NOT_ALLOWED("BILL-1028"),
+    /** 退费卡侧原付守卫（409；W-16——卡行金额≤0 或退款额>卡侧原付合计，复审 F6 加固） */
+    REFUND_CARD_CHANNEL_INVALID("BILL-1029"),
+    /** 退费结算单状态不允许（409；W-18——仅 SETTLED 单值可退（SETTLED 唯一可退基点），封堵 DRAFT/预结算绕过主链） */
+    REFUND_SETTLEMENT_STATE_NOT_ALLOWED("BILL-1030"),
+    /** 退费费用行归属不符（409；W-18——行 settlementId 与申请结算单不一致） */
+    REFUND_FEE_NOT_IN_SETTLEMENT("BILL-1031");
 
     /** 码值（如 BILL-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

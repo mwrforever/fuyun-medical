@@ -346,31 +346,46 @@ class DeadLetterGovernanceIT {
     /**
      * 轮询等待死信落库并返回该行视图。
      *
+     * <p>按来源队列收敛到 it 测试消费者自身行：PR-4 起 pharmacy 亦订阅 system.dict.published（V607
+     * 字典水位消费），同一毒丸 eventId 会在 it 与 pharmacy 两队列各自死信落行（W-9 口径：dead_letter
+     * 无唯一约束，同 eventId 可因不同消费者多次死信），不按 source_queue 过滤将命中他消费者行。
+     *
      * @param eventId 信封 eventId，非空
      * @return 死信行字段视图（id/source_queue/status/replay_count）
      */
     private Map<String, Object> awaitDeadLetterRow(String eventId) {
         awaitUntil(
                 () -> !jdbcTemplate
-                        .queryForList("SELECT id FROM integration.dead_letter WHERE event_id = ?", eventId)
+                        .queryForList(
+                                "SELECT id FROM integration.dead_letter WHERE event_id = ? AND source_queue = ?",
+                                eventId,
+                                QUEUE_NAME)
                         .isEmpty(),
                 "死信未在等待窗内落库：event_id=" + eventId);
         return jdbcTemplate
                 .queryForList(
-                        "SELECT id, source_queue, status, replay_count FROM integration.dead_letter WHERE event_id = ?",
-                        eventId)
+                        "SELECT id, source_queue, status, replay_count FROM integration.dead_letter"
+                                + " WHERE event_id = ? AND source_queue = ?",
+                        eventId,
+                        QUEUE_NAME)
                 .get(0);
     }
 
     /**
      * 按 eventId 取死信主键。
      *
+     * <p>限定 it 测试消费者来源队列（依据同 {@link #awaitDeadLetterRow}）：同一 eventId 存在多消费者
+     * 各自死信行时，无队列过滤的单行断言会因实际行数大于一而失真。
+     *
      * @param eventId 信封 eventId，非空
      * @return 死信主键（雪花 ID）
      */
     private Long deadLetterIdByEventId(String eventId) {
         return jdbcTemplate.queryForObject(
-                "SELECT id FROM integration.dead_letter WHERE event_id = ?", Long.class, eventId);
+                "SELECT id FROM integration.dead_letter WHERE event_id = ? AND source_queue = ?",
+                Long.class,
+                eventId,
+                QUEUE_NAME);
     }
 
     /**

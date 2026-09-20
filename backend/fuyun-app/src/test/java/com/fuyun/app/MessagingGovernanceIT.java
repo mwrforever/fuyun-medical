@@ -298,19 +298,19 @@ class MessagingGovernanceIT {
 
     @Test
     @Order(1)
-    @DisplayName("冻结登记断言：event_registry 二十四条种子行齐全且全部 ACTIVE，system.dict.published 生产方为 system")
+    @DisplayName("冻结登记断言：event_registry 三十一条种子行齐全且全部 ACTIVE，system.dict.published 生产方为 system")
     void seedRegistryRowsAreFrozenAndActive() {
-        // 总量口径：V5 七条 + V403 登记 iot.device.status-changed 一行 + V105 患者域八条（Task 14 装配后
-        // patient 迁移进入 fuyun-app IT 库，id 9–16，全 ACTIVE）+ V605 billing 域八行（id 17–24：CF-4 发布六
-        // + CF-5 占位订阅二）
+        // 总量口径：V5 七条 + V403 iot 一条 + V105 患者域八条（id 9–16）+ V605 billing 域八条
+        // （id 17–24）+ V702 pharmacy 域七条（id 25–31：outpatient 占位二 + pharmacy 发布四
+        // + prescription.rejected 占位一；id 24 系 V605 占位行经 V702 UPDATE 载荷冻结，不增行）
         Integer totalRows =
                 jdbcTemplate.queryForObject("SELECT count(*) FROM integration.event_registry", Integer.class);
-        assertThat(totalRows).isEqualTo(24);
+        assertThat(totalRows).isEqualTo(31);
         Integer activeRows = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM integration.event_registry WHERE status = ?",
                 Integer.class,
                 MessagingConstants.REGISTRY_STATUS_ACTIVE);
-        assertThat(activeRows).isEqualTo(24);
+        assertThat(activeRows).isEqualTo(31);
         String producer = jdbcTemplate.queryForObject(
                 "SELECT producer_module FROM integration.event_registry WHERE event_type = ?",
                 String.class,
@@ -425,6 +425,10 @@ class MessagingGovernanceIT {
     /**
      * 轮询等待死信台账出现指定 eventId 的留痕行并返回。
      *
+     * <p>按来源队列收敛到 it 测试消费者自身行：PR-4 起 pharmacy 亦订阅 system.dict.published（V607
+     * 字典水位消费），同一毒丸 eventId 会在 it 与 pharmacy 两队列各自死信落行（W-9 口径：dead_letter
+     * 无唯一约束，同 eventId 可因不同消费者多次死信），不按 source_queue 过滤将命中他消费者行。
+     *
      * @param eventId 死信所属信封 eventId，非空
      * @return 死信行字段视图（source_queue/routing_key/event_type/event_id/payload_body/fail_reason/status）
      */
@@ -434,8 +438,9 @@ class MessagingGovernanceIT {
         while (System.nanoTime() < deadlineNanos) {
             rows = jdbcTemplate.queryForList(
                     "SELECT source_queue, routing_key, event_type, event_id, payload_body, fail_reason, status"
-                            + " FROM integration.dead_letter WHERE event_id = ?",
-                    eventId);
+                            + " FROM integration.dead_letter WHERE event_id = ? AND source_queue = ?",
+                    eventId,
+                    QUEUE_NAME);
             if (!rows.isEmpty()) {
                 return rows.get(0);
             }
