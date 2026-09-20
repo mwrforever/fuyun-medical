@@ -531,13 +531,15 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                         .orderByAsc(PrescriptionItem::getId))
                 .stream()
                 .collect(Collectors.groupingBy(PrescriptionItem::getPrescriptionId));
-        // 数据库读操作：本集发药单一次 in 批取（复刻原逐行 selectOne 全部谓词 rx_no=...：一处方一张
-        //   活动单 uk_dispense_rx_active；id 升序后每 rxNo 首行即与单查唯一命中同一行，重复命中属脏
-        //   数据取首行），按 rxNo 建映射供投影消费；未配药处方映射缺位→null（占用行仍出，退费前置）
+        // 数据库读操作：本集发药单一次 in 批取，谓词排除 CANCELLED 与 uk_dispense_rx_active 配套互锁
+        //   （V703 部分唯一索引仅约束活动行唯一，status<>CANCELLED 排除「取消单+重建活动单」共存的
+        //   取消态历史行——一处方一张活动单，每 rxNo 至多 1 行命中，不重蹈原逐行 selectOne 多行抛错），
+        //   按 rxNo 建映射供投影消费；未配药处方映射缺位→null（占用行仍出，退费前置）
         List<String> rxNos = rxs.stream().map(Prescription::getRxNo).toList();
         Map<String, Dispense> dispenseByRxNo = baseMapper
                 .selectList(Wrappers.<Dispense>lambdaQuery()
                         .in(Dispense::getRxNo, rxNos)
+                        .ne(Dispense::getStatus, "CANCELLED")
                         .orderByAsc(Dispense::getId))
                 .stream()
                 .collect(Collectors.toMap(Dispense::getRxNo, Function.identity(), (first, duplicate) -> first));

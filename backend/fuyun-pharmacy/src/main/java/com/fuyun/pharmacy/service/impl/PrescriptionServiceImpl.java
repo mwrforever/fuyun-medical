@@ -144,10 +144,11 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         rx.setSkinTestRequired(skinRequired);
         rx.setRxCategory(topNarcotic);
         baseMapper.updateById(rx);
-        // 事务内发应用事件：处方生效即发布（携计费行，M-4 裁决）。投递实况：PharmacyEventPublisher
-        //   以 @TransactionalEventListener(AFTER_COMMIT) 在事务提交后直发 MQ，无 JDBC 暂存/失败重投
-        //   ——「处方生效但事件丢失」窗口并未被本机制消除；可靠投递 outbox 化属 P1（D-2 裁决的
-        //   Spring Modulith 事件发布注册表接入为改造点）
+        // 事务内发应用事件：处方生效即发布（携计费行，M-4 裁决）。可靠投递链路（宪法 B.3-3，D-2 裁决）：
+        //   Spring Modulith 事件发布注册表在本事务内同步落 event_publication，与处方业务变更原子提交
+        //   ——处方生效与事件可投递记录同生共死，丢失窗口已消除；事务提交后 PharmacyEventPublisher
+        //   以 @TransactionalEventListener(AFTER_COMMIT) 直发 MQ，监听器失败或实例宕机遗留的未完成
+        //   发布由 EventOpsJob 定时重投（卡住超 5 分钟，重启重发默认关闭），残余风险仅剩消费侧幂等
         events.publishEvent(new PharmacyDomainEvent(
                 PharmacyMessagingConstants.EVENT_PRESCRIPTION_CREATED,
                 new PrescriptionCreatedPayload(

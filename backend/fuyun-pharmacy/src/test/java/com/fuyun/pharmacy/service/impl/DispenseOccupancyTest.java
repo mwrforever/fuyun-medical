@@ -37,7 +37,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 占用查询单测（GET /medication-occupancy，供 M13 位）：处方×明细×发药单三维投影、
  * 读侧患者归一（merged 从档入参归主档查询）、未配药处方占用行可见（退费前置）、
- * 可选参数缺位不附加谓词。billing 不切注记维持——BILL-1017 硬前置仍走 exec_occupy_status 列口径。
+ * 可选参数缺位不附加谓词、发药单批查排除取消态历史行（与 uk_dispense_rx_active 互锁）。
+ * billing 不切注记维持——BILL-1017 硬前置仍走 exec_occupy_status 列口径。
  */
 @ExtendWith(MockitoExtension.class)
 class DispenseOccupancyTest {
@@ -135,6 +136,16 @@ class DispenseOccupancyTest {
         return wrapper;
     }
 
+    /** 取捕获的发药单批查 wrapper 并渲染 SQL 片段（取消态排除谓词断言用，惰性求值同上） */
+    private LambdaQueryWrapper<Dispense> capturedDispenseWrapper() {
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<Dispense>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(dispenseMapper).selectList(captor.capture());
+        LambdaQueryWrapper<Dispense> wrapper = (LambdaQueryWrapper<Dispense>) captor.getValue();
+        wrapper.getSqlSegment();
+        return wrapper;
+    }
+
     @Test
     @DisplayName("占用三维投影：处方×明细×发药单联立出参（数量 DECIMAL string 承载）")
     void occupancyJoinsPrescriptionItemAndDispense() {
@@ -206,5 +217,21 @@ class DispenseOccupancyTest {
         verify(prescriptionItemMapper).selectList(itemCaptor.capture());
         LambdaQueryWrapper<PrescriptionItem> itemWrapper = (LambdaQueryWrapper<PrescriptionItem>) itemCaptor.getValue();
         assertThat(itemWrapper.getSqlSegment()).doesNotContain("item_code");
+    }
+
+    @Test
+    @DisplayName("发药单批查排除取消态：wrapper 含 status<>CANCELLED 谓词（与 uk_dispense_rx_active 互锁，取消单不投影）")
+    void occupancyDispenseBatchQueryExcludesCancelled() {
+        when(masterDataCache.resolveSurvivor(700101L)).thenReturn(700101L);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rxDISPENSED()));
+        when(prescriptionItemMapper.selectList(any())).thenReturn(List.of(rxItem()));
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(dispenseIssued()));
+
+        List<OccupancyVO> rows = newService().occupancy(700101L, null, null);
+
+        assertThat(rows).hasSize(1);
+        LambdaQueryWrapper<Dispense> dispenseWrapper = capturedDispenseWrapper();
+        assertThat(dispenseWrapper.getSqlSegment()).contains("status <>");
+        assertThat(dispenseWrapper.getParamNameValuePairs().values()).contains("CANCELLED");
     }
 }
