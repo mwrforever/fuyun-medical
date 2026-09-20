@@ -3,6 +3,7 @@ package com.fuyun.system.internal;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.system.api.DictPublishedPayload;
+import com.fuyun.system.api.PracticeChangedPayload;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.constants.SystemMessagingConstants;
 import java.nio.charset.StandardCharsets;
@@ -85,6 +86,40 @@ public class SystemEventPublisher implements RabbitTemplate.ConfirmCallback, Rab
                 envelope.eventType(),
                 event.typeCode(),
                 event.version(),
+                envelope.eventId(),
+                envelope.traceId());
+    }
+
+    /**
+     * 执业授权变更广播入口（事务提交后触发）：grant 登记/withdraw 停权的事实经信封化载荷
+     * 发送至 fy.topic（system.practice.changed，V5 id 6 既有登记）。
+     *
+     * <p>{@code fallbackExecution = true}：grant/withdraw 均在事务上下文内发布事件，此处兜底
+     * 非事务调用路径（事件照发，AFTER_COMMIT 语义在无事务时退化为立即执行），与 outpatient 侧
+     * 发布器同型。信封化与留痕执行流程同 {@link #onDictVersionPublished}。
+     *
+     * @param event 执业授权变更应用事件，非空；来源：PracticeServiceImpl.grant/withdraw 事务内发布
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    public void onPracticeChanged(PracticeChangedEvent event) {
+        EventEnvelope envelope = codec.create(
+                Clock.systemUTC(),
+                SystemMessagingConstants.MODULE,
+                SystemMessagingConstants.EVENT_PRACTICE_CHANGED,
+                MDC.get(SecurityConstants.TRACE_ID_MDC_KEY),
+                new PracticeChangedPayload(event.employeeId(), event.grantType(), event.status()));
+        // CorrelationData 携带 eventId：confirm/return 回调据此定位失败帧（告警留痕，不自动重发）
+        rabbitTemplate.convertAndSend(
+                SystemMessagingConstants.TOPIC_EXCHANGE,
+                envelope.eventType(),
+                envelope,
+                new CorrelationData(envelope.eventId()));
+        log.info(
+                "执业授权变更广播已投递 MQ：eventType={}，employeeId={}，grantType={}，status={}，eventId={}，traceId={}",
+                envelope.eventType(),
+                event.employeeId(),
+                event.grantType(),
+                event.status(),
                 envelope.eventId(),
                 envelope.traceId());
     }

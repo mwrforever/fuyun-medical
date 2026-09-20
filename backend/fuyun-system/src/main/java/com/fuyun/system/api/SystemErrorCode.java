@@ -42,7 +42,13 @@ public enum SystemErrorCode implements ErrorCode {
     DICT_VERSION_NOT_PUBLISHABLE("SYS-1013"),
 
     /** 字典类型编码已存在（409） */
-    DICT_TYPE_CODE_EXISTS("SYS-1014");
+    DICT_TYPE_CODE_EXISTS("SYS-1014"),
+
+    /** 执业授权记录不存在（404）：withdraw/query 定位失败 */
+    PRACTICE_GRANT_NOT_FOUND("SYS-1021"),
+
+    /** 同一员工同一授权类型已存在生效行（409）：重复登记冲突 */
+    PRACTICE_GRANT_DUPLICATE("SYS-1022");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

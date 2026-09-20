@@ -7,6 +7,7 @@ import com.fuyun.system.controller.DictController;
 import com.fuyun.system.controller.DictTypeController;
 import com.fuyun.system.controller.DictVersionController;
 import com.fuyun.system.controller.PracticeController;
+import com.fuyun.system.controller.PracticeGrantController;
 import com.fuyun.system.convert.AuthConverter;
 import com.fuyun.system.convert.DictConverter;
 import com.fuyun.system.internal.AuditLogAspect;
@@ -64,7 +65,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     AuditLogServiceImpl.class,
     AuditLogAspect.class,
     PracticeServiceImpl.class,
-    PracticeController.class
+    PracticeController.class,
+    PracticeGrantController.class
 })
 public class SystemWebConfig implements WebMvcConfigurer {
 

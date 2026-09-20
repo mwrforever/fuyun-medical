@@ -16,6 +16,9 @@ public final class SystemMessagingConstants {
     /** 字典发布广播事件类型：{@code <模块>.<实体>.<动作>}（V5 种子 id=2 已登记，M01 Spec §7） */
     public static final String EVENT_DICT_PUBLISHED = "system.dict.published";
 
+    /** 执业授权变更事件类型：grant 登记/withdraw 停权广播（V5 种子 id=6 既有登记，零新增） */
+    public static final String EVENT_PRACTICE_CHANGED = "system.practice.changed";
+
     /** 本模块域标识：发布方（producer）与消费方（consumer module）同源 */
     public static final String MODULE = "system";
 
