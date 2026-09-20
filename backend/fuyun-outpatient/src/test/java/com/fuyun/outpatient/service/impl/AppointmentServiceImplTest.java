@@ -8,7 +8,9 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -41,6 +43,7 @@ import com.fuyun.outpatient.enums.PoolStatus;
 import com.fuyun.outpatient.enums.ScheduleStatus;
 import com.fuyun.outpatient.enums.SessionType;
 import com.fuyun.outpatient.enums.VisitStatus;
+import com.fuyun.outpatient.enums.VisitType;
 import com.fuyun.outpatient.internal.DelayEnvelopeSender;
 import com.fuyun.outpatient.internal.OutpatientDomainEvent;
 import com.fuyun.outpatient.mapper.AppointmentMapper;
@@ -74,9 +77,11 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -677,5 +682,517 @@ class AppointmentServiceImplTest {
         ArgumentCaptor<ApptCreditRecord> creditCaptor = ArgumentCaptor.forClass(ApptCreditRecord.class);
         verify(apptCreditRecordMapper, times(1)).insert(creditCaptor.capture());
         assertThat(creditCaptor.getValue().getRestrictFrom()).isNull();
+    }
+
+    // ---------------------------------------------------------------- R1 修复环（Important-1 泄漏 + Important-2 分支覆盖）
+
+    @Test
+    @DisplayName("R1 book：并发限购 DuplicateKey 路径回补 Redis 持有后再抛 OP-1005（防快路径槽位泄漏）")
+    void bookingReleasesRedisHoldWhenConcurrentDuplicateKey() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        when(appointmentMapper.insert(any(Appointment.class)))
+                .thenThrow(new DuplicateKeyException("uk_appt_patient 冲突"));
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.DUPLICATE_APPOINTMENT);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        // 泄漏修复断言：事务回滚前 Redis 持有已回补（败者侧第一道闸余量恢复）
+        verify(poolRedisGate).release(eq(31L), eq(4L), any(Duration.class));
+        verify(apptNumberPoolMapper, never()).casOccupy(anyLong(), anyInt());
+    }
+
+    @Test
+    @DisplayName("R1 book：portal 延迟信封入队失败（AmqpException）——回补持有+删占位键后原样上抛整单回滚")
+    void bookingReleasesRedisHoldWhenDelayEnvelopeRejected() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
+        doThrow(new AmqpException("broker 不可达"))
+                .when(rabbitTemplate)
+                .convertAndSend(anyString(), anyString(), any(Object.class), any(CorrelationData.class));
+
+        assertThatThrownBy(() -> service.book(request("PORTAL"))).isInstanceOf(AmqpException.class);
+        // 泄漏修复断言：占位登记失败路径 Redis 持有回补+占位键清理，booked 事件不发布（交事务回滚）
+        verify(poolRedisGate).release(eq(31L), eq(4L), any(Duration.class));
+        verify(redisTemplate).delete(startsWith("fy:outpatient:pay-hold:"));
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：portal 载荷组装 fail-fast（排班缺失）——同款回补持有后上抛（对称面闭合）")
+    void bookingReleasesHoldWhenPayloadAssemblyFails() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        // 首读（主流程校验）命中排班；scheduleOf 组装 booked 载荷重读时缺失——fail-fast 对称面
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule()).thenReturn(null);
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
+
+        assertThatThrownBy(() -> service.book(request("PORTAL"))).isInstanceOf(IllegalStateException.class);
+        verify(poolRedisGate).release(eq(31L), eq(4L), any(Duration.class));
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：渠道词表外（FAX）拒 OP-1019——患者解析零触达")
+    void bookRejectsUnknownChannelVocabulary() {
+        assertThatThrownBy(() -> service.book(request("FAX"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        });
+        verify(patientContextResolver, never()).resolve(anyLong());
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：P1 未开放渠道（MINIAPP 预留位）拒 OP-1019——患者解析零触达")
+    void bookRejectsReservedChannelNotOpenInP1() {
+        assertThatThrownBy(() -> service.book(request("MINIAPP"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+        });
+        verify(patientContextResolver, never()).resolve(anyLong());
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+    }
+
+    @Test
+    @DisplayName("R1 take：预约单不存在拒 OP-1009——visit 零签发")
+    void takeRejectsWhenAppointmentMissing() {
+        when(appointmentMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.take("AP20260920000099")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(visitIdIssuer, never()).issue();
+        verify(visitMapper, never()).insert(any(Visit.class));
+    }
+
+    @Test
+    @DisplayName("R1 take：TAKEN 态重复取号幂等返回既有 visit——零重复签发零 CAS")
+    void takeIdempotentReturnsExistingVisitWhenTaken() {
+        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00001";
+        Appointment taken =
+                reservedAppointment(ApptStatus.TAKEN, OffsetDateTime.now().minusMinutes(20), visitId);
+        when(appointmentMapper.selectOne(any())).thenReturn(taken);
+        Visit existing = new Visit();
+        existing.setId(501L);
+        existing.setVisitId(visitId);
+        existing.setPatientId(9L);
+        existing.setApptId(101L);
+        existing.setDeptCode("DEP001");
+        existing.setVisitType(VisitType.GENERAL);
+        existing.setIsRevisit((short) 0);
+        existing.setStatus(VisitStatus.REGISTERED);
+        when(visitMapper.selectOne(any())).thenReturn(existing);
+
+        VisitVO vo = service.take("AP20260920000001");
+
+        assertThat(vo.visitId()).isEqualTo(visitId);
+        assertThat(vo.status()).isEqualTo(VisitStatus.REGISTERED);
+        verify(appointmentMapper, never()).casTake(anyLong(), anyString());
+        verify(visitMapper, never()).insert(any(Visit.class));
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("R1 take：TAKEN 态但 visit 记录缺失（数据异常）拒 OP-1009")
+    void takeRejectsWhenTakenButVisitMissing() {
+        Appointment taken =
+                reservedAppointment(ApptStatus.TAKEN, OffsetDateTime.now().minusMinutes(20), "O20260921000001");
+        when(appointmentMapper.selectOne(any())).thenReturn(taken);
+        when(visitMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.take("AP20260920000001")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(visitIdIssuer, never()).issue();
+    }
+
+    @Test
+    @DisplayName("R1 take：casTake 0 行且库态 CANCELLED（非时限成因）拒 OP-1009")
+    void takeRejectsWhenStateNotAllowedAfterCasLose() {
+        Appointment cancelled =
+                reservedAppointment(ApptStatus.CANCELLED, OffsetDateTime.now().minusMinutes(20), null);
+        when(appointmentMapper.selectOne(any())).thenReturn(cancelled);
+        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now().format(SEQ_DATE) + "00009");
+        when(appointmentMapper.casTake(eq(101L), anyString())).thenReturn(0);
+        when(appointmentMapper.selectById(101L)).thenReturn(cancelled);
+
+        assertThatThrownBy(() -> service.take("AP20260920000001")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(visitMapper, never()).insert(any(Visit.class));
+        verify(redisTemplate, never()).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("R1 book：当日挂号 casTake 落败（新建行状态异常）fail-fast——visit 零落库（降级路径无持有不回补）")
+    void windowCasTakeLoseFailsFastWithoutVisitInsert() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        // 键缺失降级（-2）：无 Redis 持有，失败路径零回补面
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(-2);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
+        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now().format(SEQ_DATE) + "00007");
+        when(appointmentMapper.casTake(101L, "O" + LocalDate.now().format(SEQ_DATE) + "00007"))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOf(IllegalStateException.class);
+        verify(visitMapper, never()).insert(any(Visit.class));
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：portal 占位键写入失败（Redis 异常）不阻断预约——延迟信封照常入队、零回补")
+    void portalBookingToleratesHoldKeyWriteFailure() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        doThrow(new RedisConnectionFailureException("connection refused"))
+                .when(valueOperations)
+                .set(anyString(), anyString(), any(Duration.class));
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
+
+        AppointmentVO vo = service.book(request("PORTAL"));
+
+        // 辅助标记失败不阻断主链：booked 事件发布（占位守卫以延迟档位为权威）
+        assertThat(vo.status()).isEqualTo(ApptStatus.RESERVED);
+        verify(rabbitTemplate)
+                .convertAndSend(
+                        eq("fy.delay"), eq("delay.appointment-timeout"), any(Object.class), any(CorrelationData.class));
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：预约单号流水缺失（Redis 返回空）fail-fast IllegalStateException")
+    void bookingFailsFastWhenApptSeqMissing() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(null);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(-2);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOf(IllegalStateException.class);
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：CAS 重读发现池行停诊（漂移）——回补持有后拒 OP-1004 整单回滚")
+    void bookingAbortsWhenPoolStoppedMidflight() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L))
+                .thenReturn(activePool(PoolStatus.ACTIVE))
+                .thenReturn(activePool(PoolStatus.STOPPED));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        // 首次 CAS 即重读出停诊：仅 1 次 CAS，持有已回补
+        verify(apptNumberPoolMapper, times(1)).casOccupy(eq(31L), anyInt());
+        verify(poolRedisGate).release(eq(31L), eq(4L), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：CAS 重读发现余量耗尽——提前终止重试判 OP-1003（不再空转 CAS）并回补持有")
+    void bookingStopsRetryWhenRereadSeesPoolExhausted() {
+        ApptNumberPool exhausted = activePool(PoolStatus.ACTIVE);
+        exhausted.setUsedCount(4);
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L))
+                .thenReturn(activePool(PoolStatus.ACTIVE))
+                .thenReturn(exhausted);
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.POOL_EXHAUSTED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        // 重读定性余量耗尽：1 次 CAS 即终止（重试至多 2 次的前置分支）
+        verify(apptNumberPoolMapper, times(1)).casOccupy(eq(31L), anyInt());
+        verify(poolRedisGate).release(eq(31L), eq(4L), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：CAS 耗尽路径回补 Redis 持有自身异常——不吞业务拒绝，仍判 OP-1003")
+    void bookingStillRejectsWhenRedisReleaseFailsOnCasExhausted() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        when(apptNumberPoolMapper.casOccupy(eq(31L), anyInt())).thenReturn(0);
+        doThrow(new RedisConnectionFailureException("connection refused"))
+                .when(poolRedisGate)
+                .release(anyLong(), anyLong(), any(Duration.class));
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.POOL_EXHAUSTED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(apptNumberPoolMapper, times(3)).casOccupy(eq(31L), anyInt());
+    }
+
+    @Test
+    @DisplayName("R1 markTimeout：池行缺失——跳过回池（warn）但占位键删除与 credit 行照常")
+    void markTimeoutSkipsPoolReleaseWhenPoolRowMissing() {
+        Appointment held =
+                reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(20), null);
+        when(appointmentMapper.selectOne(any())).thenReturn(held);
+        when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(1);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(null);
+        when(apptCreditRecordMapper.selectCount(any())).thenReturn(0L);
+
+        service.markTimeout(new AppointmentTimeoutPayload("AP20260920000001", 9L, 31L));
+
+        verify(apptNumberPoolMapper, never()).casRelease(anyLong(), anyInt());
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+        verify(redisTemplate).delete("fy:outpatient:pay-hold:AP20260920000001");
+        verify(apptCreditRecordMapper).insert(any(ApptCreditRecord.class));
+    }
+
+    @Test
+    @DisplayName("R1 markTimeout：回池命中后排班缺失——Redis 快路径跳过（交日对账），credit 行照常")
+    void markTimeoutSkipsRedisReleaseWhenScheduleMissing() {
+        Appointment held =
+                reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(20), null);
+        when(appointmentMapper.selectOne(any())).thenReturn(held);
+        when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(1);
+        ApptNumberPool pool = activePool(PoolStatus.ACTIVE);
+        pool.setVersion(7);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool);
+        when(apptNumberPoolMapper.casRelease(31L, 7)).thenReturn(1);
+        when(scheduleMapper.selectById(11L)).thenReturn(null);
+        when(apptCreditRecordMapper.selectCount(any())).thenReturn(0L);
+
+        service.markTimeout(new AppointmentTimeoutPayload("AP20260920000001", 9L, 31L));
+
+        verify(apptNumberPoolMapper).casRelease(31L, 7);
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+        verify(apptCreditRecordMapper).insert(any(ApptCreditRecord.class));
+    }
+
+    @Test
+    @DisplayName("R1 markTimeout：Redis 快路径回补自身异常——不阻断释放面，credit 行照常落")
+    void markTimeoutToleratesRedisReleaseFailure() {
+        Appointment held =
+                reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(20), null);
+        when(appointmentMapper.selectOne(any())).thenReturn(held);
+        when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(1);
+        ApptNumberPool pool = activePool(PoolStatus.ACTIVE);
+        pool.setVersion(7);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool);
+        when(apptNumberPoolMapper.casRelease(31L, 7)).thenReturn(1);
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        doThrow(new RedisConnectionFailureException("connection refused"))
+                .when(poolRedisGate)
+                .release(anyLong(), anyLong(), any(Duration.class));
+        when(apptCreditRecordMapper.selectCount(any())).thenReturn(0L);
+
+        service.markTimeout(new AppointmentTimeoutPayload("AP20260920000001", 9L, 31L));
+
+        verify(apptNumberPoolMapper).casRelease(31L, 7);
+        verify(redisTemplate).delete("fy:outpatient:pay-hold:AP20260920000001");
+        verify(apptCreditRecordMapper).insert(any(ApptCreditRecord.class));
+    }
+
+    @Test
+    @DisplayName("R1 markTimeout：预约单按 appt_no 定位失败——数据异常 fail-fast 交死信留痕")
+    void markTimeoutFailsFastWhenAppointmentMissing() {
+        when(appointmentMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.markTimeout(new AppointmentTimeoutPayload("AP20260920000001", 9L, 31L)))
+                .isInstanceOf(IllegalStateException.class);
+        verify(appointmentMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 take：占位键删除自身异常（Redis 异常）不阻断取号——visit.registered 照常发布")
+    void takeToleratesHoldKeyDeleteFailure() {
+        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00002";
+        Appointment held =
+                reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().plusMinutes(5), null);
+        when(appointmentMapper.selectOne(any())).thenReturn(held);
+        when(visitIdIssuer.issue()).thenReturn(visitId);
+        when(appointmentMapper.casTake(101L, visitId)).thenReturn(1);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(visitMapper.insert(any(Visit.class))).thenReturn(1);
+        doThrow(new RedisConnectionFailureException("connection refused"))
+                .when(redisTemplate)
+                .delete(anyString());
+
+        VisitVO vo = service.take("AP20260920000001");
+
+        assertThat(vo.visitId()).isEqualTo(visitId);
+        verify(events).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().eventType()).isEqualTo(OutpatientMessagingConstants.EVENT_VISIT_REGISTERED);
+    }
+
+    // ---------------------------------------------------------------- R1 覆盖率收口（PACKAGE LINE=1.00 补齐分支）
+
+    @Test
+    @DisplayName("R1 book：号源池不存在（poolId 无行）拒 OP-1002 404——排班读取零触达")
+    void bookingRejectsWhenPoolMissing() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.POOL_NOT_FOUND);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        });
+        verify(scheduleMapper, never()).selectById(anyLong());
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：排班不存在（池行悬挂）拒 OP-1004——限约/限购零触达")
+    void bookingRejectsWhenScheduleMissing() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(apptCreditRecordMapper, never()).selectList(any());
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：池行余量谓词旁路（读回已约满）拒 OP-1003——Redis 预扣零触达")
+    void bookingRejectsWhenPoolExhaustedAtRead() {
+        ApptNumberPool exhausted = activePool(PoolStatus.ACTIVE);
+        exhausted.setUsedCount(4);
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(exhausted);
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.POOL_EXHAUSTED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(poolRedisGate, never()).deduct(anyLong(), anyLong(), any(Duration.class));
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+    }
+
+    @Test
+    @DisplayName("R1 take：casTake 成功后关联池行缺失（数据异常）fail-fast——visit 零落库")
+    void takeFailsFastWhenAssociationsMissing() {
+        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00005";
+        Appointment held =
+                reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().plusMinutes(5), null);
+        when(appointmentMapper.selectOne(any())).thenReturn(held);
+        when(visitIdIssuer.issue()).thenReturn(visitId);
+        when(appointmentMapper.casTake(101L, visitId)).thenReturn(1);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.take("AP20260920000001")).isInstanceOf(IllegalStateException.class);
+        verify(visitMapper, never()).insert(any(Visit.class));
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("R1 book：降级路径（无 Redis 持有）CAS 耗尽判 OP-1003——零回补（回补面 redisHeld 短路）")
+    void bookingCasExhaustedWithoutRedisHoldSkipsReplenish() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenReturn(0L);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        // 键缺失降级（-2）：无第一道闸持有，失败路径回补面短路（redisHeld=false）
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(-2);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(eq(31L), anyInt())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.POOL_EXHAUSTED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(apptNumberPoolMapper, times(3)).casOccupy(eq(31L), anyInt());
+        verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
     }
 }

@@ -304,6 +304,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
             // 数据库写操作：预约单落库；uk 命中=并发限购抢落（预查后竞态窗口），按 OP-1005 整单回滚
             appointmentMapper.insert(appointment);
         } catch (DuplicateKeyException e) {
+            // 事务回滚前回补 Redis 持有（防败者侧第一道闸余量 -1 不恢复致快路径不可售，与 CAS 耗尽路径对称）
+            releaseRedisHoldQuietly(pool, schedule, redisHeld);
             log.warn(
                     "预约并发限购冲突回滚：patientId={}，schedDate={}，deptCode={}",
                     patientId,
@@ -317,7 +319,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         occupyPoolCasWithRetry(pool, schedule, redisHeld);
         // ⑦ 渠道分流：PORTAL 占位登记；WINDOW/KIOSK 一步直达 TAKEN（同事务签发 visit）
         if (channel == ApptChannel.PORTAL) {
-            holdPortalSlot(appointment, pool);
+            holdPortalSlot(appointment, pool, schedule, redisHeld);
             return toAppointmentVO(appointment);
         }
         return registerVisitAndTake(appointment, pool, schedule, operator);
@@ -496,8 +498,10 @@ public class AppointmentServiceImpl implements IAppointmentService {
      *
      * @param appointment 已落库预约单（RESERVED+payDeadline），非空
      * @param pool        号源池行，非空（载荷 poolId 锚）
+     * @param schedule    所属排班，非空（失败回补 TTL 锚与 booked 载荷 session 组件）
+     * @param redisHeld   第一道闸是否已扣减（延迟信封投递失败须回补后整单回滚）
      */
-    private void holdPortalSlot(Appointment appointment, ApptNumberPool pool) {
+    private void holdPortalSlot(Appointment appointment, ApptNumberPool pool, Schedule schedule, boolean redisHeld) {
         String apptNo = appointment.getApptNo();
         try {
             // 缓存写操作：支付占位键（辅助标记，权威时限守卫在 casTake 谓词与延迟档位）
@@ -510,18 +514,34 @@ public class AppointmentServiceImpl implements IAppointmentService {
         } catch (DataAccessException e) {
             log.error("支付占位键写入失败（占位守卫以延迟档位为权威）：apptNo={}，原因={}", apptNo, e.getMessage(), e);
         }
-        // 事务内直发延迟信封（A.4.2-7 例外注记）；业务事件走事务内 publishEvent AFTER_COMMIT 出 MQ
-        delayEnvelopeSender.send(new AppointmentTimeoutPayload(apptNo, appointment.getPatientId(), pool.getId()));
-        events.publishEvent(new OutpatientDomainEvent(
-                OutpatientMessagingConstants.EVENT_APPOINTMENT_BOOKED,
-                new AppointmentBookedPayload(
-                        apptNo,
-                        appointment.getPatientId(),
-                        appointment.getSchedDate().format(SEQ_DATE),
-                        scheduleOf(appointment).getSession().getCode(),
-                        appointment.getDeptCode(),
-                        appointment.getApptType().getCode(),
-                        appointment.getChannel().getCode())));
+        try {
+            // 事务内直发延迟信封（A.4.2-7 例外注记）；业务事件走事务内 publishEvent AFTER_COMMIT 出 MQ
+            delayEnvelopeSender.send(new AppointmentTimeoutPayload(apptNo, appointment.getPatientId(), pool.getId()));
+            events.publishEvent(new OutpatientDomainEvent(
+                    OutpatientMessagingConstants.EVENT_APPOINTMENT_BOOKED,
+                    new AppointmentBookedPayload(
+                            apptNo,
+                            appointment.getPatientId(),
+                            appointment.getSchedDate().format(SEQ_DATE),
+                            scheduleOf(appointment).getSession().getCode(),
+                            appointment.getDeptCode(),
+                            appointment.getApptType().getCode(),
+                            appointment.getChannel().getCode())));
+        } catch (RuntimeException e) {
+            // 延迟信封是占位超时释放的权威载体：入队失败（AmqpException）则占位永不超时释放（槽位泄漏面），
+            // 载荷组装失败（scheduleOf fail-fast）同面——对称裁定：先回补 Redis 持有+删占位键，再原样上抛
+            // 交事务回滚（调用方可重试），与 CAS 耗尽/并发限购失败路径同款（R1 Important-1）
+            releaseRedisHoldQuietly(pool, schedule, redisHeld);
+            deletePayHoldQuietly(apptNo);
+            log.error(
+                    "portal 占位登记失败，预约整单回滚：apptNo={}，poolId={}，exception={}，原因={}",
+                    apptNo,
+                    pool.getId(),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
+            throw e;
+        }
         log.info(
                 "portal 预约占位完成：apptNo={}，patientId={}，poolId={}，payDeadline={}",
                 apptNo,

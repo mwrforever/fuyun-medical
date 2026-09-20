@@ -552,4 +552,50 @@ class ScheduleServiceImplTest {
         assertThat(lambdaWrapper.getSqlSegment()).contains("dept_code").contains("sched_date");
         assertThat(lambdaWrapper.getParamNameValuePairs().values()).contains("DEP001");
     }
+
+    @Test
+    @DisplayName("R1 extraQuota：CAS 0 行（池行不存在或已停用）抛 OP-1002——池键零触达（行覆盖补齐）")
+    void extraQuotaRejectsWhenPoolMissingOrStopped() {
+        when(apptNumberPoolMapper.casAddExtraQuota(99L, 5)).thenReturn(0);
+
+        assertThatThrownBy(() -> service.extraQuota(99L, 5)).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.POOL_NOT_FOUND);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+        });
+        verify(poolRedisGate, never()).increase(anyLong(), anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("R1 generate：模板失效日（eff_to）截断放号窗口——失效日后日期不生成排班（matchesWeekAndValidity 排除分支）")
+    void generateSkipsDatesBeyondTemplateValidity() {
+        // 模板仅周一出诊（1000000），eff_to=09-21：窗口 09-21~09-27 内仅 09-21（周一=失效日当日）生成，
+        // 09-22 起既非周一且越过失效日——eff_to 排除分支（generateSkipsExisting 同源替身构造）
+        ScheduleTemplate expiring = template("1000000");
+        expiring.setEffTo(LocalDate.of(2026, 9, 21));
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(expiring));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        AtomicLong scheduleSeq = new AtomicLong(300);
+        doAnswer(inv -> {
+                    Schedule inserting = inv.getArgument(0);
+                    inserting.setId(scheduleSeq.incrementAndGet());
+                    return 1;
+                })
+                .when(scheduleMapper)
+                .insert(any(Schedule.class));
+        AtomicLong poolSeq = new AtomicLong(400);
+        doAnswer(inv -> {
+                    ApptNumberPool inserting = inv.getArgument(0);
+                    inserting.setId(poolSeq.incrementAndGet());
+                    return 1;
+                })
+                .when(apptNumberPoolMapper)
+                .insert(any(ApptNumberPool.class));
+
+        int generated = service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7));
+
+        assertThat(generated).isEqualTo(1);
+        ArgumentCaptor<Schedule> scheduleCaptor = ArgumentCaptor.forClass(Schedule.class);
+        verify(scheduleMapper, times(1)).insert(scheduleCaptor.capture());
+        assertThat(scheduleCaptor.getValue().getSchedDate()).isEqualTo(LocalDate.of(2026, 9, 21));
+    }
 }

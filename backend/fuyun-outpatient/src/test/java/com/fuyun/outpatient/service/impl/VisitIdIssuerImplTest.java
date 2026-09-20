@@ -86,4 +86,29 @@ class VisitIdIssuerImplTest {
         assertThatThrownBy(() -> issuer.issue()).isInstanceOf(IllegalStateException.class);
         verify(redisTemplate, never()).expire(any(String.class), any(Duration.class));
     }
+
+    @Test
+    @DisplayName("issue：Redis 流水返回空（连接异常面）fail-fast 抛 IllegalStateException，且不触碰 TTL")
+    void issueFailsFastWhenRedisSeqMissing() {
+        String today = LocalDate.now().format(SEQ_DATE);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("fy:outpatient:visit-seq:" + today)).thenReturn(null);
+
+        assertThatThrownBy(() -> issuer.issue()).isInstanceOf(IllegalStateException.class);
+        verify(redisTemplate, never()).expire(any(String.class), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("issue：结构自检防线（畸形流水致形态违例）fail-fast 抛 IllegalStateException——违例值禁落库")
+    void issueFailsFastWhenStructureSelfCheckViolated() {
+        String today = LocalDate.now().format(SEQ_DATE);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 负数流水使 %05d 产出畸形段（-0001），VisitIdValidator 结构自检必败——防御 CF-3 契约漂移的兜底分支
+        when(valueOperations.increment("fy:outpatient:visit-seq:" + today)).thenReturn(-1L);
+
+        assertThatThrownBy(() -> issuer.issue())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("结构自检失败");
+        verify(redisTemplate, never()).expire(any(String.class), any(Duration.class));
+    }
 }
