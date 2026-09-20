@@ -2,6 +2,40 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-20 · P1 PR-5 M03 门诊主流程：outpatient 号段初始化登记与门禁适配（先记再改）
+
+- **号段初始化批次**：outpatient 域启用固定百位段 **V200–V299**（recon 裁决 1；段内 V200–V299 全空），
+  首批 V200–V204（V200 号源池三表、V201 预约/就诊四表、V202 分诊/队列两表、V203 申请单两表、
+  V204 门诊事件契约种子）。outpatient schema 基线零迁移，`scripts/check-migration-governance.py`
+  乱序守卫「号段初始化豁免」（:152-154）放行首批；批次合入后 outpatient 后续迁移一律走 V500+
+  通用段（TASK.md W-12 全局规则恢复约束）。
+- **存量 dev 卷一次性重置**（进入条件，Task 13 api-docs 导出前执行——导出要求 backend 在含 V200–V204
+  的新卷上启动，旧卷 Flyway outOfOrder=false 必拒 pending 迁移；Task 15 真栈探针复用该重置后卷）：
+  首批 V200–V204 低于基线全局最大已应用版本 V703，Flyway outOfOrder=false 对存量卷拒绝应用
+  （守卫脚本 docstring :7-11 与 PR-1a 真栈实证）；处置=`docker compose -f deploy/docker-compose.yml
+  --env-file deploy/.env down -v && up -d` 全新卷按版本升序一次应用（本条目即登记载体；
+  Testcontainers IT 每次全新库不受影响）。**团队广播警示（待批 3 执行条件）**：重置=存量 dev 库
+  一次性清空重建（down -v 清卷），执行前须在团队渠道广播警示——「存量 dev 库将一次性清空重建，
+  未入库数据先行导出」；广播记录随执行台账归档。
+- **practice_grant 改道 system 通用段 V704**（recon 裁决 9 原拟 V608 经守卫算术改道，偏差②）：
+  system schema 基线非零迁移（V300–V303/V607），新迁移必须 > V703——V608 必被乱序守卫拦截；
+  V704∈(500,None) 合法（V607 先例）。**V705**=门诊三类字典种子（appt-type/visit-type/disposition，
+  03 Spec §8「引用 M01 字典 code 不自建副本」）。
+- **CF-5/CF-3 事件 id 排定（全局递增按迁移执行序）**：id 23/25/31 载荷 desc 经 outpatient V204
+  冻结（「UPDATE 存量行 + WHERE NOT EXISTS 兜底 INSERT」双语句形态——V204 应用序先于 V605/V702，
+  纯 UPDATE 在新库 no-op 后会被 V605/V702 以占位 desc 首插，双形态保两序同终态，偏差①；CF-5
+  双向评审声明随 PR）；新增 id 32 outpatient.visit.registered / 33 visit.finished / 34
+  visit.cancelled / 35 visit.no-show（仅登记无发布点，id 27 先例）/ 36 appointment.booked /
+  37 appointment.cancelled / 38 appointment.rescheduled / 39 appointment.timeout（延迟队列回调
+  内部事件，自产自消）/ 40 schedule.stopped；`outpatient.queue.called` 不登记（纯 WS 通道）；
+  `system.practice.changed` 已随 V5 id 6 登记（发布接线随 Task 2，零新登记）；
+  MessagingGovernanceIT 总行断言 31→40 与 V204 同任务落改（PR-3「种子+断言同任务」Task 17 先例）。
+- **JaCoCo 核心包扩名单**：父 POM 规则二增 `com.fuyun.outpatient.service.impl`（号源权威库存扣减/
+  visit 主状态机/退号退费联动直接驱动资金联动=「核心业务状态机」LINE=1.00，recon 裁决 2，
+  2026-09-19 主控裁决；包不存在时零包平凡通过，首个 impl 落码即生效）。
+- **W-22 前置**：PR-4 九条合规遗留 fix PR 已先行合入（裁决 14，TASK.md W-22 行由其回填删除），
+  本 PR 新增页面/DTO 自带合规形态（loading+在途守卫+零出网用例；入参显式格式校验 4xx）。
+
 ## 2026-09-20 · P1 PR-5 批复落档：11 项待批/10 项偏差全部批准认可，6 项执行条件融入任务步骤
 
 - **批复记录**：用户逐项批复——待批 1–11 全部批准、偏差①–⑩全部认可；其中待批 3/4/5/6 与
