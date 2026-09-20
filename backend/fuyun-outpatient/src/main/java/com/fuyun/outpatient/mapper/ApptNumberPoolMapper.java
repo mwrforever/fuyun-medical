@@ -37,18 +37,22 @@ public interface ApptNumberPoolMapper extends BaseMapper<ApptNumberPool> {
 
     /**
      * 池行回补 CAS（退号/取消/超时释放回池，与 casOccupy 对称）：带 used_count &gt; 0 谓词防负
-     * 余量（重复回补/对账漂移兜底）。
+     * 余量（重复回补/对账漂移兜底）+ version 乐观锁谓词防并发双回补——调用前须重读池行 version，
+     * 影响行数 0=并发消费者已回池（version 前移）或池行状态漂移，调用方重读定性后终止本轮回池
+     * （禁负余量、禁重复回补 Redis；Task 5 超时释放为首个消费点，Task 6 回池同 SQL 继承）。
      *
      * <p>status 字面量与 {@link com.fuyun.outpatient.enums.PoolStatus} code 同源；deleted=0
      * 显式补齐（注解 SQL 不继承 @TableLogic）；updated_by 固定 'system'。
      *
-     * @param poolId 池行主键；来源：退号/释放载荷定位的号源行
-     * @return 影响行数：1=回补成功；0=行不存在/非 ACTIVE/余量已为 0（幂等达成或数据异常留痕）
+     * @param poolId  池行主键；来源：退号/释放载荷定位的号源行
+     * @param version 重读取得的乐观锁版本；来源：释放前 SELECT 读回
+     * @return 影响行数：1=回补成功；0=并发已回池（version 前移）/行不存在/非 ACTIVE/余量已为 0
+     *         （调用方重读定性后终止本轮回池，幂等达成）
      */
     @Update("UPDATE outpatient.appt_number_pool SET used_count = used_count - 1, version = version + 1, "
             + "updated_by = 'system', updated_at = now() WHERE id = #{poolId} AND deleted = 0 "
-            + "AND status = 'ACTIVE' AND used_count > 0")
-    int casRelease(@Param("poolId") long poolId);
+            + "AND status = 'ACTIVE' AND used_count > 0 AND version = #{version}")
+    int casRelease(@Param("poolId") long poolId, @Param("version") int version);
 
     /**
      * 加号授权 CAS（POST /number-pools/{id}/extra-quota）：total_quota 增量 count——加号额度

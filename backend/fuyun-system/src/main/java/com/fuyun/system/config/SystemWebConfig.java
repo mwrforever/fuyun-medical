@@ -71,12 +71,14 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class SystemWebConfig implements WebMvcConfigurer {
 
     /**
-     * 免认证白名单：仅登录与刷新两端点（常量收口防散落，供装配与测试断言共用）。
+     * 免认证白名单：登录/刷新两端点 + portal 患者匿名预约通道（裁决 13：/api/v1/outpatient/portal/**
+     * 免 401，服务端经介质解析定 patientId、操作者留痕取哨兵 PORTAL；限流/风控随 M18 注记）。
+     * 常量收口防散落，供装配与测试断言共用。
      *
      * <p>注意 logout 不在白名单：登出请求本身需通过 401 认证（防止伪造/无效令牌触发会话删除探测）。
      */
     public static final List<String> AUTH_WHITELIST =
-            List.of("/api/v1/system/auth/login", "/api/v1/system/auth/refresh");
+            List.of("/api/v1/system/auth/login", "/api/v1/system/auth/refresh", "/api/v1/outpatient/portal/**");
 
     /** 认证拦截拦截路径：全部业务 API（含未来模块，P0 只做认证 401 不做 403 鉴权） */
     private static final String INTERCEPT_PATH_PATTERN = "/api/v1/**";

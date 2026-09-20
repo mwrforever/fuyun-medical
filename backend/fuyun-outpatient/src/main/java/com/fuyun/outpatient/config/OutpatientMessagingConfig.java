@@ -8,6 +8,8 @@ import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.DelayQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.internal.DelayEnvelopeSender;
+import com.fuyun.outpatient.internal.OutpatientAppointmentTimeoutListener;
 import com.fuyun.outpatient.internal.OutpatientEventPublisher;
 import com.fuyun.outpatient.properties.OutpatientProperties;
 import java.util.Arrays;
@@ -25,7 +27,7 @@ import org.springframework.context.annotation.Import;
  * 监听器类同步追加进 @Import（先登记后订阅红线）。
  */
 @Configuration
-@Import(OutpatientEventPublisher.class)
+@Import({OutpatientEventPublisher.class, DelayEnvelopeSender.class, OutpatientAppointmentTimeoutListener.class})
 @EnableConfigurationProperties(OutpatientProperties.class)
 public class OutpatientMessagingConfig {
 
