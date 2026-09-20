@@ -2,6 +2,24 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-20 · P1 PR-5 计划增补：UI 设计系统与 taste-skill 深度打磨任务（用户增补指令）
+
+- **增补依据**：用户 2026-09-20 增补指令——用 ui-ux-pro-max 插件对 PR-5 前端整体布局/
+  样式/交互/动画产出设计方案并应用；落地后用 taste-skill 插件对组件/样式/交互/动画
+  全面深度打磨；两插件均为执行 subagent 开工强制加载项。
+- **设计方案入库**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`（755 行，
+  PR-5 计划伴随规范）——设计 token 系统（`--fuy-*` 命名空间、临床蓝 #0369A1 经
+  `:root:root` 双写覆盖 `--el-*` 梯度、白字对比 5.93:1）、五页布局骨架（workstation
+  挂号收费联动/分诊台/医生站三栏体系+portal 480px 移动优先+bigscreen 暗色三段
+  grid 与 rem 缩放零媒体查询）、组件定制样式、交互三态、动画编排（仅 transform/
+  opacity 合成层、FLIP 用 Vue TransitionGroup 零依赖、prefers-reduced-motion 全局
+  兜底）、性能红线与落地自查清单。
+- **计划增补**（+67/-6，15→16 任务）：Global Constraints 增「UI 设计系统红线」（设计
+  文档为前端视觉唯一权威）；前置项增 P-10；Task 13 增 token 落位与设计对照步骤；
+  新增 Task 16「UI 深度打磨」（taste-skill 强制加载：design-taste-frontend/
+  high-end-visual-design/minimalist-ui/redesign-existing-projects；执行序 13→14→16→15，
+  打磨完成后进收口）；Handoff 待批项增第 10 条、SDD 派发强制加载设计技能声明。
+
 ## 2026-09-20 · P1 PR-5 计划定稿：M03 门诊主流程实施计划（docs-only）
 
 - **计划本体**：`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`（1865 行/15 任务/
