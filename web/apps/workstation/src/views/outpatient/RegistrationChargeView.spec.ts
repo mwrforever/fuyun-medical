@@ -157,7 +157,9 @@ describe('挂号收费联动页', () => {
           itemNameSnapshot: '普通挂号费',
           quantity: 1,
           amount: '1050',
-          status: 'UNPAID',
+          // FeeRecordVO.status 词表（后端 FeeStatus 枚举）：待缴=PENDING；真机 D-1 前误用
+          // AppointmentVO.feeStatus 的 UNPAID 致过滤恒假（mock 随之纠偏，防回归假绿）
+          status: 'PENDING',
         },
       ],
       page: 0,
@@ -239,6 +241,66 @@ describe('挂号收费联动页', () => {
     // 缴费完成态绿色对勾区 + 记录表登记一行
     expect(wrapper.text()).toContain('收费完成');
     expect(wrapper.text()).toContain('OAPPT-20260921-0001');
+    wrapper.unmount();
+  });
+
+  it('费用词表回归锚（真机 D-1）：FeeRecordVO.status=PENDING 行进收费面板，SETTLED 行不进', async () => {
+    vi.mocked(searchPatients).mockResolvedValue({
+      content: [patientMock()],
+      page: 0,
+      size: 10,
+      total: 1,
+    });
+    vi.mocked(listAvailablePools).mockResolvedValue([poolMock(8)]);
+    vi.mocked(createAppointment).mockResolvedValue(appointmentTakenMock());
+    // 双行对照：PENDING（待缴，FeeStatus 词表）应在面板；SETTLED（已结算）应被过滤——
+    // 钉死 FeeRecordVO.status 与 AppointmentVO.feeStatus（UNPAID/PAID/REFUNDED）两套词表边界
+    vi.mocked(listFees).mockResolvedValue({
+      content: [
+        {
+          id: '701',
+          feeNo: 'FEE-1',
+          visitId: 'O2026092100001',
+          itemNameSnapshot: '普通挂号费',
+          quantity: 1,
+          amount: '1050',
+          status: 'PENDING',
+        },
+        {
+          id: '702',
+          feeNo: 'FEE-2',
+          visitId: 'O2026092100001',
+          itemNameSnapshot: '诊查费（已结算行）',
+          quantity: 1,
+          amount: '800',
+          status: 'SETTLED',
+        },
+      ],
+      page: 0,
+      size: 20,
+      total: '2',
+    });
+    const wrapper = mount(RegistrationChargeView);
+    await flushPromises();
+
+    // 走挂号链拉起费用面板（TAKEN 直出 visitId 自动 loadFees）
+    await wrapper.find('input[placeholder="姓名/证件号/手机号"]').setValue('张');
+    await clickButton(wrapper, '检索患者');
+    await flushPromises();
+    await wrapper.find('.fuy-patient-row').trigger('click');
+    await wrapper.find('input[placeholder="诊区编码，如 DEPT-INT"]').setValue('DEPT-INT');
+    wrapper.findComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-09-21');
+    await flushPromises();
+    await clickButton(wrapper, '查询号源');
+    await flushPromises();
+    await wrapper.find('button.registration-charge-pool').trigger('click');
+    await clickButton(wrapper, '确认挂号');
+    await flushPromises();
+
+    // 业务断言：PENDING 待缴行可见且金额在位（分→元展示），SETTLED 行不进面板
+    expect(wrapper.text()).toContain('普通挂号费');
+    expect(wrapper.text()).toContain('10.50');
+    expect(wrapper.text()).not.toContain('诊查费（已结算行）');
     wrapper.unmount();
   });
 

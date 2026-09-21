@@ -174,8 +174,12 @@ const chargeVisitId = computed(() =>
   lastAppointment.value?.status === 'TAKEN' ? (lastAppointment.value.visitId ?? '') : '',
 );
 
-/** 待缴费用行（status=UNPAID；已结算行不进收费面板） */
-const unpaidFees = computed(() => fees.value.filter((fee) => fee.status === 'UNPAID'));
+/**
+ * 待缴费用行（FeeRecordVO.status 走后端 FeeStatus 词表，PENDING=已生成待确认；
+ * UNPAID/PAID/REFUNDED 是 AppointmentVO.feeStatus 词表勿混淆——Task 15 Step6 真机 D-1：
+ * 误用 UNPAID 过滤恒假致联动面板永不可用，已结算 CONFIRMED/SETTLED 等行不进收费面板）
+ */
+const unpaidFees = computed(() => fees.value.filter((fee) => fee.status === 'PENDING'));
 
 /** 拉取就诊费用（挂号成功联动入口与结算成功重刷共用；完成态由调用方按 visit 变更自行清理） */
 async function loadFees(visitId: string): Promise<void> {

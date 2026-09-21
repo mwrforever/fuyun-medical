@@ -106,17 +106,24 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 const POLL_INTERVAL_MS = 5000;
 
 /**
- * 拉取队列快照并 merge（按票 id 稳定键逐行替换，真实增删才触发行级动画路径——§6.2）。
+ * 拉取队列快照并 merge（按票 id 稳定键，同 id 行复用旧引用原位同步全量可变字段——行级 DOM
+ * 不重挂 §6.2，状态 tag 流转由模板 :key=状态承载）。同状态但内容变化（如二次分诊 RE_TRIAGE
+ * 改派 doctorId）必须同步，否则叫号携旧 doctorId 出网必 4xx——Task 15 Step6 真机 D-3：
+ * 旧实现「同 id 同状态保留旧行」漏同步该场景。增删行自然触发列表 diff。
  * 失败置 error 态（轮询状态点转红）并驻留旧数据。
  */
 async function refreshSnapshot(): Promise<void> {
   try {
     const latest = await getQueueSnapshot({ queueId: deptCode.value });
-    // merge：同 id 行原位替换（引用更新驱动单元格级 tag 流转），增删行自然触发列表 diff
     const current = new Map(tickets.value.map((item) => [item.id, item]));
     tickets.value = latest.map((item) => {
       const existing = current.get(item.id);
-      return existing !== undefined && existing.status === item.status ? existing : item;
+      if (existing === undefined) {
+        return item;
+      }
+      // 同 id 行保留引用、原位并入最新字段（doctorId/priorityScore/queueTime 等全量同步）
+      Object.assign(existing, item);
+      return existing;
     });
     pollHealth.value = 'ok';
   } catch {

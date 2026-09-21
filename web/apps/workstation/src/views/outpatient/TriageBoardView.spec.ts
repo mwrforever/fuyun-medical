@@ -1,12 +1,14 @@
 // 分诊台页单测（FU-M03-04 前端面）：渲染断言（操作条/轮询提示/空态）、报到显式格式校验
 // （空值与形态违规两道前置拦截零出网——W-22⑦ 同款禁裸提交）、报到出网参数、行动作在途守卫
-// （W-22⑥：慢响应窗口按钮禁用且二次点击零出网）、调级确认带回显摘要。
-// api mock 承载，不打真实网络；轮询 5s 周期在用例时间窗内零触发，卸载清理定时器。
+// （W-22⑥：慢响应窗口按钮禁用且二次点击零出网）、调级确认带回显摘要、轮询 merge 可变字段
+// 同步（真机 D-3：二次分诊改派 doctorId 后叫号须携新值出网）。
+// api mock 承载，不打真实网络；轮询 5s 周期在用例时间窗内零触发（merge 用例经
+// visibilitychange 事件驱动单次刷新），卸载清理定时器。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { adjustTriage, checkIn, getQueueSnapshot, passTicket } from '@/api/outpatient';
+import { adjustTriage, callNext, checkIn, getQueueSnapshot, passTicket } from '@/api/outpatient';
 import type { QueueTicketVO } from '@/api/outpatient';
 import TriageBoardView from './TriageBoardView.vue';
 
@@ -81,6 +83,7 @@ describe('分诊台', () => {
     vi.mocked(checkIn).mockReset();
     vi.mocked(adjustTriage).mockReset();
     vi.mocked(passTicket).mockReset();
+    vi.mocked(callNext).mockReset();
     vi.mocked(getQueueSnapshot).mockReset();
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.success).mockClear();
@@ -234,6 +237,29 @@ describe('分诊台', () => {
       targetQueue: undefined,
       doctorId: undefined,
     });
+    wrapper.unmount();
+  });
+
+  it('轮询 merge 同步可变字段（真机 D-3）：同 id 同状态回包改派 doctorId 后，叫号携新值出网', async () => {
+    // 首拉：WAITING 行派给 d1
+    vi.mocked(getQueueSnapshot).mockResolvedValue([
+      ticketMock({ id: '1', ticketNo: 'A003', status: 'WAITING', doctorId: 'd1' }),
+    ]);
+    const wrapper = mount(TriageBoardView);
+    await flushPromises();
+
+    // 模拟二次分诊（RE_TRIAGE）改派后的下一拍轮询回包：同 id 同状态仅 doctorId 变化
+    vi.mocked(getQueueSnapshot).mockResolvedValue([
+      ticketMock({ id: '1', ticketNo: 'A003', status: 'WAITING', doctorId: 'd2' }),
+    ]);
+    // 轮询 5s 周期不在用例时间窗内触发：经 visibilitychange 恢复可见驱动单次刷新（同 onVisibilityChange 路径）
+    document.dispatchEvent(new Event('visibilitychange'));
+    await flushPromises();
+
+    // 业务断言：叫号请求体携带改派后的 doctorId=d2（旧实现保留旧行致 doctorId 仍为 d1）
+    await clickButton(wrapper, '叫号');
+    await flushPromises();
+    expect(vi.mocked(callNext)).toHaveBeenCalledWith({ deptCode: 'DEPT-INT', doctorId: 'd2' });
     wrapper.unmount();
   });
 });
