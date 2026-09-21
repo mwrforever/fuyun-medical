@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { createDispenseReturn, listDispenses } from '@/api/pharmacy';
 import type { DispenseVO } from '@/api/pharmacy';
+import { dispenseStatusText } from '@/utils/dispenseDisplay';
 
 /** 退药编辑行（与 DispenseItemVO 展示字段 + ReturnLine 录入字段合并，行编辑同构） */
 interface ReturnLineRow {
@@ -42,15 +43,6 @@ const submitting = ref(false);
 
 /** 受理模式：ISSUED_RETURN 发药后实物退 / DISPENSING_CANCEL 发药中明细退场 */
 const mode = ref<'ISSUED_RETURN' | 'DISPENSING_CANCEL'>('ISSUED_RETURN');
-
-/** 发药单状态词表（DispenseVO.status 契约为 string 无生成物枚举；词表与发药工作台同源，
- * 未知态原样回显防后端扩态白屏——F-8 枚举直出修复口径） */
-const DISPENSE_STATUS_TEXT: Record<string, string> = {
-  CREATED: '待配药',
-  PICKING: '配药中',
-  PICKED: '待发药签名',
-  ISSUED: '已发药',
-};
 
 /** 检索发药单：处方号空前置拦截不出网；检回后重建逐行录入（退药数默认 1）。 */
 async function handleSearch(): Promise<void> {
@@ -164,7 +156,7 @@ async function submitReturn(): Promise<void> {
               dispense.dispenseNo ?? '—'
             }}</el-descriptions-item>
             <el-descriptions-item label="单状态">{{
-              DISPENSE_STATUS_TEXT[dispense.status ?? ''] ?? dispense.status ?? '—'
+              dispenseStatusText(dispense.status) || '—'
             }}</el-descriptions-item>
             <el-descriptions-item label="处方号">{{ dispense.rxNo ?? '—' }}</el-descriptions-item>
           </el-descriptions>

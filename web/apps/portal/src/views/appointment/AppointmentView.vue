@@ -573,7 +573,8 @@ onBeforeUnmount(() => {
 }
 
 /* 步骤指示条：3 圆点 + 连接线（§3.3）：当前点品牌实心、已完成 success、未到中性描边；
-   连接线悬于相邻圆点间隙中点（32px gap 内 16px 线段），未到段中性、已越过段随完成态转 success */
+   连接线锚定 li（右缘=label 尾），8+16+8 恰在相邻步骤项 32px gap 内光学居中；
+   未到段中性、已越过段随完成态转 success */
 .appt-steps {
   display: flex;
   align-items: center;
@@ -589,21 +590,20 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--fuy-space-2);
 }
-.appt-step-dot:not(:last-child) .appt-dot::after {
+.appt-step-dot:not(:last-child)::after {
   content: '';
   position: absolute;
-  top: 5px; /* 锚定 12px 圆点本体：垂直中心 6px 减线高半值 */
-  left: calc(100% + 12px); /* 悬于「点-点」40px 间距（8+32）的中段，16px 线段光学居中 */
+  top: calc(50% - 1px); /* li 垂直中心减线高半值，与圆点/文字同行居中 */
+  left: calc(100% + 8px); /* li 右缘出 8px 起线，16px 线段落于 32px gap 中段 */
   width: var(--fuy-space-4);
   height: 2px;
   border-radius: 1px;
   background: var(--fuy-palette-brand-200);
 }
-.appt-step-dot.is-done:not(:last-child) .appt-dot::after {
+.appt-step-dot.is-done:not(:last-child)::after {
   background: var(--fuy-color-success-text);
 }
 .appt-dot {
-  position: relative;
   width: 12px;
   height: 12px;
   border-radius: var(--fuy-radius-full);
