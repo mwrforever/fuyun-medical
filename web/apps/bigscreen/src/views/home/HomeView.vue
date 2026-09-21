@@ -91,13 +91,18 @@ async function handleDisconnect(): Promise<void> {
       <p v-if="connectHint !== ''" class="connect-panel-hint">{{ connectHint }}</p>
     </section>
 
-    <!-- 链路状态区：连接状态徽标 + 当前订阅主题路径 + 已接收帧计数 -->
+    <!-- 链路状态区：连接状态徽标（呼吸点 + 文字）+ 当前订阅主题路径 + 已接收帧计数 -->
     <section class="link-panel">
       <span class="link-panel-state" :class="`link-panel-state--${connectionState}`">
+        <!-- 呼吸点为纯装饰（状态语义由文字承载）；常驻呼吸动画挂 .fuy-loading-essential
+             豁免类（motion.css reduce 兜底下降速不清除，值守语义停转=卡死误判） -->
+        <span class="link-panel-state-dot fuy-loading-essential" aria-hidden="true"></span>
         {{ stateLabel }}
       </span>
       <span>订阅主题：{{ topicPath ?? '未订阅' }}</span>
-      <span>已接收帧数：{{ frameCount }}</span>
+      <span
+        >已接收帧数：<span class="fuy-num">{{ frameCount }}</span></span
+      >
     </section>
 
     <!-- 遥测摘要区：最近一帧覆盖渲染 -->
@@ -106,13 +111,17 @@ async function handleDisconnect(): Promise<void> {
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2）：最小可读样式，完整大屏版式（图表/网格）随 P1 交付 */
+/* 视图级样式隔离（web A.1-2）：暗色遥测值守页（§9.5.1，与新 QueueBoardView §8.5 同一
+   视觉语言）——底色/文本消费 tokens.css 暗色语义变量；完整大屏版式（图表/网格）随 P1 交付 */
 .home-view {
+  background: var(--fuy-screen-bg-base);
+  color: var(--fuy-screen-text-primary);
+  min-height: 100dvh;
   padding: 16px;
 }
 
 .home-view-subtitle {
-  color: #909399;
+  color: var(--fuy-screen-text-secondary);
 }
 
 .connect-panel {
@@ -125,23 +134,48 @@ async function handleDisconnect(): Promise<void> {
 }
 
 .connect-panel-field span {
+  color: var(--fuy-screen-text-secondary);
   display: inline-block;
   width: 72px;
 }
 
+/* 原生控件暗色基线（§4.4/§9.5.1）：panel 底 + hairline 描边（复合简写变量整条消费）
+   + radius-md，输入文本 primary/占位提示 secondary 两档 */
 .connect-panel-field input {
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
+  background: var(--fuy-screen-bg-panel);
+  border: var(--fuy-screen-border-hairline);
+  border-radius: var(--fuy-radius-md);
+  color: var(--fuy-screen-text-primary);
   padding: 4px 8px;
   width: 280px;
+}
+
+.connect-panel-field input::placeholder {
+  color: var(--fuy-screen-text-secondary);
 }
 
 .connect-panel-actions {
   margin-top: 8px;
 }
 
+.connect-panel-actions button {
+  background: var(--fuy-screen-bg-panel);
+  border: var(--fuy-screen-border-hairline);
+  border-radius: var(--fuy-radius-md);
+  color: var(--fuy-screen-text-primary);
+  cursor: pointer;
+  padding: 4px 12px;
+}
+
+.connect-panel-actions button:hover {
+  /* 悬停反馈（交互三态基础）：抬升一档面板底，无过渡动画（值守页克制口径） */
+  background: var(--fuy-screen-bg-elevated);
+}
+
+/* 键盘焦点环由 motion.css 全局 :focus-visible 承载（brand 描边 + 0 0 0 3px 柔光环，
+   与 §9.5.1 基线同值），scoped 零重复声明 */
 .connect-panel-hint {
-  color: #e6a23c;
+  color: var(--fuy-screen-warn);
   margin-top: 8px;
 }
 
@@ -152,24 +186,49 @@ async function handleDisconnect(): Promise<void> {
   margin-top: 16px;
 }
 
+/* 连接状态徽标 = 8px 呼吸点 + 1.25rem 文字（§9.5.1）：状态色由 color 承载，
+   圆点经 currentColor 同色，三态 ok/warn/secondary */
 .link-panel-state {
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  padding: 2px 10px;
+  align-items: center;
+  display: inline-flex;
+  font-size: 1.25rem;
+  gap: 8px;
 }
 
 .link-panel-state--connected {
-  border-color: #67c23a;
-  color: #67c23a;
+  color: var(--fuy-screen-ok);
 }
 
 .link-panel-state--connecting {
-  border-color: #e6a23c;
-  color: #e6a23c;
+  color: var(--fuy-screen-warn);
 }
 
 .link-panel-state--disconnected {
-  border-color: #909399;
-  color: #909399;
+  color: var(--fuy-screen-text-secondary);
+}
+
+.link-panel-state-dot {
+  animation: fuy-dot-breathe 1.2s linear infinite alternate;
+  background: currentColor;
+  border-radius: var(--fuy-radius-full);
+  display: inline-block;
+  height: 8px;
+  width: 8px;
+}
+
+/* 常驻呼吸（§6：opacity 1→.4 alternate 1.2s linear，仅 opacity 单属性；状态指示豁免面，
+   reduce 下经 .fuy-loading-essential 降速 1.5s 不清除） */
+@keyframes fuy-dot-breathe {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+
+/* 数字等宽防宽度跳动（§9.7-2）：bigscreen 无 EP 无全局工具类，SFC 内最小定义 */
+.fuy-num {
+  font-variant-numeric: tabular-nums;
 }
 </style>
