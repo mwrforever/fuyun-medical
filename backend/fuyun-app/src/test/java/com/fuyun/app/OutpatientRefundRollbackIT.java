@@ -297,9 +297,12 @@ class OutpatientRefundRollbackIT extends FuyunStackITBase {
         ObjectNode draft = objectMapper.createObjectNode();
         draft.put("itemCode", itemCode)
                 .put("price", priceFen)
+                // 生效起点必须取 UTC 当日零点（与取价侧注入时钟的 UTC 口径同源）：取价判定为
+                // effective_from <= now 的 DB 区间直查，若误用 JVM 默认时区（+08:00）的当日，
+                // 本地 00:00-08:00 时段生效起点会落在未来 8 小时，手工计费必报 BILL-1008
                 .put(
                         "effectiveFrom",
-                        LocalDate.now()
+                        LocalDate.now(java.time.ZoneOffset.UTC)
                                 .atStartOfDay()
                                 .toInstant(java.time.ZoneOffset.UTC)
                                 .toString())
