@@ -1,0 +1,165 @@
+/**
+ * 动效层：动效 token（§2.6）+ 过渡/动画类（§6，含 bigscreen 叫号三段编排 §6.3）+
+ * 暗色版键盘焦点环（§5.3 / §9.5.1）+ prefers-reduced-motion 全局兜底（§6.9）。
+ * 铁律：动画属性仅 transform 与 opacity（叫号脉冲底色走伪元素 opacity 承载）；
+ * 常驻动画仅连接状态呼吸点（状态指示豁免面）；will-change 仅限当前叫号卡。
+ */
+
+/* 时长阶梯：fast=微反馈；base=显隐过渡；slow=进场/FLIP；observe=叫号脉冲（slow × 3） */
+:root {
+  --fuy-motion-fast: 120ms;
+  --fuy-motion-base: 200ms;
+  --fuy-motion-slow: 320ms;
+  --fuy-motion-observe: 960ms; /* bigscreen 叫号脉冲 = slow × 3 */
+
+  --fuy-ease-standard: cubic-bezier(0.2, 0, 0, 1); /* 默认：位移/尺寸 */
+  --fuy-ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* 进场减速（快出缓停） */
+  --fuy-ease-exit: cubic-bezier(0.4, 0, 1, 1); /* 离场加速 */
+  --fuy-ease-emphasis: cubic-bezier(0.34, 1.56, 0.64, 1); /* 唯一过冲曲线：仅成功确认时刻 */
+
+  --fuy-motion-stagger: 40ms; /* 进场级联步长，最多 6 档，第 7 项起并发播放 */
+}
+
+/* 键盘焦点环（暗色版 §5.3）：亮描边 + 柔光环，3 米外值守场景焦点可见 */
+:focus-visible {
+  outline: 2px solid var(--fuy-screen-brand);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
+}
+
+/* 页面/卡片进场 stagger：属性 opacity+transform，触发于组件 mounted（CSS 动画自动播放）；
+   子元素模板内联 --fuy-stagger-index 指定级联序（≤5 封顶，第 6 项起恒为 5 并发） */
+.fuy-stagger > * {
+  animation: fuy-rise var(--fuy-motion-slow) var(--fuy-ease-enter) both;
+  animation-delay: calc(var(--fuy-stagger-index, 0) * var(--fuy-motion-stagger));
+}
+@keyframes fuy-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 列表项增删 FLIP：Vue 内建 TransitionGroup 的 move class 即 FLIP（transform 反演播放），
+   零依赖；候诊榜 merge 更新时稳定 key 才触发，REST/WS 快照禁整表重挂 */
+.fuy-flip-move {
+  transition: transform var(--fuy-motion-slow) var(--fuy-ease-standard);
+}
+.fuy-flip-enter-active {
+  transition:
+    opacity var(--fuy-motion-base) var(--fuy-ease-enter),
+    transform var(--fuy-motion-base) var(--fuy-ease-enter);
+}
+.fuy-flip-enter-from {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+.fuy-flip-leave-active {
+  position: absolute; /* 脱流使 move 平滑（TransitionGroup 要求） */
+  transition:
+    opacity var(--fuy-motion-fast) var(--fuy-ease-exit),
+    transform var(--fuy-motion-fast) var(--fuy-ease-exit);
+}
+.fuy-flip-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* 叫号跳前高亮（bigscreen 核心动画三段编排 §6.3）：WS CALLED 帧到达且票号变化时，
+   当前叫号卡内容 :key="ticketNo" 重挂触发——卡片入场 320ms + ::after 叠加层身份脉冲
+   960ms（两次明暗波，动画其 opacity）+ 票号 scale 强调 320ms；播完即止不驻留合成层 */
+.fuy-call-card {
+  will-change: transform, opacity; /* 全站仅两处允许面之一，动画结束由浏览器回收 */
+  position: relative;
+  overflow: hidden;
+}
+.fuy-call-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--fuy-screen-call);
+  opacity: 0;
+  animation: fuy-call-flash var(--fuy-motion-observe) linear both;
+  pointer-events: none;
+}
+@keyframes fuy-call-flash {
+  0% {
+    opacity: 0.9;
+  }
+  33% {
+    opacity: 0.1;
+  }
+  66% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.fuy-call-no {
+  animation: fuy-call-pop var(--fuy-motion-slow) var(--fuy-ease-standard) both;
+}
+@keyframes fuy-call-pop {
+  0% {
+    transform: scale(1);
+  }
+  60% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 状态标签流转：Transition name="fuy-tag-flip" mode="out-in"（:key=状态值）；
+   120ms 进 / 120ms 出，scale 0.8→1；暗色版 tag 用文字色+描边（非 EP tag） */
+.fuy-tag-flip-enter-active {
+  transition:
+    opacity var(--fuy-motion-fast) var(--fuy-ease-enter),
+    transform var(--fuy-motion-fast) var(--fuy-ease-enter);
+}
+.fuy-tag-flip-leave-active {
+  transition: opacity var(--fuy-motion-fast) var(--fuy-ease-exit);
+  position: absolute;
+}
+.fuy-tag-flip-enter-from {
+  opacity: 0;
+  transform: scale(0.8);
+}
+.fuy-tag-flip-leave-to {
+  opacity: 0;
+}
+
+/* 骨架屏 → 内容切换：Transition + v-if="!loading"，200ms opacity 单属性；
+   骨架与内容不做交叉溶解（占位高度差用 min-height 锁定防 CLS） */
+.fuy-content-fade-enter-active {
+  transition: opacity var(--fuy-motion-base) var(--fuy-ease-enter);
+}
+.fuy-content-fade-enter-from {
+  opacity: 0;
+}
+
+/* prefers-reduced-motion 全局兜底：reduce 下全部动画/过渡直达终态（叫号卡无闪烁，
+   票号直接切换为终态） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* 唯一豁免类：加载指示（状态语义，停转=卡死误判）——bigscreen 连接状态呼吸点属此面，
+     豁免元素降速不清除 */
+  .fuy-loading-essential,
+  .fuy-loading-essential::before,
+  .fuy-loading-essential::after {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
