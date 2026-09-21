@@ -136,9 +136,17 @@ async function handleQuery(): Promise<void> {
           </div>
         </div>
       </Transition>
-      <!-- 未查询引导空态（F-6）：业务口径指路，非「暂无数据」（§4.4）；
-           显式 v-if——前驱 v-if 在 Transition 内，v-else 链被组件隔断不合法 -->
-      <el-empty v-if="!result" :image-size="72" description="输入就诊号与清单日期查询费用明细" />
+      <!-- 首查加载走骨架、未查询给引导空态（§4.4 二分：首屏骨架/结果区刷新 v-loading；
+           批次 3 移交打磨项——原首查窗口 el-empty 与按钮转圈并存） -->
+      <el-skeleton v-if="loading && result === null" :rows="4" animated />
+      <!-- 未查询引导空态（F-6）：业务口径指路，非「暂无数据」（§4.4）；与上方首查骨架构成
+           同层 v-if/v-else-if 分支链（非加载且无结果时呈现），result 就绪后由 Transition
+           内结果区承接呈现 -->
+      <el-empty
+        v-else-if="!result"
+        :image-size="72"
+        description="输入就诊号与清单日期查询费用明细"
+      />
     </el-card>
   </div>
 </template>

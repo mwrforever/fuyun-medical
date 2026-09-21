@@ -90,10 +90,14 @@ class BillingSettlementFlowIT extends FuyunStackITBase {
     private static final String VISIT_C = visitId("00003");
     private static final long PATIENT_ID = 700101L;
 
-    /** 二级审批账号（财务/医保办侧；IT 就地播种，与申请人/一级审批人三方互异） */
+    /**
+     * 二级审批账号（财务/医保办侧；IT 就地播种，与申请人/一级审批人三方互异）。id 取 4：V704
+     * 起演示医师 doctordemo 占用 sys_user id=3，小整数种子位顺延（PR-5 Task 12 全量门禁实证
+     * id=3 主键冲突的失效修正——Task 9/10/11 门禁范围不含 fuyun-app 致漏红）。
+     */
     private static final String REVIEWER2_LOGIN_NAME = "it-reviewer2";
 
-    private static final long REVIEWER2_USER_ID = 3L;
+    private static final long REVIEWER2_USER_ID = 4L;
 
     private static String adminToken = "";
     private static String reviewerToken = "";

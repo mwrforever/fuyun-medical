@@ -178,6 +178,60 @@
 
 **WebSocket**：`/ws/outpatient/queue/{queueId}`（候诊队列变更与叫号推送：大屏、语音客户端、医生站列表）；`/ws/outpatient/doctor/{doctorId}`（医生站患者到达/报告到达提醒）。语音播报由叫号客户端本地播报，不走 MQ。
 
+> **P1 PR-5 落地注记（2026-09-22，M03 门诊主流程实装交付面）**：本模块已随 P1·PR-5（计划
+> `docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`）部分实装，以下八点为落地口径；
+> 未注记条目（绿通/自助机/治疗执行、M07/M08/M05/M18/M19 消费面等）维持声明面，随 P2/P3 交付。
+> ① **事件契约实装面**：id 23（order.created）/25（order.charged）/31（order.cancelled）载荷经 V204
+> 以「UPDATE（存量卷命中）+ WHERE NOT EXISTS 兜底 INSERT（新库落冻结行）」双语句形态冻结（CF-5 双向
+> 评审声明随 PR，两应用序同终态——偏差①）；新增登记 id 32–40：visit.registered / visit.finished /
+> visit.cancelled、**visit.no-show（id 35）仅登记无发布点**（id 27 先例，禁发布——爽约号源释放与信用
+> 限约在 appointment 链承载，visit 维度为声明态）、appointment.booked / appointment.cancelled /
+> appointment.rescheduled、appointment.timeout（延迟队列回调内部事件，自产自消）、schedule.stopped；
+> **`outpatient.queue.called` 不登记 event_registry**（§7 :166 表述的事件登记豁免——叫号走纯 WS 推送，
+> 无 MQ 发布点）；payload record 全集 11 个（`outpatient/api` 包），字段与 event_registry payload_desc
+> 逐字同源。② **号源池 V200 三表**（schedule_template/schedule/appt_number_pool）与**双道闸降级口径**
+> （Task 4/5 对齐裁定，较 §3.2 声明面收紧）：第一道闸 Redis Lua 余量不足（-1）判 OP-1003 直接拒绝
+> **不降级**（余量谓词旁路即超卖面）；**仅 Redis 异常（连接/超时）降级 DB 条件更新**（第二道闸
+> used<total 谓词，0 行重读重试 ≤2 次后判 OP-1003 并回补 Redis 持有）；加号授权增量 total_quota、
+> extra_used 为占用计数列、extraQuota 同步 INCRBY 池键；池键 `fy:outpatient:pool:{poolId}`
+> TTL=排班日次日 02:00 对账窗口锚。③ **visit_id 签发**（裁决 11）：O+yyyyMMdd+5 位流水的当日流水经
+> Redis 键 `fy:outpatient:visit-seq:{yyyyMMdd}` INCR 承载（TTL=48h；CAS 落败跳号业务无副作用），
+> 签发与 appointment casTake 同事务回填 visit_id。④ **退号四分支**（裁决 7 资金无涉红线）：入口守卫
+> （存在性/终态/线上退号时限）后按态分流——支付时限内未支付免退费直取消+回池 / RESERVED 已付走退费链
+> 原态占位待回执 / TAKEN 走退费链（先核 visit 态）/ 已报到已接诊拒线上退（OP-1010）；退费一律经
+> `OutpatientBillingPort` → billing `POST /api/v1/billing/refunds` **免审档（DAY_CORRECTION 自动直退）
+> 统一通道**，appointment/visit 终态一律消费 `billing.refund.approved` 回执后置（本模块零金额逻辑）；
+> **W-20 规避注记**：P1 挂号费>0 演示数据（0 元结算 400 收窄面已转产品待办 TASK.md W-20，现状规避
+> 路径维持）。⑤ **WS 面**（裁决 12 自建 configurer，禁依赖 fuyun-iot）：`OutpatientWebSocketConfig`
+> 注册 STOMP 端点 `/ws/outpatient`（纯 WebSocket 无 SockJS）+ CONNECT 帧级鉴权拦截器（镜像 iot 形态，
+> 收敛工单 TASK.md W-25）；两目的地 `/topic/outpatient/queue/{deptCode}`（大屏/语音）与
+> `/topic/outpatient/doctor/{doctorId}`（医生站提醒）；REST 快照 `GET /queues/{queueId}/tickets` 与
+> WS 双通道。**§7 :179 通道表述的显式映射（转译关系）**：`/ws/outpatient/queue/{queueId}` 与
+> `/ws/outpatient/doctor/{doctorId}` 系沿 iot 范式的「端点/目的地」两段式声明——实装=统一 STOMP 端点
+> `/ws/outpatient` + 订阅目的地 `/topic/outpatient/queue/{deptCode}`（**queueId=dept_code 诊区队列**，
+> 偏差⑧）/ `/topic/outpatient/doctor/{doctorId}`；Spec 路径字面**非直连 URL**，客户端按端点连接、
+> 按目的地订阅。⑥ **portal 匿名通道**（裁决 13）：`/api/v1/outpatient/portal/**` 单条目入
+> SystemWebConfig 免认证白名单（PortalAppointmentController 三端点：`GET /portal/schedules` 号源查询、
+> `POST /portal/appointments` 预约、`POST /portal/appointments/{no}/cancel` 退号），免 401；服务端经
+> 介质解析（标识号→patientId，patient api 端口）定患者，操作者留痕取哨兵值 `PORTAL`（不经
+> OperatorContextHolder）；**portal 患者账号体系随 M18/P6 完整化**（P1 演示口径），限流/风控同随
+> M18 注记。⑦ **演示终点直线段声明**（裁决 0）：P1 验收直线段=挂号→就诊→开单→收费→发药→诊毕；
+> visit 枚举 IN_EXECUTION/PENDING_MEDICATION/NO_SHOW 与 clinic_order 枚举 IN_EXECUTION/COMPLETED 为
+> **声明态**——仅注册状态机合法迁移对（javadoc 注记触发事件源与阶段），P1 无生产触发点（lab/imaging
+> 执行回执事件源 P3 前缺位、发药回执仅做「已发药」聚合展示），非死代码豁免面。⑧ **排除面回执**：
+> FU-M03-09（门诊护士站/治疗室）/FU-M03-10（急诊绿通）/FU-M03-11（自助机）P1 排除，与 P1 计划
+> :108-110 对齐——`outpatient.order.executed` 不登记不实装、green_channel_record 不建表、
+> `billing.charge.guaranteed` 不订阅、`outpatient.green-channel.opened/closed` 不登记、
+> kiosk_terminal/kiosk_txn_log 不建表；分诊台仅承载报到/二次分诊/调级（绿通置顶随排除面顺延）。
+> **契约缝三条**（P1 契约增补回补，禁虚构契约未呈现——前端对应呈现面缺失已在交付面注记归因）：
+> **D-2** QueueTicketVO 缺 triageLevel（分诊台级别徽标列无从取数）；**D-3** ClinicOrderVO 缺
+> dispense_status（医生站「已发药」镜像列无从取数）；**D-9** TriageAdjustRequest 缺 reason（调级
+> 理由必填未呈现）。**D-4 schema 同名坍缩归因**：springdoc 注册层 outpatient `ClinicOrderVO.Item`
+> （itemCode/quantity/usageSummary）与 pharmacy `PrescriptionOpenRequest.Item`（drugId/quantity/…）
+> 内嵌 record 共名 `Item`，openapi 生成物中两者坍缩为单一 `Item` schema（ClinicOrderVO.items 反向
+> 引用 pharmacy 形态；openapi-typescript 系忠实镜像，运行时消费无行为损害）；根治=后端 dto 改名，
+> 随 P1 契约增补一并处置。
+
 ## 8. 集成点
 
 - **M01**：认证与 RBAC（号源配置/退号/加号/绿通启用/退费入口/信用解除独立权限点）；执业授权强校验（开方与开单前调 `POST /api/v1/system/practice/check`）；字典（号别/就诊类型/离院去向引用 M01 字典 code，不自建副本）；通知中心（预约/停诊/叫号提醒多通道）；打印模板（号条/票号/瓶贴/治疗单）；审计切面；订阅其主数据广播事件刷新缓存。

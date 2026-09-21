@@ -25,10 +25,12 @@ import com.fuyun.billing.service.impl.DailyListServiceImpl;
 import com.fuyun.billing.service.impl.DepositServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceCallLogServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceMappingServiceImpl;
+import com.fuyun.billing.service.impl.OutpatientBillingPortImpl;
 import com.fuyun.billing.service.impl.PrescriptionFeePortImpl;
 import com.fuyun.billing.service.impl.PricingEngineServiceImpl;
 import com.fuyun.billing.service.impl.PricingRuleServiceImpl;
 import com.fuyun.billing.service.impl.RefundServiceImpl;
+import com.fuyun.billing.service.impl.SettlementQueryPortImpl;
 import com.fuyun.billing.service.impl.SettlementServiceImpl;
 import java.time.Clock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -58,6 +60,8 @@ import org.springframework.context.annotation.Import;
     DepositServiceImpl.class,
     DailyListServiceImpl.class,
     InsuranceCallLogServiceImpl.class,
+    OutpatientBillingPortImpl.class,
+    SettlementQueryPortImpl.class,
     ChargeItemController.class,
     InsuranceMappingController.class,
     PricingRuleController.class,

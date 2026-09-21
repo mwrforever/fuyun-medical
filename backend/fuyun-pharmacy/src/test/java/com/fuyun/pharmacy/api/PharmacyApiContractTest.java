@@ -15,12 +15,12 @@ import org.junit.jupiter.api.Test;
 class PharmacyApiContractTest {
 
     @Test
-    @DisplayName("PH 码值唯一且形态合规（16 码位）")
+    @DisplayName("PH 码值唯一且形态合规（18 码位——PH-1018 凭证不符随 PR-5 Task 11 顺延增补）")
     void errorCodesAreUniqueAndWellFormed() {
         assertThat(Arrays.stream(PharmacyErrorCode.values()).map(PharmacyErrorCode::getCode))
                 .allMatch(code -> code.matches("^PH-1\\d{3}$"))
                 .doesNotHaveDuplicates()
-                .hasSize(16);
+                .hasSize(18);
     }
 
     @Test

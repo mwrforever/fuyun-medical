@@ -202,24 +202,31 @@
 
 **WebSocket**：`/ws/pharmacy/review-tasks`（审方工作台实时任务推送与队列变更）；其余提醒（效期预警、补药提醒、审方超时升级、毒麻差异告警）经 M01 通知中心站内信通道投递，不自建重复通道。
 
-> **P1 PR-4 落地注记（2026-09-18，CF-5 冻结载体）**：① 事件 id 排定——prescription.created=id 24
+> **P1 PR-4 落地注记（2026-09-18，CF-5 冻结载体；2026-09-22 PR-5 收口回填）**：① 事件 id 排定——prescription.created=id 24
 > （V605 占位经 V702 UPDATE 载荷冻结：prescriptionId/rxNo/visitId/patientId/lines[]{itemCode,
-> quantity,usageSummary}，prescriptionId=rx_no 业务号）、order.charged=id 25 / order.cancelled=id 31
-> （outpatient 占位，生产发布方随 PR-5）、prescription.cancelled=26、prescription.rejected=27
-> （P3 引擎前无发布点）、dispense.completed=28、dispense.returned=29、drug.changed=30；总行 31。
-> ② 审方预检为占位级（恒通过，CREATED→APPROVED 同事务），practice/check 未接线（TODO(PR-5)）。
+> quantity,usageSummary}，prescriptionId=rx_no 业务号）；**order.charged=id 25 / order.cancelled=id 31
+> 生产发布方已随 PR-5 回切实装**（outpatient V204 载荷冻结：charged 携 settlementId/settleNo/orderNos[]/
+> rxNos[]/greenChannelFlag 精确清单、cancelled 携 orderNo/rxNos[]/reason；rxNos 清单由 outpatient 经
+> billing SettlementQueryPort 反查承载——PR-4 占位语义终止）；prescription.cancelled=26、prescription.rejected=27
+> （P3 引擎前无发布点）、dispense.completed=28、dispense.returned=29、drug.changed=30；registry 总行
+> 31→**40**（outpatient id 32–40 登记后）。② 审方预检为占位级（恒通过，CREATED→APPROVED 同事务）；
+> **practice/check 双端接线完成（TODO(PR-5) 已清除）**——本模块开方侧 PH-1017 经 system api
+> PracticeCheckPort 强校验（403），outpatient 开单侧 OP-1017 同端口校验（PR-5 Task 9 交付）。
 > ③ 批次账最小实现：仅 ISSUE/RETURN_RESTOCK 两类动作，选批 FEFO 单批足量（拆批随 P3）。
 > ④ M13（本仓 billing）占用回写已接线（dispense.completed→DISPENSED/returned fullReturn→NONE）；
 > `GET /medication-occupancy` 交付 API 位、billing 暂不切（P3 注记维持）。⑤ 订阅实装集：fee.created/
-> refund.approved/order.charged(占位)/order.cancelled(占位)/system.dict.published（版本水位）/
-> patient.merged/split（读侧归一）；其余 §7 声明订阅随 P3/P2 注记。⑥ 未发药作废取消：cancel API
-> 仅承载未缴费（APPROVED/PENDING_FEE），已缴费（PENDING_DISPENSE+）拒绝并引导退药/退费链；
-> :132 的 PENDING_DISPENSE/DISPENSING→CANCELLED 完整作废路径随 PR-5（outpatient.order.cancelled
-> 终态确认回切）落地。⑦ 已知收口缺口（P3）：confirmRefundTerminal 以患者维度镜像处方终态，
-> 同患者其他在途发药单存在被提前置终态的误伤面——P3 收口（billing refund.approved 载荷补 rxNo
-> 或经 api 端口单据化精确定位；载荷变更属 CF-4 冻结面，须双向评审）。⑧ 豁免两条：Spec :154
-> 字典版本化审核随 P3 药事管理交付；扫码核对中的取药凭证核对随 PR-5 凭证载体交付（本 PR 以
-> 追溯码逐码核验承载防回流）。
+> refund.approved/order.charged（PR-5 起生产实装）/order.cancelled（PR-5 起生产实装：未发药处方作废与
+> 退药单终态确认）/system.dict.published（版本水位）/patient.merged/split（读侧归一）；其余 §7 声明
+> 订阅随 P3/P2 注记。⑥ 未发药作废取消：cancel API 仅承载未缴费（APPROVED/PENDING_FEE），已缴费拒绝并
+> 引导退药/退费链维持；**:132 的 PENDING_DISPENSE/DISPENSING→CANCELLED 完整作废路径已随
+> order.cancelled 实装**（PR-5 Task 11：未发药处方作废/活动发药单含 PICKED 退场+批次锁释放，ISSUED
+> 挂单=脏数据显式拒）。⑦ 原已知收口缺口（P3）：confirmRefundTerminal 以患者维度镜像处方终态的误伤面
+> **已收口（PR-5）**——按「billing api 端口单据化精确定位」落定：confirmRefundTerminalByRx 以 rxNos
+> 单据清单精确定位（releaseByVisit/confirmRefundTerminal 旧签名废除，偏差⑤），两候选路径（载荷补
+> rxNo vs 端口反查）落定记录=**SettlementQueryPort 反查、CF-4 载荷零变更**（零 billing 文件触碰实证）。
+> ⑧ 豁免两条：Spec :154 字典版本化审核随 P3 药事管理交付；扫码核对中的取药凭证核对**已随 PR-5 凭证
+> 载体落地**（凭证=settlementNo，verify 端点可选 body 核验凭证与处方归属一致性 PH-1018，无凭证调用
+> 向后兼容——豁免面闭合）。
 
 ## 8. 集成点
 

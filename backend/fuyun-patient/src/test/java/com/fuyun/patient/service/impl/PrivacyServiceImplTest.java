@@ -17,6 +17,7 @@ import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.api.CareRelationQuery;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.entity.Patient;
@@ -41,6 +42,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * 明文查阅与留痕服务单测（FU-M02-06 双留痕出口）：403 无豁免前置拒绝不落台账、豁免放行台账落痕、
@@ -61,6 +63,9 @@ class PrivacyServiceImplTest {
     @Mock
     private PatientFieldCrypto crypto;
 
+    @Mock
+    private ObjectProvider<CareRelationQuery> careRelationProvider;
+
     private PrivacyServiceImpl privacyService;
 
     @BeforeAll
@@ -72,7 +77,9 @@ class PrivacyServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        privacyService = new PrivacyServiceImpl(privacyMaskService, patientService, privacyAccessLogMapper, crypto);
+        // 本类既有用例锚定单门禁与放行主链：SPI 探针不桩 getIfAvailable（返回 null=容器无实现语义）
+        privacyService = new PrivacyServiceImpl(
+                privacyMaskService, patientService, privacyAccessLogMapper, crypto, careRelationProvider);
         // 豁免角色与操作人上下文种子（ADMIN 命中种子规则豁免清单）；用例间隔离收尾必清
         RoleContextHolder.set(List.of("ADMIN"));
         OperatorContextHolder.set("op-001");

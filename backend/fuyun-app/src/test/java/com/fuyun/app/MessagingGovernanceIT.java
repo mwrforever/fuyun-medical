@@ -298,19 +298,19 @@ class MessagingGovernanceIT {
 
     @Test
     @Order(1)
-    @DisplayName("冻结登记断言：event_registry 三十一条种子行齐全且全部 ACTIVE，system.dict.published 生产方为 system")
+    @DisplayName("冻结登记断言：event_registry 四十条种子行齐全且全部 ACTIVE，system.dict.published 生产方为 system")
     void seedRegistryRowsAreFrozenAndActive() {
         // 总量口径：V5 七条 + V403 iot 一条 + V105 患者域八条（id 9–16）+ V605 billing 域八条
-        // （id 17–24）+ V702 pharmacy 域七条（id 25–31：outpatient 占位二 + pharmacy 发布四
-        // + prescription.rejected 占位一；id 24 系 V605 占位行经 V702 UPDATE 载荷冻结，不增行）
+        // （id 17–24）+ V702 pharmacy 域七条（id 25–31）+ V204 outpatient 域九条（id 32–40；
+        //   id 23/25/31 系 V605/V702 占位行经 V204 UPDATE 冻结，不增行）
         Integer totalRows =
                 jdbcTemplate.queryForObject("SELECT count(*) FROM integration.event_registry", Integer.class);
-        assertThat(totalRows).isEqualTo(31);
+        assertThat(totalRows).isEqualTo(40);
         Integer activeRows = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM integration.event_registry WHERE status = ?",
                 Integer.class,
                 MessagingConstants.REGISTRY_STATUS_ACTIVE);
-        assertThat(activeRows).isEqualTo(31);
+        assertThat(activeRows).isEqualTo(40);
         String producer = jdbcTemplate.queryForObject(
                 "SELECT producer_module FROM integration.event_registry WHERE event_type = ?",
                 String.class,

@@ -16,6 +16,7 @@ import {
   verifyDispense,
 } from '@/api/pharmacy';
 import type { DispenseVO, PrescriptionVO } from '@/api/pharmacy';
+import { dispenseStatusText } from '@/utils/dispenseDisplay';
 import { useAuthStore } from '@/stores/auth';
 
 /** 待发处方队列（status=PENDING_DISPENSE） */
@@ -32,17 +33,10 @@ const auth = useAuthStore();
  */
 const dispensing = ref(false);
 
-/** 发药单状态展示词表（未知态原样透出，防后端扩态即白屏） */
-const dispenseStatusText: Record<string, string> = {
-  CREATED: '待配药',
-  PICKING: '配药中',
-  PICKED: '待发药签名',
-  ISSUED: '已发药',
-};
-
-/** 发药单状态 tag 语义映射（§4.3 映射法）：待配药 primary、配药中 warning、
+/** 发药单状态 tag 色型映射（§4.3 映射法；文案词表走 utils/dispenseDisplay 单源——
+ * 与退药受理页共用，色型仅本页消费故页内承载）：待配药 primary、配药中 warning、
  * 待发药签名 success、已发药 info；未知态归 info 防不确定色彩语义。
- * 文案词表与色型词表分离——tag 仅使三按钮启停语义显性化，不改按钮启停逻辑 */
+ * tag 仅使三按钮启停语义显性化，不改按钮启停逻辑 */
 const dispenseStatusTagType: Record<string, 'primary' | 'success' | 'warning' | 'info'> = {
   CREATED: 'primary',
   PICKING: 'warning',
@@ -234,7 +228,7 @@ onMounted(loadQueue);
                   :type="dispenseStatusTagType[dispense.status ?? ''] ?? 'info'"
                   class="fuy-tag-aa"
                 >
-                  {{ dispenseStatusText[dispense.status ?? ''] ?? dispense.status }}
+                  {{ dispenseStatusText(dispense.status) }}
                 </el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="调配人">{{

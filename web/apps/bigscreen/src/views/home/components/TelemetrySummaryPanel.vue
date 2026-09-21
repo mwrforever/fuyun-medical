@@ -93,9 +93,4 @@ const { summary, frameCount } = defineProps<TelemetrySummaryPanelProps>();
 .telemetry-panel-table tbody tr:nth-child(even) {
   background: #0d2132;
 }
-
-/* 数字等宽防宽度跳动（§9.7-2）：bigscreen 无 EP 无全局工具类，SFC 内最小定义 */
-.fuy-num {
-  font-variant-numeric: tabular-nums;
-}
 </style>

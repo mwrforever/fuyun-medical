@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { createDispenseReturn, listDispenses } from '@/api/pharmacy';
 import type { DispenseVO } from '@/api/pharmacy';
+import { dispenseStatusText } from '@/utils/dispenseDisplay';
 
 /** 退药编辑行（与 DispenseItemVO 展示字段 + ReturnLine 录入字段合并，行编辑同构） */
 interface ReturnLineRow {
@@ -154,7 +155,9 @@ async function submitReturn(): Promise<void> {
             <el-descriptions-item label="发药单号">{{
               dispense.dispenseNo ?? '—'
             }}</el-descriptions-item>
-            <el-descriptions-item label="单状态">{{ dispense.status ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item label="单状态">{{
+              dispenseStatusText(dispense.status) || '—'
+            }}</el-descriptions-item>
             <el-descriptions-item label="处方号">{{ dispense.rxNo ?? '—' }}</el-descriptions-item>
           </el-descriptions>
 

@@ -4,3 +4,9 @@
  */
 @import './tokens.css';
 @import './motion.css';
+
+/* 数字等宽防宽度跳动（§9.7-2，全站通用工具类）：原 TelemetrySummaryPanel/HomeView 两 SFC
+   scoped 重复定义上收全局单源（批次 5 移交打磨项），SFC 内零副本 */
+.fuy-num {
+  font-variant-numeric: tabular-nums;
+}

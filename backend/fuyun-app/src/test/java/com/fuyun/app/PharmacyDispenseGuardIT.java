@@ -98,8 +98,12 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     /** V303 种子超管 id（picker 留痕口径=登录会话 userId 十进制文本，AuthTokenInterceptor:76） */
     private static final long ADMIN_USER_ID = 1L;
 
+    /** V704 演示医师登录名（sys_user id=3，PRESCRIPTION 执业授权种子——开方操作者须持权医师） */
+    private static final String DOCTOR_LOGIN_NAME = "doctordemo";
+
     private static String adminToken = "";
     private static String reviewerToken = "";
+    private static String doctorToken = "";
 
     /** 跨用例链路状态（JUnit 每用例新实例，业务号经 static 传递） */
     private static String rxA = "";
@@ -197,17 +201,24 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     }
 
     /**
-     * 注入门诊缴费放行事件帧（stub 边界红线：outpatient.order.charged 生产零发布——IT 手工注入
-     * 合成信封；每次调用 eventId 均为新 UUID，重投语义由调用方以新 traceId 表达）。
+     * 注入门诊缴费放行事件帧（PR-5 起 outpatient.order.charged 有真实发布点——IT 内仍一律
+     * RabbitTemplate + EventEnvelopeCodec 手工合成信封注入上游帧，stub 边界红线；
+     * 载荷携 rxNos 精确清单——消费侧按单据放行，裁决 4；每次调用 eventId 均为新 UUID，
+     * 重投语义由调用方以新 traceId 表达）。
      *
-     * @param visitId 放行目标就诊号（消费侧按 visitId 维度放行）
+     * @param visitId 放行目标就诊号
+     * @param rxNos   本次结算覆盖的处方号精确清单（消费侧逐单放行，禁全量扫描）
      * @param traceId 全链路追踪号（重投帧以 -replay 后缀区分）
      */
-    private void publishCharged(String visitId, String traceId) {
+    private void publishCharged(String visitId, List<String> rxNos, String traceId) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("orderId", "ITG-ORDER-" + visitId)
                 .put("patientId", PATIENT_ID)
                 .put("visitId", visitId);
+        ArrayNode rxNosNode = payload.putArray("rxNos");
+        for (String rxNo : rxNos) {
+            rxNosNode.add(rxNo);
+        }
         rabbitTemplate.convertAndSend(
                 "fy.topic",
                 "outpatient.order.charged",
@@ -293,7 +304,8 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
                 .put("frequency", "TID")
                 .put("days", 3)
                 .put("singleDose", "0.5g");
-        return postJson("/api/v1/pharmacy/prescriptions", adminToken, req)
+        // 开方以 V704 演示医师承载（PRESCRIPTION 授权；Task 9 practice/check 接线后 admin 开方 403）
+        return postJson("/api/v1/pharmacy/prescriptions", doctorToken, req)
                 .path("rxNo")
                 .asText();
     }
@@ -382,10 +394,12 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     @Order(1)
     @DisplayName("双签同人拒：admin 配药后 admin 核对 → 409 PH-1011，再以 reviewer 核对放行")
     void dualSignConflictRejectedAsPh1011() throws Exception {
-        // 登录与第二账号播种（it-reviewer 承载核对位，与 admin 互异）
+        // 登录与第二账号播种（it-reviewer 承载核对位，与 admin 互异；doctordemo 承载开方位——
+        // Task 9 practice/check 接线后开方须持 PRESCRIPTION 授权的医师，admin 无授权即 403 PH-1017）
         adminToken = loginToken(ADMIN_LOGIN_NAME);
         seedReviewerUser();
         reviewerToken = loginToken(REVIEWER_LOGIN_NAME);
+        doctorToken = loginToken(DOCTOR_LOGIN_NAME);
 
         // 造数基座：两药品各配项目定价（3000 分）+ 批次余量 2 + 四处方（A/B→药品 A，C/D→药品 B）
         newItemWithPrice(DRUG_A, 3000);
@@ -405,8 +419,8 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
         awaitRxStatus(rxD, "PENDING_FEE");
 
         // 双 charged 注入（visitA/visitB）→ 放行入队
-        publishCharged(VISIT_A, "itg-charged-a");
-        publishCharged(VISIT_B, "itg-charged-b");
+        publishCharged(VISIT_A, List.of(rxA), "itg-charged-a");
+        publishCharged(VISIT_B, List.of(rxB), "itg-charged-b");
         JsonNode voA = awaitDispense(rxA);
         dispenseNoA = voA.path("dispenseNo").asText();
         prescriptionItemIdA =
@@ -493,8 +507,8 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     void chargedRedeliveryIsIdempotent() throws Exception {
         // visitB 已在 Order(1) 放行入队（恰一张活动单）——同 visitId 新 eventId 双帧重投
         long processedBefore = countChargedProcessed();
-        publishCharged(VISIT_B, "itg-charged-b-replay-1");
-        publishCharged(VISIT_B, "itg-charged-b-replay-2");
+        publishCharged(VISIT_B, List.of(rxB), "itg-charged-b-replay-1");
+        publishCharged(VISIT_B, List.of(rxB), "itg-charged-b-replay-2");
 
         // 非盲等实证：轮询幂等台账直至两帧均被 pharmacy 消费登记 PROCESSED（消费完成后才登记）
         for (int i = 0; i < 100; i++) {
@@ -515,8 +529,8 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     @DisplayName("批次并发不超发：两处方并发配药同批次（余量 2 争 4）恰一成功一 PH-1010")
     void concurrentPickDoesNotOversellBatch() throws Exception {
         // visitC/visitD 放行入队（同批次 B 余量 2，两处方各请发 2——争 4 超发前提）
-        publishCharged(VISIT_C, "itg-charged-c");
-        publishCharged(VISIT_D, "itg-charged-d");
+        publishCharged(VISIT_C, List.of(rxC), "itg-charged-c");
+        publishCharged(VISIT_D, List.of(rxD), "itg-charged-d");
         JsonNode voC = awaitDispense(rxC);
         JsonNode voD = awaitDispense(rxD);
         String dispenseNoC = voC.path("dispenseNo").asText();

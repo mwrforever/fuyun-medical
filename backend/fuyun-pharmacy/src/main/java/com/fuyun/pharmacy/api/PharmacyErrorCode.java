@@ -41,10 +41,22 @@ public enum PharmacyErrorCode implements ErrorCode {
     /** 给药途径不在药品途径集（400；route_code ∉ drug.route_codes） */
     ROUTE_NOT_ALLOWED("PH-1015"),
     /**
-     * 数值字段格式非法（400；退药数量/药品拆分比例等 DECIMAL string 入参非数字串——W-22⑦ 引入，
-     * 禁 NumberFormatException 直穿 500 出契约外形态，SettlementServiceImpl 解析守卫同口径）
+     * 数值字段格式非法（400；退药数量/药品拆分比例等 DECIMAL string 入参与操作者工号解析非数字串
+     * ——W-22⑦ 引入，禁 NumberFormatException 直穿 500 出契约外形态，SettlementServiceImpl 解析
+     * 守卫同口径）
      */
-    NUMERIC_FIELD_MALFORMED("PH-1016");
+    NUMERIC_FIELD_MALFORMED("PH-1016"),
+    /**
+     * 开方执业授权未过（403；处方权/抗菌药分级/麻精权纵深防御校验拒绝——裁决 9，Spec :226，文案含
+     * 工号脱敏；PH-1016 已被 W-22⑦ 占用，本码接续顺延）
+     */
+    PRACTICE_NOT_ALLOWED("PH-1017"),
+    /**
+     * 取药凭证与处方归属不一致（409；扫码核对可选凭证核验拒绝——PR-5 裁决 8 凭证载体=settlementNo，
+     * 经 billing SettlementQueryPort.settledUnder 反查该结算单下无该处方 SETTLED 费用行即拒；
+     * PH-1017 已被 PRACTICE_NOT_ALLOWED 占用，本码接续顺延）
+     */
+    CREDENTIAL_MISMATCH("PH-1018");
 
     /** 码值（如 PH-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

@@ -35,11 +35,16 @@ class SystemWebConfigTest {
     }
 
     @Test
-    @DisplayName("免认证白名单冻结：仅 login/refresh 两端点，logout 不在白名单（登出需令牌）")
+    @DisplayName("免认证白名单冻结：login/refresh + portal 匿名通道（裁决 13）+ 大屏只读快照（§8.5），logout 不在白名单")
     void authWhitelistContainsOnlyLoginAndRefresh() {
         List<String> whitelist = SystemWebConfig.AUTH_WHITELIST;
 
-        assertThat(whitelist).containsExactlyInAnyOrder("/api/v1/system/auth/login", "/api/v1/system/auth/refresh");
+        assertThat(whitelist)
+                .containsExactlyInAnyOrder(
+                        "/api/v1/system/auth/login",
+                        "/api/v1/system/auth/refresh",
+                        "/api/v1/outpatient/portal/**",
+                        "/api/v1/outpatient/queues/*/tickets");
         assertThat(whitelist).noneMatch(path -> path.contains("logout"));
     }
 

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.billing.api.SettlementQueryPort;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.pharmacy.api.DispenseCompletedPayload;
@@ -47,13 +48,15 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 发药服务实现：放行链（charged→PENDING_DISPENSE+入队）、费用链（fee.created→PENDING_FEE）、
- * 调剂三段闭环（pick FEFO 批次锁定+追溯码采集 → verify 双签核对 → issue 发药签名+批次扣减+
- * 出库流水+completed 事件）与退药受理两时点（ISSUED_RETURN 实物退批次回补+处方明细退药
- * 累计回写+returned 事件 / DISPENSING_CANCEL 发药中明细退场释放锁定）、refund.approved 终态收敛与执行占用查询
- * （读侧经主数据缓存患者归一，供 M13 位）。状态机 CAS 收口：
- * 0 行=并发被抢/状态违例一律显式拒绝（无负库存，未锁先发即 PH-1010）；双签分权（调配/核对
- * 同人 PH-1011，Spec :226）为法定留痕硬守卫；退药追溯码逐码核验防回流（PH-1012，Spec §10）。
+ * 发药服务实现：放行链（charged 按 rxNos 精确清单→PENDING_DISPENSE+入队，裁决 4）、
+ * 费用链（fee.created→PENDING_FEE）、调剂三段闭环（pick FEFO 批次锁定+追溯码采集 → verify
+ * 双签核对+可选取药凭证核验 → issue 发药签名+批次扣减+出库流水+completed 事件）与退药受理
+ * 两时点（ISSUED_RETURN 实物退批次回补+处方明细退药累计回写+returned 事件 / DISPENSING_CANCEL
+ * 发药中明细退场释放锁定）、refund.approved 按单据清单终态收敛（注记⑦收口）、order.cancelled
+ * 未发药作废路径（注记⑥回切）与执行占用查询（读侧经主数据缓存患者归一，供 M13 位）。
+ * 状态机 CAS 收口：0 行=并发被抢/状态违例一律显式拒绝（无负库存，未锁先发即 PH-1010）；
+ * 双签分权（调配/核对同人 PH-1011，Spec :226）为法定留痕硬守卫；退药追溯码逐码核验防回流
+ * （PH-1012，Spec §10）；凭证核验=settlementNo 与处方归属一致性（PH-1018，裁决 8）。
  * 事件消费幂等双层：eventId 构件幂等之外，业务级「CAS 0 行→重读定性：已达目标态幂等跳过、
  * 其余状态 warn 跳过不上抛」（charged 重复投递仅放行一次，Spec §10 异常项）。uk_dispense_rx_active
  * 兜底防重复建单。装配归 PharmacyWebConfig @Import。
@@ -92,9 +95,12 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     /** 主数据读侧缓存（occupancy 读侧患者归一唯一消费方），非空 */
     private final PharmacyMasterDataCache masterDataCache;
 
+    /** 结算单反查端口（verify 凭证与处方归属一致性核验唯一消费方，billing api 只读面），非空 */
+    private final SettlementQueryPort settlementQueryPort;
+
     /**
-     * 全参构造器（装配归 PharmacyWebConfig @Import；Task 10 起扩十参——masterDataCache 承载
-     * 占用查询读侧患者归一）。
+     * 全参构造器（装配归 PharmacyWebConfig @Import；Task 11 起扩十一参——settlementQueryPort
+     * 承载凭证核验反查）。
      *
      * @param dispenseMapper         调剂单 mapper（ServiceImpl 继承 baseMapper 同源），非空
      * @param dispenseItemMapper     调剂明细 mapper，非空
@@ -106,6 +112,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
      * @param events                 应用事件发布器，非空
      * @param objectMapper           追溯码 JSON 读写器，非空
      * @param masterDataCache        主数据读侧缓存（merged/split 订阅写、occupancy 读），非空
+     * @param settlementQueryPort    结算单反查端口（billing api 只读面），非空
      */
     public DispenseServiceImpl(
             DispenseMapper dispenseMapper,
@@ -117,7 +124,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             IBatchSelectService batchSelectService,
             ApplicationEventPublisher events,
             ObjectMapper objectMapper,
-            PharmacyMasterDataCache masterDataCache) {
+            PharmacyMasterDataCache masterDataCache,
+            SettlementQueryPort settlementQueryPort) {
         this.dispenseMapper = dispenseMapper;
         this.dispenseItemMapper = dispenseItemMapper;
         this.drugBatchMapper = drugBatchMapper;
@@ -128,18 +136,30 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         this.events = events;
         this.objectMapper = objectMapper;
         this.masterDataCache = masterDataCache;
+        this.settlementQueryPort = settlementQueryPort;
     }
 
     @Override
     @Transactional
-    public void releaseByVisit(String visitId) {
-        // 数据库读操作：该就诊待放行处方（门诊/急诊；charged 为门诊/急诊唯一权威放行通道）
-        List<Prescription> rxs = prescriptionMapper.selectList(Wrappers.<Prescription>lambdaQuery()
-                .eq(Prescription::getVisitId, visitId)
-                .eq(Prescription::getStatus, "PENDING_FEE")
-                .in(Prescription::getRxType, "OUTPATIENT", "EMERGENCY")
-                .orderByAsc(Prescription::getId));
-        for (Prescription rx : rxs) {
+    public void releaseByRxNos(List<String> rxNos) {
+        // 空清单=该结算无药品行（纯检查/检验结算），合法帧 info 跳过（裁决 4：单据精确放行无对象）
+        if (rxNos == null || rxNos.isEmpty()) {
+            log.info("缴费放行跳过（该结算无药品行，纯检查/检验结算合法空清单）");
+            return;
+        }
+        for (String rxNo : rxNos) {
+            // 数据库读操作：按处方号定位（charged 载荷清单与 pharmacy 库的脏差异 warn 留痕不阻断同批放行）
+            Prescription rx = prescriptionMapper.selectOne(
+                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
+            if (rx == null) {
+                log.warn("缴费放行跳过（清单处方号无法定位处方）：rxNo={}", rxNo);
+                continue;
+            }
+            // 通道过滤：门诊/急诊处方为本通道放行对象（DISCHARGE 出院带药归 settlement.completed 分支）
+            if (!"OUTPATIENT".equals(rx.getRxType()) && !"EMERGENCY".equals(rx.getRxType())) {
+                log.warn("缴费放行跳过（非门诊/急诊通道处方）：rxNo={}，rxType={}", rxNo, rx.getRxType());
+                continue;
+            }
             // 数据库写操作：CAS 放行（0 行=并发放行/状态漂移，重读定性幂等或跳过）
             if (prescriptionMapper.casStatus(rx.getId(), "PENDING_FEE", "PENDING_DISPENSE") != 1) {
                 Prescription latest = prescriptionMapper.selectById(rx.getId());
@@ -241,8 +261,15 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
 
     @Override
     @Transactional
-    public void verify(String dispenseNo) {
+    public void verify(String dispenseNo, String credential) {
         Dispense d = requireByNo(dispenseNo);
+        // 取药凭证核验（PR-5 裁决 8）：凭证=settlementNo，与处方归属一致性经 billing 反查——
+        // 该结算单下无该处方 SETTLED 费用行即 PH-1018 拒（409）；空凭证跳过核验（追溯码逐码
+        // 采集维持防回流主道——PR-4 注记⑧豁免面就此闭合）
+        if (credential != null && !credential.isBlank() && !settlementQueryPort.settledUnder(credential, d.getRxNo())) {
+            throw new BizException(
+                    PharmacyErrorCode.CREDENTIAL_MISMATCH, HttpStatus.CONFLICT, "取药凭证与处方归属不一致：" + dispenseNo);
+        }
         String operator = OperatorContextHolder.get();
         // 双签分权（Spec :226）：核对人不得为调配人（后端硬守卫，前端按钮启停为辅助面）
         if (operator.equals(d.getPicker())) {
@@ -258,7 +285,11 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         d.setStatus("PICKED");
         d.setVerifier(operator);
         dispenseMapper.updateById(d);
-        log.info("扫码核对通过：dispenseNo={}，verifier={}", dispenseNo, operator);
+        log.info(
+                "扫码核对通过：dispenseNo={}，verifier={}，credential={}",
+                dispenseNo,
+                operator,
+                credential == null ? "无" : "已核验");
     }
 
     @Override
@@ -479,30 +510,127 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
 
     @Override
     @Transactional
-    public void confirmRefundTerminal(long patientId) {
-        // 数据库读操作：该患者受理已终态的发药单（终态在受理完成即置——镜像源）
-        List<Dispense> returned = baseMapper.selectList(Wrappers.<Dispense>lambdaQuery()
-                .eq(Dispense::getPatientId, patientId)
-                .in(Dispense::getStatus, "PART_RETURNED", "FULL_RETURNED")
-                .orderByAsc(Dispense::getId));
-        for (Dispense d : returned) {
+    public void confirmRefundTerminalByRx(List<String> rxNos) {
+        for (String rxNo : rxNos) {
+            // 数据库读操作：按反查清单处方号定位（脏差异 warn 留痕不阻断同批收敛）
             Prescription rx = prescriptionMapper.selectOne(
-                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, d.getRxNo()));
+                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
             if (rx == null) {
-                log.warn("退费终态确认无法定位处方：rxNo={}", d.getRxNo());
+                log.warn("退费终态确认无法定位处方：rxNo={}", rxNo);
                 continue;
             }
             if ("DISPENSED".equals(rx.getStatus())) {
+                // 数据库读操作：活动发药单（排除 CANCELLED——uk_dispense_rx_active 允许取消态历史行共存）
+                Dispense d = baseMapper.selectOne(Wrappers.<Dispense>lambdaQuery()
+                        .eq(Dispense::getRxNo, rxNo)
+                        .ne(Dispense::getStatus, "CANCELLED"));
+                if (d == null) {
+                    log.warn("退费终态确认跳过（无活动发药单）：rxNo={}", rxNo);
+                    continue;
+                }
+                // 镜像源=发药单受理终态（受理完成即置，Spec :134）；未终态=回执先于退药受理到达
+                //   （跨队列乱序），warn 跳过待受理完成后的回执重投收敛
+                if (!"PART_RETURNED".equals(d.getStatus()) && !"FULL_RETURNED".equals(d.getStatus())) {
+                    log.warn("退费终态确认跳过（发药单受理未终态，跨队列乱序待重投收敛）：rxNo={}，dispenseStatus={}", rxNo, d.getStatus());
+                    continue;
+                }
                 // 数据库写操作：处方终态镜像发药单受理终态（Spec :132：billing.refund.approved 后终态）
                 String target = "FULL_RETURNED".equals(d.getStatus()) ? "FULL_RETURNED" : "PART_RETURNED";
                 prescriptionMapper.casStatus(rx.getId(), "DISPENSED", target);
-                log.info("退费终态收敛：rxNo={}→{}（以 M13 回执为退费权威）", d.getRxNo(), target);
+                log.info("退费终态收敛：rxNo={}→{}（以 M13 回执为退费权威，单据精确清单）", rxNo, target);
             } else if ("PART_RETURNED".equals(rx.getStatus()) || "FULL_RETURNED".equals(rx.getStatus())) {
-                log.info("退费终态确认幂等跳过（已终态）：rxNo={}，status={}", d.getRxNo(), rx.getStatus());
+                log.info("退费终态确认幂等跳过（已终态）：rxNo={}，status={}", rxNo, rx.getStatus());
             } else {
-                // 未发药退费（PENDING_DISPENSE/DISPENSING）：终态确认归 outpatient.order.cancelled，PR-5 回切
-                log.warn("退费终态确认跳过（未发药处方终态确认随 PR-5 回切）：rxNo={}，status={}", d.getRxNo(), rx.getStatus());
+                // 未发药退费（PENDING_DISPENSE/DISPENSING）：终态确认归 order.cancelled 作废通道（注记⑥）
+                log.warn("退费终态确认跳过（未发药处方终态确认归作废通道）：rxNo={}，status={}", rxNo, rx.getStatus());
             }
+        }
+    }
+
+    @Override
+    @Transactional
+    public void voidUndispensedByRx(List<String> rxNos, String reason) {
+        for (String rxNo : rxNos) {
+            // 数据库读操作：按退费逆向清单处方号定位（脏差异 warn 留痕不阻断同批作废）
+            Prescription rx = prescriptionMapper.selectOne(
+                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
+            if (rx == null) {
+                log.warn("退费逆向作废跳过（清单处方号无法定位处方）：rxNo={}", rxNo);
+                continue;
+            }
+            // 已发药终态：refund.approved 双通道已收敛（或应收敛），作废通道禁触碰
+            if ("DISPENSED".equals(rx.getStatus())
+                    || "PART_RETURNED".equals(rx.getStatus())
+                    || "FULL_RETURNED".equals(rx.getStatus())) {
+                log.info("退费逆向作废幂等跳过（已发药终态归 refund.approved 双通道）：rxNo={}，status={}", rxNo, rx.getStatus());
+                continue;
+            }
+            // 已作废：重投幂等直返
+            if ("CANCELLED".equals(rx.getStatus())) {
+                log.info("退费逆向作废幂等跳过（已作废）：rxNo={}", rxNo);
+                continue;
+            }
+            // 状态域外守卫：未缴费作废（APPROVED/PENDING_FEE 等）归 cancel API 通道，本通道不承接
+            if (!"PENDING_DISPENSE".equals(rx.getStatus()) && !"DISPENSING".equals(rx.getStatus())) {
+                log.warn("退费逆向作废跳过（状态不在未发药作废域）：rxNo={}，status={}", rxNo, rx.getStatus());
+                continue;
+            }
+            // 数据库写操作：处方 CAS 作废先行（0 行=与发药签名等并发被抢/终态漂移——重读定性，
+            //   禁半程写面：发药单退场与锁释放后置于 CAS 成功）
+            if (prescriptionMapper.casStatus(rx.getId(), rx.getStatus(), "CANCELLED") != 1) {
+                Prescription latest = prescriptionMapper.selectById(rx.getId());
+                String latestStatus = latest == null ? "UNKNOWN" : latest.getStatus();
+                if ("CANCELLED".equals(latestStatus)
+                        || "DISPENSED".equals(latestStatus)
+                        || "PART_RETURNED".equals(latestStatus)
+                        || "FULL_RETURNED".equals(latestStatus)) {
+                    log.info("退费逆向作废幂等跳过（重读已达终态）：rxNo={}，status={}", rxNo, latestStatus);
+                } else {
+                    log.warn("退费逆向作废跳过（状态漂移）：rxNo={}，status={}", rxNo, latestStatus);
+                }
+                continue;
+            }
+            // 数据库读操作：活动发药单（排除 CANCELLED——uk_dispense_rx_active 允许取消态历史行共存）
+            List<Dispense> actives = baseMapper.selectList(Wrappers.<Dispense>lambdaQuery()
+                    .eq(Dispense::getRxNo, rxNo)
+                    .ne(Dispense::getStatus, "CANCELLED")
+                    .orderByAsc(Dispense::getId));
+            for (Dispense d : actives) {
+                // 脏数据显式暴露：未发药处方挂已发药活动单（状态机不可能态，禁静默作废已发药单据）
+                if ("ISSUED".equals(d.getStatus())) {
+                    throw new BizException(
+                            PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED,
+                            HttpStatus.CONFLICT,
+                            "未发药作废遇已发药活动单（脏数据显式暴露禁静默）：rxNo=" + rxNo + "，dispenseNo=" + d.getDispenseNo());
+                }
+                // 数据库读操作：NORMAL 明细行（退场行/取消行不重复处置）
+                List<DispenseItem> items = dispenseItemMapper.selectList(Wrappers.<DispenseItem>lambdaQuery()
+                        .eq(DispenseItem::getDispenseId, d.getId())
+                        .eq(DispenseItem::getItemStatus, "NORMAL")
+                        .orderByAsc(DispenseItem::getId));
+                for (DispenseItem item : items) {
+                    // 数据库写操作：释放锁定批次（锁定数非数量流水，不落 stock_ledger——DISPENSING_CANCEL
+                    //   退场段同款形态；CREATED 单明细未锁批 batchId 缺位零释放面）；0 行=批次漂移整事务回滚
+                    if (item.getBatchId() != null
+                            && drugBatchMapper.releaseLock(item.getBatchId(), item.getRequestedQty()) != 1) {
+                        throw new BizException(
+                                PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                                HttpStatus.CONFLICT,
+                                "批次锁定释放失败：batchId=" + item.getBatchId());
+                    }
+                    item.setItemStatus("CANCELLED");
+                    dispenseItemMapper.updateById(item);
+                }
+                // 数据库写操作：发药单同步作废（Spec :134 CREATED/PICKING→CANCELLED 处方作废联动；
+                //   PICKED 已核待发同样未出库，随整单退场释放锁）；0 行=并发被抢显式拒（事务回滚重投再定性）
+                if (dispenseMapper.casStatus(d.getId(), d.getStatus(), "CANCELLED") != 1) {
+                    throw new BizException(
+                            PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED,
+                            HttpStatus.CONFLICT,
+                            "发药单作废并发被抢：dispenseNo=" + d.getDispenseNo());
+                }
+            }
+            log.info("退费逆向未发药处方作废：rxNo={}，{}→CANCELLED，reason={}", rxNo, rx.getStatus(), reason);
         }
     }
 
@@ -555,8 +683,11 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     @Override
     @Transactional(readOnly = true)
     public DispenseVO getByRxNo(String rxNo) {
-        // 数据库读操作：一处方一张活动单（uk_dispense_rx_active），按 rx_no 定位；无单返回 null（调用方组空集）
-        Dispense d = baseMapper.selectOne(Wrappers.<Dispense>lambdaQuery().eq(Dispense::getRxNo, rxNo));
+        // 数据库读操作：一处方一张活动单（uk_dispense_rx_active），按 rx_no 定位且排除 CANCELLED
+        //   取消态历史行（W-24——order.cancelled 作废单与重建活动单允许共存，selectOne 禁多行歧义）；
+        //   无活动单返回 null（调用方组空集）
+        Dispense d = baseMapper.selectOne(
+                Wrappers.<Dispense>lambdaQuery().eq(Dispense::getRxNo, rxNo).ne(Dispense::getStatus, "CANCELLED"));
         if (d == null) {
             return null;
         }
@@ -598,7 +729,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             rows.add(row);
         }
         // 数据库写操作：明细一次批插（A.4.3-16 saveBatch：JDBC 批处理 + ASSIGN_ID 自动填充 ID，
-        //   调用方 releaseByVisit @Transactional 事务内承载）
+        //   调用方 releaseByRxNos @Transactional 事务内承载）
         Db.saveBatch(rows);
         log.info("缴费放行入队：rxNo={}，dispenseNo={}，明细数={}", rx.getRxNo(), dispense.getDispenseNo(), items.size());
     }

@@ -6,6 +6,7 @@ import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.api.CareRelationQuery;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.dto.UnmaskRequest;
@@ -25,17 +26,20 @@ import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.factory.Mappers;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 隐私明文查阅与留痕实现（FU-M02-06）：unmask 为全仓唯一明文出口——角色豁免校验 403 前置
- * （不落台账、不返明文），解密取值仅在本方法生命周期与响应体内存活；成功由 @AuditLog
- * SENSITIVE_QUERY 审计行 + privacy_access_log 台账行双留痕，失败由审计 FAIL 行留痕。
- * 豁免判定复用 PrivacyMaskService isExempt（禁复制判定逻辑，A.4.3-21）。
+ * 隐私明文查阅与留痕实现（FU-M02-06）：unmask 为全仓唯一明文出口——角色豁免 + 诊疗关系
+ * D-16 三态双道校验 403 前置（不落台账、不返明文），解密取值仅在本方法生命周期与响应体内
+ * 存活；成功由 @AuditLog SENSITIVE_QUERY 审计行 + privacy_access_log 台账行双留痕，失败由
+ * 审计 FAIL 行留痕。豁免判定复用 PrivacyMaskService isExempt（禁复制判定逻辑，A.4.3-21）。
  *
- * <p>范围口径（写死）：明文查阅的「诊疗关系校验」以角色豁免承载（功能权限先行，诊疗关系随
- * M03/M04 挂接演进）；档案导出/全景调阅 access_type 词表预留不实现（无调用方）。
+ * <p>诊疗关系第二道（{@link CareRelationQuery} SPI，D-16 冻结语义）：容器无实现时跳过维持
+ * 角色豁免单门禁现状（ObjectProvider 空安全，不 NPE）；任一实现（M03 门诊在途诊疗关系）
+ * 注册后自动收紧为「无豁免且无诊疗关系即 403」。档案导出/全景调阅 access_type 词表预留
+ * 不实现（无调用方）。
  */
 @Slf4j
 public class PrivacyServiceImpl implements PrivacyService {
@@ -54,6 +58,9 @@ public class PrivacyServiceImpl implements PrivacyService {
 
     private final PatientFieldCrypto crypto;
 
+    /** 诊疗关系查询 SPI（第二道门禁依据）：容器无实现为 null（冻结语义=维持角色豁免单门禁） */
+    private final CareRelationQuery careRelationQuery;
+
     /**
      * 全参构造器（装配归 PatientWebConfig @Import）。
      *
@@ -61,16 +68,20 @@ public class PrivacyServiceImpl implements PrivacyService {
      * @param patientService          患者主表服务（解密载体：读 patient 行取 cipher 列），非空
      * @param privacyAccessLogMapper  查阅台账只增表 mapper（落痕与分页检索），非空
      * @param crypto                  敏感字段加密构件（AES-GCM 解密），非空
+     * @param careRelationProvider    诊疗关系 SPI 探针（ObjectProvider 空安全取用），非空；
+     *                                容器无实现时解析值为 null（维持单门禁，M03 注册后自动收紧）
      */
     public PrivacyServiceImpl(
             PrivacyMaskService privacyMaskService,
             IPatientService patientService,
             PrivacyAccessLogMapper privacyAccessLogMapper,
-            PatientFieldCrypto crypto) {
+            PatientFieldCrypto crypto,
+            ObjectProvider<CareRelationQuery> careRelationProvider) {
         this.privacyMaskService = privacyMaskService;
         this.patientService = patientService;
         this.privacyAccessLogMapper = privacyAccessLogMapper;
         this.crypto = crypto;
+        this.careRelationQuery = careRelationProvider.getIfAvailable();
     }
 
     /**
@@ -83,15 +94,31 @@ public class PrivacyServiceImpl implements PrivacyService {
     @Override
     @Transactional
     public UnmaskVO unmask(UnmaskRequest request) {
-        // ①角色豁免校验：任一字段无豁免即整体 403（不落查阅台账，留痕由审计切面 FAIL 行承担）
+        // ①角色豁免判定：全字段豁免=角色单门禁直接放行；存在非豁免字段时进入 ② 诊疗关系第二道
         List<String> roles = RoleContextHolder.get();
+        boolean exemptAll = true;
+        String firstUnexemptField = null;
         for (String field : request.fields()) {
             if (!privacyMaskService.isExempt(roles, field)) {
-                log.warn("明文查阅拒绝（无豁免角色）：patientId={}，field={}", request.patientId(), field);
-                throw new BizException(PatientErrorCode.UNMASK_NOT_AUTHORIZED, HttpStatus.FORBIDDEN, "无明文查阅权限");
+                exemptAll = false;
+                firstUnexemptField = field;
+                break;
             }
         }
-        // ②解密取值（明文仅在本方法生命周期与响应体内存活）
+        String operatorId = OperatorContextHolder.get() == null ? "system" : OperatorContextHolder.get();
+        // ②诊疗关系校验（D-16 三态第二道）：SPI 无实现=跳过维持单门禁（warn，冻结语义）；
+        //   有实现时非豁免字段须命中在途诊疗关系，否则 403（不落查阅台账，留痕由审计切面 FAIL 行承担）
+        if (!exemptAll
+                && careRelationQuery != null
+                && !careRelationQuery.hasCareRelation(request.patientId(), operatorId)) {
+            log.warn("明文查阅拒绝（无豁免角色且无在途诊疗关系）：patientId={}", request.patientId());
+            throw new BizException(PatientErrorCode.UNMASK_NOT_AUTHORIZED, HttpStatus.FORBIDDEN, "无豁免角色且无在途诊疗关系");
+        }
+        if (!exemptAll && careRelationQuery == null) {
+            log.warn("明文查阅拒绝（无豁免角色）：patientId={}，field={}", request.patientId(), firstUnexemptField);
+            throw new BizException(PatientErrorCode.UNMASK_NOT_AUTHORIZED, HttpStatus.FORBIDDEN, "无明文查阅权限");
+        }
+        // ③解密取值（明文仅在本方法生命周期与响应体内存活）
         Patient patient = patientService.getById(request.patientId());
         if (patient == null) {
             throw new BizException(PatientErrorCode.PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "患者档案不存在");
@@ -100,9 +127,9 @@ public class PrivacyServiceImpl implements PrivacyService {
         for (String field : request.fields()) {
             values.put(field, plaintextOf(patient, field));
         }
-        // ③查阅台账落痕（只增表：谁看了谁的什么 + purpose + traceId，等保审计锚点）
+        // ④查阅台账落痕（只增表：谁看了谁的什么 + purpose + traceId，等保审计锚点）
         PrivacyAccessLog logRow = new PrivacyAccessLog();
-        logRow.setOperatorId(OperatorContextHolder.get() == null ? "system" : OperatorContextHolder.get());
+        logRow.setOperatorId(operatorId);
         logRow.setPatientId(request.patientId());
         logRow.setAccessType(ACCESS_TYPE_UNMASK_QUERY);
         logRow.setPurpose(request.purpose());

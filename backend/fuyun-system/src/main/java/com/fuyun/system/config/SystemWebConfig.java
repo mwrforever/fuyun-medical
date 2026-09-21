@@ -7,6 +7,7 @@ import com.fuyun.system.controller.DictController;
 import com.fuyun.system.controller.DictTypeController;
 import com.fuyun.system.controller.DictVersionController;
 import com.fuyun.system.controller.PracticeController;
+import com.fuyun.system.controller.PracticeGrantController;
 import com.fuyun.system.convert.AuthConverter;
 import com.fuyun.system.convert.DictConverter;
 import com.fuyun.system.internal.AuditLogAspect;
@@ -19,6 +20,7 @@ import com.fuyun.system.service.impl.DictItemServiceImpl;
 import com.fuyun.system.service.impl.DictQueryServiceImpl;
 import com.fuyun.system.service.impl.DictTypeServiceImpl;
 import com.fuyun.system.service.impl.DictVersionServiceImpl;
+import com.fuyun.system.service.impl.PracticeCheckPortImpl;
 import com.fuyun.system.service.impl.PracticeServiceImpl;
 import com.fuyun.system.service.impl.RoleServiceImpl;
 import com.fuyun.system.service.impl.TokenServiceImpl;
@@ -37,7 +39,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * 系统模块 Web 装配（BRIEF-PR3-01 §1.5/§3.2）：认证拦截器注册（401 白名单策略）+
- * 认证与字典域链路 Bean 装配集中点。
+ * 认证与字典域链路 Bean 装配集中点（Task 8 追加：PracticeCheckPort 跨模块 api 面实现——
+ * M03 开单执业授权强校验进程内消费通道）。
  *
  * <p>com.fuyun.system 包不在 @SpringBootApplication 扫描范围（com.fuyun.app.*）内，
  * 本类经 fuyun-app SystemConfig @Import 生效（PR #4 既有裁决：装配归 app，不放宽扫描）；
@@ -64,17 +67,27 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     AuditLogServiceImpl.class,
     AuditLogAspect.class,
     PracticeServiceImpl.class,
-    PracticeController.class
+    PracticeCheckPortImpl.class,
+    PracticeController.class,
+    PracticeGrantController.class
 })
 public class SystemWebConfig implements WebMvcConfigurer {
 
     /**
-     * 免认证白名单：仅登录与刷新两端点（常量收口防散落，供装配与测试断言共用）。
+     * 免认证白名单：登录/刷新两端点 + portal 患者匿名预约通道（裁决 13：/api/v1/outpatient/portal/**
+     * 免 401，服务端经介质解析定 patientId、操作者留痕取哨兵 PORTAL；限流/风控随 M18 注记）
+     * + bigscreen 候诊榜只读快照（UI 设计文档 §8.5「REST 快照首屏、路由 query 书签化」的
+     * 无登录态设备直开场景，bigscreen http.ts 匿名只读面口径——大屏无 Authorization 注入；
+     * 端点自身脱敏出网（patientName 掩码、无证件号字段），且该路径仅映射只读 GET，动作类
+     * POST 在 /queue/... 单数路径不受放行影响）。常量收口防散落，供装配与测试断言共用。
      *
      * <p>注意 logout 不在白名单：登出请求本身需通过 401 认证（防止伪造/无效令牌触发会话删除探测）。
      */
-    public static final List<String> AUTH_WHITELIST =
-            List.of("/api/v1/system/auth/login", "/api/v1/system/auth/refresh");
+    public static final List<String> AUTH_WHITELIST = List.of(
+            "/api/v1/system/auth/login",
+            "/api/v1/system/auth/refresh",
+            "/api/v1/outpatient/portal/**",
+            "/api/v1/outpatient/queues/*/tickets");
 
     /** 认证拦截拦截路径：全部业务 API（含未来模块，P0 只做认证 401 不做 403 鉴权） */
     private static final String INTERCEPT_PATH_PATTERN = "/api/v1/**";

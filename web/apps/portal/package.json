@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@fuyun/shared": "workspace:*",
+    "axios": "catalog:",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"

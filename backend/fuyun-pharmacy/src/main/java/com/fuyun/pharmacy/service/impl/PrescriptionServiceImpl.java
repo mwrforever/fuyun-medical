@@ -25,6 +25,8 @@ import com.fuyun.pharmacy.mapper.PrescriptionMapper;
 import com.fuyun.pharmacy.service.IPrescriptionService;
 import com.fuyun.pharmacy.vo.PrescriptionItemVO;
 import com.fuyun.pharmacy.vo.PrescriptionVO;
+import com.fuyun.system.api.PracticeCheckPort;
+import com.fuyun.system.api.PracticeCheckResult;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -43,8 +45,9 @@ import org.springframework.transaction.annotation.Transactional;
  * （Spec :132），created/cancelled 事件事务内经 ApplicationEventPublisher 发布（AFTER_COMMIT
  * 出 fy.topic）；作废无条件联动 billing PrescriptionFeePort 作废 PENDING 费用行（主控裁决 7，
  * 幂等——堵读态与 CAS 间 TOCTOU 资金窗口），已缴费（PENDING_DISPENSE+）拒绝并引导退药/退费。
- * practice/check 执业授权校验 PR-4 不接线（P0 骨架恒 false 无判定力——主控裁决 6），
- * TODO(PR-5): 接入执业授权校验（处方权/麻精权/抗菌药分级，M01 小改后于此调用）。
+ * practice/check 执业授权校验已接线（PR-5 Task 9，裁决 9 纵深防御，Spec :226）：落库前处方权
+ * （PRESCRIPTION）一次，明细聚合后按命中集追加抗菌药最高分级与麻精类（至多两次）——任一未过
+ * PH-1017（403，工号脱敏出文案），与 M03 开方入口校验（OP-1017）构成纵深两层。
  */
 @Slf4j
 public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Prescription>
@@ -53,11 +56,35 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     /** rx_no 日期段格式（R+yyyyMMdd+6 位纳秒尾数） */
     private static final DateTimeFormatter RX_DATE = DateTimeFormatter.ofPattern("yyyyMMdd");
 
+    /** 执业授权词表·处方权（practice_grant grant_type，system api 契约消费方逐字引用） */
+    private static final String GRANT_PRESCRIPTION = "PRESCRIPTION";
+
+    /** 执业授权词表·麻精药品（明细命中 narcoticClass≠NORMAL 时追加校验） */
+    private static final String GRANT_NARCOTIC = "NARCOTIC";
+
+    /**
+     * 抗菌药分级→授权词表映射（drug.antibio_class 值→practice_grant grant_type；NONE/空=非抗菌药
+     * 不参与命中集——AntibacterialClass 词表 UNRESTRICTED=非限制使用级）
+     */
+    private static final Map<String, String> ANTIBIO_GRANT_BY_CLASS = Map.of(
+            "UNRESTRICTED", "ANTIBIO_NONRESTRICT", "RESTRICTED", "ANTIBIO_RESTRICT", "SPECIAL", "ANTIBIO_SPECIAL");
+
+    /**
+     * 抗菌药授权严重序（grant 域，与 ANTIBIO_GRANT_BY_CLASS 值域同源；SPECIAL &gt; RESTRICTED &gt;
+     * NONRESTRICT——命中集只查最高分级对应授权。R1 修正：比较域必须与聚合值同域（grant 名），
+     * 严禁回退为 class 名表——跨域 indexOf 恒 -1 致严重序失效（首遇分级当最高级的安全漏洞））
+     */
+    private static final List<String> ANTIBIO_GRANT_SEVERITY =
+            List.of("ANTIBIO_NONRESTRICT", "ANTIBIO_RESTRICT", "ANTIBIO_SPECIAL");
+
     private final PrescriptionItemMapper prescriptionItemMapper;
 
     private final DrugMapper drugMapper;
 
     private final PrescriptionFeePort prescriptionFeePort;
+
+    /** 执业授权校验端口（system api 契约），非空；纵深防御 ①处方权/②抗菌药分级/麻精权校验 */
+    private final PracticeCheckPort practiceCheckPort;
 
     /** 应用事件发布器（created/cancelled 事务内发布，AFTER_COMMIT 出 fy.topic），非空 */
     private final ApplicationEventPublisher events;
@@ -69,6 +96,7 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
      * @param prescriptionItemMapper 明细 mapper，非空
      * @param drugMapper             药品 mapper（开方逐行取药），非空
      * @param prescriptionFeePort    billing 费用作废端口（未缴费作废联动），非空
+     * @param practiceCheckPort      执业授权校验端口（system api），非空；处方权/抗菌/麻精纵深校验
      * @param events                 应用事件发布器，非空
      */
     public PrescriptionServiceImpl(
@@ -76,17 +104,23 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
             PrescriptionItemMapper prescriptionItemMapper,
             DrugMapper drugMapper,
             PrescriptionFeePort prescriptionFeePort,
+            PracticeCheckPort practiceCheckPort,
             ApplicationEventPublisher events) {
         this.prescriptionItemMapper = prescriptionItemMapper;
         this.drugMapper = drugMapper;
         this.prescriptionFeePort = prescriptionFeePort;
+        this.practiceCheckPort = practiceCheckPort;
         this.events = events;
     }
 
     @Override
     @Transactional
     public PrescriptionVO create(PrescriptionCreateRequest req) {
-        // TODO(PR-5): 接入执业授权校验（POST /api/v1/system/practice/check 真实化后，处方权/麻精权/抗菌药分级纵深防御——M03 入口校验之外的第二道）
+        // ① 纵深防御第一段（落库前置，裁决 9/Spec :226）：处方权强校验——运行态 userId 直作
+        //    employeeId（AuthTokenInterceptor 注入十进制字符串化 userId，Task 2 身份链口径），
+        //    未过 PH-1017（403）且零写；M03 开单入口校验之外的第二道
+        long employeeId = parseOperatorAsEmployeeId();
+        checkGrant(employeeId, GRANT_PRESCRIPTION);
         validateVisitAndType(req);
         // 请求面数量守卫（读库前置）：数量口径属请求自证，无需药品信息，禁未校验先落库；
         //   解析结果随行带回（W-22⑦：非数字串显式拒 400），明细落库复用禁二次 parse
@@ -115,6 +149,9 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         List<PrescriptionItem> items = new ArrayList<>(req.items().size());
         boolean skinRequired = Boolean.TRUE.equals(req.skinTestRequired());
         String topNarcotic = "NORMAL";
+        // ② 纵深防御命中集聚合：抗菌药最高分级对应授权（null=纯非抗菌药不追加）+ 麻精命中标记
+        String topAntibioGrant = null;
+        boolean narcoticHit = false;
         for (int i = 0; i < req.items().size(); i++) {
             RxItemRequest itemReq = req.items().get(i);
             Drug drug = drugMapper.selectById(itemReq.drugId());
@@ -134,9 +171,20 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
             row.setUsageSummary(buildUsageSummary(itemReq));
             row.setSkinTestFlag(Boolean.TRUE.equals(drug.getSkinTestFlag()));
             items.add(row);
-            // 皮试要求聚合 + 处方类别随最高毒麻级别派生（红处方口径，Spec :106）
+            // 皮试要求聚合 + 处方类别随最高毒麻级别派生（红处方口径，Spec :106）+ ② 命中集聚合
             skinRequired = skinRequired || Boolean.TRUE.equals(drug.getSkinTestFlag());
             topNarcotic = maxNarcotic(topNarcotic, drug.getNarcoticClass());
+            topAntibioGrant = maxAntibioGrant(topAntibioGrant, drug.getAntibioClass());
+            narcoticHit = narcoticHit || (drug.getNarcoticClass() != null && !"NORMAL".equals(drug.getNarcoticClass()));
+        }
+        // ② 纵深防御第二段（明细聚合后、明细落库前）：按处方命中集追加校验——抗菌药取最高分级
+        //    对应 grant_type、含麻精类查 NARCOTIC，任一未过即 PH-1017（403）；三次 check 以命中集
+        //    为准（纯普通药处方仅 ① 一次 PRESCRIPTION 校验）
+        if (topAntibioGrant != null) {
+            checkGrant(employeeId, topAntibioGrant);
+        }
+        if (narcoticHit) {
+            checkGrant(employeeId, GRANT_NARCOTIC);
         }
         // 数据库写操作：明细一次批插（A.4.3-16 saveBatch：JDBC 批处理 + ASSIGN_ID 自动填充 ID，
         //   本方法 @Transactional 事务内承载；前置 validateLine 逐行逻辑不受批插影响）
@@ -338,6 +386,89 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     private String maxNarcotic(String current, String candidate) {
         List<String> order = List.of("NORMAL", "PSYCHOTIC_II", "PSYCHOTIC_I", "NARCOTIC", "TOXIC");
         return order.indexOf(candidate) > order.indexOf(current) ? candidate : current;
+    }
+
+    /**
+     * 抗菌药授权取最高分级（严重序 SPECIAL &gt; RESTRICTED &gt; UNRESTRICTED）：命中集只查最高分级
+     * 对应 grant_type——高分级授权必然覆盖低分级处方行为，避免同方重复校验。词表外非空分级属主数据
+     * 脏数据，fail-closed 显式暴露（R1 裁量：抗菌药授权是医疗安全校验，静默跳过即授权失控——
+     * IllegalStateException 数据异常口径与 casApprove 竞态同源，人工对账介入）。
+     *
+     * @param current      当前已聚合的最高分级授权，可空（尚无抗菌药命中）
+     * @param antibioClass 明细药品抗菌药分级（drug.antibio_class），可空/NONE=非抗菌药不参与
+     * @return 聚合后的最高分级授权；仍无命中返回 null
+     * @throws IllegalStateException 词表外非空 antibio_class（主数据异常，人工对账）时触发
+     */
+    private static String maxAntibioGrant(String current, String antibioClass) {
+        if (antibioClass == null || "NONE".equals(antibioClass)) {
+            return current;
+        }
+        String candidate = ANTIBIO_GRANT_BY_CLASS.get(antibioClass);
+        if (candidate == null) {
+            throw new IllegalStateException("药品抗菌药分级词表外（主数据异常，人工对账）：antibioClass=" + antibioClass);
+        }
+        if (current == null) {
+            return candidate;
+        }
+        return ANTIBIO_GRANT_SEVERITY.indexOf(candidate) > ANTIBIO_GRANT_SEVERITY.indexOf(current)
+                ? candidate
+                : current;
+    }
+
+    /**
+     * 执业授权校验唯一出口（PH-1017，403）：PracticeCheckPort 未过即拒；文案携工号脱敏（等保三级
+     * 脱敏口径，禁明文工号出 ProblemDetail），reason 原样透传（授权已过期/无有效记录两态可定位）。
+     *
+     * @param employeeId 员工 ID（运行态 userId 直作，Task 2 身份链口径），非空
+     * @param grantType  授权类型词表值（PRESCRIPTION/ANTIBIO_NONRESTRICT/ANTIBIO_RESTRICT/
+     *                   ANTIBIO_SPECIAL/NARCOTIC），非空
+     * @throws BizException PH-1017（403）授权未过时触发；建议处理策略：提示医师联系医务授权管理，
+     *                      前端禁重试直发
+     */
+    private void checkGrant(long employeeId, String grantType) {
+        PracticeCheckResult result = practiceCheckPort.check(employeeId, grantType);
+        if (!result.passed()) {
+            log.warn(
+                    "开方拒绝：执业授权未过：employeeId（脱敏）={}，grantType={}，reason={}",
+                    maskEmployeeId(String.valueOf(employeeId)),
+                    grantType,
+                    result.reason());
+            throw new BizException(
+                    PharmacyErrorCode.PRACTICE_NOT_ALLOWED,
+                    HttpStatus.FORBIDDEN,
+                    "开方执业授权未过（工号 " + maskEmployeeId(String.valueOf(employeeId)) + "）：" + result.reason());
+        }
+    }
+
+    /**
+     * 操作者标识解析为 employeeId（运行态 userId 直作 employeeId，Task 2 身份链口径）：非数字串
+     * 显式 PH-1016 拒绝（W-22⑦ 禁裸 parse——NumberFormatException 裸抛即底层异常），门诊侧
+     * ClinicOrderServiceImpl OP-1019 同型守卫。
+     *
+     * @return 员工 ID（OperatorContextHolder 运行态 userId）
+     * @throws BizException PH-1016（400）操作者标识非数字（无法定位执业授权主体）时触发
+     */
+    private static long parseOperatorAsEmployeeId() {
+        String operator = OperatorContextHolder.get();
+        if (operator == null || !operator.matches("\\d+")) {
+            throw new BizException(
+                    PharmacyErrorCode.NUMERIC_FIELD_MALFORMED,
+                    HttpStatus.BAD_REQUEST,
+                    "操作者标识非数字（无法定位执业授权主体）：" + maskEmployeeId(operator));
+        }
+        return Long.parseLong(operator);
+    }
+
+    /**
+     * 工号脱敏（等保三级展示口径）：首尾字符保留、中间星号遮蔽；两位以内整体遮蔽防短串反推。
+     *
+     * @param employeeId 工号原文，可空
+     * @return 脱敏文案（如 301→3***1、3→***），非空
+     */
+    private static String maskEmployeeId(String employeeId) {
+        return employeeId == null || employeeId.length() <= 2
+                ? "***"
+                : employeeId.charAt(0) + "***" + employeeId.charAt(employeeId.length() - 1);
     }
 
     /** 签发处方号：R+yyyyMMdd+6 位纳秒尾数（uk_rx_no 兜底并发重号，P1 演示序列与 billing fee_no 同口径） */

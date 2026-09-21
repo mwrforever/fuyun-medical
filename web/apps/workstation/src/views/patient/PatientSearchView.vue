@@ -125,9 +125,15 @@ function handleRowClick(row: PatientVO): void {
             <el-button link type="primary" @click.stop="handleRowClick(row)">详情</el-button>
           </template>
         </el-table-column>
-        <!-- 空态区分两态：已执行检索无结果给业务口径提示，初始未查保持空白区（min-height 锁 CLS） -->
+        <!-- 空态区分两态（§4.4 业务口径 description）：初始未查给操作指引（批次 2 移交打磨项——
+             原初始为 240px 空白板），已查无结果给业务结果提示 -->
         <template #empty>
-          <el-empty v-if="searched" :image-size="72" description="未检索到匹配患者" />
+          <el-empty
+            v-if="!searched"
+            :image-size="72"
+            description="输入证件号 / 手机号 / 姓名后查询患者档案"
+          />
+          <el-empty v-else :image-size="72" description="未检索到匹配患者" />
         </template>
       </el-table>
       <el-pagination

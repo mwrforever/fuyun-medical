@@ -2,6 +2,78 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-22 · P1 PR-5 M03 门诊主流程收口：outpatient 全链+门诊三前端交付（CF-5 冻结载体实装）
+
+- **交付面**：后端 outpatient 全链——号源池域（V200 三表+V705 三类字典种子：排班模板/放号/停诊/加号）、
+  预约挂号域（V201 预约/就诊四表：visit_id 当日键签发+双道闸扣减+支付时限延迟释放+退号四分支+改期链）、
+  分诊队列域（V202 两表：报到/二次分诊/调级/跨队列转接+叫号 CAS+过号重排+WS 推送）、医生站域（V203 两表：
+  开单/作废/RX_REF 引用登记+接诊/诊毕状态机+开方端口转调）、收费退费联动（手工计费挂号费/
+  settlement.completed 放行扇出/refund.approved 终态回滚/fee.created 补账）、V204 事件契约种子
+  （id 23/25/31 冻结+id 32–40 登记，event_registry 总行 31→40）、practice/check 真实化（V704
+  practice_grant+outpatient/pharmacy 双端接线）、portal 匿名通道（SystemWebConfig 白名单+
+  PortalAppointmentController）、WS 自建面（/ws/outpatient 端点+两 topic+帧级鉴权拦截器）、三验收锚点 IT
+  （FullFlow/RefundRollback/PoolConcurrency）与 `docs/migrations/flyway-version-registry.md` 建档；
+  前端三应用——workstation 门诊三页（挂号收费联动/分诊台/医生站）+存量面全站打磨（Task 16 taste-skill）、
+  portal 免登录基座（无 token 注入）+预约出票页、bigscreen /ws/outpatient 叫号页暗色化；**Task 17 存量
+  前端基建六批次子 PR（#37–#42 全合并，末端 dev@58e16a5）**——批次 0 设计系统地基/批次 1 布局壳数据化
+  菜单/批次 2 患者三页/批次 3 收费三页/批次 4 药房三页/批次 5 bigscreen+portal，经 c0cfb26 合并回主线
+  （AppSidebar 冲突按预登记消解：门诊菜单组并入数据驱动 MENU_ITEMS）。
+- **门禁记录**：Task 14 全量——后端 `mvn verify` 全 24 模块绿（全反应堆 1369 例零失败；
+  outpatient/pharmacy/billing service.impl 三包 JaCoCo 实测 LINE=1.00 不回退；Modulith
+  `ApplicationModules.verify()` 过）；前端五连绿（30 文件 129 用例）+ api.d.ts 新鲜度
+  `git diff --exit-code` 输出空；门禁期修复 1 提交（1d7746c OutpatientRefundRollbackIT 时段型缺陷——
+  effectiveFrom 改取 UTC 当日零点）；Task 17 六批次各自五连绿+22 既有 spec 断言 diff=0+六 checks 绿；
+  Task 16 打磨五连绿+spec diff=0 复核。
+- **裁决落实（recon 14 条对照）**：0 范围界定/演示终点直线段声明（文档头 not-in-scope+03 Spec 注记⑦）；
+  1 号段 V200–V299（practice_grant 改道 V704=偏差②）；2 JaCoCo 核心包 LINE=1.00（outpatient impl 入
+  名单）；3 id 23/25/31 冻结（V204 UPDATE+兜底 INSERT 双形态=偏差①）；4 放行链回切（rxNos 载荷携带案，
+  Task 11）；5 confirmRefundTerminal 收口（SettlementQueryPort 反查，CF-4 载荷零变更）；6 refund 映射
+  M03 自查（refundableLines visit 锚，Task 10 契约缝定案）；7 退号退费统一免审档（OutpatientBillingPort
+  DAY_CORRECTION）；8 取药凭证载体 settlementNo（verify 可选 body，Task 11）；9 practice/check 真实化
+  （Task 2/9）；10 D-16 三态门禁（Task 2/8）；11 visit_id Redis 当日键（Task 5）；12 WS 自建（镜像
+  拦截器=偏差⑥，收敛工单 W-25）；13 portal 免登录白名单（Task 5/13）；14 W-22 前置 fix PR 先行
+  （P-0 已合入）。
+- **偏差与待批处置结论**：批次 4 主控裁决——发药工作台「发药签名」confirm 两参调用被其 spec :198-201
+  `toHaveBeenCalledWith` 锁死文案与元数，R-3 confirmButtonText 第三实参与 §4.4 单号回显任一落地必破
+  冻结断言，按「改实现不改断言」红线本调用不动，**新登 TASK.md D-21 待决策项**（选项=专项 PR 修订该
+  断言并补两交付 / 维持现状）；R-3 三处已完成两处（批次 3 PricingSettle/RefundApproval 中文按钮文案）；
+  D-20 fy.delay quorum TTL 惰性过期待决策项随 PR 描述声明缺口与影响边界；W-19/W-20/D-19 维持现状
+  （W-20 已转产品待办）；W-23/W-24 两行不回填（W-24 代码修复已随本 PR 交付、行删除待合并后执行）。
+
+## 2026-09-20 · P1 PR-5 M03 门诊主流程：outpatient 号段初始化登记与门禁适配（先记再改）
+
+- **号段初始化批次**：outpatient 域启用固定百位段 **V200–V299**（recon 裁决 1；段内 V200–V299 全空），
+  首批 V200–V204（V200 号源池三表、V201 预约/就诊四表、V202 分诊/队列两表、V203 申请单两表、
+  V204 门诊事件契约种子）。outpatient schema 基线零迁移，`scripts/check-migration-governance.py`
+  乱序守卫「号段初始化豁免」（:152-154）放行首批；批次合入后 outpatient 后续迁移一律走 V500+
+  通用段（TASK.md W-12 全局规则恢复约束）。
+- **存量 dev 卷一次性重置**（进入条件，Task 13 api-docs 导出前执行——导出要求 backend 在含 V200–V204
+  的新卷上启动，旧卷 Flyway outOfOrder=false 必拒 pending 迁移；Task 15 真栈探针复用该重置后卷）：
+  首批 V200–V204 低于基线全局最大已应用版本 V703，Flyway outOfOrder=false 对存量卷拒绝应用
+  （守卫脚本 docstring :7-11 与 PR-1a 真栈实证）；处置=`docker compose -f deploy/docker-compose.yml
+  --env-file deploy/.env down -v && up -d` 全新卷按版本升序一次应用（本条目即登记载体；
+  Testcontainers IT 每次全新库不受影响）。**团队广播警示（待批 3 执行条件）**：重置=存量 dev 库
+  一次性清空重建（down -v 清卷），执行前须在团队渠道广播警示——「存量 dev 库将一次性清空重建，
+  未入库数据先行导出」；广播记录随执行台账归档。
+- **practice_grant 改道 system 通用段 V704**（recon 裁决 9 原拟 V608 经守卫算术改道，偏差②）：
+  system schema 基线非零迁移（V300–V303/V607），新迁移必须 > V703——V608 必被乱序守卫拦截；
+  V704∈(500,None) 合法（V607 先例）。**V705**=门诊三类字典种子（appt-type/visit-type/disposition，
+  03 Spec §8「引用 M01 字典 code 不自建副本」）。
+- **CF-5/CF-3 事件 id 排定（全局递增按迁移执行序）**：id 23/25/31 载荷 desc 经 outpatient V204
+  冻结（「UPDATE 存量行 + WHERE NOT EXISTS 兜底 INSERT」双语句形态——V204 应用序先于 V605/V702，
+  纯 UPDATE 在新库 no-op 后会被 V605/V702 以占位 desc 首插，双形态保两序同终态，偏差①；CF-5
+  双向评审声明随 PR）；新增 id 32 outpatient.visit.registered / 33 visit.finished / 34
+  visit.cancelled / 35 visit.no-show（仅登记无发布点，id 27 先例）/ 36 appointment.booked /
+  37 appointment.cancelled / 38 appointment.rescheduled / 39 appointment.timeout（延迟队列回调
+  内部事件，自产自消）/ 40 schedule.stopped；`outpatient.queue.called` 不登记（纯 WS 通道）；
+  `system.practice.changed` 已随 V5 id 6 登记（发布接线随 Task 2，零新登记）；
+  MessagingGovernanceIT 总行断言 31→40 与 V204 同任务落改（PR-3「种子+断言同任务」Task 17 先例）。
+- **JaCoCo 核心包扩名单**：父 POM 规则二增 `com.fuyun.outpatient.service.impl`（号源权威库存扣减/
+  visit 主状态机/退号退费联动直接驱动资金联动=「核心业务状态机」LINE=1.00，recon 裁决 2，
+  2026-09-19 主控裁决；包不存在时零包平凡通过，首个 impl 落码即生效）。
+- **W-22 前置**：PR-4 九条合规遗留 fix PR 已先行合入（裁决 14，TASK.md W-22 行由其回填删除），
+  本 PR 新增页面/DTO 自带合规形态（loading+在途守卫+零出网用例；入参显式格式校验 4xx）。
+
 ## 2026-09-20 · P1 PR-5 批复落档：11 项待批/10 项偏差全部批准认可，6 项执行条件融入任务步骤
 
 - **批复记录**：用户逐项批复——待批 1–11 全部批准、偏差①–⑩全部认可；其中待批 3/4/5/6 与

@@ -3,18 +3,22 @@ package com.fuyun.pharmacy.service;
 /**
  * 发药服务（FU-M06-04 门诊发药闭环）：Task 5 交付缴费放行与费用回执两消费入口；
  * Task 6 补齐调剂三段（pick/verify/issue）与工作台回显；Task 7 扩展退药受理两时点
- * （acceptReturn）与 refund.approved 终态收敛（confirmRefundTerminal）；Task 10 追加
- * 执行占用查询（occupancy，供 M13 位）（接口方法只增不改形）。
+ * （acceptReturn）与 refund.approved 终态收敛；Task 10 追加执行占用查询（occupancy，供 M13 位）；
+ * PR-5 Task 11 放行链回切——放行/退费收口按单据精确清单承载、verify 增可选凭证核验、
+ * order.cancelled 未发药作废路径实装（接口方法只增不改形）。
  */
 public interface IDispenseService {
 
     /**
-     * 缴费放行（charged 消费业务）：就诊维度放行 PENDING_FEE 的门诊/急诊处方——
-     * 逐单 CAS 转 PENDING_DISPENSE 并创建 CREATED 发药单与明细入队（Spec §5 流程 1）。
+     * 缴费放行（charged 消费业务）：按结算覆盖的处方号精确清单放行——逐 rxNo 定位
+     * PENDING_FEE 的门诊/急诊处方，逐单 CAS 转 PENDING_DISPENSE 并创建 CREATED 发药单与
+     * 明细入队（Spec §5 流程 1；裁决 4 单据精确放行——禁 visit 维度全量扫描，避免误放
+     * 未纳入本结算的处方）；空清单=该结算无药品行（纯检查/检验结算）info 跳过。
      *
-     * @param visitId CF-3 就诊号（charged 占位契约最小已知字段，PR-5 回切按单据精确放行），非空
+     * @param rxNos 本次结算覆盖的处方号精确清单，非 null（可空清单=合法跳过面）；
+     *              来源：outpatient.order.charged 载荷 rxNos（V204 id 25 冻结契约）
      */
-    void releaseByVisit(String visitId);
+    void releaseByRxNos(java.util.List<String> rxNos);
 
     /**
      * 费用回执（fee.created 消费业务）：处方通道（trigger_point=PRESCRIPTION_EFFECTIVE，
@@ -36,12 +40,15 @@ public interface IDispenseService {
     void pick(String dispenseNo, java.util.List<com.fuyun.pharmacy.dto.PickLine> lines);
 
     /**
-     * 扫码核对（PICKING→PICKED）：核对药师=当前登录者，双签守卫 verifier≠picker（PH-1011）。
+     * 扫码核对（PICKING→PICKED）：核对药师=当前登录者，双签守卫 verifier≠picker（PH-1011）；
+     * 凭证非空时增取药凭证核验（裁决 8：凭证=settlementNo，经 billing SettlementQueryPort
+     * 反查其与处方归属一致性，不一致 PH-1018）——空凭证跳过核验，追溯码逐码采集维持防回流主道。
      *
      * @param dispenseNo 调剂单号
-     * @throws BizException PH-1008 / PH-1009 / PH-1011
+     * @param credential 取药凭证（结算单号），可空；来源：M06 药师工作站扫码/手工录入
+     * @throws BizException PH-1008 / PH-1009 / PH-1011 / PH-1018（凭证与处方归属不一致）
      */
-    void verify(String dispenseNo);
+    void verify(String dispenseNo, String credential);
 
     /**
      * 发药签名（PICKED→ISSUED）：批次扣减+出库流水同事务，处方转 DISPENSED，
@@ -74,18 +81,30 @@ public interface IDispenseService {
     void acceptReturn(com.fuyun.pharmacy.dto.DispenseReturnRequest req);
 
     /**
-     * 退费终态收敛（refund.approved 消费业务）：受理已终态（PART/FULL_RETURNED）的发药单镜像
-     * 处方终态（DISPENSED→PART/FULL_RETURNED，Spec :132「billing.refund.approved 后终态」，
-     * 以 M13 回执为退费权威）。幂等面：处方已退药终态重读跳过（与 order.cancelled 双通道
-     * 重复到达只收敛一次）；定位不到处方与未发药退费（PENDING_DISPENSE/DISPENSING）warn 跳过
-     * 不阻断消费位（未发药终态确认归 outpatient.order.cancelled，PR-5 回切）。
+     * 退费终态收敛（refund.approved 消费业务，PR-5 单据化收口——注记⑦误伤面闭合）：按反查
+     * 处方号清单逐 rxNo 定位处方与活动发药单，DISPENSED 态处方按发药单受理终态镜像
+     * PART/FULL_RETURNED（Spec :132「billing.refund.approved 后终态」，以 M13 回执为退费权威）。
+     * 幂等面：处方已退药终态重读跳过（与 order.cancelled 双通道重复到达只收敛一次）；
+     * 清单处方定位不到、活动发药单缺位与受理未终态（跨队列乱序）warn 跳过不阻断消费位；
+     * 未发药退费（PENDING_DISPENSE/DISPENSING）warn 跳过（终态确认归 order.cancelled 作废通道）。
      *
-     * <p>已知口径（Task 13 Spec 注记⑦ 收口缺口）：以患者维度镜像处方终态，同患者其他在途
-     * 发药单存在被提前置终态的误伤面，随 PR-5 按单据维度回切修正。
-     *
-     * @param patientId 患者主索引，非空；来源：billing.refund.approved 载荷
+     * @param rxNos 退费涉及的处方号精确清单（调用方经 billing SettlementQueryPort 反查承载，
+     *              非空清单；来源：sourceRefsOfSettlement(settlementId).rxRefs()）
      */
-    void confirmRefundTerminal(long patientId);
+    void confirmRefundTerminalByRx(java.util.List<String> rxNos);
+
+    /**
+     * 未发药作废（order.cancelled 消费业务，PR-5 注记⑥回切）：按退费逆向处方号清单逐 rxNo
+     * 将 PENDING_DISPENSE/DISPENSING 态处方 CAS 作废并同步发药单退场（Spec :132/:134——
+     * 活动发药单 CANCELLED、批次锁定释放、明细退场，复用 DISPENSING_CANCEL 退场段形态）。
+     * 已发药终态（DISPENSED/PART/FULL_RETURNED）info 跳过（已由 refund.approved 双通道收敛）；
+     * 已 CANCELLED 幂等重投跳过；清单处方定位不到与状态域外（未缴费作废归 cancel API）warn 跳过。
+     *
+     * @param rxNos 退费逆向涉及的处方号精确清单，非空清单；来源：outpatient.order.cancelled
+     *              载荷 rxNos（V204 id 31 冻结契约，经 billing SettlementQueryPort 反查扇出）
+     * @param reason 退费原因（载荷透传，作废留痕日志锚点），可空
+     */
+    void voidUndispensedByRx(java.util.List<String> rxNos, String reason);
 
     /**
      * 执行占用查询（供 M13 退费前置校验调用位，Spec :172；billing 不切——BILL-1017 维持
@@ -99,10 +118,11 @@ public interface IDispenseService {
     java.util.List<com.fuyun.pharmacy.vo.OccupancyVO> occupancy(long patientId, String visitId, String itemCode);
 
     /**
-     * 按处方号查发药单（前端工作台回显）。
+     * 按处方号查发药单（前端工作台回显）：排除 CANCELLED 取消态历史行（W-24——
+     * uk_dispense_rx_active 允许「取消单+重建活动单」共存，一处方一张活动单）。
      *
      * @param rxNo 处方号，非空
-     * @return 发药单出参；无单返回 null
+     * @return 发药单出参；无活动单返回 null
      */
     com.fuyun.pharmacy.vo.DispenseVO getByRxNo(String rxNo);
 }

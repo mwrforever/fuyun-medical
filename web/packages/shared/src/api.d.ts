@@ -54,6 +54,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/outpatient/schedule-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 排班模板分页清单 */
+        get: operations["listTemplates"];
+        /** 更新排班模板 */
+        put: operations["updateTemplate"];
+        /** 登记排班模板 */
+        post: operations["createTemplate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ingest/iotda-fallback": {
         parameters: {
             query?: never;
@@ -64,6 +83,38 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["ingestIotdaFallback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/practice/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listByEmployee"];
+        put?: never;
+        post: operations["grant"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/practice/grants/{id}/withdraw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["withdraw"];
         delete?: never;
         options?: never;
         head?: never;
@@ -665,6 +716,363 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["close"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/visits/{visitId}/prescriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 开立处方（M06 衔接） */
+        post: operations["openPrescription"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/visits/{visitId}/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医生站开单 */
+        post: operations["createOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/visits/{visitId}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 诊毕 */
+        post: operations["finish"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/visits/{visitId}/admit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 接诊 */
+        post: operations["admit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/triage/check-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 分诊报到 */
+        post: operations["checkIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/triage/adjust": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 二次分诊/调级/转队列 */
+        post: operations["adjust"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/schedules/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 停诊 */
+        post: operations["stop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/schedules/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 恢复停诊 */
+        post: operations["resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/schedules/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** T+N 放号生成 */
+        post: operations["generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/queue/tickets/{id}/recall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重呼 */
+        post: operations["recall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/queue/tickets/{id}/pass": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 过号 */
+        post: operations["pass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/queue/call": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 候诊叫号 */
+        post: operations["call"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/portal/appointments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** portal 预约（免登录） */
+        post: operations["book"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/portal/appointments/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** portal 退号（免登录） */
+        post: operations["cancel_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/orders/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 申请单作废 */
+        post: operations["cancel_2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/number-pools/{id}/extra-quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 加号授权 */
+        post: operations["extraQuota"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/appt-credits/{id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 爽约限约手工解除 */
+        post: operations["release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/appointments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 统一预约/当日挂号 */
+        post: operations["book_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/appointments/{no}/take": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预约取号 */
+        post: operations["take"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/appointments/{no}/reschedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预约改期 */
+        post: operations["reschedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/appointments/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预约退号 */
+        post: operations["cancel_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1274,6 +1682,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/outpatient/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 排班日历分页清单 */
+        get: operations["listSchedules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/queues/{queueId}/tickets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 队列快照 */
+        get: operations["snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/portal/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** portal 可约号源查询（免登录） */
+        get: operations["schedules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按就诊号查询申请单 */
+        get: operations["listByVisit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/number-pools/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 可约号源查询 */
+        get: operations["availablePools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/doctor/patient-queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 医生站候诊列表 */
+        get: operations["patientQueue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outpatient/appt-credits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 爽约信用记录查询 */
+        get: operations["credits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integration/received-events": {
         parameters: {
             query?: never;
@@ -1568,6 +2095,53 @@ export interface components {
             mobile?: string;
             address?: string;
         };
+        ScheduleTemplateSaveRequest: {
+            /** @example 0 */
+            id?: string;
+            deptCode: string;
+            doctorId: string;
+            /** Format: date */
+            effFrom: string;
+            /** Format: date */
+            effTo?: string;
+            weekPattern: string;
+            /** @enum {string} */
+            session: "MORNING" | "AFTERNOON" | "EVENING";
+            /** @enum {string} */
+            apptType: "GENERAL" | "EXPERT" | "SPECIAL_DISEASE" | "EMERGENCY" | "REVISIT";
+            slotStart: string;
+            slotEnd: string;
+            /** Format: int32 */
+            slotQuota: number;
+            room?: string;
+            /** Format: int32 */
+            releaseDays?: number;
+            releaseTime?: string;
+        };
+        ScheduleTemplateVO: {
+            /** @example 0 */
+            id?: string;
+            deptCode?: string;
+            doctorId?: string;
+            /** Format: date */
+            effFrom?: string;
+            /** Format: date */
+            effTo?: string;
+            weekPattern?: string;
+            /** @enum {string} */
+            session?: "MORNING" | "AFTERNOON" | "EVENING";
+            /** @enum {string} */
+            apptType?: "GENERAL" | "EXPERT" | "SPECIAL_DISEASE" | "EMERGENCY" | "REVISIT";
+            slotStart?: string;
+            slotEnd?: string;
+            /** Format: int32 */
+            slotQuota?: number;
+            room?: string;
+            /** Format: int32 */
+            releaseDays?: number;
+            releaseTime?: string;
+            status?: string;
+        };
         FallbackIngestRequest: {
             deviceId: string;
             metricCode: string;
@@ -1579,6 +2153,19 @@ export interface components {
         };
         FallbackIngestResponse: {
             accepted?: boolean;
+        };
+        PracticeGrantCreateRequest: {
+            /** @example 0 */
+            employeeId: string;
+            grantType: string;
+            legalBasis?: string;
+            /** Format: date */
+            validFrom: string;
+            /** Format: date */
+            validTo?: string;
+        };
+        PracticeWithdrawRequest: {
+            reason: string;
         };
         PracticeCheckRequest: {
             /** @example 0 */
@@ -1725,6 +2312,9 @@ export interface components {
             nhsaCode: string;
             catalogVersion: string;
             payType: string;
+        };
+        VerifyCredentialRequest: {
+            credential?: string;
         };
         PickLine: {
             prescriptionItemId: string;
@@ -1929,6 +2519,196 @@ export interface components {
             cardNo: string;
             /** @example 0 */
             patientId: string;
+        };
+        Item: {
+            /** @example 0 */
+            drugId: string;
+            quantity: string;
+            unit?: string;
+            singleDose?: string;
+            routeCode?: string;
+            frequency?: string;
+            /** Format: int32 */
+            days?: number;
+            usageNote?: string;
+        };
+        PrescriptionOpenRequest: {
+            rxType: string;
+            diagnosisCodes?: string[];
+            skinTestRequired?: boolean;
+            items: components["schemas"]["Item"][];
+        };
+        ClinicOrderVO: {
+            /** @example 0 */
+            id?: string;
+            orderNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** @enum {string} */
+            orderType?: "EXAM" | "LAB" | "TREATMENT" | "DISPOSAL" | "MATERIAL" | "RX_REF";
+            extRef?: string;
+            orderDoctorId?: string;
+            /** Format: date-time */
+            validTo?: string;
+            /** @enum {string} */
+            status?: "CREATED" | "PENDING_FEE" | "CHARGED" | "IN_EXECUTION" | "COMPLETED" | "CANCELLED";
+            /** @example 0 */
+            feeSettlementId?: string;
+            items?: components["schemas"]["Item"][];
+        };
+        OrderCreateRequest: {
+            orderType: string;
+            items: components["schemas"]["OrderItemRequest"][];
+        };
+        OrderItemRequest: {
+            itemCode: string;
+            quantity: string;
+            usageSummary?: string;
+        };
+        FinishVisitRequest: {
+            disposition: string;
+            explicitConfirm?: boolean;
+        };
+        VisitVO: {
+            /** @example 0 */
+            id?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** @example 0 */
+            apptId?: string;
+            deptCode?: string;
+            doctorId?: string;
+            /** @enum {string} */
+            visitType?: "EMERGENCY" | "GENERAL" | "SPECIAL" | "INTERNET" | "MDT" | "OTHER";
+            /** Format: int32 */
+            isRevisit?: number;
+            /** Format: int32 */
+            triageLevel?: number;
+            /** @enum {string} */
+            status?: "REGISTERED" | "WAITING" | "IN_CONSULT" | "PENDING_FEE" | "IN_EXECUTION" | "PENDING_MEDICATION" | "FINISHED" | "CANCELLED" | "NO_SHOW";
+            /** Format: date-time */
+            registeredAt?: string;
+        };
+        CheckInRequest: {
+            visitId: string;
+            stationId: string;
+            priorityFactors?: string[];
+        };
+        QueueTicketVO: {
+            /** @example 0 */
+            id?: string;
+            visitId?: string;
+            queueId?: string;
+            ticketNo?: string;
+            /** @enum {string} */
+            ticketType?: "FIRST" | "VISIT" | "RETURN" | "EXTRA";
+            doctorId?: string;
+            /** Format: int32 */
+            priorityScore?: number;
+            /** Format: int32 */
+            queueSeq?: number;
+            /** Format: date-time */
+            queueTime?: string;
+            /** Format: int32 */
+            calledCount?: number;
+            /** Format: date-time */
+            callTime?: string;
+            /** @enum {string} */
+            status?: "WAITING" | "CALLED" | "SERVING" | "SERVED" | "PASSED" | "CANCELLED";
+            patientName?: string;
+        };
+        TriageAdjustRequest: {
+            visitId: string;
+            action: string;
+            targetQueue?: string;
+            doctorId?: string;
+            /** Format: int32 */
+            triageLevel?: number;
+            priorityFactors?: string[];
+        };
+        StopScheduleRequest: {
+            reason: string;
+        };
+        ScheduleGenerateRequest: {
+            /** Format: date */
+            endDate: string;
+            /** Format: int32 */
+            days: number;
+        };
+        QueueCallRequest: {
+            deptCode: string;
+            doctorId: string;
+        };
+        PortalAppointmentRequest: {
+            credentialType: string;
+            credentialNo: string;
+            /** @example 0 */
+            poolId: string;
+        };
+        AppointmentVO: {
+            /** @example 0 */
+            id?: string;
+            apptNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** @example 0 */
+            scheduleId?: string;
+            /** @example 0 */
+            poolId?: string;
+            /** @enum {string} */
+            apptType?: "GENERAL" | "EXPERT" | "SPECIAL_DISEASE" | "EMERGENCY" | "REVISIT";
+            /** Format: date */
+            schedDate?: string;
+            slotStart?: string;
+            slotEnd?: string;
+            /** @enum {string} */
+            channel?: "WINDOW" | "KIOSK" | "PORTAL" | "MINIAPP" | "CONSULT" | "EXTERNAL";
+            /** @enum {string} */
+            feeStatus?: "UNPAID" | "PAID" | "REFUNDED";
+            /** Format: date-time */
+            payDeadline?: string;
+            visitId?: string;
+            /** @enum {string} */
+            status?: "RESERVED" | "TAKEN" | "CANCELLED" | "NO_SHOW";
+        };
+        CancelAppointmentRequest: {
+            reason: string;
+        };
+        ExtraQuotaRequest: {
+            /** Format: int32 */
+            count: number;
+        };
+        CreditReleaseRequest: {
+            reason: string;
+        };
+        ApptCreditVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            patientId?: string;
+            action?: string;
+            /** Format: date-time */
+            occurredAt?: string;
+            /** Format: int32 */
+            windowDays?: number;
+            /** Format: date */
+            restrictFrom?: string;
+            /** Format: date */
+            restrictTo?: string;
+            releaseReason?: string;
+        };
+        AppointmentCreateRequest: {
+            /** @example 0 */
+            patientId: string;
+            /** @example 0 */
+            poolId: string;
+            channel: string;
+        };
+        RescheduleRequest: {
+            /** @example 0 */
+            newPoolId: string;
         };
         MdmSubscriptionCreateRequest: {
             topic: string;
@@ -2172,6 +2952,20 @@ export interface components {
             componentItemId: string;
             defaultQuantity: number;
         };
+        PracticeGrantVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            employeeId?: string;
+            grantType?: string;
+            legalBasis?: string;
+            /** Format: date */
+            validFrom?: string;
+            /** Format: date */
+            validTo?: string;
+            status?: string;
+            approvalRef?: string;
+        };
         PageResultPrescriptionVO: {
             content?: components["schemas"]["PrescriptionVO"][];
             /** @example 0 */
@@ -2349,6 +3143,80 @@ export interface components {
             size?: string;
             /** @example 0 */
             total?: string;
+        };
+        PageResultScheduleVO: {
+            content?: components["schemas"]["ScheduleVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        ScheduleVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            templateId?: string;
+            /** Format: date */
+            schedDate?: string;
+            /** @enum {string} */
+            session?: "MORNING" | "AFTERNOON" | "EVENING";
+            deptCode?: string;
+            doctorId?: string;
+            /** @enum {string} */
+            apptType?: "GENERAL" | "EXPERT" | "SPECIAL_DISEASE" | "EMERGENCY" | "REVISIT";
+            /** Format: int32 */
+            totalQuota?: number;
+            /** Format: int32 */
+            usedQuota?: number;
+            room?: string;
+            /** @enum {string} */
+            status?: "NORMAL" | "STOPPED";
+            stopReason?: string;
+        };
+        PageResultScheduleTemplateVO: {
+            content?: components["schemas"]["ScheduleTemplateVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        NumberPoolVO: {
+            /** @example 0 */
+            id?: string;
+            /** @example 0 */
+            scheduleId?: string;
+            /** @enum {string} */
+            apptType?: "GENERAL" | "EXPERT" | "SPECIAL_DISEASE" | "EMERGENCY" | "REVISIT";
+            slotStart?: string;
+            slotEnd?: string;
+            /** Format: int32 */
+            totalQuota?: number;
+            /** Format: int32 */
+            usedCount?: number;
+            /** Format: int32 */
+            remaining?: number;
+        };
+        DoctorQueueItemVO: {
+            /** @example 0 */
+            ticketId?: string;
+            visitId?: string;
+            ticketNo?: string;
+            patientName?: string;
+            /** @enum {string} */
+            ticketType?: "FIRST" | "VISIT" | "RETURN" | "EXTRA";
+            /** Format: int32 */
+            priorityScore?: number;
+            /** @enum {string} */
+            status?: "WAITING" | "CALLED" | "SERVING" | "SERVED" | "PASSED" | "CANCELLED";
+            allergyFlag?: boolean;
+            /** Format: date-time */
+            queueTime?: string;
+            /** Format: int32 */
+            calledCount?: number;
         };
         PageResultReceivedEventVO: {
             content?: components["schemas"]["ReceivedEventVO"][];
@@ -2763,6 +3631,77 @@ export interface operations {
             };
         };
     };
+    listTemplates: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultScheduleTemplateVO"];
+                };
+            };
+        };
+    };
+    updateTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleTemplateSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ScheduleTemplateVO"];
+                };
+            };
+        };
+    };
+    createTemplate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleTemplateSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ScheduleTemplateVO"];
+                };
+            };
+        };
+    };
     ingestIotdaFallback: {
         parameters: {
             query?: never;
@@ -2786,6 +3725,76 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["FallbackIngestResponse"];
                 };
+            };
+        };
+    };
+    listByEmployee: {
+        parameters: {
+            query: {
+                employeeId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PracticeGrantVO"][];
+                };
+            };
+        };
+    };
+    grant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PracticeGrantCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    withdraw: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PracticeWithdrawRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -3105,7 +4114,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["VerifyCredentialRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -3709,6 +4722,512 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    openPrescription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrescriptionOpenRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ClinicOrderVO"];
+                };
+            };
+        };
+    };
+    createOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ClinicOrderVO"];
+                };
+            };
+        };
+    };
+    finish: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishVisitRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VisitVO"];
+                };
+            };
+        };
+    };
+    admit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VisitVO"];
+                };
+            };
+        };
+    };
+    checkIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckInRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QueueTicketVO"];
+                };
+            };
+        };
+    };
+    adjust: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriageAdjustRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QueueTicketVO"];
+                };
+            };
+        };
+    };
+    stop: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StopScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    generate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": number;
+                };
+            };
+        };
+    };
+    recall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QueueTicketVO"];
+                };
+            };
+        };
+    };
+    pass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QueueTicketVO"];
+                };
+            };
+        };
+    };
+    call: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueueCallRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QueueTicketVO"];
+                };
+            };
+        };
+    };
+    book: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PortalAppointmentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AppointmentVO"];
+                };
+            };
+        };
+    };
+    cancel_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelAppointmentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AppointmentVO"];
+                };
+            };
+        };
+    };
+    cancel_2: {
+        parameters: {
+            query: {
+                reason: string;
+            };
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ClinicOrderVO"];
+                };
+            };
+        };
+    };
+    extraQuota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExtraQuotaRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreditReleaseRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApptCreditVO"];
+                };
+            };
+        };
+    };
+    book_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppointmentCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AppointmentVO"];
+                };
+            };
+        };
+    };
+    take: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VisitVO"];
+                };
+            };
+        };
+    };
+    reschedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RescheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AppointmentVO"];
+                };
+            };
+        };
+    };
+    cancel_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelAppointmentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AppointmentVO"];
+                };
             };
         };
     };
@@ -4645,6 +6164,170 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["PageResultCardTxnVO"];
+                };
+            };
+        };
+    };
+    listSchedules: {
+        parameters: {
+            query?: {
+                deptCode?: string;
+                dateFrom?: string;
+                dateTo?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultScheduleVO"];
+                };
+            };
+        };
+    };
+    snapshot: {
+        parameters: {
+            query?: {
+                status?: string;
+            };
+            header?: never;
+            path: {
+                queueId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["QueueTicketVO"][];
+                };
+            };
+        };
+    };
+    schedules: {
+        parameters: {
+            query: {
+                deptCode: string;
+                date: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NumberPoolVO"][];
+                };
+            };
+        };
+    };
+    listByVisit: {
+        parameters: {
+            query: {
+                visitId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ClinicOrderVO"][];
+                };
+            };
+        };
+    };
+    availablePools: {
+        parameters: {
+            query: {
+                deptCode: string;
+                date: string;
+                apptType?: "GENERAL" | "EXPERT" | "SPECIAL_DISEASE" | "EMERGENCY" | "REVISIT";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NumberPoolVO"][];
+                };
+            };
+        };
+    };
+    patientQueue: {
+        parameters: {
+            query: {
+                deptCode: string;
+                doctorId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DoctorQueueItemVO"][];
+                };
+            };
+        };
+    };
+    credits: {
+        parameters: {
+            query: {
+                patientId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ApptCreditVO"][];
                 };
             };
         };
