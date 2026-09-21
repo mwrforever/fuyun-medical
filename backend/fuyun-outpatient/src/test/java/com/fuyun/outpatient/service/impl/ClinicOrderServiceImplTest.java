@@ -343,6 +343,51 @@ class ClinicOrderServiceImplTest {
     }
 
     @Test
+    @DisplayName("开方拒绝：就诊不存在——OP-1001 且零授权触达零端口零落库")
+    void openPrescriptionRejectsUnknownVisit() {
+        when(visitMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.openPrescription("O2026092199999", openRequest()))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(OutpatientErrorCode.VISIT_NOT_FOUND));
+        verify(practiceCheckPort, never()).check(anyLong(), anyString());
+        verify(prescriptionOpenPort, never()).open(any(PrescriptionOpenCommand.class));
+        verify(clinicOrderMapper, never()).insert(any(ClinicOrder.class));
+    }
+
+    @Test
+    @DisplayName("开方拒绝：visit 终态（FINISHED 后拒绝一切开单/执行动作，红线 5）——OP-1011 且零授权触达零端口零落库")
+    void openPrescriptionRejectsTerminalVisit() {
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.FINISHED));
+
+        assertThatThrownBy(() -> service.openPrescription("O2026092100001", openRequest()))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.VISIT_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        verify(practiceCheckPort, never()).check(anyLong(), anyString());
+        verify(prescriptionOpenPort, never()).open(any(PrescriptionOpenCommand.class));
+        verify(clinicOrderMapper, never()).insert(any(ClinicOrder.class));
+    }
+
+    @Test
+    @DisplayName("开方拒绝：执业授权未过（port false）——OP-1017 403 且零端口零落库零事件（授权先于端口调用）")
+    void openPrescriptionRejectsWhenPracticeCheckFails() {
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.IN_CONSULT));
+        when(practiceCheckPort.check(501L, "PRESCRIPTION"))
+                .thenReturn(new PracticeCheckResult(false, "无有效执业授权记录：PRESCRIPTION"));
+
+        assertThatThrownBy(() -> service.openPrescription("O2026092100001", openRequest()))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PRACTICE_CHECK_FAILED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+        verify(prescriptionOpenPort, never()).open(any(PrescriptionOpenCommand.class));
+        verify(clinicOrderMapper, never()).insert(any(ClinicOrder.class));
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+    }
+
+    @Test
     @DisplayName("作废 PENDING_FEE 单：CAS→CANCELLED+端口逐行作废 sourceRef=orderNo 的 PENDING 行")
     void cancelVoidingPendingFeeViaPort() {
         ClinicOrder order = order(orderNoOf(1), OrderType.LAB, OrderStatus.PENDING_FEE);

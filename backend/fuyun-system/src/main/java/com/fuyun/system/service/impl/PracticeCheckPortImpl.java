@@ -10,7 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 执业授权校验端口实现（api 面 → IPracticeService 转调，跨模块进程内唯一消费通道）：REST 契约
  * POST /practice/check 与 api 端口同源同一校验实现（checkTime 缺省取服务端当前时刻），passed/reason
- * 原样透传不二次包装（调用方 OP-1017/PH-1016 语义不受影响）。线程安全：无状态单例。装配归
+ * 原样透传不二次包装（调用方 OP-1017（M03）/PH-1017（M06）语义不受影响）。线程安全：无状态单例。装配归
  * SystemWebConfig @Import；端口转调行覆盖由 PracticeCheckPortImplTest 承载（system impl 包
  * LINE=1.00）。
  */

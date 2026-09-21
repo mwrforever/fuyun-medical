@@ -20,7 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * 执业授权校验端口转调单测（PracticeCheckPort → IPracticeService，Task 8）：passed/reason 原样
- * 透传不二次包装（调用方 OP-1017/PH-1016 语义不受影响）；入参投影（employeeId/grantType 直传，
+ * 透传不二次包装（调用方 OP-1017（M03）/PH-1017（M06）语义不受影响）；入参投影（employeeId/grantType 直传，
  * checkTime 缺省 null=服务端当前时刻口径）。端口转调行覆盖由本测试承载（system impl 包 LINE=1.00）。
  */
 @ExtendWith(MockitoExtension.class)

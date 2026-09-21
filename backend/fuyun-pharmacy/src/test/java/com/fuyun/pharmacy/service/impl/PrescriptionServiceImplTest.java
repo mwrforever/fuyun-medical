@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -401,6 +402,15 @@ class PrescriptionServiceImplTest {
         return d;
     }
 
+    /** 造药：特殊使用级抗菌药（antibio_class=SPECIAL → 命中最高分级 ANTIBIO_SPECIAL 授权） */
+    private Drug specialAntibioDrug() {
+        Drug d = drug();
+        d.setId(13L);
+        d.setDrugCode("D-IT-003");
+        d.setAntibioClass("SPECIAL");
+        return d;
+    }
+
     /** 造药：麻醉类药品（narcotic_class=NARCOTIC → 命中 NARCOTIC 授权，非抗菌药） */
     private Drug narcoticDrug() {
         Drug d = drug();
@@ -474,6 +484,70 @@ class PrescriptionServiceImplTest {
                     });
             mockedDb.verify(() -> Db.saveBatch(any()), never());
         }
+    }
+
+    @Test
+    @DisplayName("开方纵深防御②命中集收敛：同方多级抗菌药（UNRESTRICTED+SPECIAL+RESTRICTED）仅查最高分级 ANTIBIO_SPECIAL（低分级不重复校验且不降级）")
+    void createChecksOnlyTopAntibioGrantForMultiAntibioPrescription() {
+        PrescriptionServiceImpl impl = newService();
+        Drug unrestricted = drug();
+        unrestricted.setAntibioClass("UNRESTRICTED");
+        when(drugMapper.selectById(11L)).thenReturn(unrestricted);
+        when(drugMapper.selectById(13L)).thenReturn(specialAntibioDrug());
+        // 低分级后置：严重序比较 false 分支（候选低于已聚合最高级时保持不降级）
+        Drug restricted = drug();
+        restricted.setId(14L);
+        restricted.setDrugCode("D-IT-004");
+        restricted.setAntibioClass("RESTRICTED");
+        when(drugMapper.selectById(14L)).thenReturn(restricted);
+        when(practiceCheckPort.check(3L, "ANTIBIO_SPECIAL"))
+                .thenReturn(new PracticeCheckResult(true, "执业授权有效：ANTIBIO_SPECIAL"));
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+        PrescriptionCreateRequest multiAntibio = new PrescriptionCreateRequest(
+                700101L,
+                VISIT,
+                "OUTPATIENT",
+                "NEIKE",
+                List.of("J06.900"),
+                false,
+                List.of(
+                        new RxItemRequest(11L, "1", "盒", "0.5g", "ORAL", "TID", 3, null),
+                        new RxItemRequest(13L, "1", "支", "0.1g", "IV", "QD", 2, null),
+                        new RxItemRequest(14L, "1", "盒", "0.5g", "ORAL", "TID", 3, null)));
+
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            impl.create(multiAntibio);
+        }
+        // 命中集只查最高分级：低分级（NONRESTRICT/RESTRICT）不重复校验（高分级授权覆盖低分级处方行为）
+        verify(practiceCheckPort).check(3L, "PRESCRIPTION");
+        verify(practiceCheckPort).check(3L, "ANTIBIO_SPECIAL");
+        verify(practiceCheckPort, never()).check(eq(3L), eq("ANTIBIO_NONRESTRICT"));
+        verify(practiceCheckPort, never()).check(eq(3L), eq("ANTIBIO_RESTRICT"));
+        verify(practiceCheckPort, never()).check(eq(3L), eq("NARCOTIC"));
+    }
+
+    @Test
+    @DisplayName("开方纵深防御守卫：抗菌药分级词表外（主数据脏数据）fail-closed 拒开——IllegalStateException 数据异常显式暴露，禁静默跳过授权校验")
+    void createRejectsUnknownAntibioClassAsDataAnomaly() {
+        PrescriptionServiceImpl impl = newService();
+        Drug dirty = drug();
+        dirty.setAntibioClass("WIDE_SPECTRUM"); // 词表外（AntibacterialClass 四值外）
+        when(drugMapper.selectById(11L)).thenReturn(dirty);
+        // 聚合发生在主行落库/放行迁移之后（同事务，异常即整体回滚）：机械补齐前置写桩
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+
+        assertThatThrownBy(() -> impl.create(request(VISIT, "OUTPATIENT", "ORAL")))
+                .isInstanceOfSatisfying(
+                        IllegalStateException.class,
+                        e -> assertThat(e.getMessage()).contains("词表外").contains("WIDE_SPECTRUM"));
     }
 
     @Test

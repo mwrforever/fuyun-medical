@@ -69,8 +69,13 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     private static final Map<String, String> ANTIBIO_GRANT_BY_CLASS = Map.of(
             "UNRESTRICTED", "ANTIBIO_NONRESTRICT", "RESTRICTED", "ANTIBIO_RESTRICT", "SPECIAL", "ANTIBIO_SPECIAL");
 
-    /** 抗菌药分级严重序（SPECIAL &gt; RESTRICTED &gt; UNRESTRICTED——命中集只查最高分级对应授权） */
-    private static final List<String> ANTIBIO_CLASS_SEVERITY = List.of("UNRESTRICTED", "RESTRICTED", "SPECIAL");
+    /**
+     * 抗菌药授权严重序（grant 域，与 ANTIBIO_GRANT_BY_CLASS 值域同源；SPECIAL &gt; RESTRICTED &gt;
+     * NONRESTRICT——命中集只查最高分级对应授权。R1 修正：比较域必须与聚合值同域（grant 名），
+     * 严禁回退为 class 名表——跨域 indexOf 恒 -1 致严重序失效（首遇分级当最高级的安全漏洞））
+     */
+    private static final List<String> ANTIBIO_GRANT_SEVERITY =
+            List.of("ANTIBIO_NONRESTRICT", "ANTIBIO_RESTRICT", "ANTIBIO_SPECIAL");
 
     private final PrescriptionItemMapper prescriptionItemMapper;
 
@@ -385,21 +390,27 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
 
     /**
      * 抗菌药授权取最高分级（严重序 SPECIAL &gt; RESTRICTED &gt; UNRESTRICTED）：命中集只查最高分级
-     * 对应 grant_type——高分级授权必然覆盖低分级处方行为，避免同方重复校验。
+     * 对应 grant_type——高分级授权必然覆盖低分级处方行为，避免同方重复校验。词表外非空分级属主数据
+     * 脏数据，fail-closed 显式暴露（R1 裁量：抗菌药授权是医疗安全校验，静默跳过即授权失控——
+     * IllegalStateException 数据异常口径与 casApprove 竞态同源，人工对账介入）。
      *
      * @param current      当前已聚合的最高分级授权，可空（尚无抗菌药命中）
      * @param antibioClass 明细药品抗菌药分级（drug.antibio_class），可空/NONE=非抗菌药不参与
      * @return 聚合后的最高分级授权；仍无命中返回 null
+     * @throws IllegalStateException 词表外非空 antibio_class（主数据异常，人工对账）时触发
      */
     private static String maxAntibioGrant(String current, String antibioClass) {
-        String candidate = antibioClass == null ? null : ANTIBIO_GRANT_BY_CLASS.get(antibioClass);
-        if (candidate == null) {
+        if (antibioClass == null || "NONE".equals(antibioClass)) {
             return current;
+        }
+        String candidate = ANTIBIO_GRANT_BY_CLASS.get(antibioClass);
+        if (candidate == null) {
+            throw new IllegalStateException("药品抗菌药分级词表外（主数据异常，人工对账）：antibioClass=" + antibioClass);
         }
         if (current == null) {
             return candidate;
         }
-        return ANTIBIO_CLASS_SEVERITY.indexOf(candidate) > ANTIBIO_CLASS_SEVERITY.indexOf(current)
+        return ANTIBIO_GRANT_SEVERITY.indexOf(candidate) > ANTIBIO_GRANT_SEVERITY.indexOf(current)
                 ? candidate
                 : current;
     }
