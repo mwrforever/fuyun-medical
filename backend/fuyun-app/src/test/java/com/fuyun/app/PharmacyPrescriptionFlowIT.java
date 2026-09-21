@@ -3,6 +3,7 @@ package com.fuyun.app;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.common.messaging.EventEnvelope;
@@ -101,6 +102,11 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
 
     private static String adminToken = "";
     private static String reviewerToken = "";
+
+    /** V704 演示医师登录名（sys_user id=3，PRESCRIPTION 执业授权种子——开方操作者须持权医师） */
+    private static final String DOCTOR_LOGIN_NAME = "doctordemo";
+
+    private static String doctorToken = "";
 
     /** 跨用例链路状态（JUnit 每用例新实例，业务号经 static 传递） */
     private static long drugId;
@@ -230,18 +236,24 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
     }
 
     /**
-     * 注入门诊缴费放行事件帧（stub 边界红线：outpatient.order.charged 生产零发布——IT 经
-     * RabbitTemplate + 信封编解码器手工注入合成信封，BillingSettlementFlowIT :240-284 形态；
-     * 每次调用信封内 eventId 均为新 UUID，重投语义由调用方以新 traceId 表达）。
+     * 注入门诊缴费放行事件帧（PR-5 起 outpatient.order.charged 有真实发布点——IT 内仍一律
+     * RabbitTemplate + EventEnvelopeCodec 手工注入合成信封，BillingSettlementFlowIT :240-284 形态；
+     * 载荷携 rxNos 精确清单——消费侧按单据放行，裁决 4；每次调用信封内 eventId 均为新 UUID，
+     * 重投语义由调用方以新 traceId 表达）。
      *
-     * @param visitId 放行目标就诊号（消费侧按 visitId 维度放行，PharmacyChargedOrderListener 载荷守卫）
+     * @param visitId 放行目标就诊号
+     * @param rxNos   本次结算覆盖的处方号精确清单（PharmacyChargedOrderListener 载荷守卫+逐单放行）
      * @param traceId 全链路追踪号（同时作日志检索锚点，重投帧以 -replay 后缀区分）
      */
-    private void publishCharged(String visitId, String traceId) {
+    private void publishCharged(String visitId, List<String> rxNos, String traceId) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("orderId", "IT-RX-ORDER-" + visitId)
                 .put("patientId", PATIENT_ID)
                 .put("visitId", visitId);
+        ArrayNode rxNosNode = payload.putArray("rxNos");
+        for (String rxNo : rxNos) {
+            rxNosNode.add(rxNo);
+        }
         rabbitTemplate.convertAndSend(
                 "fy.topic",
                 "outpatient.order.charged",
@@ -360,6 +372,8 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
         adminToken = loginToken(ADMIN_LOGIN_NAME);
         seedReviewerUser();
         reviewerToken = loginToken(REVIEWER_LOGIN_NAME);
+        // doctordemo 承载开方位——Task 9 practice/check 接线后开方须持 PRESCRIPTION 授权的医师
+        doctorToken = loginToken(DOCTOR_LOGIN_NAME);
 
         // billing 侧：建收费项目（与药品 itemCode 共码）+ 定价 3000 分 + 发布生效（FlowIT newItemWithPrice 同型）
         ObjectNode item = objectMapper.createObjectNode();
@@ -450,7 +464,7 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
                 .put("frequency", "TID")
                 .put("days", 3)
                 .put("singleDose", "0.5g");
-        JsonNode vo = postJson("/api/v1/pharmacy/prescriptions", adminToken, req);
+        JsonNode vo = postJson("/api/v1/pharmacy/prescriptions", doctorToken, req);
         rxNo = vo.path("rxNo").asText();
         // 处方号契约：R+yyyyMMdd+6 位（14 位数字段）；预检占位恒通过级（P3 引擎前固定 PASS）
         assertThat(rxNo).matches("R\\d{14}");
@@ -490,7 +504,7 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
         assertThat(sv.path("status").asText()).isEqualTo("SETTLED");
 
         // 注入 charged 帧（stub 边界：生产零发布，IT 合成信封）→ 放行链异步收敛
-        publishCharged(VISIT, "it-rx-charged-" + VISIT);
+        publishCharged(VISIT, List.of(rxNo), "it-rx-charged-" + VISIT);
         // 轮询：处方 PENDING_DISPENSE 且发药单 CREATED（双行迁移一次到位，上限 10s）
         for (int i = 0; i < 100; i++) {
             Integer released = jdbcTemplate.queryForObject(
@@ -508,7 +522,7 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
         assertThat(countDispense(rxNo)).isEqualTo(1);
 
         // 幂等重投：同 visitId 新 eventId 帧（业务级 CAS 重读定性 + uk_dispense_rx_active 兜底）
-        publishCharged(VISIT, "it-rx-charged-" + VISIT + "-replay");
+        publishCharged(VISIT, List.of(rxNo), "it-rx-charged-" + VISIT + "-replay");
         // 覆盖一次重投消费窗口（FlowIT Order(3) 同型有界等待，非盲等——入队态已先行实证）
         Thread.sleep(2000);
         assertThat(countDispense(rxNo)).as("charged 重复投递仅放行一次：发药单仍恰一张").isEqualTo(1);
@@ -685,7 +699,7 @@ class PharmacyPrescriptionFlowIT extends FuyunStackITBase {
                 .put("frequency", "TID")
                 .put("days", 3)
                 .put("singleDose", "0.5g");
-        String rxNo2 = postJson("/api/v1/pharmacy/prescriptions", adminToken, req)
+        String rxNo2 = postJson("/api/v1/pharmacy/prescriptions", doctorToken, req)
                 .path("rxNo")
                 .asText();
 

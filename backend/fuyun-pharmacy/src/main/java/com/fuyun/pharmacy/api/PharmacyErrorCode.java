@@ -50,7 +50,13 @@ public enum PharmacyErrorCode implements ErrorCode {
      * 开方执业授权未过（403；处方权/抗菌药分级/麻精权纵深防御校验拒绝——裁决 9，Spec :226，文案含
      * 工号脱敏；PH-1016 已被 W-22⑦ 占用，本码接续顺延）
      */
-    PRACTICE_NOT_ALLOWED("PH-1017");
+    PRACTICE_NOT_ALLOWED("PH-1017"),
+    /**
+     * 取药凭证与处方归属不一致（409；扫码核对可选凭证核验拒绝——PR-5 裁决 8 凭证载体=settlementNo，
+     * 经 billing SettlementQueryPort.settledUnder 反查该结算单下无该处方 SETTLED 费用行即拒；
+     * PH-1017 已被 PRACTICE_NOT_ALLOWED 占用，本码接续顺延）
+     */
+    CREDENTIAL_MISMATCH("PH-1018");
 
     /** 码值（如 PH-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

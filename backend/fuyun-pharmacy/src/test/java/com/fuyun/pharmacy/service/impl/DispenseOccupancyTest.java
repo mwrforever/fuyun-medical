@@ -71,6 +71,10 @@ class DispenseOccupancyTest {
     @Mock
     private PharmacyMasterDataCache masterDataCache;
 
+    /** Task 11 起构造器扩十一参：结算单反查端口补位（verify 凭证核验消费方，读侧链路不触达） */
+    @Mock
+    private com.fuyun.billing.api.SettlementQueryPort settlementQueryPort;
+
     @BeforeAll
     static void initTableInfo() {
         // MP 3.5.17 单测范式：lambdaQuery 触达的实体均须手工注册表信息（谓词断言三实体）
@@ -81,7 +85,8 @@ class DispenseOccupancyTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十参直注（Task 10 起第十参 masterDataCache；objectMapper 用真实例，与本域单测同款）
+        // 构造器十一参直注（Task 10 起第十参 masterDataCache、Task 11 扩第十一参 settlementQueryPort；
+        // objectMapper 用真实例，与本域单测同款）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
@@ -92,7 +97,8 @@ class DispenseOccupancyTest {
                 batchSelectService,
                 events,
                 new com.fasterxml.jackson.databind.ObjectMapper(),
-                masterDataCache);
+                masterDataCache,
+                settlementQueryPort);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         return impl;
     }
@@ -233,5 +239,23 @@ class DispenseOccupancyTest {
         LambdaQueryWrapper<Dispense> dispenseWrapper = capturedDispenseWrapper();
         assertThat(dispenseWrapper.getSqlSegment()).contains("status <>");
         assertThat(dispenseWrapper.getParamNameValuePairs().values()).contains("CANCELLED");
+    }
+
+    @Test
+    @DisplayName("按处方号查活动单排除取消态（W-24 台账闭合）：order.cancelled 作废单与重建活动单共存不误检")
+    void getByRxNoExcludesCancelledDispenseHistory() {
+        when(dispenseMapper.selectOne(any())).thenReturn(dispenseIssued());
+
+        com.fuyun.pharmacy.vo.DispenseVO vo = newService().getByRxNo("R20260918000001");
+
+        assertThat(vo).isNotNull();
+        assertThat(vo.dispenseNo()).isEqualTo("D20260918000001");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<Dispense>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(dispenseMapper).selectOne(captor.capture());
+        LambdaQueryWrapper<Dispense> wrapper = (LambdaQueryWrapper<Dispense>) captor.getValue();
+        wrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
+        assertThat(wrapper.getSqlSegment()).contains("status <>");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("CANCELLED");
     }
 }

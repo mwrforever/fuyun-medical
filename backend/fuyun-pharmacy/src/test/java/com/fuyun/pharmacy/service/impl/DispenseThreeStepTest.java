@@ -80,6 +80,10 @@ class DispenseThreeStepTest {
     @Mock
     private com.fuyun.pharmacy.cache.PharmacyMasterDataCache masterDataCache;
 
+    /** Task 11 起构造器扩十一参：结算单反查端口补位（verify 凭证核验消费方，三段守卫用例传 null 不触达） */
+    @Mock
+    private com.fuyun.billing.api.SettlementQueryPort settlementQueryPort;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Dispense.class);
@@ -98,8 +102,9 @@ class DispenseThreeStepTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十参直注（Task 6 起构造器承载 batchSelectService/events/objectMapper、Task 10 扩第十参 masterDataCache，
-        // objectMapper 用真实例承载 JSON 读写）；ServiceImpl 继承字段 baseMapper 反射注入（Global Constraints 单测范式）
+        // 构造器十一参直注（Task 6 起构造器承载 batchSelectService/events/objectMapper、Task 10 扩第十参
+        // masterDataCache、Task 11 扩第十一参 settlementQueryPort，objectMapper 用真实例承载 JSON 读写）；
+        // ServiceImpl 继承字段 baseMapper 反射注入（Global Constraints 单测范式）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
@@ -110,7 +115,8 @@ class DispenseThreeStepTest {
                 batchSelectService,
                 events,
                 new ObjectMapper(),
-                masterDataCache);
+                masterDataCache,
+                settlementQueryPort);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         return impl;
     }
@@ -306,7 +312,7 @@ class DispenseThreeStepTest {
         d.setPicker("dispenser-01"); // 与 OperatorContextHolder 同账号
         when(dispenseMapper.selectOne(any())).thenReturn(d);
 
-        assertThatThrownBy(() -> impl.verify("D20260918000001"))
+        assertThatThrownBy(() -> impl.verify("D20260918000001", null))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PharmacyErrorCode.DUAL_SIGN_CONFLICT));
         verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
@@ -324,7 +330,7 @@ class DispenseThreeStepTest {
         // 核对操作者切换第二账号（@BeforeEach 缺省 dispenser-01 会被 PH-1011 拒，须显式换人）
         OperatorContextHolder.set("verify-02");
 
-        impl.verify("D20260918000001");
+        impl.verify("D20260918000001", null); // 无凭证帧：跳过归属核验，追溯码主道不变
 
         verify(dispenseMapper).casStatus(900L, "PICKING", "PICKED");
         ArgumentCaptor<Dispense> captor = ArgumentCaptor.forClass(Dispense.class);
@@ -345,7 +351,7 @@ class DispenseThreeStepTest {
         when(dispenseMapper.casStatus(900L, "PICKING", "PICKED")).thenReturn(0);
         OperatorContextHolder.set("verify-02"); // 换第二账号绕开 PH-1011 前置，专测 CAS 违例分支
 
-        assertThatThrownBy(() -> impl.verify("D20260918000001"))
+        assertThatThrownBy(() -> impl.verify("D20260918000001", null))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
         verify(dispenseMapper, never()).updateById(any(Dispense.class));

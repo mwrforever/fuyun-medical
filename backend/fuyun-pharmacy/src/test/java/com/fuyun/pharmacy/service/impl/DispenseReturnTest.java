@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -45,7 +47,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 退药受理与终态单测：实物退（追溯码核验/批次回补/流水冲正/处方明细退药累计回写/单据终态/
- * returned 事件）、发药中明细退场（释放锁定不落流水）、refund.approved 终态镜像与幂等。
+ * returned 事件）、发药中明细退场（释放锁定不落流水）、refund.approved 按单据清单终态镜像与幂等
+ * （PR-5 Task 11 单据化收口——confirmRefundTerminalByRx 逐 rxNo 精确收敛，注记⑦误伤面闭合）。
  */
 @ExtendWith(MockitoExtension.class)
 class DispenseReturnTest {
@@ -78,6 +81,10 @@ class DispenseReturnTest {
     @Mock
     private com.fuyun.pharmacy.cache.PharmacyMasterDataCache masterDataCache;
 
+    /** Task 11 起构造器扩十一参：结算单反查端口补位（verify 凭证核验消费方，退药链路不触达） */
+    @Mock
+    private com.fuyun.billing.api.SettlementQueryPort settlementQueryPort;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Dispense.class);
@@ -95,8 +102,9 @@ class DispenseReturnTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十参直注（Task 6 起扩 batchSelectService/events/objectMapper、Task 10 扩第十参 masterDataCache，
-        // objectMapper 用真实例承载 JSON 读写）；ServiceImpl 继承字段 baseMapper 反射注入（Global Constraints 单测范式）
+        // 构造器十一参直注（Task 6 起扩 batchSelectService/events/objectMapper、Task 10 扩第十参
+        // masterDataCache、Task 11 扩第十一参 settlementQueryPort，objectMapper 用真实例承载 JSON 读写）；
+        // ServiceImpl 继承字段 baseMapper 反射注入（Global Constraints 单测范式）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
@@ -107,7 +115,8 @@ class DispenseReturnTest {
                 batchSelectService,
                 events,
                 new ObjectMapper(),
-                masterDataCache);
+                masterDataCache,
+                settlementQueryPort);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         return impl;
     }
@@ -289,35 +298,78 @@ class DispenseReturnTest {
     }
 
     @Test
-    @DisplayName("refund.approved 终态镜像：受理 FULL_RETURNED 的发药单驱动处方 DISPENSED→FULL_RETURNED")
-    void confirmRefundTerminalMirrorsDispenseTerminalToPrescription() {
+    @DisplayName("refund.approved 单据化镜像：同患者两 DISPENSED 处方仅反查清单内处方镜像 FULL_RETURNED（注记⑦收口）")
+    void confirmRefundTerminalByRxMirrorsOnlyListedRx() {
         DispenseServiceImpl impl = newService();
-        Dispense returned = dispense("FULL_RETURNED");
-        when(dispenseMapper.selectList(any())).thenReturn(List.of(returned));
+        // 同患者两处方均 DISPENSED 且发药单均已 FULL_RETURNED——本次反查清单仅覆盖其一
+        Prescription listed = new Prescription();
+        listed.setId(100L);
+        listed.setRxNo("R20260918000001");
+        listed.setPatientId(700101L);
+        listed.setStatus("DISPENSED");
+        Prescription unlisted = new Prescription();
+        unlisted.setId(101L);
+        unlisted.setRxNo("R20260918000002");
+        unlisted.setPatientId(700101L);
+        unlisted.setStatus("DISPENSED");
+        when(prescriptionMapper.selectOne(any())).thenAnswer(inv -> {
+            AbstractWrapper<?, ?, ?> wrapper = inv.getArgument(0);
+            wrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
+            return wrapper.getParamNameValuePairs().containsValue("R20260918000001") ? listed : unlisted;
+        });
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("FULL_RETURNED"));
+        when(prescriptionMapper.casStatus(100L, "DISPENSED", "FULL_RETURNED")).thenReturn(1);
+
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
+
+        // 单据精确核心断言：仅清单内处方镜像，未列入处方零迁移（患者维度误伤面回归锚）
+        verify(prescriptionMapper).casStatus(100L, "DISPENSED", "FULL_RETURNED");
+        verify(prescriptionMapper, never()).casStatus(eq(101L), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("refund.approved 幂等：处方已退药终态重读跳过（双通道收敛仅终态生效一次）")
+    void confirmRefundTerminalByRxIsIdempotentWhenAlreadyReturned() {
+        DispenseServiceImpl impl = newService();
+        Prescription rx = new Prescription();
+        rx.setId(100L);
+        rx.setRxNo("R20260918000001");
+        rx.setStatus("FULL_RETURNED");
+        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
+
+        verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("refund.approved 活动发药单缺位：DISPENSED 处方无活动单 warn 跳过（禁误照脏面）")
+    void confirmRefundTerminalByRxSkipsWhenActiveDispenseMissing() {
+        DispenseServiceImpl impl = newService();
         Prescription rx = new Prescription();
         rx.setId(100L);
         rx.setRxNo("R20260918000001");
         rx.setStatus("DISPENSED");
         when(prescriptionMapper.selectOne(any())).thenReturn(rx);
-        when(prescriptionMapper.casStatus(100L, "DISPENSED", "FULL_RETURNED")).thenReturn(1);
+        when(dispenseMapper.selectOne(any())).thenReturn(null);
 
-        impl.confirmRefundTerminal(700101L);
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
 
-        verify(prescriptionMapper).casStatus(100L, "DISPENSED", "FULL_RETURNED");
+        verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
     }
 
     @Test
-    @DisplayName("refund.approved 幂等：处方已退药终态重读跳过（双通道收敛仅终态生效一次）")
-    void confirmRefundTerminalIsIdempotentWhenAlreadyReturned() {
+    @DisplayName("refund.approved 跨队列乱序：发药单受理未终态（如 ISSUED）warn 跳过待重投收敛")
+    void confirmRefundTerminalByRxSkipsWhenDispenseNotTerminal() {
         DispenseServiceImpl impl = newService();
-        Dispense returned = dispense("FULL_RETURNED");
-        when(dispenseMapper.selectList(any())).thenReturn(List.of(returned));
         Prescription rx = new Prescription();
         rx.setId(100L);
-        rx.setStatus("FULL_RETURNED");
+        rx.setRxNo("R20260918000001");
+        rx.setStatus("DISPENSED");
         when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("ISSUED"));
 
-        impl.confirmRefundTerminal(700101L);
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
 
         verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
     }
@@ -510,28 +562,27 @@ class DispenseReturnTest {
     }
 
     @Test
-    @DisplayName("终态镜像缺行：refund.approved 定位不到处方 warn 留痕继续（禁阻断消费位）")
-    void confirmRefundTerminalSkipsWhenPrescriptionMissing() {
+    @DisplayName("终态镜像缺行：refund.approved 清单处方号定位不到处方 warn 留痕继续（禁阻断消费位）")
+    void confirmRefundTerminalByRxSkipsWhenPrescriptionMissing() {
         DispenseServiceImpl impl = newService();
-        when(dispenseMapper.selectList(any())).thenReturn(List.of(dispense("FULL_RETURNED")));
         when(prescriptionMapper.selectOne(any())).thenReturn(null);
 
-        impl.confirmRefundTerminal(700101L);
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
 
         verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
     }
 
     @Test
-    @DisplayName("未发药退费 warn 跳过：处方非 DISPENSED/已终态（如 PENDING_DISPENSE）不镜像（终态归 PR-5 回切）")
-    void confirmRefundTerminalSkipsNonDispensedPrescription() {
+    @DisplayName("未发药退费 warn 跳过：处方非 DISPENSED/已终态（如 PENDING_DISPENSE）不镜像（终态归 order.cancelled 实装通道）")
+    void confirmRefundTerminalByRxSkipsNonDispensedPrescription() {
         DispenseServiceImpl impl = newService();
-        when(dispenseMapper.selectList(any())).thenReturn(List.of(dispense("FULL_RETURNED")));
         Prescription pending = new Prescription();
         pending.setId(100L);
+        pending.setRxNo("R20260918000001");
         pending.setStatus("PENDING_DISPENSE");
         when(prescriptionMapper.selectOne(any())).thenReturn(pending);
 
-        impl.confirmRefundTerminal(700101L);
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
 
         verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
     }

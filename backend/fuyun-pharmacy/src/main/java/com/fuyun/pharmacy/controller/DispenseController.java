@@ -2,6 +2,7 @@ package com.fuyun.pharmacy.controller;
 
 import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.dto.PickRequest;
+import com.fuyun.pharmacy.dto.VerifyCredentialRequest;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispenseVO;
 import com.fuyun.pharmacy.vo.OccupancyVO;
@@ -46,15 +47,19 @@ public class DispenseController {
     }
 
     /**
-     * 扫码核对（PICKING→PICKED）：核对药师=当前登录者，双签分权后端硬守卫（PH-1011）。
+     * 扫码核对（PICKING→PICKED）：核对药师=当前登录者，双签分权后端硬守卫（PH-1011）；
+     * body 可选携取药凭证（settlementNo）——非空时核验其与处方归属一致性（PH-1018），
+     * 缺省/空凭证跳过核验（追溯码防回流主道不变）。
      *
-     * @param no 调剂单号（路径参数）
+     * @param no  调剂单号（路径参数）
+     * @param req 取药凭证核验入参，可缺省（body 缺省即 null 安全跳过）
      */
     @Operation(summary = "扫码核对")
     @PostMapping("/api/v1/pharmacy/dispenses/{no}/verify")
     @AuditLog(actionType = AuditActionType.WRITE)
-    public void verify(@PathVariable("no") String no) {
-        dispenseService.verify(no);
+    public void verify(
+            @PathVariable("no") String no, @Valid @RequestBody(required = false) VerifyCredentialRequest req) {
+        dispenseService.verify(no, req == null ? null : req.credential());
     }
 
     /**
