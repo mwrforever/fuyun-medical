@@ -1,0 +1,7 @@
+/**
+ * 全局样式入口：main.ts 仅引此一行（置于 createApp 之前）。
+ * 内部顺序固定 tokens → element-plus → motion（设计文档 §7.4）。
+ */
+@import './tokens.css';
+@import './element-plus.css';
+@import './motion.css';

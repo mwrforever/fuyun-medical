@@ -7,6 +7,8 @@ import { reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage 在模板外使用，按需样式需手动引入（与 api/http.ts 同款口径）
 import 'element-plus/es/components/message/style/css';
+// ElMessageBox 确认弹窗在模板外使用，按需样式手动补引（F-1 缺口闭合）
+import 'element-plus/es/components/message-box/style/css';
 import { listFees, manualCharge, previewSettlement, quote, settle } from '@/api/billing';
 import type {
   FeeRecordVO,

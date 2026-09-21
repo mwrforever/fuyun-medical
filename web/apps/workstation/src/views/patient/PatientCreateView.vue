@@ -5,6 +5,8 @@ import { computed, reactive, ref, useTemplateRef } from 'vue';
 import { useRouter } from 'vue-router';
 import type { FormInstance, FormRules } from 'element-plus';
 import { ElMessageBox } from 'element-plus';
+// ElMessageBox 在模板外使用，按需样式需手动引入（与 api/http.ts 同款口径，F-1 缺口补引）
+import 'element-plus/es/components/message-box/style/css';
 import { createPatient, matchCheck } from '@/api/patient';
 import type { MatchCheckVO, PatientCreateRequest } from '@/api/patient';
 

@@ -1,0 +1,47 @@
+/**
+ * 数据大屏设计 token（设计文档 §2.2.3 暗色语义 + §2.3 根字号 + §2.5 大屏面）。
+ * 暗色高对比场景：3-10 米外一眼看到「现在叫到谁」——深海军蓝底，冷色相与医疗蓝一致。
+ * 命名空间 --fuy-*；页面字号全部用 rem（根字号随视口线性缩放，1080p/4K 零媒体查询）。
+ */
+
+/* 暗色场景引用的 primitive（§2.2.1 品牌色阶中的亮青共用值） */
+:root {
+  --fuy-palette-brand-400: #38bdf8; /* bigscreen 暗底品牌亮青共用值 */
+}
+
+/* 暗色语义层（bigscreen 专用）：两档文本灰与叫号色均给出对比度计算值 */
+:root {
+  --fuy-screen-bg-base: #0a1a28; /* 页面底 */
+  --fuy-screen-bg-panel: #0f2536; /* 面板底 */
+  --fuy-screen-bg-elevated: #16324a; /* 当前叫号卡底 */
+  --fuy-screen-text-primary: #f0f6fa; /* 16.0:1 on bg-panel */
+  --fuy-screen-text-secondary: #a8c3d8; /* 8.6:1 on bg-panel */
+  --fuy-screen-brand: var(--fuy-palette-brand-400); /* 边框/装饰线 */
+  --fuy-screen-call: #fbbf24; /* 当前叫号主色 9.4:1 on bg-elevated */
+  --fuy-screen-ok: #34d399; /* 连接正常 */
+  --fuy-screen-warn: #fbbf24; /* 连接异常复用叫号色系外的琥珀 */
+  --fuy-screen-triage-l1: #f87171;
+  --fuy-screen-triage-l2: #fb923c;
+  --fuy-screen-triage-l3: #fbbf24;
+  --fuy-screen-triage-l4: #60a5fa;
+}
+
+/* 根字号随视口线性缩放（§2.3 bigscreen）：1920 宽=16px，3840 宽 4K=32px，
+   物理字高随像素密度自动一致。页面内字号全部用 rem（rem 表见设计文档 §2.3：
+   叫号票号 10rem / 姓名 4.5rem / 诊区名与时钟 3rem / 区域题 2.5rem / 行正文 1.75rem /
+   表头角标 1.5rem / 连接状态小字 1.25rem） */
+:root {
+  font-size: clamp(12px, 0.8333vw, 34px);
+}
+
+/* 圆角/描边/辉光（§2.5 bigscreen 面）：面板描边 hairline 暗色值；glow 仅当前叫号卡 */
+:root {
+  --fuy-radius-sm: 2px; /* tag、分诊级别徽标 */
+  --fuy-radius-md: 4px; /* 原生控件基线 */
+  --fuy-radius-lg: 8px; /* 面板圆角 */
+  --fuy-radius-xl: 12px;
+  --fuy-radius-full: 999px;
+
+  --fuy-screen-glow: 0 0 24px rgba(56, 189, 248, 0.25); /* 仅当前叫号卡 */
+  --fuy-screen-border-hairline: 1px solid #1e3a52;
+}
