@@ -187,6 +187,7 @@
   align-items: center;
   flex-wrap: wrap; /* 窄屏防溢出（存量无换行能力，收编时一并补齐） */
   gap: var(--fuy-space-3);
+  min-height: 48px; /* 检索条区高度锁（§9.7-1 CLS）：加载/空态切换零塌陷，与页头行 48px 同口径 */
   margin-bottom: var(--fuy-space-3);
 }
 

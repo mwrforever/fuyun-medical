@@ -17,11 +17,15 @@ const { summary, frameCount } = defineProps<TelemetrySummaryPanelProps>();
 
 <template>
   <section class="telemetry-panel">
-    <h2>最近一帧遥测摘要（累计接收 {{ frameCount }} 帧）</h2>
+    <h2>
+      最近一帧遥测摘要（累计接收 <span class="fuy-num">{{ frameCount }}</span> 帧）
+    </h2>
     <p v-if="summary === null" class="telemetry-panel-empty">暂无遥测数据</p>
     <template v-else>
       <p class="telemetry-panel-meta">
-        <span>本批条数：{{ summary.count }}</span>
+        <span
+          >本批条数：<span class="fuy-num">{{ summary.count }}</span></span
+        >
         <span class="telemetry-panel-time">发生时刻上界：{{ summary.occurredAtUpperBound }}</span>
       </p>
       <table class="telemetry-panel-table">
@@ -47,13 +51,18 @@ const { summary, frameCount } = defineProps<TelemetrySummaryPanelProps>();
 </template>
 
 <style scoped>
-/* 组件级样式隔离（web A.1-2）：最小可读样式，完整大屏版式随 P1 交付 */
+/* 组件级样式隔离（web A.1-2）：暗色面板（§9.5.1 遥测表暗色化）——容器 panel 底 +
+   hairline 描边（复合简写变量整条消费）+ radius 8px，完整大屏版式随 P1 交付 */
 .telemetry-panel {
+  background: var(--fuy-screen-bg-panel);
+  border: var(--fuy-screen-border-hairline);
+  border-radius: var(--fuy-radius-lg);
   margin-top: 16px;
+  padding: 16px;
 }
 
 .telemetry-panel-empty {
-  color: #909399;
+  color: var(--fuy-screen-text-secondary);
 }
 
 .telemetry-panel-meta {
@@ -65,10 +74,28 @@ const { summary, frameCount } = defineProps<TelemetrySummaryPanelProps>();
   border-collapse: collapse;
 }
 
+/* 表头小字（secondary 两档灰）；单元格描边整条消费 hairline 复合变量 */
+.telemetry-panel-table th {
+  color: var(--fuy-screen-text-secondary);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: left;
+}
+
 .telemetry-panel-table th,
 .telemetry-panel-table td {
-  border: 1px solid #dcdfe6;
+  border: var(--fuy-screen-border-hairline);
   padding: 4px 12px;
   text-align: left;
+}
+
+/* 偶数行斑马纹提升行辨识（§8.5 同款值——bigscreen 斑马纹唯一允许字面量） */
+.telemetry-panel-table tbody tr:nth-child(even) {
+  background: #0d2132;
+}
+
+/* 数字等宽防宽度跳动（§9.7-2）：bigscreen 无 EP 无全局工具类，SFC 内最小定义 */
+.fuy-num {
+  font-variant-numeric: tabular-nums;
 }
 </style>
