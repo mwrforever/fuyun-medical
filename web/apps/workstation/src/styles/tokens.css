@@ -1,0 +1,101 @@
+/**
+ * 医护工作站设计 token（设计文档 §2.2-§2.5 唯一来源，批次 0 落盘零重写）。
+ * 三层架构：primitive（原始色阶）→ semantic（语义用途）；命名空间 --fuy-* 与
+ * Element Plus --el-* 完全隔离，单向赋值仅允许出现在 element-plus.css 映射文件中。
+ * 亮色场景：白天临床环境高密度操作台，文本对比度全部满足白底 ≥4.5:1。
+ */
+
+/* 品牌色阶（primitive）：临床蓝，与 Element Plus 默认 #409EFF 区分，医疗稳重感 */
+:root {
+  --fuy-palette-brand-50: #f0f9ff; /* 悬停底 */
+  --fuy-palette-brand-100: #e0f2fe; /* 选中底 */
+  --fuy-palette-brand-200: #bae6fd;
+  --fuy-palette-brand-400: #38bdf8; /* bigscreen 暗底品牌亮青共用值 */
+  --fuy-palette-brand-600: #0284c7; /* 链接/图标强调（白底文字用 ≥#0369a1） */
+  --fuy-palette-brand-700: #0369a1; /* 品牌主色 */
+  --fuy-palette-brand-800: #075985;
+  --fuy-palette-brand-900: #0c4a6e; /* 深文本/按压 */
+  --fuy-palette-gray-50: #f9fafb;
+  --fuy-palette-gray-600: #4b5563;
+  --fuy-palette-gray-800: #1f2937;
+  --fuy-palette-red-700: #b91c1c;
+  --fuy-palette-amber-700: #b45309;
+  --fuy-palette-green-800: #166534;
+  --fuy-palette-red-600: #dc2626;
+  --fuy-palette-orange-700: #c2410c;
+  --fuy-palette-blue-700: #1d4ed8;
+  --fuy-palette-slate-ink: #0f172a; /* 阴影基色 */
+}
+
+/* 语义色（亮色）：文本全部满足白底 ≥4.5:1 */
+:root {
+  --fuy-color-brand: var(--fuy-palette-brand-700); /* 主操作/选中 */
+  --fuy-color-brand-strong: var(--fuy-palette-brand-900); /* 按压 */
+  --fuy-color-text-emphasis: var(--fuy-palette-gray-800); /* 关键数字/姓名 */
+  --fuy-color-text-secondary: var(--fuy-palette-gray-600); /* 次要说明 */
+  --fuy-color-success-text: #1f7a33; /* 5.4:1，已发药/已结算 */
+  --fuy-color-warning-text: var(--fuy-palette-amber-700); /* 5.0:1，待支付/待配药 */
+  --fuy-color-danger-text: var(--fuy-palette-red-700); /* 6.5:1，已退号/异常 */
+  --fuy-color-info-text: var(--fuy-palette-gray-600); /* 7.6:1，中性态 */
+  --fuy-color-focus-ring: rgba(3, 105, 161, 0.35); /* 键盘焦点环 */
+
+  /* 诊区分级语义色（预检分诊四级，实底白字徽标场景，均 ≥4.5:1） */
+  --fuy-color-triage-l1: var(--fuy-palette-red-600); /* Ⅰ级-危 4.8:1 */
+  --fuy-color-triage-l2: var(--fuy-palette-orange-700); /* Ⅱ级-急 5.2:1 */
+  --fuy-color-triage-l3: var(--fuy-palette-amber-700); /* Ⅲ级-重 5.0:1 */
+  --fuy-color-triage-l4: var(--fuy-palette-blue-700); /* Ⅳ级-普 6.7:1 */
+
+  /* 票据状态语义（映射见设计文档 §4.3；此处为文本/描边用色，全部复用上列 AA 达标值） */
+  --fuy-color-state-waiting: var(--fuy-color-brand);
+  --fuy-color-state-called: var(--fuy-color-warning-text);
+  --fuy-color-state-serving: var(--fuy-color-success-text);
+  --fuy-color-state-served: var(--fuy-color-info-text);
+  --fuy-color-state-passed: var(--fuy-palette-orange-700);
+  /* 仅限删除线弱化态（tag strike），不作正文文字色——弱化语义不承载唯一信息 */
+  --fuy-color-state-cancelled: #9ca3af;
+}
+
+/* 字号阶梯（高密度，px 精确值）：13px/22px 行高为一屏可见行数优先的表格基线 */
+:root {
+  --fuy-font-size-xs: 12px; /* 表格脚注/时间戳 */
+  --fuy-font-size-sm: 13px; /* 高密度表格正文/表头 */
+  --fuy-font-size-md: 14px; /* 页面正文基线（与 EP base 一致） */
+  --fuy-font-size-lg: 16px; /* 卡片标题 */
+  --fuy-font-size-xl: 18px; /* 页面标题 */
+  --fuy-font-size-2xl: 20px; /* 区域强调数字 */
+  --fuy-font-size-3xl: 24px; /* 关键计数（候诊数/今日挂号数） */
+}
+
+/* 行高/字重口径：正文 1.5、标题 1.3；正文 400、标题/表头 600、关键数字 700。
+   所有数字列与计数一律加 .fuy-num（tabular-nums）防宽度跳动（工具类见 element-plus.css） */
+
+/* 间距系统（4px 基数）：卡内 padding space-4、卡间 space-3、表单行距 space-3 */
+:root {
+  --fuy-space-1: 4px;
+  --fuy-space-2: 8px;
+  --fuy-space-3: 12px;
+  --fuy-space-4: 16px;
+  --fuy-space-5: 20px;
+  --fuy-space-6: 24px;
+  --fuy-space-8: 32px;
+  --fuy-space-10: 40px;
+  --fuy-space-12: 48px;
+  --fuy-space-16: 64px;
+}
+
+/* 圆角/阴影/描边：workstation 卡片默认无阴影（1px 描边，密度优先），仅 hover 与弹层用 sm/md */
+:root {
+  --fuy-radius-sm: 2px; /* tag、分诊级别徽标 */
+  --fuy-radius-md: 4px; /* input/button（与 EP 默认一致，勿改） */
+  --fuy-radius-lg: 8px; /* el-card 覆盖 */
+  --fuy-radius-xl: 12px; /* el-dialog、portal 卡片 */
+  --fuy-radius-full: 999px;
+
+  --fuy-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --fuy-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --fuy-shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
+  --fuy-screen-glow: 0 0 24px rgba(56, 189, 248, 0.25); /* 仅当前叫号卡 */
+
+  --fuy-border-hairline: 1px solid #e5e7eb; /* portal/bigscreen 亮暗各自覆盖 */
+  --fuy-screen-border-hairline: 1px solid #1e3a52;
+}

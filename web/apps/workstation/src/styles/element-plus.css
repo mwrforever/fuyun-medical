@@ -1,0 +1,114 @@
+/**
+ * Element Plus 定制层（仅 workstation）：主色梯度覆盖 + 高密度工具类 + 状态标签辅助类。
+ * 红线：不修改 EP 主题 SCSS 编译（先 CSS 变量条款）；一切 --el-* 覆盖经 :root:root
+ * 双写或 .fuy-* 挂类承载，禁止全局裸改 .el-* 组件选择器。
+ */
+
+/* 主色映射（:root:root 双写提高特异性 0,2,0）：按需引入的 EP base 样式在运行期注入
+   :root 变量，同特异性下依赖注入顺序不可靠——双写后无论加载顺序恒定生效。
+   功能色（success/warning/danger/info）保留 EP 默认值不动，与存量页面硬编码语义一致。
+   注意：本块使全站主色由 EP 默认 #409eff 统一切换为临床蓝 #0369a1，属批次 0 预期内的
+   全局视觉变化（设计文档 §9.2.3 主色全局变化声明）。 */
+:root:root {
+  --el-color-primary: #0369a1;
+  /* light-N = 主色混入 N×10% 白（EP 官方混色公式同源计算） */
+  --el-color-primary-light-3: #4f96bd; /* hover */
+  --el-color-primary-light-5: #81b4d0;
+  --el-color-primary-light-7: #b3d2e3;
+  --el-color-primary-light-8: #cde1ec; /* 边框 */
+  --el-color-primary-light-9: #e6f0f6; /* 浅底 */
+  --el-color-primary-dark-2: #025481; /* active */
+}
+
+/* el-table 高密度模式：挂载方式为 <el-table> 外层卡片或自身加 class="fuy-dense"，
+   13px/22px 行高密集但可读；禁与 size="small" 双轨混用（fuy-dense 唯一） */
+.fuy-dense .el-table {
+  --el-table-row-hover-bg-color: var(--fuy-palette-brand-50);
+  font-size: var(--fuy-font-size-sm); /* 13px */
+}
+.fuy-dense .el-table .el-table__cell {
+  padding: 5px 0; /* 默认 8px，压行高 */
+}
+.fuy-dense .el-table .cell {
+  padding: 0 8px;
+  line-height: 22px; /* 13×22 密集但可读 */
+}
+.fuy-dense .el-table th.el-table__cell {
+  background: var(--el-fill-color-light);
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+.fuy-num {
+  font-variant-numeric: tabular-nums; /* 数字等宽，全站通用 */
+}
+
+/* 状态标签 AA 修正：el-tag effect=light 的文字色默认不达 4.5:1；经 --el-tag-text-color
+   变量修正——变量定义特异性(0,2,0)高于 EP 的 .el-tag--warning(0,1,0)，不依赖按需样式注入顺序 */
+.fuy-tag-aa.el-tag--warning {
+  --el-tag-text-color: var(--fuy-color-warning-text);
+}
+.fuy-tag-aa.el-tag--success {
+  --el-tag-text-color: var(--fuy-color-success-text);
+}
+.fuy-tag-aa.el-tag--danger {
+  --el-tag-text-color: var(--fuy-color-danger-text);
+}
+.fuy-tag-strike {
+  text-decoration: line-through; /* 删除线弱化态：取消/作废语义，弱化后不承载唯一信息 */
+  opacity: 0.75;
+}
+
+/* 分诊级别徽标（预检分诊四级，实底白字 span，非 el-tag）：取值一律来自
+   --fuy-color-triage-l1..l4，实现禁止自造色 */
+.fuy-triage-badge {
+  display: inline-block;
+  min-width: 28px;
+  padding: 0 8px;
+  height: 22px;
+  line-height: 22px;
+  border-radius: var(--fuy-radius-sm);
+  color: #fff;
+  font-size: var(--fuy-font-size-xs);
+  font-weight: 600;
+  text-align: center;
+}
+.fuy-triage-badge--l1 {
+  background: var(--fuy-color-triage-l1);
+}
+.fuy-triage-badge--l2 {
+  background: var(--fuy-color-triage-l2);
+}
+.fuy-triage-badge--l3 {
+  background: var(--fuy-color-triage-l3);
+}
+.fuy-triage-badge--l4 {
+  background: var(--fuy-color-triage-l4);
+}
+
+/* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */
+.fuy-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* 窄屏防溢出（存量无换行能力，收编时一并补齐） */
+  gap: var(--fuy-space-3);
+  margin-bottom: var(--fuy-space-3);
+}
+
+/* 卡内小节题：收编划价/退费/一日清单三页散写的 h4 规则 */
+.fuy-section-title {
+  margin: var(--fuy-space-4) 0 var(--fuy-space-2);
+  font-size: var(--fuy-font-size-md);
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+/* 三分区合计强调条：一日清单勾稽佐证条专用（患者费用公开场景的醒目口径） */
+.fuy-total-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--fuy-space-6);
+  margin-top: var(--fuy-space-3);
+  padding: var(--fuy-space-3) var(--fuy-space-4);
+  background: var(--el-fill-color-light);
+  border-radius: var(--fuy-radius-md);
+}

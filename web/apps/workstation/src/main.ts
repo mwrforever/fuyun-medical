@@ -3,5 +3,7 @@ import { createPinia } from 'pinia';
 import { createApp } from 'vue';
 import App from './App.vue';
 import { router } from './router';
+// 全局设计系统地基（设计 token + EP 主色映射 + 动效），样式入口置于 createApp 之前（§7.4）
+import './styles/index.css';
 
 createApp(App).use(createPinia()).use(router).mount('#app');

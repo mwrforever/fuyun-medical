@@ -1,0 +1,122 @@
+/**
+ * 动效层：动效 token（§2.6）+ 过渡/动画类（§6）+ 键盘焦点环（§5.3 通用段）+
+ * prefers-reduced-motion 全局兜底（§6.9）。
+ * 铁律：动画属性仅 transform 与 opacity；零 width/height/top/left 动画；
+ * 本文件为 portal 全站唯一 keyframes 来源，页面零新增。
+ */
+
+/* 时长阶梯：fast=悬停/按压/微反馈；base=显隐过渡/状态翻转；slow=进场/场景级 */
+:root {
+  --fuy-motion-fast: 120ms;
+  --fuy-motion-base: 200ms;
+  --fuy-motion-slow: 320ms;
+  --fuy-motion-observe: 960ms; /* bigscreen 叫号脉冲 = slow × 3 */
+
+  --fuy-ease-standard: cubic-bezier(0.2, 0, 0, 1); /* 默认：位移/尺寸 */
+  --fuy-ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* 进场减速（快出缓停） */
+  --fuy-ease-exit: cubic-bezier(0.4, 0, 1, 1); /* 离场加速 */
+  --fuy-ease-emphasis: cubic-bezier(
+    0.34,
+    1.56,
+    0.64,
+    1
+  ); /* 唯一过冲曲线：仅成功确认时刻（portal 出票卡） */
+
+  --fuy-motion-stagger: 40ms; /* 进场级联步长，最多 6 档，第 7 项起并发播放 */
+}
+
+/* 键盘焦点环（全站强制）：仅 outline（现代浏览器自动跟随元素圆角）；
+   禁止在此设 border-radius——会改元素本身形状；键盘焦点环永远可见 */
+:focus-visible {
+  outline: 2px solid var(--fuy-color-brand);
+  outline-offset: 2px;
+}
+
+/* 页面/卡片进场 stagger：属性 opacity+transform，触发于组件 mounted（CSS 动画自动播放）；
+   子元素模板内联 --fuy-stagger-index 指定级联序（≤5 封顶，第 6 项起恒为 5 并发） */
+.fuy-stagger > * {
+  animation: fuy-rise var(--fuy-motion-slow) var(--fuy-ease-enter) both;
+  animation-delay: calc(var(--fuy-stagger-index, 0) * var(--fuy-motion-stagger));
+}
+@keyframes fuy-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 列表项增删 FLIP：Vue 内建 TransitionGroup 的 move class 即 FLIP（transform 反演播放），
+   零依赖；用法 <TransitionGroup name="fuy-flip">；进入 200ms / 移位 320ms / 离场 120ms */
+.fuy-flip-move {
+  transition: transform var(--fuy-motion-slow) var(--fuy-ease-standard);
+}
+.fuy-flip-enter-active {
+  transition:
+    opacity var(--fuy-motion-base) var(--fuy-ease-enter),
+    transform var(--fuy-motion-base) var(--fuy-ease-enter);
+}
+.fuy-flip-enter-from {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+.fuy-flip-leave-active {
+  position: absolute; /* 脱流使 move 平滑（TransitionGroup 要求） */
+  transition:
+    opacity var(--fuy-motion-fast) var(--fuy-ease-exit),
+    transform var(--fuy-motion-fast) var(--fuy-ease-exit);
+}
+.fuy-flip-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* 状态标签流转：Transition name="fuy-tag-flip" mode="out-in"（:key=状态值）；
+   120ms 进 / 120ms 出，scale 0.8→1 */
+.fuy-tag-flip-enter-active {
+  transition:
+    opacity var(--fuy-motion-fast) var(--fuy-ease-enter),
+    transform var(--fuy-motion-fast) var(--fuy-ease-enter);
+}
+.fuy-tag-flip-leave-active {
+  transition: opacity var(--fuy-motion-fast) var(--fuy-ease-exit);
+  position: absolute;
+}
+.fuy-tag-flip-enter-from {
+  opacity: 0;
+  transform: scale(0.8);
+}
+.fuy-tag-flip-leave-to {
+  opacity: 0;
+}
+
+/* 骨架屏 → 内容切换：Transition + v-if="!loading"，200ms opacity 单属性；
+   骨架与内容不做交叉溶解（占位高度差用 min-height 锁定防 CLS） */
+.fuy-content-fade-enter-active {
+  transition: opacity var(--fuy-motion-base) var(--fuy-ease-enter);
+}
+.fuy-content-fade-enter-from {
+  opacity: 0;
+}
+
+/* prefers-reduced-motion 全局兜底：reduce 下全部动画/过渡直达终态 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* 唯一豁免类：加载指示（状态语义，停转=卡死误判）。豁免元素降速不清除 */
+  .fuy-loading-essential,
+  .fuy-loading-essential::before,
+  .fuy-loading-essential::after {
+    animation-duration: 1.5s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
