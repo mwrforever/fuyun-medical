@@ -18,9 +18,9 @@ const loginName = computed(() => authStore.user?.loginName ?? '—');
 </script>
 
 <template>
-  <section class="fuy-page home-view">
+  <section class="fuy-page">
     <!-- 会话问候区：问候语升为页面题（--fuy-font-size-xl/600，§9.3.3） -->
-    <el-card class="home-greeting">
+    <el-card>
       <p class="home-greeting-name">{{ displayName }}，欢迎回来</p>
       <p class="home-greeting-login">登录名：{{ loginName }}</p>
     </el-card>
