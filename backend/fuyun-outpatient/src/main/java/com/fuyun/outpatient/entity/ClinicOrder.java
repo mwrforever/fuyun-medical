@@ -52,6 +52,9 @@ public class ClinicOrder {
     /** 结算单 id（M13 回填锚），可空 */
     private Long feeSettlementId;
 
+    /** 发药回流镜像（RX_REF 行派生展示面：DISPENSED/PART_RETURNED/FULL_RETURNED，可空；状态机五值不变，M06 回执回流镜像，Spec :142 已发药可见） */
+    private String dispenseStatus;
+
     /** 审计列：库维护 */
     private OffsetDateTime createdAt;
 

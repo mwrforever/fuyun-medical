@@ -21,6 +21,7 @@ CREATE TABLE outpatient.clinic_order (
     valid_to          TIMESTAMPTZ  NULL,                            -- 执行有效期（P1 为空，执行域随 P3）
     status            VARCHAR(16)  NOT NULL DEFAULT 'CREATED',      -- CREATED 已开立/PENDING_FEE 待缴费/CHARGED 已缴费/IN_EXECUTION 执行中（声明态）/COMPLETED 执行完成（声明态）/CANCELLED 已作废
     fee_settlement_id BIGINT       NULL,                            -- 结算单 id（M13 回填锚，退费逆向定位）
+    dispense_status   VARCHAR(16)  NULL,                            -- 发药回流镜像（RX_REF 行派生展示面：DISPENSED/PART_RETURNED/FULL_RETURNED；引用行状态机五值不变，M06 dispense 回执回流，Task 10）
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
     created_by        VARCHAR(64)  NOT NULL DEFAULT 'system',

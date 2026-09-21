@@ -65,4 +65,23 @@ public interface AppointmentMapper extends BaseMapper<Appointment> {
     @Update("UPDATE outpatient.appointment SET fee_status = 'REFUNDED', updated_by = 'system', updated_at = now() "
             + "WHERE id = #{id} AND deleted = 0 AND fee_status = 'PAID'")
     int casMarkRefunded(@Param("id") long id);
+
+    /**
+     * 挂号费收费回填 CAS（UNPAID→PAID + 结算单 id 回填，Task 10 settlement.completed 消费侧）：
+     * 挂号费与就诊费同 visit 结算（收费工作台直调 M13 面），结算回执经 visit 锚定位预约单后单条
+     * 原子回填（PAID⇒visit 锚在位不变式——取号 casTake 已回填 visit_id，M13 结算面以 visit_id 为
+     * NOT NULL 硬锚）。仅未缴行可迁，0 行=重投幂等/费态漂移，调用方重读定性。
+     *
+     * <p>fee_status 字面量与 {@link com.fuyun.outpatient.enums.FeeStatusType} code 同源；
+     * deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）；updated_by 固定 'system'（系统回执定性，
+     * 与 casMarkRefunded 同款口径）。
+     *
+     * @param id           预约单主键；来源：settlement.completed 载荷 visitId 定位的预约行
+     * @param settlementId 结算单 id（fee_settlement_id 回填锚，退号退费定位依据）；来源：事件载荷
+     * @return 影响行数：1=已回填 PAID+结算锚；0=非 UNPAID（重投/漂移）或行不存在
+     */
+    @Update("UPDATE outpatient.appointment SET fee_status = 'PAID', fee_settlement_id = #{settlementId}, "
+            + "updated_by = 'system', updated_at = now() "
+            + "WHERE id = #{id} AND deleted = 0 AND fee_status = 'UNPAID'")
+    int casMarkPaid(@Param("id") long id, @Param("settlementId") long settlementId);
 }

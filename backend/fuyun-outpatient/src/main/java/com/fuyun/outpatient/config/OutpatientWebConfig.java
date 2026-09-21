@@ -11,6 +11,7 @@ import com.fuyun.outpatient.controller.ScheduleController;
 import com.fuyun.outpatient.controller.TriageController;
 import com.fuyun.outpatient.controller.VisitController;
 import com.fuyun.outpatient.service.impl.AppointmentServiceImpl;
+import com.fuyun.outpatient.service.impl.ChargingServiceImpl;
 import com.fuyun.outpatient.service.impl.ClinicOrderServiceImpl;
 import com.fuyun.outpatient.service.impl.OutpatientCareRelationQuery;
 import com.fuyun.outpatient.service.impl.OutpatientOngoingVisitQuery;
@@ -48,6 +49,7 @@ import org.springframework.context.annotation.Import;
     QueueController.class,
     VisitServiceImpl.class,
     ClinicOrderServiceImpl.class,
+    ChargingServiceImpl.class,
     OutpatientCareRelationQuery.class,
     VisitController.class,
     OrderController.class

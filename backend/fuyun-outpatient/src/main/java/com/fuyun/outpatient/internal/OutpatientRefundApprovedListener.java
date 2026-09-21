@@ -6,6 +6,7 @@ import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
 import com.fuyun.outpatient.service.IAppointmentService;
+import com.fuyun.outpatient.service.IChargingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -15,8 +16,10 @@ import org.springframework.beans.factory.annotation.Qualifier;
  * 退费审批通过消费侧（billing.refund.approved，V605 id 20 既有登记；退号退费联动唯一终态权威）：
  * 免审直退（DAY_CORRECTION autoApproved）apply 同事务发布立达，跨日分级审批终批同事件承载——
  * appointment/visit 终态一律本回执后置（资金无涉红线裁决 7：禁止本模块自行「退款成功」），驱动
- * 退号预约/取号单置 CANCELLED、号源回池、fee_status=REFUNDED 与 visit REGISTERED→CANCELLED 回滚。
- * 归 internal/，Bean 注册点 OutpatientMessagingConfig @Import。
+ * 退号预约/取号单置 CANCELLED、号源回池、fee_status=REFUNDED 与 visit REGISTERED→CANCELLED 回滚
+ * （appointment 分支，Task 6）；同回执再按结算锚反查来源单据驱动开单退费逆向与 order.cancelled
+ * 逐单扇出（order 分支，Task 10，appointment 分支之后追加）。归 internal/，Bean 注册点
+ * OutpatientMessagingConfig @Import。
  */
 @Slf4j
 public class OutpatientRefundApprovedListener {
@@ -25,18 +28,23 @@ public class OutpatientRefundApprovedListener {
 
     private final IAppointmentService appointmentService;
 
+    private final IChargingService chargingService;
+
     /**
      * 全参构造器（装配归 OutpatientMessagingConfig @Import；消费模板多候选 @Qualifier 定绑
      * ——Global Constraints common 模板类多实例红线）。
      *
      * @param consumerSupport    消费模板，非空；定绑 outpatientConsumerSupport Bean
-     * @param appointmentService 预约服务，非空
+     * @param appointmentService 预约服务，非空；appointment 分支（退号终态/回池/visit 回滚）
+     * @param chargingService    收费编排服务，非空；order 分支（单据逆向+order.cancelled 扇出）
      */
     public OutpatientRefundApprovedListener(
             @Qualifier("outpatientConsumerSupport") IdempotentConsumerSupport consumerSupport,
-            IAppointmentService appointmentService) {
+            IAppointmentService appointmentService,
+            IChargingService chargingService) {
         this.consumerSupport = consumerSupport;
         this.appointmentService = appointmentService;
+        this.chargingService = chargingService;
     }
 
     /**
@@ -73,5 +81,7 @@ public class OutpatientRefundApprovedListener {
                 envelope.payload().path("refundType").asText(""),
                 envelope.payload().path("autoApproved").asBoolean(false));
         appointmentService.confirmRefundedCancel(payload);
+        // order 分支（Task 10，appointment 分支之后追加）：按结算锚反查来源单据驱动开单退费逆向扇出
+        chargingService.onRefundApproved(payload);
     }
 }

@@ -92,8 +92,9 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
 
 /**
- * 退号退费联动与改期服务单测（M03 FU-M03-03，Task 6 冻结用例集 11 例+覆盖率收口补例）：
- * 退号四分支（时限内免退费/已付退费审批待回执/已取号退费待回执/已报到拒线上退）、线上退号时限
+ * 退号退费联动与改期服务单测（M03 FU-M03-03，Task 6 冻结用例集 11 例+覆盖率收口补例；Task 10
+ * 增补挂号费收费回填 markRegistrationPaid 三例）：退号四分支（时限内免退费/已付退费审批待回执/
+ * 已取号退费待回执/已报到拒线上退）、线上退号时限
  * OP-1010（窗口渠道不受限）、refund.approved 回执驱动终态（appointment 分支：取消+回池+REFUNDED，
  * TAKEN 分支同步 visit 回滚+迁移日志）、改期先占新后退旧（reschedule_of 链）与信用手工解除。
  * AFTER_COMMIT 的 MQ 出线时机归 OutpatientEventPublisherTest 与集成测试验证。
@@ -629,6 +630,44 @@ class AppointmentCancelRescheduleTest {
         verify(apptNumberPoolMapper).casRelease(31L, 7);
         assertThat(capturedEvent(times(1)).eventType())
                 .isEqualTo(OutpatientMessagingConstants.EVENT_APPOINTMENT_CANCELLED);
+    }
+
+    // ---------------------------------------------------------------- 挂号费收费回填（Task 10）
+
+    @Test
+    @DisplayName("挂号费收费回填：visit 锚命中 UNPAID 预约单——casMarkPaid 回填 PAID+结算锚（PAID⇒visit 锚在位定案①）")
+    void markRegistrationPaidBackfillsUnpaidAppointmentByVisitAnchor() {
+        Appointment taken = appointment(
+                ApptStatus.TAKEN, FeeStatusType.UNPAID, null, ApptChannel.WINDOW, LocalDate.now(), "O20260921000001");
+        when(appointmentMapper.selectOne(any())).thenReturn(taken);
+        when(appointmentMapper.casMarkPaid(101L, 501L)).thenReturn(1);
+
+        service.markRegistrationPaid("S20260920001", 501L, "O20260921000001");
+
+        verify(appointmentMapper).casMarkPaid(101L, 501L);
+    }
+
+    @Test
+    @DisplayName("挂号费收费回填幂等：visit 无 UNPAID 预约单（已回填/非取号链结算）——零写跳过")
+    void markRegistrationPaidSkipsWhenNoUnpaidHit() {
+        when(appointmentMapper.selectOne(any())).thenReturn(null);
+
+        service.markRegistrationPaid("S20260920001", 501L, "O20260921000001");
+
+        verify(appointmentMapper, never()).casMarkPaid(anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("挂号费收费回填 CAS 落败：费态并发漂移（非 UNPAID）——warn 跳过不阻断")
+    void markRegistrationPaidSkipsOnCasMiss() {
+        Appointment taken = appointment(
+                ApptStatus.TAKEN, FeeStatusType.UNPAID, null, ApptChannel.WINDOW, LocalDate.now(), "O20260921000001");
+        when(appointmentMapper.selectOne(any())).thenReturn(taken);
+        when(appointmentMapper.casMarkPaid(101L, 501L)).thenReturn(0);
+
+        service.markRegistrationPaid("S20260920001", 501L, "O20260921000001");
+
+        verify(appointmentMapper).casMarkPaid(101L, 501L);
     }
 
     // ---------------------------------------------------------------- 改期（先占新后退旧）

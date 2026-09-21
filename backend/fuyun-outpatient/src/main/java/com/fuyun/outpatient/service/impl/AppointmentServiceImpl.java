@@ -688,6 +688,47 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 appointment.getVisitId());
     }
 
+    // ---------------------------------------------------------------- 挂号费收费回填（Task 10）
+
+    /**
+     * 挂号费收费回填（接口 javadoc 契约）：visit 锚定位 UNPAID 预约单→CAS 回填 PAID+结算锚。
+     * 重投幂等：已回填/非取号链结算（visit 无 UNPAID 预约单）零写 info 跳过；费态并发漂移 CAS
+     * 0 行 warn 跳过（回执可重投，终态幂等收敛）。PAID⇒visit 锚在位不变式由定位谓词承载
+     * （visit_id 仅 casTake 回填，Task 6 契约缝定案①）。
+     *
+     * @param settleNo     结算编号，非空
+     * @param settlementId 结算单 id，非空非零
+     * @param visitId      CF-3 就诊号，非空
+     */
+    @Override
+    @Transactional
+    public void markRegistrationPaid(String settleNo, long settlementId, String visitId) {
+        // 数据库读操作：visit 锚定位未缴预约单（visit_id 唯一，至多一行）
+        Appointment appointment = appointmentMapper.selectOne(Wrappers.<Appointment>lambdaQuery()
+                .eq(Appointment::getVisitId, visitId)
+                .eq(Appointment::getFeeStatus, FeeStatusType.UNPAID));
+        if (appointment == null) {
+            log.info("挂号费收费回填幂等跳过（该 visit 无 UNPAID 预约单，已回填/非取号链结算）：visitId={}，settleNo={}", visitId, settleNo);
+            return;
+        }
+        // 数据库写操作：PAID+fee_settlement_id 单条 CAS（UNPAID 谓词防并发双回填）；0 行=费态漂移
+        if (appointmentMapper.casMarkPaid(appointment.getId(), settlementId) == 0) {
+            log.warn(
+                    "挂号费收费回填 CAS 落败（费态并发漂移非 UNPAID）：apptNo={}，visitId={}，settleNo={}",
+                    appointment.getApptNo(),
+                    visitId,
+                    settleNo);
+            return;
+        }
+        log.info(
+                "挂号费收费回填完成：apptNo={}，visitId={}，patientId={}，settleNo={}，settlementId={}",
+                appointment.getApptNo(),
+                visitId,
+                appointment.getPatientId(),
+                settleNo,
+                settlementId);
+    }
+
     // ---------------------------------------------------------------- 爽约信用管理（Task 6）
 
     /**

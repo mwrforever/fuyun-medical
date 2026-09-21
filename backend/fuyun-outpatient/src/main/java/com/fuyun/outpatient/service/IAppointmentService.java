@@ -87,6 +87,20 @@ public interface IAppointmentService {
     void confirmRefundedCancel(RefundApprovedPayload payload);
 
     /**
+     * 挂号费收费回填（Task 10 settlement.completed 消费侧分发）：挂号费与就诊费同 visit 结算面
+     * （收费工作台直调 M13 划价/结算 REST，裁决 7——M03 零收费 REST 零资金逻辑），结算回执经
+     * visit 锚定位 UNPAID 预约单后 CAS 回填 fee_status=PAID + fee_settlement_id（退号退费定位
+     * 锚）。PAID⇒visit 锚在位为可实现不变式（billing 结算面以 visit_id 为 NOT NULL 硬锚，取号
+     * casTake 先行回填——未取号占位单不产生挂号费结算，Task 6 契约缝定案①）。无命中/并发落败
+     * 幂等跳过（回执可重投，终态幂等收敛）。
+     *
+     * @param settleNo     结算编号（日志留痕锚点），非空；来源：settlement.completed 载荷
+     * @param settlementId 结算单 id（fee_settlement_id 回填值），非空非零；来源：同上
+     * @param visitId      CF-3 就诊号（预约单 visit 锚，casTake 回填），非空；来源：同上
+     */
+    void markRegistrationPaid(String settleNo, long settlementId, String visitId);
+
+    /**
      * 支付超时释放（延迟队列消费业务面，消费幂等三段式之外的业务态幂等守卫）：RESERVED→NO_SHOW CAS
      * 影响 1 行才执行释放面（version 条件回池+Redis 回补+删占位键+爽约信用记录）；0 行=已取号/已取消/
      * 已释放，幂等跳过禁二次释放。

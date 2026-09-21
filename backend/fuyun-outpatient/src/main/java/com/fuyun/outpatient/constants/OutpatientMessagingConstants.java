@@ -64,14 +64,21 @@ public final class OutpatientMessagingConstants {
     public static final String EVENT_SUB_PHARMACY_DISPENSE_RETURNED = "pharmacy.dispense.returned";
 
     /**
-     * 订阅事件全集（队列声明与监听器同源）：随消费任务逐批追加——Task 5 补 appointment.timeout（本批），
-     * Task 6 补 refund.approved、Task 8 补 fee.created、Task 10 补 settlement.completed/
-     * prescription.cancelled/dispense.completed/returned；每批追加须与该任务监听器同任务落改
-     * （先登记后订阅红线）。prescription.created 不订阅：M03 经 PrescriptionOpenPort 同步登记引用
-     * （事件订阅为重复面，偏差注记），登记一致性由 Task 12 IT 断言 ext_ref 在位承载。
+     * 订阅事件全集（队列声明与监听器同源，Task 10 起全集落位）：appointment.timeout（Task 5）、
+     * refund.approved（Task 6）、fee.created（Task 8）、settlement.completed 与 pharmacy 回流
+     * prescription.cancelled/dispense.completed/dispense.returned（Task 10，先登记后订阅红线——
+     * 四事件均既有登记 id 19/26/28/29，本任务仅补订阅队列与监听器）。prescription.created 不订阅：
+     * M03 经 PrescriptionOpenPort 同步登记引用（事件订阅为重复面，偏差注记），登记一致性由 Task 12
+     * IT 断言 ext_ref 在位承载。
      */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
-        EVENT_APPOINTMENT_TIMEOUT, EVENT_SUB_BILLING_REFUND_APPROVED, EVENT_SUB_BILLING_FEE_CREATED
+        EVENT_APPOINTMENT_TIMEOUT,
+        EVENT_SUB_BILLING_REFUND_APPROVED,
+        EVENT_SUB_BILLING_FEE_CREATED,
+        EVENT_SUB_BILLING_SETTLEMENT_COMPLETED,
+        EVENT_SUB_PHARMACY_PRESCRIPTION_CANCELLED,
+        EVENT_SUB_PHARMACY_DISPENSE_COMPLETED,
+        EVENT_SUB_PHARMACY_DISPENSE_RETURNED
     };
 
     /** 私有构造器（A.2-6） */
