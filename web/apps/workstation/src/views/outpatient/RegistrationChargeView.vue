@@ -726,8 +726,12 @@ onBeforeUnmount(() => {
   background: var(--fuy-palette-brand-50);
 }
 .registration-charge-pool.is-selected {
+  /* 选中态（§8.1:694 逐字）：卡描边转品牌 2px + 底 brand-100；左缘维持 3px 状态色条
+     （§3.2 状态色条 3px 规格，与选中描边分属两条款）——grid 拉伸下 border-box 恒填格，零位移 */
   border-color: var(--fuy-color-brand);
   border-left-color: var(--fuy-color-brand);
+  border-width: 2px;
+  border-left-width: 3px;
   background: var(--fuy-palette-brand-100);
 }
 /* 余 0：卡体 60% 透明禁点（§8.1） */
