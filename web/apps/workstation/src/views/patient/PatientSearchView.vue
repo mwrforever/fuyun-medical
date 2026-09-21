@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 患者检索页（FU-M02-02）：证件号/手机号/姓名关键词分页检索，输出统一脱敏（Task 6 后端已脱敏，
-// 前端原样渲染不二次处理明文）；分页组件 1 基 ↔ 后端契约 0 基在本页边界转换；行点击跳详情。
+// 前端原样渲染不二次处理明文）；分页组件 1 基 ↔ 后端契约 0 基在本页边界转换；行点击与「详情」
+// link 按钮列双通道跳详情（F-4 键盘可达收口：按钮原生可聚焦，键盘用户有主流程路径）。
 // 体量小不设 composable（简单优先），数据获取以组件内 ref 承载；失败弹错归响应拦截器（web A.3-2）。
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
@@ -82,10 +83,13 @@ function handleRowClick(row: PatientVO): void {
 </script>
 
 <template>
-  <div class="fuy-page">
-    <el-card class="patient-search">
+  <div class="fuy-page fuy-stagger">
+    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：element-plus.css
+         密度规则均为后代选择器 .fuy-dense .el-table，挂在表格自身不构成后代关系、零生效
+        （质量门 R1 F-1）；四条规则全带表格前缀，不影响卡内工具条/分页 -->
+    <el-card class="fuy-dense">
       <template #header>患者检索</template>
-      <div class="patient-search-bar">
+      <div class="fuy-toolbar">
         <el-input
           v-model="keyword"
           class="patient-search-input"
@@ -109,14 +113,23 @@ function handleRowClick(row: PatientVO): void {
         <el-table-column prop="mobile" label="手机号（脱敏）" min-width="130" />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="patientStatusTagType(row.status)">{{
+            <el-tag :type="patientStatusTagType(row.status)" class="fuy-tag-aa">{{
               patientStatusText(row.status)
             }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="建档时间" min-width="170" />
+        <el-table-column label="操作" width="60">
+          <template #default="{ row }">
+            <!-- 详情按钮：键盘可达的跳详情第二通道（stop 防与行点击双触发） -->
+            <el-button link type="primary" @click.stop="handleRowClick(row)">详情</el-button>
+          </template>
+        </el-table-column>
+        <!-- 空态区分两态：已执行检索无结果给业务口径提示，初始未查保持空白区（min-height 锁 CLS） -->
+        <template #empty>
+          <el-empty v-if="searched" :image-size="72" description="未检索到匹配患者" />
+        </template>
       </el-table>
-      <p v-if="searched && rows.length === 0" class="patient-search-empty">未检索到匹配患者</p>
       <el-pagination
         v-if="total > 0"
         background
@@ -132,34 +145,20 @@ function handleRowClick(row: PatientVO): void {
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2） */
-.patient-search {
-  max-width: 1080px;
-}
-
-.patient-search-bar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
+/* 视图级样式隔离（web A.1-2）：工具条已收编 .fuy-toolbar（§9.2.2），卡宽随 .fuy-page
+   全宽（列表卡 1080 上限撤销，密度优先全宽利用），本块只留 input 宽度/表格交互态/分页间距 */
 .patient-search-input {
   max-width: 360px;
 }
 
-/* 行点击跳详情：整行可点，指针态提示 */
+/* 行点击跳详情：整行可点指针态提示；min-height 锁定加载/空态切换零塌陷（§7.1 CLS） */
 .patient-search-table {
+  min-height: 240px;
   cursor: pointer;
 }
 
 .patient-search-pagination {
-  margin-top: 12px;
+  margin-top: var(--fuy-space-3);
   justify-content: flex-end;
-}
-
-.patient-search-empty {
-  margin: 12px 0 0;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
 }
 </style>
