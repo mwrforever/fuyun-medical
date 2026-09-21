@@ -42,6 +42,14 @@
   font-variant-numeric: tabular-nums; /* 数字等宽，全站通用 */
 }
 
+/* 表格操作列按钮间距收窄：挂 el-table-column 的 class-name（td 由 el-table 内部渲染，
+   不含视图组件 scoped 哈希——scoped 规则在此零匹配，必须全局层承载，.fuy-dense 同款机理）。
+   用法：操作列 <el-table-column class-name="fuy-ops-8">；特异性 (0,3,0) 压过
+   EP 相邻按钮默认 12px 的 (0,2,0)，不依赖样式注入顺序。首例：退费审批队列 8px（§8.2 同款） */
+.fuy-ops-8 .el-button + .el-button {
+  margin-left: 8px;
+}
+
 /* 状态标签 AA 修正：el-tag effect=light 的文字色默认不达 4.5:1；经 --el-tag-text-color
    变量修正——变量定义特异性(0,2,0)高于 EP 的 .el-tag--warning(0,1,0)，不依赖按需样式注入顺序 */
 .fuy-tag-aa.el-tag--warning {

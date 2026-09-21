@@ -138,6 +138,18 @@ const refundStatusText: Record<string, string> = {
   REJECTED: '已驳回',
 };
 
+/** 队列状态 tag 语义映射（§4.3 唯一映射表）：待审/待二级 warning、已批准 primary、
+ * 已执行 success、已驳回 danger、草稿 info；未知态归 info 防不确定色彩语义。
+ * 文案词表（refundStatusText）与色型词表分离——spec 锁按钮启停不锁 tag type */
+const refundStatusTagType: Record<string, 'primary' | 'success' | 'warning' | 'info' | 'danger'> = {
+  DRAFT: 'info',
+  PENDING_APPROVAL: 'warning',
+  PENDING_SECOND_APPROVAL: 'warning',
+  APPROVED: 'primary',
+  EXECUTED: 'success',
+  REJECTED: 'danger',
+};
+
 /** 队列动作按态启停（双人守卫与终态不可逆由后端强制，前端仅抑制无效点击） */
 function canApprove(row: RefundVO): boolean {
   // 待一层与待二级（一级已批）均可批准：同一按钮两段式复用，服务端按 status 推进
@@ -188,8 +200,12 @@ async function handleReject(row: RefundVO): Promise<void> {
   try {
     let input: { value: string };
     try {
+      // R-3：ElMessageBox.prompt 函数式挂载不继承 ConfigProvider locale（默认英文 OK/Cancel），
+      // 按钮文案显式中文（PatientDetailView 先例同款）
       input = await ElMessageBox.prompt('请输入驳回理由', '驳回退费申请', {
         inputValidator: (text: string) => (text.trim() === '' ? '驳回理由必填' : true),
+        confirmButtonText: '确认驳回',
+        cancelButtonText: '取消',
       });
     } catch {
       // 用户关闭弹窗=放弃驳回
@@ -229,10 +245,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="refund-approval fuy-page">
-    <el-card class="refund-approval-main">
+  <!-- 双卡进场 stagger（§6.1）：申请/审批两卡线性级联（第二卡 delay 40ms） -->
+  <div class="fuy-page fuy-stagger">
+    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点）：表格 size="small" 移除，fuy-dense 唯一
+         密度通道（§9.9-2）；操作列按钮 size=small 为 §8.2 点名按钮尺寸，与表格密度无关保留 -->
+    <el-card class="fuy-dense">
       <template #header>退费申请</template>
-      <div class="refund-approval-bar">
+      <div class="fuy-toolbar">
         <el-input
           v-model="settleNo"
           placeholder="结算号"
@@ -244,51 +263,58 @@ onMounted(() => {
           查询结算
         </el-button>
       </div>
-      <el-descriptions v-if="settlement" :column="4" border class="refund-approval-summary">
-        <el-descriptions-item label="结算号">{{ settlement.settleNo }}</el-descriptions-item>
-        <el-descriptions-item label="就诊号">{{ settlement.visitId }}</el-descriptions-item>
-        <el-descriptions-item label="结算金额（元）">
-          {{ fenToYuanDisplay(settlement.totalAmount ?? '0') }}
-        </el-descriptions-item>
-        <el-descriptions-item label="状态">{{ settlement.status }}</el-descriptions-item>
-      </el-descriptions>
-      <el-table
-        v-if="settlement"
-        :data="refundRows"
-        size="small"
-        @selection-change="handleSelectionChange"
-      >
-        <el-table-column type="selection" width="44" />
-        <el-table-column prop="fee.feeNo" label="费用号" min-width="170" />
-        <el-table-column prop="fee.itemNameSnapshot" label="项目" min-width="130" />
-        <el-table-column label="单价（元）" width="100">
-          <template #default="{ row }">
-            {{ fenToYuanDisplay(row.fee.unitPriceSnapshot ?? '0') }}
-          </template>
-        </el-table-column>
-        <el-table-column label="原数量" width="80" prop="fee.quantity" />
-        <el-table-column label="金额（元）" width="100">
-          <template #default="{ row }">{{ fenToYuanDisplay(row.fee.amount ?? '0') }}</template>
-        </el-table-column>
-        <el-table-column label="退数量" width="140">
-          <template #default="{ row }">
-            <el-input-number v-model="row.qty" :min="1" :max="row.fee.quantity ?? 1" />
-          </template>
-        </el-table-column>
-      </el-table>
-      <div v-if="settlement" class="refund-approval-apply">
-        <el-input
-          v-model="reason"
-          placeholder="退费理由（必填留痕）"
-          class="refund-approval-reason"
-        />
-        <el-button type="primary" :loading="applying" @click="handleApply">申请退费</el-button>
-      </div>
+      <!-- 摘要区（descriptions + 可退明细 + 申请行）随查询显隐，200ms 淡入（§6.7，
+           appear 供首次挂载即播——批次 2 R1 同款） -->
+      <Transition name="fuy-content-fade" appear>
+        <div v-if="settlement">
+          <el-descriptions :column="4" border class="refund-approval-summary">
+            <el-descriptions-item label="结算号">{{ settlement.settleNo }}</el-descriptions-item>
+            <el-descriptions-item label="就诊号">{{ settlement.visitId }}</el-descriptions-item>
+            <el-descriptions-item label="结算金额（元）">
+              <span class="fuy-num">{{ fenToYuanDisplay(settlement.totalAmount ?? '0') }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="状态">{{ settlement.status }}</el-descriptions-item>
+          </el-descriptions>
+          <el-table :data="refundRows" @selection-change="handleSelectionChange">
+            <el-table-column type="selection" width="44" />
+            <el-table-column prop="fee.feeNo" label="费用号" min-width="170" />
+            <el-table-column prop="fee.itemNameSnapshot" label="项目" min-width="130" />
+            <el-table-column label="单价（元）" width="100" align="right" class-name="fuy-num">
+              <template #default="{ row }">
+                {{ fenToYuanDisplay(row.fee.unitPriceSnapshot ?? '0') }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="原数量"
+              width="80"
+              prop="fee.quantity"
+              align="right"
+              class-name="fuy-num"
+            />
+            <el-table-column label="金额（元）" width="100" align="right" class-name="fuy-num">
+              <template #default="{ row }">{{ fenToYuanDisplay(row.fee.amount ?? '0') }}</template>
+            </el-table-column>
+            <el-table-column label="退数量" width="140">
+              <template #default="{ row }">
+                <el-input-number v-model="row.qty" :min="1" :max="row.fee.quantity ?? 1" />
+              </template>
+            </el-table-column>
+          </el-table>
+          <div class="refund-approval-apply">
+            <el-input
+              v-model="reason"
+              placeholder="退费理由（必填留痕）"
+              class="refund-approval-reason"
+            />
+            <el-button type="primary" :loading="applying" @click="handleApply">申请退费</el-button>
+          </div>
+        </div>
+      </Transition>
     </el-card>
 
-    <el-card class="refund-approval-main">
+    <el-card class="fuy-dense" :style="{ '--fuy-stagger-index': 1 }">
       <template #header>审批队列</template>
-      <div class="refund-approval-bar">
+      <div class="fuy-toolbar">
         <el-select v-model="statusFilter" class="refund-approval-filter" @change="loadQueue">
           <el-option value="" label="全部" />
           <el-option value="PENDING_APPROVAL" label="待审批" />
@@ -299,21 +325,24 @@ onMounted(() => {
         </el-select>
         <el-button @click="loadQueue">刷新</el-button>
       </div>
-      <el-table v-loading="queueLoading" :data="queue" size="small">
+      <el-table v-loading="queueLoading" :data="queue">
         <el-table-column prop="refundNo" label="退费单号" min-width="170" />
-        <el-table-column label="金额（元）" width="110">
+        <el-table-column label="金额（元）" width="110" align="right" class-name="fuy-num">
           <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
         </el-table-column>
         <el-table-column prop="reason" label="理由" min-width="140" />
         <el-table-column prop="applicant" label="申请人" width="110" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'EXECUTED' ? 'success' : 'info'">
+            <!-- fuy-tag-aa 对 warning/success/danger 生效文字色 AA 修正，primary/info 无副作用 -->
+            <el-tag :type="refundStatusTagType[row.status ?? ''] ?? 'info'" class="fuy-tag-aa">
               {{ refundStatusText[row.status ?? ''] ?? row.status }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210">
+        <!-- 间距 8px（§8.2 同款）经全局工具类 .fuy-ops-8（element-plus.css）承载：
+             td 由 el-table 内部渲染不含本组件 scoped 哈希，scoped 规则零匹配 -->
+        <el-table-column label="操作" width="210" class-name="fuy-ops-8">
           <template #default="{ row }">
             <el-button size="small" :disabled="!canApprove(row)" @click="handleApprove(row)">
               批准
@@ -342,20 +371,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2） */
-.refund-approval {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-width: 1080px;
-}
-
-.refund-approval-bar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
+/* 视图级样式隔离（web A.1-2）：工具条已收编 .fuy-toolbar（§9.2.2），卡宽随 .fuy-page
+   全宽（列表 1080 上限撤销），本块只留 input 宽度与摘要/申请区间距（操作列 8px 间距
+   收编全局工具类 .fuy-ops-8——td 无 scoped 哈希，scoped 规则在此零匹配） */
 .refund-approval-input {
   max-width: 280px;
 }
