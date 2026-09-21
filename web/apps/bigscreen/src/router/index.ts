@@ -13,5 +13,13 @@ export const router = createRouter({
       // meta 预留权限语义：后续按权限点补 requiresAuth / permission 等字段（医疗系统审计形态）
       meta: {},
     },
+    {
+      path: '/queue',
+      name: 'queue-board',
+      // 路由组件全懒加载（web B.3-2 红线），禁静态导入
+      component: () => import('@/views/queue/QueueBoardView.vue'),
+      // 大屏现场展示面：诊区经 query.dept 书签化（deptCode 路由 query 可直接部署到诊区大屏）
+      meta: { public: true },
+    },
   ],
 });

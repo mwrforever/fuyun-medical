@@ -13,5 +13,13 @@ export const router = createRouter({
       // meta 预留权限语义：后续按权限点补 requiresAuth / permission 等字段（医疗系统审计形态）
       meta: {},
     },
+    {
+      path: '/appointment',
+      name: 'appointment',
+      // 路由组件全懒加载（web B.3-2 红线），禁静态导入
+      component: () => import('@/views/appointment/AppointmentView.vue'),
+      // 免登录预约（裁决 13）：portal 匿名通道路由，meta public 语义登记
+      meta: { public: true },
+    },
   ],
 });

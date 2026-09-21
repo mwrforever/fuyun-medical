@@ -115,6 +115,21 @@
   }
 }
 
+/* 连接状态呼吸点（§7.5/§8.5 常驻动画：opacity 1→.4 alternate 1.2s linear，状态指示豁免面
+   .fuy-loading-essential——bigscreen 值守语义；合成层零 JS。Task 13 QueueBoardView 落码时补落
+   ——§7.5 设计强制内容，批次 0 落盘时缺项） */
+.fuy-breath {
+  animation: fuy-breath 1.2s linear infinite alternate;
+}
+@keyframes fuy-breath {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.4;
+  }
+}
+
 /* 状态标签流转：Transition name="fuy-tag-flip" mode="out-in"（:key=状态值）；
    120ms 进 / 120ms 出，scale 0.8→1；暗色版 tag 用文字色+描边（非 EP tag） */
 .fuy-tag-flip-enter-active {
