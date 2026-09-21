@@ -67,47 +67,49 @@ async function handleChangeFreeze(freeze: boolean): Promise<void> {
 </script>
 
 <template>
-  <el-card v-loading="loading" class="patient-detail">
-    <template #header>
-      <div class="patient-detail-header">
-        <span>患者档案</span>
-        <span class="patient-detail-actions">
-          <!-- 冻结/解冻成对呈现：仅正常档可冻结、仅冻结档可解冻（已合并档只读） -->
-          <el-button v-if="patient?.status === 'NORMAL'" @click="handleChangeFreeze(true)"
-            >冻结</el-button
-          >
-          <el-button v-if="patient?.status === 'FROZEN'" @click="handleChangeFreeze(false)"
-            >解冻</el-button
-          >
-        </span>
-      </div>
-    </template>
-    <el-descriptions v-if="patient" :column="2" border>
-      <el-descriptions-item label="患者ID">{{
-        String(patient.patientId ?? '')
-      }}</el-descriptions-item>
-      <el-descriptions-item label="姓名">{{ patient.name }}</el-descriptions-item>
-      <el-descriptions-item label="性别">{{ patientSexText(patient.sex) }}</el-descriptions-item>
-      <el-descriptions-item label="出生日期">{{ patient.birthDate }}</el-descriptions-item>
-      <el-descriptions-item label="证件号（脱敏）">{{ patient.idCardNo }}</el-descriptions-item>
-      <el-descriptions-item label="手机号（脱敏）">{{ patient.mobile }}</el-descriptions-item>
-      <el-descriptions-item label="住址（脱敏）" :span="2">{{
-        patient.address
-      }}</el-descriptions-item>
-      <el-descriptions-item label="状态">
-        <el-tag :type="patientStatusTagType(patient.status)">{{
-          patientStatusText(patient.status)
-        }}</el-tag>
-      </el-descriptions-item>
-      <el-descriptions-item label="实名标志">{{
-        patient.realNameFlag ? '已实名' : '未实名'
-      }}</el-descriptions-item>
-      <el-descriptions-item label="建档渠道">{{ patient.registerChannel }}</el-descriptions-item>
-      <el-descriptions-item label="档案来源">{{ patient.archiveSource }}</el-descriptions-item>
-      <el-descriptions-item label="建档时间">{{ patient.createdAt }}</el-descriptions-item>
-    </el-descriptions>
-    <p v-else-if="!loading" class="patient-detail-empty">未查询到患者档案</p>
-  </el-card>
+  <div class="fuy-page">
+    <el-card v-loading="loading" class="patient-detail">
+      <template #header>
+        <div class="patient-detail-header">
+          <span>患者档案</span>
+          <span class="patient-detail-actions">
+            <!-- 冻结/解冻成对呈现：仅正常档可冻结、仅冻结档可解冻（已合并档只读） -->
+            <el-button v-if="patient?.status === 'NORMAL'" @click="handleChangeFreeze(true)"
+              >冻结</el-button
+            >
+            <el-button v-if="patient?.status === 'FROZEN'" @click="handleChangeFreeze(false)"
+              >解冻</el-button
+            >
+          </span>
+        </div>
+      </template>
+      <el-descriptions v-if="patient" :column="2" border>
+        <el-descriptions-item label="患者ID">{{
+          String(patient.patientId ?? '')
+        }}</el-descriptions-item>
+        <el-descriptions-item label="姓名">{{ patient.name }}</el-descriptions-item>
+        <el-descriptions-item label="性别">{{ patientSexText(patient.sex) }}</el-descriptions-item>
+        <el-descriptions-item label="出生日期">{{ patient.birthDate }}</el-descriptions-item>
+        <el-descriptions-item label="证件号（脱敏）">{{ patient.idCardNo }}</el-descriptions-item>
+        <el-descriptions-item label="手机号（脱敏）">{{ patient.mobile }}</el-descriptions-item>
+        <el-descriptions-item label="住址（脱敏）" :span="2">{{
+          patient.address
+        }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="patientStatusTagType(patient.status)">{{
+            patientStatusText(patient.status)
+          }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="实名标志">{{
+          patient.realNameFlag ? '已实名' : '未实名'
+        }}</el-descriptions-item>
+        <el-descriptions-item label="建档渠道">{{ patient.registerChannel }}</el-descriptions-item>
+        <el-descriptions-item label="档案来源">{{ patient.archiveSource }}</el-descriptions-item>
+        <el-descriptions-item label="建档时间">{{ patient.createdAt }}</el-descriptions-item>
+      </el-descriptions>
+      <p v-else-if="!loading" class="patient-detail-empty">未查询到患者档案</p>
+    </el-card>
+  </div>
 </template>
 
 <style scoped>

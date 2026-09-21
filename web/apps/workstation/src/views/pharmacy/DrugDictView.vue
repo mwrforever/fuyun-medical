@@ -208,7 +208,7 @@ onMounted(loadDrugs);
 </script>
 
 <template>
-  <div class="drug-dict">
+  <div class="drug-dict fuy-page">
     <el-card>
       <template #header>药品字典</template>
       <div class="drug-dict-bar">

@@ -82,51 +82,53 @@ function handleRowClick(row: PatientVO): void {
 </script>
 
 <template>
-  <el-card class="patient-search">
-    <template #header>患者检索</template>
-    <div class="patient-search-bar">
-      <el-input
-        v-model="keyword"
-        class="patient-search-input"
-        placeholder="证件号 / 手机号 / 姓名"
-        clearable
-        @keyup.enter="handleQuery"
+  <div class="fuy-page">
+    <el-card class="patient-search">
+      <template #header>患者检索</template>
+      <div class="patient-search-bar">
+        <el-input
+          v-model="keyword"
+          class="patient-search-input"
+          placeholder="证件号 / 手机号 / 姓名"
+          clearable
+          @keyup.enter="handleQuery"
+        />
+        <el-button type="primary" :loading="loading" @click="handleQuery">查询</el-button>
+      </div>
+      <el-table
+        v-loading="loading"
+        :data="rows"
+        class="patient-search-table"
+        @row-click="handleRowClick"
+      >
+        <el-table-column prop="name" label="姓名" min-width="100" />
+        <el-table-column label="性别" width="70">
+          <template #default="{ row }">{{ patientSexText(row.sex) }}</template>
+        </el-table-column>
+        <el-table-column prop="idCardNo" label="证件号（脱敏）" min-width="170" />
+        <el-table-column prop="mobile" label="手机号（脱敏）" min-width="130" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="patientStatusTagType(row.status)">{{
+              patientStatusText(row.status)
+            }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="建档时间" min-width="170" />
+      </el-table>
+      <p v-if="searched && rows.length === 0" class="patient-search-empty">未检索到匹配患者</p>
+      <el-pagination
+        v-if="total > 0"
+        background
+        layout="total, prev, pager, next"
+        :current-page="currentPage"
+        :page-size="pageSize"
+        :total="total"
+        class="patient-search-pagination"
+        @current-change="handlePageChange"
       />
-      <el-button type="primary" :loading="loading" @click="handleQuery">查询</el-button>
-    </div>
-    <el-table
-      v-loading="loading"
-      :data="rows"
-      class="patient-search-table"
-      @row-click="handleRowClick"
-    >
-      <el-table-column prop="name" label="姓名" min-width="100" />
-      <el-table-column label="性别" width="70">
-        <template #default="{ row }">{{ patientSexText(row.sex) }}</template>
-      </el-table-column>
-      <el-table-column prop="idCardNo" label="证件号（脱敏）" min-width="170" />
-      <el-table-column prop="mobile" label="手机号（脱敏）" min-width="130" />
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag :type="patientStatusTagType(row.status)">{{
-            patientStatusText(row.status)
-          }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="createdAt" label="建档时间" min-width="170" />
-    </el-table>
-    <p v-if="searched && rows.length === 0" class="patient-search-empty">未检索到匹配患者</p>
-    <el-pagination
-      v-if="total > 0"
-      background
-      layout="total, prev, pager, next"
-      :current-page="currentPage"
-      :page-size="pageSize"
-      :total="total"
-      class="patient-search-pagination"
-      @current-change="handlePageChange"
-    />
-  </el-card>
+    </el-card>
+  </div>
 </template>
 
 <style scoped>

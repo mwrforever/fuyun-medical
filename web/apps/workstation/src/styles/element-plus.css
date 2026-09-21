@@ -96,8 +96,77 @@
   gap: var(--fuy-space-3);
 }
 
-/* TODO(batch-1): .fuy-menu-* 菜单收编类（§9.2.2 第五枚）延后至布局壳升级批次落盘——
-   §9.3.1 仅给布局树片段未定死完整 CSS 规格，批次 0 修复时登记（2026-09-21 质量门 R-1） */
+/* 菜单收编类（§9.2.2 第五枚，§9.3.1 布局树定稿；批次 1 落盘，兑现批次 0 的 TODO(batch-1)）。
+   三枚职责：.fuy-menu 承载菜单项高/字号/悬停/选中态变量与后代覆盖（挂 el-menu）；
+   .fuy-menu-head 承载侧栏品牌头布局；.fuy-menu-brand 承载品牌字标本体（展开「富云」/折叠「富」共用）。
+   后代选择器均带 .fuy-menu 前缀挂类（.fuy-dense 同款先例），特异性恒压 EP 按需注入样式，不依赖加载顺序 */
+.fuy-menu {
+  /* 菜单项高 40px（EP 默认 56px，密度优先压低）；悬停底灰-50 由变量注入 EP 悬停通道 */
+  --el-menu-item-height: 40px;
+  --el-menu-hover-bg-color: var(--fuy-palette-gray-50);
+  font-size: var(--fuy-font-size-md);
+  border-right: none; /* 侧栏分隔线由 aside 边框承载，菜单自带右边框与之重合 */
+}
+
+/* 菜单项：悬停底色 120ms 过渡（单元素状态反馈，§9.3.1 布局树点名；relative 供选中色条定位） */
+.fuy-menu .el-menu-item {
+  position: relative;
+  transition: background-color var(--fuy-motion-fast) var(--fuy-ease-standard);
+}
+
+/* 选中态：底 brand-50 + 文字 brand-700（压过 EP 的 .el-menu-item.is-active 主色文字） */
+.fuy-menu .el-menu-item.is-active {
+  background: var(--fuy-palette-brand-50);
+  color: var(--fuy-palette-brand-700);
+}
+
+/* 选中态左缘 3px 品牌色条（§9.3.1 布局树）：位置指示不依赖色觉单通道 */
+.fuy-menu .el-menu-item.is-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--fuy-color-brand);
+}
+
+/* 分组标题：xs/600、letter-spacing 0.5px、次要色（EP 默认口径偏大偏散，收编压紧） */
+.fuy-menu .el-menu-item-group__title {
+  font-size: var(--fuy-font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--el-text-color-secondary);
+}
+
+/* 折叠态隐藏分组标题：64px 宽度下四字标题竖排不可读，分组语义由菜单项缩写承接 */
+.fuy-menu.el-menu--collapse .el-menu-item-group__title {
+  display: none;
+}
+
+/* 侧栏品牌头：高 48px flex 居中（§9.3.1 布局树第一层） */
+.fuy-menu-head {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 品牌字标本体：brand-700 底白字，展开态「富云」/折叠态「富」单字共用一套形态；
+   24px 高与菜单项 40px 形成头区-菜单密度对比，radius-md 与 input/button 圆角口径一致 */
+.fuy-menu-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--fuy-radius-md);
+  background: var(--fuy-palette-brand-700);
+  color: #fff;
+  font-size: var(--fuy-font-size-sm);
+  font-weight: 700;
+}
 
 /* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */
 .fuy-toolbar {

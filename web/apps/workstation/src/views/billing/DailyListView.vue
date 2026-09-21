@@ -69,47 +69,54 @@ async function handleQuery(): Promise<void> {
 </script>
 
 <template>
-  <el-card class="daily-list">
-    <template #header>一日清单</template>
-    <div class="daily-list-bar">
-      <el-input v-model="visitId" placeholder="就诊号" class="daily-list-input" clearable />
-      <el-date-picker v-model="date" type="date" placeholder="清单日期" value-format="YYYY-MM-DD" />
-      <el-button type="primary" :loading="loading" @click="handleQuery">查询</el-button>
-    </div>
-
-    <template v-if="result">
-      <h4 class="daily-list-section">费用明细</h4>
-      <el-table v-loading="loading" :data="result.items ?? []" size="small">
-        <el-table-column prop="itemNameSnapshot" label="项目" min-width="160" />
-        <el-table-column label="单价（元）" width="110">
-          <template #default="{ row }">
-            {{ fenToYuanDisplay(row.unitPriceSnapshot ?? '0') }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="quantity" label="数量" width="80" />
-        <el-table-column label="金额（元）" width="110">
-          <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-        </el-table-column>
-      </el-table>
-
-      <h4 class="daily-list-section">大类汇总</h4>
-      <el-table :data="result.categories ?? []" size="small" class="daily-list-categories">
-        <el-table-column prop="feeCategory" label="大类" min-width="140" />
-        <el-table-column label="金额（元）" width="120">
-          <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-        </el-table-column>
-      </el-table>
-
-      <!-- 三分区合计：Σ明细 / Σ大类 / 合计 并列展示，勾稽一致才露绿标（第三层校验 UI 佐证） -->
-      <div class="daily-list-total">
-        <span>Σ明细 {{ fenToYuanDisplay(itemsSumFen) }} 元</span>
-        <span>Σ大类 {{ fenToYuanDisplay(categoriesSumFen) }} 元</span>
-        <span>合计 {{ fenToYuanDisplay(result.totalAmount ?? '0') }} 元</span>
-        <el-tag v-if="reconciled" type="success">已核对</el-tag>
-        <el-tag v-else type="danger">合计不一致，请核对</el-tag>
+  <div class="fuy-page">
+    <el-card class="daily-list">
+      <template #header>一日清单</template>
+      <div class="daily-list-bar">
+        <el-input v-model="visitId" placeholder="就诊号" class="daily-list-input" clearable />
+        <el-date-picker
+          v-model="date"
+          type="date"
+          placeholder="清单日期"
+          value-format="YYYY-MM-DD"
+        />
+        <el-button type="primary" :loading="loading" @click="handleQuery">查询</el-button>
       </div>
-    </template>
-  </el-card>
+
+      <template v-if="result">
+        <h4 class="daily-list-section">费用明细</h4>
+        <el-table v-loading="loading" :data="result.items ?? []" size="small">
+          <el-table-column prop="itemNameSnapshot" label="项目" min-width="160" />
+          <el-table-column label="单价（元）" width="110">
+            <template #default="{ row }">
+              {{ fenToYuanDisplay(row.unitPriceSnapshot ?? '0') }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="quantity" label="数量" width="80" />
+          <el-table-column label="金额（元）" width="110">
+            <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
+          </el-table-column>
+        </el-table>
+
+        <h4 class="daily-list-section">大类汇总</h4>
+        <el-table :data="result.categories ?? []" size="small" class="daily-list-categories">
+          <el-table-column prop="feeCategory" label="大类" min-width="140" />
+          <el-table-column label="金额（元）" width="120">
+            <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
+          </el-table-column>
+        </el-table>
+
+        <!-- 三分区合计：Σ明细 / Σ大类 / 合计 并列展示，勾稽一致才露绿标（第三层校验 UI 佐证） -->
+        <div class="daily-list-total">
+          <span>Σ明细 {{ fenToYuanDisplay(itemsSumFen) }} 元</span>
+          <span>Σ大类 {{ fenToYuanDisplay(categoriesSumFen) }} 元</span>
+          <span>合计 {{ fenToYuanDisplay(result.totalAmount ?? '0') }} 元</span>
+          <el-tag v-if="reconciled" type="success">已核对</el-tag>
+          <el-tag v-else type="danger">合计不一致，请核对</el-tag>
+        </div>
+      </template>
+    </el-card>
+  </div>
 </template>
 
 <style scoped>

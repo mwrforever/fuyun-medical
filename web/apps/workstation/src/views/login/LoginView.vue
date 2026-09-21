@@ -102,27 +102,34 @@ async function handleSubmit(): Promise<void> {
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2）：登录卡片居中，视觉细化随设计稿演进 */
+/* 视图级样式隔离（web A.1-2）：登录卡片居中；品牌化（§9.3.3）——gray-50 底 + radius-xl
+   + shadow-md + 顶部 3px 品牌色条（静态，入场零动画，登录页克制口径 §9.6）。表单逻辑零改动 */
 .login-view {
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+  background: var(--fuy-palette-gray-50);
 }
 
 .login-card {
   width: 360px;
+  border-radius: var(--fuy-radius-xl);
+  box-shadow: var(--fuy-shadow-md);
+  /* 顶部品牌色条随圆角自然成形（border 承载，零伪元素零动画） */
+  border-top: 3px solid var(--fuy-color-brand);
 }
 
 .login-title {
-  margin: 0 0 4px;
-  font-size: 22px;
+  margin: 0 0 var(--fuy-space-1);
+  font-size: var(--fuy-font-size-xl);
   text-align: center;
 }
 
 .login-subtitle {
-  margin: 0 0 16px;
+  margin: 0 0 var(--fuy-space-4);
   color: var(--el-text-color-secondary);
+  font-size: var(--fuy-font-size-sm);
   text-align: center;
 }
 

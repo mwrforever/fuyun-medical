@@ -118,7 +118,7 @@ async function submitReturn(): Promise<void> {
 </script>
 
 <template>
-  <div class="dispense-return">
+  <div class="dispense-return fuy-page">
     <el-card>
       <template #header>退药受理</template>
       <div class="dispense-return-bar">
