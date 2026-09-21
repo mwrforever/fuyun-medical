@@ -185,9 +185,12 @@ onMounted(loadQueue);
 </script>
 
 <template>
-  <!-- 双卡进场 stagger（§6.1）：队列/发药单两卡级联（第二卡 inline index 1 = 40ms delay） -->
-  <div class="fuy-page fuy-stagger">
-    <el-row :gutter="16">
+  <!-- 双卡进场 stagger（§6.1）挂 el-row 而非根 div：.fuy-stagger > * 只匹配直接子元素，
+       挂根 div 时唯一子元素是 el-row，级联退化为整行同播且 el-col 上的 index 变量零消费；
+       挂 el-row 后两个 el-col 即直接子元素——右列 inline index 1 = 40ms delay，级联真实生效
+       （质量门 R1 F-1 修复；与批次 3 双卡页 stagger 直接命中卡元素同语义） -->
+  <div class="fuy-page">
+    <el-row :gutter="16" class="fuy-stagger">
       <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为
            后代选择器 .fuy-dense .el-table，挂表格自身不构成后代关系、零生效（批次 2 R1 教训） -->
       <el-col :md="24" :lg="10">
