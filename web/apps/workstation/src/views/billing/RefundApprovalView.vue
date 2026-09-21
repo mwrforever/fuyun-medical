@@ -340,7 +340,9 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210" class-name="refund-approval-ops">
+        <!-- 间距 8px（§8.2 同款）经全局工具类 .fuy-ops-8（element-plus.css）承载：
+             td 由 el-table 内部渲染不含本组件 scoped 哈希，scoped 规则零匹配 -->
+        <el-table-column label="操作" width="210" class-name="fuy-ops-8">
           <template #default="{ row }">
             <el-button size="small" :disabled="!canApprove(row)" @click="handleApprove(row)">
               批准
@@ -370,7 +372,8 @@ onMounted(() => {
 
 <style scoped>
 /* 视图级样式隔离（web A.1-2）：工具条已收编 .fuy-toolbar（§9.2.2），卡宽随 .fuy-page
-   全宽（列表 1080 上限撤销），本块只留 input 宽度/摘要与申请区间距/操作列按钮间距 */
+   全宽（列表 1080 上限撤销），本块只留 input 宽度与摘要/申请区间距（操作列 8px 间距
+   收编全局工具类 .fuy-ops-8——td 无 scoped 哈希，scoped 规则在此零匹配） */
 .refund-approval-input {
   max-width: 280px;
 }
@@ -391,11 +394,5 @@ onMounted(() => {
 
 .refund-approval-reason {
   max-width: 420px;
-}
-
-/* 操作列按钮间距 8px（§8.2 同款）：覆盖 EP 相邻按钮默认 12px；
-   td 由 el-table 渲染不带本组件 scoped 哈希，经 :deep 一层穿透（§4.1 深度上限内） */
-.refund-approval-ops :deep(.el-button + .el-button) {
-  margin-left: 8px;
 }
 </style>

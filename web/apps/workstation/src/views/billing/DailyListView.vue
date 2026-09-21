@@ -117,8 +117,9 @@ async function handleQuery(): Promise<void> {
           </el-table>
 
           <!-- 三分区合计：Σ明细 / Σ大类 / 合计 并列展示，勾稽一致才露绿标（第三层校验 UI 佐证）；
-               合计条 §6.1 rise 入场（fuy-stagger 单子容器零新样式，压轴 40ms 延后于结果区淡入） -->
-          <div class="fuy-stagger">
+               合计条 §6.1 rise 入场（fuy-stagger 单子容器 + inline index 1=40ms delay，
+               压轴于结果区 200ms 淡入完成——delay 经自定义属性继承至子动画元素） -->
+          <div class="fuy-stagger" :style="{ '--fuy-stagger-index': 1 }">
             <div class="fuy-total-strip">
               <span class="daily-list-subtotal">
                 Σ明细 {{ fenToYuanDisplay(itemsSumFen) }} 元
