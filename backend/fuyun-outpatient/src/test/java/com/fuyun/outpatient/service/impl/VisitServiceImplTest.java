@@ -3,6 +3,8 @@ package com.fuyun.outpatient.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -165,15 +167,15 @@ class VisitServiceImplTest {
     void admitMarksServingAndMovesVisitToInConsult() {
         Visit visit = visit(VisitStatus.WAITING);
         when(visitMapper.selectOne(any())).thenReturn(visit);
-        when(visitMapper.casStatus(77L, "WAITING", "IN_CONSULT")).thenReturn(1);
+        when(visitMapper.casAdmit(77L, "WAITING", "IN_CONSULT", "9001")).thenReturn(1);
 
         VisitVO vo = service.admit("O2026092100001");
 
-        // 票据联动（CALLED→SERVING+serve_time 归分诊域写路径）+visit CAS（状态机合法迁移对）
+        // 票据联动（CALLED→SERVING+serve_time 归分诊域写路径）+visit 专用 CAS（状态迁移+admitted_at
+        // 库端 now() 回填单条 UPDATE，与票面 serve_time 同源禁应用时钟——R1 修）
         verify(triageService).markServing("O2026092100001");
-        verify(visitMapper).casStatus(77L, "WAITING", "IN_CONSULT");
+        verify(visitMapper).casAdmit(77L, "WAITING", "IN_CONSULT", "9001");
         assertThat(visit.getStatus()).isEqualTo(VisitStatus.IN_CONSULT);
-        assertThat(visit.getAdmittedAt()).isNotNull();
         // 每迁必记（红线 5）：WAITING→IN_CONSULT 一行，操作者=接诊医生
         verify(visitStatusLogMapper).insert(statusLogCaptor.capture());
         assertThat(statusLogCaptor.getValue().getFromStatus()).isEqualTo(VisitStatus.WAITING);
@@ -198,7 +200,7 @@ class VisitServiceImplTest {
             assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.TICKET_STATE_NOT_ALLOWED);
             assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
         });
-        verify(visitMapper, never()).casStatus(any(long.class), any(), any());
+        verify(visitMapper, never()).casAdmit(anyLong(), anyString(), anyString(), anyString());
         verify(visitStatusLogMapper, never()).insert(any(VisitStatusLog.class));
     }
 
@@ -214,7 +216,7 @@ class VisitServiceImplTest {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.FINISH_CHECK_FAILED);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
-        verify(visitMapper, never()).casStatus(any(long.class), any(), any());
+        verify(visitMapper, never()).casFinish(anyLong(), anyString(), anyString(), anyString(), anyString());
         verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
     }
 
@@ -223,15 +225,14 @@ class VisitServiceImplTest {
     void finishPassesWithExplicitConfirm() {
         Visit visit = visit(VisitStatus.IN_CONSULT);
         when(visitMapper.selectOne(any())).thenReturn(visit);
-        when(visitMapper.casStatus(77L, "IN_CONSULT", "FINISHED")).thenReturn(1);
+        when(visitMapper.casFinish(77L, "IN_CONSULT", "FINISHED", "9001", "DISCHARGE_HOME"))
+                .thenReturn(1);
 
         VisitVO vo = service.finish("O2026092100001", new FinishVisitRequest("DISCHARGE_HOME", true));
 
-        verify(visitMapper).casStatus(77L, "IN_CONSULT", "FINISHED");
+        // 专用 CAS（状态迁移+finished_at 库端 now()+去向/操作者落列单条 UPDATE——R1 修时钟同源）
+        verify(visitMapper).casFinish(77L, "IN_CONSULT", "FINISHED", "9001", "DISCHARGE_HOME");
         assertThat(visit.getStatus()).isEqualTo(VisitStatus.FINISHED);
-        assertThat(visit.getFinishedAt()).isNotNull();
-        assertThat(visit.getDisposition()).isEqualTo("DISCHARGE_HOME");
-        assertThat(visit.getFinishOperator()).isEqualTo("9001");
         // visit.finished 发布断言（disposition/finishOperator 逐字）
         verify(events).publishEvent(eventCaptor.capture());
         assertThat(eventCaptor.getValue().eventType()).isEqualTo(OutpatientMessagingConstants.EVENT_VISIT_FINISHED);
@@ -256,7 +257,7 @@ class VisitServiceImplTest {
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
                 });
         verify(clinicOrderMapper, never()).selectCount(any());
-        verify(visitMapper, never()).casStatus(any(long.class), any(), any());
+        verify(visitMapper, never()).casFinish(anyLong(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -316,7 +317,7 @@ class VisitServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(OutpatientErrorCode.VISIT_STATE_NOT_ALLOWED));
         verifyNoInteractions(triageService);
-        verify(visitMapper, never()).casStatus(any(long.class), any(), any());
+        verify(visitMapper, never()).casAdmit(anyLong(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -324,7 +325,7 @@ class VisitServiceImplTest {
     void admitRejectsWhenVisitCasConcurrentLose() {
         Visit visit = visit(VisitStatus.WAITING);
         when(visitMapper.selectOne(any())).thenReturn(visit);
-        when(visitMapper.casStatus(77L, "WAITING", "IN_CONSULT")).thenReturn(0);
+        when(visitMapper.casAdmit(77L, "WAITING", "IN_CONSULT", "9001")).thenReturn(0);
 
         assertThatThrownBy(() -> service.admit("O2026092100001"))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
@@ -351,7 +352,7 @@ class VisitServiceImplTest {
         assertThatThrownBy(() -> service.finish("O2026092100001", new FinishVisitRequest("OTHER", true)))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(OutpatientErrorCode.VISIT_STATE_NOT_ALLOWED));
-        verify(visitMapper, never()).casStatus(any(long.class), any(), any());
+        verify(visitMapper, never()).casFinish(anyLong(), anyString(), anyString(), anyString(), anyString());
         verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
     }
 
@@ -360,7 +361,8 @@ class VisitServiceImplTest {
     void finishRejectsWhenVisitCasConcurrentLose() {
         Visit visit = visit(VisitStatus.IN_CONSULT);
         when(visitMapper.selectOne(any())).thenReturn(visit);
-        when(visitMapper.casStatus(77L, "IN_CONSULT", "FINISHED")).thenReturn(0);
+        when(visitMapper.casFinish(77L, "IN_CONSULT", "FINISHED", "9001", "OTHER"))
+                .thenReturn(0);
 
         assertThatThrownBy(() -> service.finish("O2026092100001", new FinishVisitRequest("OTHER", true)))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())

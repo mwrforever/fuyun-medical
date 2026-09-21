@@ -85,6 +85,13 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
     /** billing 费用行 PENDING 态 code（可作废词表，与 cancelPendingFee 行态守卫同源） */
     private static final String FEE_STATUS_PENDING = "PENDING";
 
+    /**
+     * 系统定性动作操作者哨兵（Task 6 AppointmentServiceImpl 先例）：缴费回执消费运行于 MQ 消费
+     * 线程——ThreadLocal 操作者上下文不跨线程（backend 宪法 A.1-10），消费路径 operator/updated_by
+     * 取本哨兵（与 {@link ClinicOrderMapper#casStatus} 固定 updated_by='system' 同迁移口径）。
+     */
+    private static final String SYSTEM_OPERATOR = "system";
+
     private final ClinicOrderMapper clinicOrderMapper;
 
     private final ClinicOrderItemMapper clinicOrderItemMapper;
@@ -482,7 +489,10 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
     }
 
     /**
-     * 迁移留痕（红线 5 每迁必记：IN_CONSULT→PENDING_FEE，缴费回执推进专用）。
+     * 迁移留痕（红线 5 每迁必记：IN_CONSULT→PENDING_FEE，缴费回执推进专用）：operator 取
+     * {@link #SYSTEM_OPERATOR} 哨兵——本方法唯一调用链为 MQ 消费线程，ThreadLocal 操作者上下文
+     * 不跨线程（取值必为 null，visit_status_log.operator 非空列将违反约束致回执反复进死信），
+     * 操作者语义不适用于系统驱动迁移。
      *
      * @param visitId 就诊号，非空
      * @param reason  迁移原因，非空
@@ -493,7 +503,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
         statusLog.setFromStatus(VisitStatus.IN_CONSULT);
         statusLog.setToStatus(VisitStatus.PENDING_FEE);
         statusLog.setReason(reason);
-        statusLog.setOperator(OperatorContextHolder.get());
+        statusLog.setOperator(SYSTEM_OPERATOR);
         // 数据库写操作：迁移日志每迁必记（红线 5）
         visitStatusLogMapper.insert(statusLog);
     }

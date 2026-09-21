@@ -525,6 +525,24 @@ class ClinicOrderServiceImplTest {
     }
 
     @Test
+    @DisplayName("缴费回执消费线程无请求上下文：operator 落 system 哨兵（R1 修——ThreadLocal 不跨线程，NOT NULL 列防回归）")
+    void markPendingFeeStampsSystemOperatorWithoutRequestContext() {
+        // MQ 消费线程无 ThreadLocal 操作者上下文（setUp 预置清空模拟真实消费环境）
+        OperatorContextHolder.clear();
+        ClinicOrder order = order(orderNoOf(1), OrderType.LAB, OrderStatus.CREATED);
+        when(clinicOrderMapper.selectOne(any())).thenReturn(order);
+        when(clinicOrderMapper.casStatus(881L, "CREATED", "PENDING_FEE")).thenReturn(1);
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.IN_CONSULT));
+        when(visitMapper.casStatus(77L, "IN_CONSULT", "PENDING_FEE")).thenReturn(1);
+
+        service.markPendingFee(orderNoOf(1));
+
+        verify(visitStatusLogMapper).insert(statusLogCaptor.capture());
+        // operator 必为 system 哨兵（null 落 NOT NULL 列即违反约束致回执反复进死信——Critical-1 防回归锚）
+        assertThat(statusLogCaptor.getValue().getOperator()).isEqualTo("system");
+    }
+
+    @Test
     @DisplayName("缴费回执 visit 跳过：visit 已非 IN_CONSULT（多单并推/诊毕竞态正常态）——零 CAS")
     void markPendingFeeSkipsWhenVisitNotInConsult() {
         ClinicOrder order = order(orderNoOf(1), OrderType.LAB, OrderStatus.CREATED);

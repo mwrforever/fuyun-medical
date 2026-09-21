@@ -27,7 +27,6 @@ import com.fuyun.outpatient.vo.DoctorQueueItemVO;
 import com.fuyun.outpatient.vo.VisitVO;
 import com.fuyun.patient.api.PatientDisplayName;
 import com.fuyun.patient.api.PatientNameQuery;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,8 +40,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 门诊医生站就诊服务实现（M03 FU-M03-05，Task 8 写路径唯一入口）：接诊（分诊域票 CALLED→SERVING
  * 联动归 ITriageService.markServing+visit WAITING→IN_CONSULT 状态机迁移+admitted_at 国标回填）、
  * 诊毕（离院去向词表 OP-1018→在途单据显式确认校验 OP-1016→visit 状态机校验迁 FINISHED（
- * IN_CONSULT 与显式确认的 PENDING_FEE 均合法）+finished_at/finish_operator 回填+visit.finished
- * 发布）、医生站候诊列表（本队列 WAITING/CALLED 票+脱敏摘要+过敏声明位）。visit 全部迁移经
+ * IN_CONSULT 与显式确认的 PENDING_FEE 均合法）+finished_at/finish_operator/disposition 回填+
+ * visit.finished 发布）、医生站候诊列表（本队列 WAITING/CALLED 票+脱敏摘要+过敏声明位）。
+ * 接诊/诊毕时间回填走 VisitMapper.casAdmit/casFinish 专用 CAS（状态迁移与国标时间单条 UPDATE，
+ * 库端 now() 与票面 serve_time 同源，禁应用服务器时钟防多实例漂移）。visit 全部迁移经
  * OutpatientVisitStateMachine 单点校验+visit_status_log 每迁必记（红线 5）；终态后一切后续动作
  * 被状态机拒绝（OP-1011）。线程安全：无状态单例。装配归 OutpatientWebConfig @Import；
  * com.fuyun.outpatient.service.impl 包 = JaCoCo PACKAGE LINE 1.00 覆盖对象。
@@ -130,8 +131,13 @@ public class VisitServiceImpl implements IVisitService {
         require(visit.getStatus().getCode(), VisitStatus.IN_CONSULT.getCode());
         // 分诊域联动：本就诊 CALLED 票 CAS→SERVING+serve_time（无已叫票 OP-1013，叫号≠接诊守卫）
         triageService.markServing(visitId);
-        // 数据库写操作：visit CAS WAITING→IN_CONSULT；0 行=并发已迁移，判 OP-1011
-        if (visitMapper.casStatus(visit.getId(), VisitStatus.WAITING.getCode(), VisitStatus.IN_CONSULT.getCode())
+        // 数据库写操作：visit CAS WAITING→IN_CONSULT+admitted_at 回填单条 UPDATE（库端 now()，与
+        // 票面 serve_time 同源，禁应用服务器时钟防多实例漂移）；0 行=并发已迁移，判 OP-1011
+        if (visitMapper.casAdmit(
+                        visit.getId(),
+                        VisitStatus.WAITING.getCode(),
+                        VisitStatus.IN_CONSULT.getCode(),
+                        OperatorContextHolder.get())
                 == 0) {
             log.warn(
                     "接诊 CAS 落败（并发已迁移）：visitId={}，读得状态={}",
@@ -142,17 +148,10 @@ public class VisitServiceImpl implements IVisitService {
                     HttpStatus.CONFLICT,
                     "就诊状态不允许接诊（并发状态迁移）：visitId=" + visitId);
         }
-        // 数据库写操作：接诊时间回填（国标采集，医生站接诊时刻）
+        // 出参语义回填（列值已由库端 CAS 写入，实体不回写库）
         visit.setStatus(VisitStatus.IN_CONSULT);
-        visit.setAdmittedAt(OffsetDateTime.now());
-        visit.setUpdatedBy(OperatorContextHolder.get());
-        visitMapper.updateById(visit);
         insertVisitStatusLog(visitId, VisitStatus.WAITING, VisitStatus.IN_CONSULT, "医生站接诊");
-        log.info(
-                "接诊完成：visitId={}，doctorId={}，admittedAt={}",
-                visitId,
-                OperatorContextHolder.get(),
-                visit.getAdmittedAt());
+        log.info("接诊完成：visitId={}，doctorId={}（admitted_at 由库端 now() 回填）", visitId, OperatorContextHolder.get());
         return toVO(visit);
     }
 
@@ -199,21 +198,23 @@ public class VisitServiceImpl implements IVisitService {
         // 状态机单点校验（红线 5）：IN_CONSULT→FINISHED 合法，PENDING_FEE→FINISHED 显式确认路径合法
         VisitStatus from = visit.getStatus();
         require(from.getCode(), VisitStatus.FINISHED.getCode());
-        // 数据库写操作：visit CAS→FINISHED；0 行=并发已迁移，判 OP-1011
-        if (visitMapper.casStatus(visit.getId(), from.getCode(), VisitStatus.FINISHED.getCode()) == 0) {
+        // 数据库写操作：visit CAS→FINISHED+finished_at/disposition/finish_operator 回填单条 UPDATE
+        // （时间取库端 now()，禁应用服务器时钟）；0 行=并发已迁移，判 OP-1011
+        if (visitMapper.casFinish(
+                        visit.getId(),
+                        from.getCode(),
+                        VisitStatus.FINISHED.getCode(),
+                        OperatorContextHolder.get(),
+                        request.disposition())
+                == 0) {
             log.warn("诊毕 CAS 落败（并发已迁移）：visitId={}，读得状态={}", visitId, from.getCode());
             throw new BizException(
                     OutpatientErrorCode.VISIT_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
                     "就诊状态不允许诊毕（并发状态迁移）：visitId=" + visitId);
         }
-        // 数据库写操作：诊毕回填（finished_at/finish_operator/disposition，国标采集）
+        // 出参语义回填（列值已由库端 CAS 写入，实体不回写库）
         visit.setStatus(VisitStatus.FINISHED);
-        visit.setFinishedAt(OffsetDateTime.now());
-        visit.setDisposition(request.disposition());
-        visit.setFinishOperator(OperatorContextHolder.get());
-        visit.setUpdatedBy(OperatorContextHolder.get());
-        visitMapper.updateById(visit);
         insertVisitStatusLog(visitId, from, VisitStatus.FINISHED, "医生站诊毕，离院去向=" + request.disposition());
         // 事务内发布 visit.finished（id 33，AFTER_COMMIT 出 MQ）：M09 信息页/病案与 M19 统计取数依据
         events.publishEvent(new OutpatientDomainEvent(
@@ -224,7 +225,7 @@ public class VisitServiceImpl implements IVisitService {
                 "诊毕完成：visitId={}，disposition={}，finishOperator={}，explicitConfirm={}",
                 visitId,
                 request.disposition(),
-                visit.getFinishOperator(),
+                OperatorContextHolder.get(),
                 explicitConfirm);
         return toVO(visit);
     }
