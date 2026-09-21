@@ -70,9 +70,11 @@ async function handleQuery(): Promise<void> {
 
 <template>
   <div class="fuy-page">
-    <el-card class="daily-list">
+    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点）：表格 size="small" 移除，fuy-dense 唯一
+         密度通道（§9.9-2） -->
+    <el-card class="fuy-dense">
       <template #header>一日清单</template>
-      <div class="daily-list-bar">
+      <div class="fuy-toolbar">
         <el-input v-model="visitId" placeholder="就诊号" class="daily-list-input" clearable />
         <el-date-picker
           v-model="date"
@@ -83,73 +85,88 @@ async function handleQuery(): Promise<void> {
         <el-button type="primary" :loading="loading" @click="handleQuery">查询</el-button>
       </div>
 
-      <template v-if="result">
-        <h4 class="daily-list-section">费用明细</h4>
-        <el-table v-loading="loading" :data="result.items ?? []" size="small">
-          <el-table-column prop="itemNameSnapshot" label="项目" min-width="160" />
-          <el-table-column label="单价（元）" width="110">
-            <template #default="{ row }">
-              {{ fenToYuanDisplay(row.unitPriceSnapshot ?? '0') }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="quantity" label="数量" width="80" />
-          <el-table-column label="金额（元）" width="110">
-            <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-          </el-table-column>
-        </el-table>
+      <!-- 结果区显隐 200ms 淡入（§6.7，appear 供首次挂载即播——批次 2 R1 同款） -->
+      <Transition name="fuy-content-fade" appear>
+        <div v-if="result">
+          <h4 class="fuy-section-title">费用明细</h4>
+          <el-table v-loading="loading" :data="result.items ?? []" class="daily-list-items">
+            <el-table-column prop="itemNameSnapshot" label="项目" min-width="160" />
+            <el-table-column label="单价（元）" width="110" align="right" class-name="fuy-num">
+              <template #default="{ row }">
+                {{ fenToYuanDisplay(row.unitPriceSnapshot ?? '0') }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              prop="quantity"
+              label="数量"
+              width="80"
+              align="right"
+              class-name="fuy-num"
+            />
+            <el-table-column label="金额（元）" width="110" align="right" class-name="fuy-num">
+              <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
+            </el-table-column>
+          </el-table>
 
-        <h4 class="daily-list-section">大类汇总</h4>
-        <el-table :data="result.categories ?? []" size="small" class="daily-list-categories">
-          <el-table-column prop="feeCategory" label="大类" min-width="140" />
-          <el-table-column label="金额（元）" width="120">
-            <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-          </el-table-column>
-        </el-table>
+          <h4 class="fuy-section-title">大类汇总</h4>
+          <el-table :data="result.categories ?? []" class="daily-list-categories">
+            <el-table-column prop="feeCategory" label="大类" min-width="140" />
+            <el-table-column label="金额（元）" width="120" align="right" class-name="fuy-num">
+              <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
+            </el-table-column>
+          </el-table>
 
-        <!-- 三分区合计：Σ明细 / Σ大类 / 合计 并列展示，勾稽一致才露绿标（第三层校验 UI 佐证） -->
-        <div class="daily-list-total">
-          <span>Σ明细 {{ fenToYuanDisplay(itemsSumFen) }} 元</span>
-          <span>Σ大类 {{ fenToYuanDisplay(categoriesSumFen) }} 元</span>
-          <span>合计 {{ fenToYuanDisplay(result.totalAmount ?? '0') }} 元</span>
-          <el-tag v-if="reconciled" type="success">已核对</el-tag>
-          <el-tag v-else type="danger">合计不一致，请核对</el-tag>
+          <!-- 三分区合计：Σ明细 / Σ大类 / 合计 并列展示，勾稽一致才露绿标（第三层校验 UI 佐证）；
+               合计条 §6.1 rise 入场（fuy-stagger 单子容器零新样式，压轴 40ms 延后于结果区淡入） -->
+          <div class="fuy-stagger">
+            <div class="fuy-total-strip">
+              <span class="daily-list-subtotal">
+                Σ明细 {{ fenToYuanDisplay(itemsSumFen) }} 元
+              </span>
+              <span class="daily-list-subtotal">
+                Σ大类 {{ fenToYuanDisplay(categoriesSumFen) }} 元
+              </span>
+              <span class="daily-list-grand fuy-num">
+                合计 {{ fenToYuanDisplay(result.totalAmount ?? '0') }} 元
+              </span>
+              <el-tag v-if="reconciled" type="success" class="fuy-tag-aa">已核对</el-tag>
+              <el-tag v-else type="danger" class="fuy-tag-aa">合计不一致，请核对</el-tag>
+            </div>
+          </div>
         </div>
-      </template>
+      </Transition>
+      <!-- 未查询引导空态（F-6）：业务口径指路，非「暂无数据」（§4.4）；
+           显式 v-if——前驱 v-if 在 Transition 内，v-else 链被组件隔断不合法 -->
+      <el-empty v-if="!result" :image-size="72" description="输入就诊号与清单日期查询费用明细" />
     </el-card>
   </div>
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2） */
-.daily-list {
-  max-width: 1080px;
-}
-
-.daily-list-bar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
+/* 视图级样式隔离（web A.1-2）：工具条/小节题/合计条容器已收编 .fuy-toolbar/.fuy-section-title/
+   .fuy-total-strip（§9.2.2），本块只留 input 宽度/明细表 CLS 高度/大类表宽/合计字级 */
 .daily-list-input {
   max-width: 240px;
 }
 
-.daily-list-section {
-  margin: 16px 0 8px;
-  font-size: 14px;
-  color: var(--el-text-color-primary);
+/* 明细表容器 min-height 锁定加载/空态切换零塌陷（§7.1 CLS） */
+.daily-list-items {
+  min-height: 240px;
 }
 
 .daily-list-categories {
   max-width: 420px;
 }
 
-.daily-list-total {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  margin-top: 12px;
-  font-size: 14px;
+/* Σ明细/Σ大类：次要 14px；合计：emphasis 20px 等宽数字（§9.4-⑥ 三分区强调口径） */
+.daily-list-subtotal {
+  font-size: var(--fuy-font-size-md);
+  color: var(--fuy-color-text-secondary);
+}
+
+.daily-list-grand {
+  font-size: var(--fuy-font-size-2xl);
+  font-weight: 700;
+  color: var(--fuy-color-text-emphasis);
 }
 </style>
