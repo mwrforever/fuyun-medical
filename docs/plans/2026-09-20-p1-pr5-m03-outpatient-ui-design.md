@@ -965,6 +965,7 @@ v-loading 挂载的遮罩 spinner 由 EP 内部类渲染，无法逐个加豁免
 
 - 主色梯度：`element-plus.css` `:root:root`（§2.2.4，批次 0 落盘即覆盖存量页——主色变化对存量页是**预期内的全局统一**，EP 默认蓝 `#409eff` → 临床蓝 `#0369a1`，功能四色保留 EP 默认不动，与存量硬编码语义一致）。
 - **zh-cn locale（F-2 修复）**：`App.vue` 根节点包 `<el-config-provider :locale="zhCn">`，`import zhCn from 'element-plus/es/config-provider/locale/zh-cn'`（按需路径）。单实例挂 App 根，分页「共 N 条」与日期面板即时中文化；不引全量 locale 入口文件。
+  > 订正注记（2026-09-21，批次 0 质量门 R-5）：上行路径为笔误——EP 2.14.5 包内不存在 `es/config-provider/locale/zh-cn`，实际按需路径为 `element-plus/es/locale/lang/zh-cn`（同为按需路径 import、非全量 locale 入口文件，不违背本条禁令）；批次 0（PR #37）已按实际路径实现，后人照本文实现时以实际路径为准。
 - 禁改：EP 主题 SCSS 编译、`.el-*` 全局裸覆盖（§4.1 禁令对存量改造同样生效——一切定制走 `--el-*` 变量或挂 `fuy-` 类）。
 
 #### 9.2.4 落地顺序（顺序不可逆，前批是后批的地基）

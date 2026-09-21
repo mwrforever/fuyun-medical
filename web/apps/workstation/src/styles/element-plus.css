@@ -85,6 +85,20 @@
   background: var(--fuy-color-triage-l4);
 }
 
+/* 业务页统一外框（§9.2.2 存量收编类之一，规格 §3.1）：超 2K 屏防无限拉伸、
+   1440 主流工作屏全宽利用；批次 1 起各页根节点挂载 */
+.fuy-page {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: var(--fuy-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--fuy-space-3);
+}
+
+/* TODO(batch-1): .fuy-menu-* 菜单收编类（§9.2.2 第五枚）延后至布局壳升级批次落盘——
+   §9.3.1 仅给布局树片段未定死完整 CSS 规格，批次 0 修复时登记（2026-09-21 质量门 R-1） */
+
 /* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */
 .fuy-toolbar {
   display: flex;

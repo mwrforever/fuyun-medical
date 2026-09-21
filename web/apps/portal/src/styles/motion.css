@@ -102,6 +102,35 @@
   opacity: 0;
 }
 
+/* portal 出票卡（成功确认时刻 §6.8）：Transition name="fuy-ticket" 包裹出票卡
+   （v-if 替换表单区），from { opacity 0 / scale 0.92 } → 终态，320ms emphasis
+   （全站唯一过冲曲线之二）；出票为替换终态，§6.8 未定义离场规格故无 leave 类 */
+.fuy-ticket-enter-active {
+  transition:
+    opacity var(--fuy-motion-slow) var(--fuy-ease-emphasis),
+    transform var(--fuy-motion-slow) var(--fuy-ease-emphasis);
+}
+.fuy-ticket-enter-from {
+  opacity: 0;
+  transform: scale(0.92);
+}
+
+/* 配套「打印出票」隐喻：出票卡顶部 3px 品牌色条 scaleX 0→1，480ms standard 延迟 160ms
+   启动（§6.8 参数；类名与 keyframes 名为实施层命名——§6.8 仅给参数未定名，页面挂载于
+   出票卡顶部色条元素） */
+.fuy-ticket-bar {
+  transform-origin: left;
+  animation: fuy-ticket-bar-grow 480ms var(--fuy-ease-standard) 160ms both;
+}
+@keyframes fuy-ticket-bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
 /* prefers-reduced-motion 全局兜底：reduce 下全部动画/过渡直达终态 */
 @media (prefers-reduced-motion: reduce) {
   *,
