@@ -100,9 +100,14 @@ class OutpatientFullFlowIT extends FuyunStackITBase {
     private static String reviewerToken = "";
     private static String doctorToken = "";
 
-    /** CF-3 当日首位就诊号冻结形态（O+今日+00001——容器独占 Redis 流水键自 1 起签发） */
+    /**
+     * CF-3 当日首位就诊号冻结形态（O+今日+00001——容器独占 Redis 流水键自 1 起签发）。日期段取
+     * 系统默认时区 {@code LocalDate.now()}：与生成器 VisitIdIssuerImpl.issue 的流水键日期戳同源
+     * （其取值无时区参），亦与本文件造数 endDate/池定位同源——原 UTC 取值在 UTC+8 每日 00:00-08:00
+     * 与生成器错日分叉致假红窗。
+     */
     private static final String EXPECTED_VISIT_ID =
-            "O" + LocalDate.now(ZoneOffset.UTC).format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
+            "O" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
 
     /** 跨用例链路状态（JUnit 每用例新实例，业务号/单据锚经 static 传递） */
     private static long poolId;

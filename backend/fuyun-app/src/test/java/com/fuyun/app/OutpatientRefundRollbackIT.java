@@ -26,8 +26,6 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -62,9 +60,6 @@ import org.testcontainers.utility.MountableFile;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class OutpatientRefundRollbackIT extends FuyunStackITBase {
-
-    /** IT 运行日志（收敛时点观测；fuyun-app 测试域无 lombok，走 SLF4J 直取） */
-    private static final Logger log = LoggerFactory.getLogger(OutpatientRefundRollbackIT.class);
 
     /** 类级独占三容器（容器禁收敛入基类——P1-1 裁决，BillingSettlementFlowIT :62-78 逐字同型；
      *  @DynamicPropertySource 密钥三元组已由 FuyunStackITBase 承载） */
@@ -574,8 +569,8 @@ class OutpatientRefundRollbackIT extends FuyunStackITBase {
         drugFeeId = awaitPendingFee(rxNo, "PRESCRIPTION_EFFECTIVE", 4000);
         drugSettlementId = settleAndLocateSettlement(rxNo, 4000);
 
-        // 放行终态：两单 CHARGED（检查单 + RX_REF 引用行）+ 处方 PENDING_DISPENSE（真实 order.charged 精确放行）
-        awaitOrderStatus(orderNoA, "CHARGED");
+        // 放行终态：RX_REF 引用行 CHARGED（检查单 A 已于其结算段后就近等待 CHARGED）
+        // + 处方 PENDING_DISPENSE（真实 order.charged 精确放行）
         awaitOrderStatus(rxRefOrderNo(rxNo), "CHARGED");
         awaitRxDispenseReleased(rxNo);
         assertThat(rxStatus(rxNo)).as("药品结算放行后处方应 PENDING_DISPENSE").isEqualTo("PENDING_DISPENSE");

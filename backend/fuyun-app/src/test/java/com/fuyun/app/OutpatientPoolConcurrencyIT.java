@@ -185,27 +185,31 @@ class OutpatientPoolConcurrencyIT extends FuyunStackITBase {
     private List<ResponseEntity<String>> runConcurrent(
             List<java.util.function.Supplier<ResponseEntity<String>>> actions) throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(actions.size());
-        CountDownLatch start = new CountDownLatch(1);
-        List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
-        for (java.util.function.Supplier<ResponseEntity<String>> action : actions) {
-            futures.add(executor.submit(() -> {
-                start.await();
-                return action.get();
-            }));
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
+            for (java.util.function.Supplier<ResponseEntity<String>> action : actions) {
+                futures.add(executor.submit(() -> {
+                    start.await();
+                    return action.get();
+                }));
+            }
+            long begin = System.nanoTime();
+            start.countDown();
+            List<ResponseEntity<String>> results = new ArrayList<>();
+            for (Future<ResponseEntity<String>> future : futures) {
+                results.add(future.get(60, TimeUnit.SECONDS));
+            }
+            long wallMillis = (System.nanoTime() - begin) / 1_000_000L;
+            // 快速失败边界（Spec :209）：放号挤兑全链（含全部 409 快拒）须在 30s 内收敛
+            assertThat(wallMillis)
+                    .as("并发抢号全链 wall time %dms 应 <30s（快速失败边界）", wallMillis)
+                    .isLessThan(CONCURRENCY_WALL_TIME_LIMIT_SECONDS * 1000L);
+            return results;
+        } finally {
+            // 线程池回收移入 finally：wall time 断言失败或等待中断时亦回收，防线程泄漏
+            executor.shutdownNow();
         }
-        long begin = System.nanoTime();
-        start.countDown();
-        List<ResponseEntity<String>> results = new ArrayList<>();
-        for (Future<ResponseEntity<String>> future : futures) {
-            results.add(future.get(60, TimeUnit.SECONDS));
-        }
-        long wallMillis = (System.nanoTime() - begin) / 1_000_000L;
-        // 快速失败边界（Spec :209）：放号挤兑全链（含全部 409 快拒）须在 30s 内收敛
-        assertThat(wallMillis)
-                .as("并发抢号全链 wall time %dms 应 <30s（快速失败边界）", wallMillis)
-                .isLessThan(CONCURRENCY_WALL_TIME_LIMIT_SECONDS * 1000L);
-        executor.shutdownNow();
-        return results;
     }
 
     @Test
