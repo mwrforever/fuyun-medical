@@ -32,6 +32,8 @@ interface ReturnLineRow {
 const rxNo = ref('');
 /** 检回的发药单（null=未检索或无单） */
 const dispense = ref<DispenseVO | null>(null);
+/** 是否已完成过检索（区分「未检索」与「检索无单」两态：空态提示仅对后者呈现） */
+const searched = ref(false);
 /** 退药行编辑模型（检索回显时重建，防上一单残留） */
 const rows = reactive<ReturnLineRow[]>([]);
 const loading = ref(false);
@@ -50,6 +52,8 @@ async function handleSearch(): Promise<void> {
   loading.value = true;
   try {
     const list = await listDispenses({ rxNo: rxNo.value.trim() });
+    // 检索已成功返回（失败驻留旧单时保持原 searched 态，防误显「无单」空态）
+    searched.value = true;
     dispense.value = list.length > 0 ? list[0] : null;
     rows.splice(
       0,
@@ -118,10 +122,13 @@ async function submitReturn(): Promise<void> {
 </script>
 
 <template>
-  <div class="dispense-return">
-    <el-card>
+  <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为后代选择器
+       .fuy-dense .el-table，挂表格自身不构成后代关系、零生效（批次 2 R1 教训）；
+       表格 size="small" 移除——fuy-dense 唯一密度通道（§9.9-2） -->
+  <div class="fuy-page">
+    <el-card class="fuy-dense">
       <template #header>退药受理</template>
-      <div class="dispense-return-bar">
+      <div class="fuy-toolbar">
         <el-input
           v-model="rxNo"
           placeholder="处方号"
@@ -132,65 +139,78 @@ async function submitReturn(): Promise<void> {
         <el-button :loading="loading" @click="handleSearch">检索发药单</el-button>
       </div>
 
-      <template v-if="dispense">
-        <el-descriptions :title="`发药单 ${dispense.dispenseNo ?? ''}`" :column="2" border>
-          <el-descriptions-item label="单状态">{{ dispense.status ?? '—' }}</el-descriptions-item>
-          <el-descriptions-item label="处方号">{{ dispense.rxNo ?? '—' }}</el-descriptions-item>
-        </el-descriptions>
+      <!-- 检索无单空态（§9.4-⑨）：warning 弹错保留，空态面以业务口径补齐；
+           searched 门控防「未检索即显无单」误导（批次 2 检索页同款两态区分） -->
+      <el-empty v-if="!dispense && searched" :image-size="72" description="该处方无发药单" />
 
-        <el-table :data="rows" size="small" class="dispense-return-items">
-          <el-table-column prop="itemCode" label="项目" min-width="110" />
-          <el-table-column prop="requestedQuantity" label="应发" width="90" />
-          <el-table-column prop="batchNo" label="批次" min-width="130" />
-          <el-table-column label="退药数量" width="130">
-            <template #default="{ row }">
-              <el-input v-model="row.returnQuantity" placeholder="退药数" />
-            </template>
-          </el-table-column>
-          <el-table-column label="追溯码录入" min-width="220">
-            <template #default="{ row }">
-              <el-input
-                v-model="row.traceCodes"
-                :placeholder="mode === 'ISSUED_RETURN' ? '逐盒扫码，逗号分隔' : '实物退才必填'"
-              />
-            </template>
-          </el-table-column>
-        </el-table>
+      <!-- 结果区单块显隐 §6.7（appear 供首次挂载即播——批次 2 R1 教训）：检索回显 200ms 淡入；
+           内容收拢单 div 承载 Transition 单子元素要求（同条件同显隐，语义等价） -->
+      <Transition name="fuy-content-fade" appear>
+        <div v-if="dispense">
+          <!-- 单据摘要显式小节题（:title 非常规用法收编 .fuy-section-title，§9.4-⑨）；
+               单号回显下沉 descriptions 项，去 title 后业务锚点零丢失 -->
+          <h4 class="fuy-section-title">发药单信息</h4>
+          <el-descriptions :column="2" border>
+            <el-descriptions-item label="发药单号">{{
+              dispense.dispenseNo ?? '—'
+            }}</el-descriptions-item>
+            <el-descriptions-item label="单状态">{{ dispense.status ?? '—' }}</el-descriptions-item>
+            <el-descriptions-item label="处方号">{{ dispense.rxNo ?? '—' }}</el-descriptions-item>
+          </el-descriptions>
 
-        <div class="dispense-return-mode">
-          <span class="dispense-return-mode-label">受理模式：</span>
-          <el-radio-group v-model="mode">
-            <el-radio value="ISSUED_RETURN">发药后实物退</el-radio>
-            <el-radio value="DISPENSING_CANCEL">发药中明细退场</el-radio>
-          </el-radio-group>
+          <el-table :data="rows" class="dispense-return-items">
+            <el-table-column prop="itemCode" label="项目" min-width="110" />
+            <el-table-column
+              prop="requestedQuantity"
+              label="应发"
+              width="90"
+              align="right"
+              class-name="fuy-num"
+            />
+            <el-table-column prop="batchNo" label="批次" min-width="130" />
+            <el-table-column label="退药数量" width="130">
+              <template #default="{ row }">
+                <!-- string 契约承载 DECIMAL 数量（禁 number 转换，W-22⑦ 校验形态归 fix PR）；
+                     inputmode 引导数字键盘，不改变 v-model string 形态 -->
+                <el-input v-model="row.returnQuantity" inputmode="numeric" placeholder="退药数" />
+              </template>
+            </el-table-column>
+            <el-table-column label="追溯码录入" min-width="220">
+              <template #default="{ row }">
+                <el-input
+                  v-model="row.traceCodes"
+                  :placeholder="mode === 'ISSUED_RETURN' ? '逐盒扫码，逗号分隔' : '实物退才必填'"
+                />
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="dispense-return-mode">
+            <span class="dispense-return-mode-label">受理模式：</span>
+            <el-radio-group v-model="mode">
+              <el-radio value="ISSUED_RETURN">发药后实物退</el-radio>
+              <el-radio value="DISPENSING_CANCEL">发药中明细退场</el-radio>
+            </el-radio-group>
+          </div>
+          <div class="dispense-return-actions">
+            <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，根除双击重复出网 -->
+            <el-button
+              type="primary"
+              :disabled="submitting"
+              :loading="submitting"
+              @click="submitReturn"
+              >提交退药</el-button
+            >
+          </div>
         </div>
-        <div class="dispense-return-actions">
-          <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，根除双击重复出网 -->
-          <el-button
-            type="primary"
-            :disabled="submitting"
-            :loading="submitting"
-            @click="submitReturn"
-            >提交退药</el-button
-          >
-        </div>
-      </template>
+      </Transition>
     </el-card>
   </div>
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2） */
-.dispense-return {
-  max-width: 1080px;
-}
-
-.dispense-return-bar {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
+/* 视图级样式隔离（web A.1-2）：工具条已收编 .fuy-toolbar（§9.2.2），卡宽随 .fuy-page
+   全宽（列表 1080 上限撤销），本块只留 input 宽度/行编辑表与模式区/按钮组间距 */
 .dispense-return-input {
   max-width: 260px;
 }
@@ -206,7 +226,7 @@ async function submitReturn(): Promise<void> {
 }
 
 .dispense-return-mode-label {
-  font-size: 14px;
+  font-size: var(--fuy-font-size-md);
 }
 
 .dispense-return-actions {

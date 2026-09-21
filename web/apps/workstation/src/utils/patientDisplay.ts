@@ -1,6 +1,7 @@
 /**
- * 患者域展示文案纯函数（web B.2-4 同 app 多处复用下沉 utils）：性别 / 档案状态编码 →
- * 中文文案与 Element Plus tag 颜色语义映射，检索页表格与详情页共用。
+ * 患者域展示文案纯函数（web B.2-4 同 app 多处复用下沉 utils）：性别 / 档案状态 /
+ * 建档渠道 / 档案来源编码 → 中文文案与 Element Plus tag 颜色语义映射，
+ * 检索页表格与详情页共用（F-8 枚举直出修复：操作员可读性，后端枚举原文不直出）。
  */
 
 /** 状态词表 → 文案与 tag 颜色（与后端 PatientStatus 枚举一致：NORMAL/FROZEN/MERGED） */
@@ -43,4 +44,40 @@ export function patientStatusText(status?: string): string {
  */
 export function patientStatusTagType(status?: string): 'success' | 'warning' | 'danger' | 'info' {
   return STATUS_META[status ?? '']?.tag ?? 'info';
+}
+
+/** 建档渠道词表 → 中文文案（与后端 RegisterChannel 枚举一致，与建档页表单选项同源） */
+const REGISTER_CHANNEL_TEXT: Record<string, string> = {
+  WINDOW: '窗口',
+  SELF_SERVICE: '自助机',
+  ONLINE: '线上',
+  INPATIENT_REGISTER: '住院登记',
+  EMERGENCY: '急诊',
+};
+
+/** 档案来源词表 → 中文文案（与后端 ArchiveSource 枚举一致，与建档页表单选项同源） */
+const ARCHIVE_SOURCE_TEXT: Record<string, string> = {
+  STANDARD: '正式档案',
+  TEMP_ANONYMOUS: '急诊无名氏（临时）',
+  TEMP_NEWBORN: '新生儿（临时）',
+};
+
+/**
+ * 建档渠道编码 → 展示文案。
+ *
+ * @param channel RegisterChannel 枚举值（允许为空=渠道未登记）
+ * @return 中文文案；未知编码原样回显（暴露脏数据便于人工核对），空值返回空串
+ */
+export function patientRegisterChannelText(channel?: string): string {
+  return REGISTER_CHANNEL_TEXT[channel ?? ''] ?? channel ?? '';
+}
+
+/**
+ * 档案来源编码 → 展示文案。
+ *
+ * @param source ArchiveSource 枚举值（允许为空=来源未登记）
+ * @return 中文文案；未知编码原样回显，空值返回空串
+ */
+export function patientArchiveSourceText(source?: string): string {
+  return ARCHIVE_SOURCE_TEXT[source ?? ''] ?? source ?? '';
 }

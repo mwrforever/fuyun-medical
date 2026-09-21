@@ -32,6 +32,24 @@ const auth = useAuthStore();
  */
 const dispensing = ref(false);
 
+/** 发药单状态展示词表（未知态原样透出，防后端扩态即白屏） */
+const dispenseStatusText: Record<string, string> = {
+  CREATED: '待配药',
+  PICKING: '配药中',
+  PICKED: '待发药签名',
+  ISSUED: '已发药',
+};
+
+/** 发药单状态 tag 语义映射（§4.3 映射法）：待配药 primary、配药中 warning、
+ * 待发药签名 success、已发药 info；未知态归 info 防不确定色彩语义。
+ * 文案词表与色型词表分离——tag 仅使三按钮启停语义显性化，不改按钮启停逻辑 */
+const dispenseStatusTagType: Record<string, 'primary' | 'success' | 'warning' | 'info'> = {
+  CREATED: 'primary',
+  PICKING: 'warning',
+  PICKED: 'success',
+  ISSUED: 'info',
+};
+
 /**
  * 加载工作台队列（发药签名成功后重刷）：待发（PENDING_DISPENSE）与调剂中（DISPENSING）
  * 两段合并——后端 pick 即 CAS 处方至 DISPENSING（PH 状态机），单查待发段会使第二药师
@@ -146,6 +164,7 @@ async function onIssue(): Promise<void> {
   dispensing.value = true;
   try {
     try {
+      // 注意：此处未显式传 confirmButtonText（ElMessageBox 函数式挂载渲染英文 OK/Cancel）亦未带单号回显——spec 断言 toHaveBeenCalledWith 锁死两参元数与文案，补传即破断言；偏差已移交主控，待专项裁决后随后续 PR 闭合
       await ElMessageBox.confirm('发药签名后药品出库且不可逆，确认发药？', '发药签名');
     } catch {
       // 用户取消：发药单驻留，可再次点击发药（在途复位交外层 finally）
@@ -166,73 +185,125 @@ onMounted(loadQueue);
 </script>
 
 <template>
-  <div class="dispense-workbench">
-    <el-row :gutter="16">
-      <el-col :span="10">
-        <el-card>
+  <!-- 双卡进场 stagger（§6.1）挂 el-row 而非根 div：.fuy-stagger > * 只匹配直接子元素，
+       挂根 div 时唯一子元素是 el-row，级联退化为整行同播且 el-col 上的 index 变量零消费；
+       挂 el-row 后两个 el-col 即直接子元素——右列 inline index 1 = 40ms delay，级联真实生效
+       （质量门 R1 F-1 修复；与批次 3 双卡页 stagger 直接命中卡元素同语义） -->
+  <div class="fuy-page">
+    <el-row :gutter="16" class="fuy-stagger">
+      <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为
+           后代选择器 .fuy-dense .el-table，挂表格自身不构成后代关系、零生效（批次 2 R1 教训） -->
+      <el-col :md="24" :lg="10">
+        <el-card class="fuy-dense">
           <template #header>工作台队列（待发/调剂中）</template>
-          <el-table :data="queue" v-loading="loading" highlight-current-row @row-click="onSelect">
+          <el-table
+            :data="queue"
+            v-loading="loading"
+            highlight-current-row
+            class="dispense-workbench-queue"
+            @row-click="onSelect"
+          >
             <el-table-column prop="rxNo" label="处方号" min-width="180" />
+            <!-- F-8 注记：PrescriptionVO 无姓名字段，患者列直显雪花 ID 属契约缺口（不虚构字段），
+                 后端补姓名后随 P2 演进，此处保持原样 -->
             <el-table-column prop="patientId" label="患者" min-width="150" />
             <el-table-column prop="visitId" label="就诊号" min-width="120" />
+            <el-table-column label="选择" width="64">
+              <template #default="{ row }">
+                <!-- 选择按钮：键盘可达的选单第二通道（stop 防与行点击双触发，F-4 收口；
+                     文本「选择」不与配药/核对/发药签名既有按钮文案冲突） -->
+                <el-button link type="primary" @click.stop="onSelect(row)">选择</el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty :image-size="72" description="暂无待发/调剂中处方" />
+            </template>
           </el-table>
         </el-card>
       </el-col>
-      <el-col :span="14" v-if="dispense">
-        <el-card>
-          <template #header>发药单 {{ dispense.dispenseNo }}</template>
-          <el-descriptions :column="2" border>
-            <el-descriptions-item label="调配人">{{ dispense.picker || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="核对人">{{
-              dispense.verifier || '—'
-            }}</el-descriptions-item>
-          </el-descriptions>
-          <el-table :data="dispense.items ?? []" class="dispense-workbench-items">
-            <el-table-column prop="itemCode" label="项目" min-width="110" />
-            <el-table-column prop="requestedQuantity" label="应发" width="90" />
-            <el-table-column prop="batchNo" label="批次" min-width="130" />
-            <el-table-column label="追溯码录入" min-width="220">
-              <template #default="{ row }">
-                <el-input
-                  v-model="traceInputs[row.id ?? '']"
-                  :disabled="dispense.status !== 'CREATED'"
-                  placeholder="逐盒扫码，逗号分隔"
-                />
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="dispense-workbench-actions">
-            <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，三动作互斥共用 dispensing -->
-            <el-button
-              type="primary"
-              :disabled="dispense.status !== 'CREATED' || dispensing"
-              :loading="dispensing"
-              @click="onPick"
-              >配药</el-button
-            >
-            <el-button
-              type="warning"
-              :disabled="dispense.status !== 'PICKING' || isPicker() || dispensing"
-              :loading="dispensing"
-              @click="onVerify"
-              >核对</el-button
-            >
-            <el-button
-              type="success"
-              :disabled="dispense.status !== 'PICKED' || isPicker() || dispensing"
-              :loading="dispensing"
-              @click="onIssue"
-              >发药签名</el-button
-            >
-          </div>
-        </el-card>
+      <el-col :md="24" :lg="14" :style="{ '--fuy-stagger-index': 1 }">
+        <!-- 发药单显隐 §6.7（appear 供首次挂载即播——批次 2 R1 教训）：选单后 200ms 淡入 -->
+        <Transition name="fuy-content-fade" appear>
+          <el-card v-if="dispense" class="fuy-dense">
+            <template #header>发药单 {{ dispense.dispenseNo }}</template>
+            <el-descriptions :column="2" border>
+              <!-- 单状态 tag 使三按钮启停语义显性化（§4.3 映射法；aa 修正 warning/success
+                   文字色，primary/info 无副作用） -->
+              <el-descriptions-item label="单状态">
+                <el-tag
+                  :type="dispenseStatusTagType[dispense.status ?? ''] ?? 'info'"
+                  class="fuy-tag-aa"
+                >
+                  {{ dispenseStatusText[dispense.status ?? ''] ?? dispense.status }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="调配人">{{
+                dispense.picker || '—'
+              }}</el-descriptions-item>
+              <el-descriptions-item label="核对人">{{
+                dispense.verifier || '—'
+              }}</el-descriptions-item>
+            </el-descriptions>
+            <el-table :data="dispense.items ?? []" class="dispense-workbench-items">
+              <el-table-column prop="itemCode" label="项目" min-width="110" />
+              <el-table-column
+                prop="requestedQuantity"
+                label="应发"
+                width="90"
+                align="right"
+                class-name="fuy-num"
+              />
+              <el-table-column prop="batchNo" label="批次" min-width="130" />
+              <el-table-column label="追溯码录入" min-width="220">
+                <template #default="{ row }">
+                  <el-input
+                    v-model="traceInputs[row.id ?? '']"
+                    :disabled="dispense.status !== 'CREATED'"
+                    placeholder="逐盒扫码，逗号分隔"
+                  />
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="dispense-workbench-actions">
+              <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，三动作互斥共用 dispensing -->
+              <el-button
+                type="primary"
+                :disabled="dispense.status !== 'CREATED' || dispensing"
+                :loading="dispensing"
+                @click="onPick"
+                >配药</el-button
+              >
+              <el-button
+                type="warning"
+                :disabled="dispense.status !== 'PICKING' || isPicker() || dispensing"
+                :loading="dispensing"
+                :title="isPicker() ? '调配人不可自行核对/发药' : undefined"
+                @click="onVerify"
+                >核对</el-button
+              >
+              <el-button
+                type="success"
+                :disabled="dispense.status !== 'PICKED' || isPicker() || dispensing"
+                :loading="dispensing"
+                :title="isPicker() ? '调配人不可自行核对/发药' : undefined"
+                @click="onIssue"
+                >发药签名</el-button
+              >
+            </div>
+          </el-card>
+        </Transition>
       </el-col>
     </el-row>
   </div>
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2） */
+/* 视图级样式隔离（web A.1-2）：栅格断点/密度/空态经 fuy-* 工具类承载，
+   本块只留表格区 CLS 锁定与明细表/按钮组间距 */
+.dispense-workbench-queue {
+  min-height: 240px; /* 队列表加载/空态切换零塌陷（§7.1 CLS 锁定） */
+}
+
 .dispense-workbench-items {
   margin-top: 12px;
 }
