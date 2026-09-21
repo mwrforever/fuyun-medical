@@ -120,8 +120,10 @@ async function handleChangeFreeze(freeze: boolean): Promise<void> {
         <!-- 首屏骨架（§4.4 骨架屏条款）：数据未达时占位，min-height 与档案区对齐防 CLS -->
         <el-skeleton v-if="!patient && loading" :rows="4" animated />
         <el-empty v-else-if="!patient" :image-size="72" description="未查询到患者档案" />
-        <!-- 骨架 → 内容切换（§6.7）：内容进场 200ms 淡入，骨架离场瞬切不做交叉溶解 -->
-        <Transition v-else name="fuy-content-fade">
+        <!-- 骨架 → 内容切换（§6.7）：内容进场 200ms 淡入，骨架离场瞬切不做交叉溶解；
+             appear 必补——Transition 随内容分支首次挂载，缺 appear 时 Vue 初次插入不播 enter，
+             §9.6「骨架→内容」过渡将静默落空（质量门 R1 F-2） -->
+        <Transition v-else name="fuy-content-fade" appear>
           <el-descriptions :column="3" border>
             <el-descriptions-item label="患者ID">{{
               String(patient.patientId ?? '')

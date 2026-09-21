@@ -84,7 +84,10 @@ function handleRowClick(row: PatientVO): void {
 
 <template>
   <div class="fuy-page fuy-stagger">
-    <el-card>
+    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：element-plus.css
+         密度规则均为后代选择器 .fuy-dense .el-table，挂在表格自身不构成后代关系、零生效
+        （质量门 R1 F-1）；四条规则全带表格前缀，不影响卡内工具条/分页 -->
+    <el-card class="fuy-dense">
       <template #header>患者检索</template>
       <div class="fuy-toolbar">
         <el-input
@@ -99,7 +102,7 @@ function handleRowClick(row: PatientVO): void {
       <el-table
         v-loading="loading"
         :data="rows"
-        class="patient-search-table fuy-dense"
+        class="patient-search-table"
         @row-click="handleRowClick"
       >
         <el-table-column prop="name" label="姓名" min-width="100" />
