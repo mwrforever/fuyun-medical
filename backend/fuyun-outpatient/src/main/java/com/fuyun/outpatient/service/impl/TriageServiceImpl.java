@@ -192,7 +192,11 @@ public class TriageServiceImpl implements ITriageService {
                     HttpStatus.CONFLICT,
                     "就诊状态不允许报到（当前态 " + visit.getStatus().getCode() + "）：visitId=" + request.visitId());
         }
-        // 数据库写操作：报到时间回填（国标采集，分诊台/自助签到时刻）
+        // 数据库写操作：报到时间回填（国标采集，分诊台/自助签到时刻）。实体补写同值后再回写：
+        // 上方 CAS 已置 WAITING，visit 内存态仍携 CAS 前旧值 REGISTERED——禁经 updateById 全字段
+        // 回写把状态机覆写回（真栈 IT 实证：覆写后 admit 恒 OP-1011；DispenseServiceImpl.verify
+        // 同款既修约定，Task 12 OutpatientRefundRollbackIT 首跑暴露）
+        visit.setStatus(VisitStatus.WAITING);
         visit.setCheckedInAt(OffsetDateTime.now());
         visit.setUpdatedBy(OperatorContextHolder.get());
         visitMapper.updateById(visit);

@@ -246,8 +246,11 @@ class TriageServiceImplTest {
         assertThat(triageCaptor.getValue().getStationId()).isEqualTo("STATION-01");
         assertThat(triageCaptor.getValue().getNurseId()).isEqualTo("nurse001");
         assertThat(triageCaptor.getValue().getPriorityFactor()).isNull();
-        // 报到时间回填（国标）
-        verify(visitMapper).updateById(any(Visit.class));
+        // 报到时间回填（国标）；实体补写同值断言：CAS 后禁携 CAS 前旧态经 updateById 覆写状态机
+        // （真栈 IT 实证回归锚——覆写致 visit 恒 REGISTERED、admit 恒 OP-1011）
+        ArgumentCaptor<Visit> checkInVisitCaptor = ArgumentCaptor.forClass(Visit.class);
+        verify(visitMapper).updateById(checkInVisitCaptor.capture());
+        assertThat(checkInVisitCaptor.getValue().getStatus()).isEqualTo(VisitStatus.WAITING);
         assertThat(visit.getCheckedInAt()).isNotNull();
         assertThat(vo.status()).isEqualTo(TicketStatus.WAITING);
         assertThat(vo.priorityScore()).isEqualTo(100);
