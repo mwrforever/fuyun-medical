@@ -49,6 +49,17 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   CANCELLED: '已作废',
 };
 
+/** 分诊级别徽标文案（Ⅰ危/Ⅱ急/Ⅲ重/Ⅳ普；VisitVO.triageLevel 生成物在位，色值走 §4.3 徽标 token） */
+const TRIAGE_LEVEL_LABELS: Record<number, string> = { 1: 'Ⅰ级', 2: 'Ⅱ级', 3: 'Ⅲ级', 4: 'Ⅳ级' };
+
+/** 中列头部级别徽标类（1-4 越界防御：契约值域外不渲染徽标） */
+function triageBadgeClass(level: number | undefined): string | null {
+  if (level === undefined || level === null || level < 1 || level > 4) {
+    return null;
+  }
+  return `fuy-triage-badge--l${level}`;
+}
+
 const auth = useAuthStore();
 /** 出诊医生：会话用户 id 与显示名（队列与叫号的双参定位来源） */
 const doctorId = computed(() => auth.user?.userId ?? '');
@@ -311,8 +322,14 @@ const disposition = ref('');
 const explicitConfirm = ref(false);
 const finishing = ref(false);
 
-/** 诊毕可提交：去向已选 + 在途单据已显式确认（未勾禁用按钮 §3.2） */
-const canFinish = computed(() => disposition.value !== '' && explicitConfirm.value);
+/**
+ * 诊毕可提交（§8.3「在途单据未确认禁用」语义）：去向必选 + 仅当存在在途单据时要求显式勾选确认。
+ * 无在途单据（纯问诊，门诊最常见路径）或单据全终态时短路放行——勾选框此时禁用（无可确认项，
+ * 勾选无意义）但不得阻断诊毕；有在途单据未勾选则按钮禁用（后端 OP-1011 同语义双保险）。
+ */
+const canFinish = computed(
+  () => disposition.value !== '' && (ongoingOrderCount.value === 0 || explicitConfirm.value),
+);
 
 /**
  * 诊毕（§5.2 高风险档：danger 确认弹窗带回显摘要）→ 成功后中列 fade-out、右列三卡复位、
@@ -446,7 +463,18 @@ onMounted(() => {
         <Transition name="fuy-content-fade">
           <div v-if="contextVisible && currentVisit !== null">
             <el-card class="doctor-station-mid-card">
-              <template #header>患者上下文</template>
+              <!-- 卡头=页面锚点（§8.3）：大号 visit 标识 + 分诊级别徽标（VisitVO.triageLevel 承载） -->
+              <template #header>
+                <div class="doctor-station-context-head">
+                  <span class="fuy-num doctor-station-visit-id">{{ currentVisit.visitId }}</span>
+                  <span
+                    v-if="triageBadgeClass(currentVisit.triageLevel) !== null"
+                    class="fuy-triage-badge"
+                    :class="triageBadgeClass(currentVisit.triageLevel)"
+                    >{{ TRIAGE_LEVEL_LABELS[currentVisit.triageLevel ?? 0] ?? '—' }}</span
+                  >
+                </div>
+              </template>
               <el-descriptions :column="4" border size="small">
                 <el-descriptions-item label="就诊号">
                   <span class="fuy-num">{{ currentVisit.visitId }}</span>
@@ -668,8 +696,14 @@ onMounted(() => {
               </el-select>
             </el-form-item>
             <el-form-item label="">
+              <!-- 无在途单据时勾选框禁用（无可确认项，勾选无意义）——诊毕放行由 canFinish
+                   按 ongoingOrderCount===0 短路承载，勾选框不构成门禁阻断（§8.3 语义） -->
               <el-checkbox v-model="explicitConfirm" :disabled="ongoingOrderCount === 0">
-                在途单据已确认（当前 {{ ongoingOrderCount }} 笔）
+                {{
+                  ongoingOrderCount === 0
+                    ? '无在途单据，无需确认'
+                    : `在途单据已确认（当前 ${ongoingOrderCount} 笔）`
+                }}
               </el-checkbox>
             </el-form-item>
           </el-form>
@@ -794,6 +828,18 @@ onMounted(() => {
 /* 中列与右列卡片间距 */
 .doctor-station-mid-card {
   margin-bottom: var(--fuy-space-3);
+}
+/* 中列卡头（§8.3 页面锚点）：大号 visit 标识（2xl/700 emphasis）+ 级别徽标同行排布 */
+.doctor-station-context-head {
+  display: flex;
+  align-items: center;
+  gap: var(--fuy-space-3);
+}
+.doctor-station-visit-id {
+  font-size: var(--fuy-font-size-2xl);
+  font-weight: 700;
+  color: var(--fuy-color-text-emphasis);
+  line-height: 1.3;
 }
 .doctor-station-side-card {
   margin-bottom: var(--fuy-space-3);

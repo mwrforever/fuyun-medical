@@ -119,6 +119,7 @@ function visitMock(): VisitVO {
     deptCode: 'DEPT-INT',
     doctorId: 'u1',
     visitType: 'GENERAL',
+    triageLevel: 3,
     status: 'IN_CONSULT',
   };
 }
@@ -140,6 +141,13 @@ function orderMock(): ClinicOrderVO {
 async function admitFirstRow(wrapper: VueWrapper): Promise<void> {
   await wrapper.findAll('.doctor-station-queue-row')[0].trigger('click');
   await clickButton(wrapper, '接诊');
+  await flushPromises();
+}
+
+/** 诊毕去向选择（页面最后一个 ElSelect，emit 回填 v-model——口径同存量 spec 的 select 替身） */
+async function selectDisposition(wrapper: VueWrapper, value: string): Promise<void> {
+  const dispositionSelect = wrapper.findAllComponents({ name: 'ElSelect' }).at(-1);
+  await dispositionSelect?.vm.$emit('update:modelValue', value);
   await flushPromises();
 }
 
@@ -193,10 +201,17 @@ describe('门诊医生站', () => {
     );
     expect(vi.mocked(admitVisit)).toHaveBeenCalledWith('O2026092100001');
     expect(vi.mocked(listOrdersByVisit)).toHaveBeenCalledWith({ visitId: 'O2026092100001' });
-    // 渲染断言：上下文卡（就诊号）与在诊单据行（单据号/类型中文词表）
+    // 渲染断言：中列卡头=页面锚点（§8.3）——大号 visit 标识 + 分诊级别徽标（VisitVO.triageLevel=3）
     await vi.waitFor(() => {
       expect(wrapper.text()).toContain('O2026092100001');
     });
+    const visitIdAnchor = wrapper.find('.doctor-station-context-head .doctor-station-visit-id');
+    expect(visitIdAnchor.exists()).toBe(true);
+    expect(visitIdAnchor.text()).toBe('O2026092100001');
+    const levelBadge = wrapper.find('.doctor-station-context-head .fuy-triage-badge--l3');
+    expect(levelBadge.exists()).toBe(true);
+    expect(levelBadge.text()).toBe('Ⅲ级');
+    // 在诊单据行（单据号/类型中文词表）
     expect(wrapper.text()).toContain('CO-1');
     expect(wrapper.text()).toContain('检查');
     expect(wrapper.text()).toContain('已开立');
@@ -232,7 +247,7 @@ describe('门诊医生站', () => {
     wrapper.unmount();
   });
 
-  it('诊毕门禁：去向与在途单据确认未齐时按钮禁用，确认弹窗带回显摘要后出网', async () => {
+  it('诊毕门禁（有在途单据）：去向已选未勾选确认被禁，真实勾选后放行出网（§8.3 语义）', async () => {
     vi.mocked(listPatientQueue).mockResolvedValue([queueRowMock()]);
     vi.mocked(admitVisit).mockResolvedValue(visitMock());
     vi.mocked(listOrdersByVisit).mockResolvedValue([orderMock()]);
@@ -244,15 +259,12 @@ describe('门诊医生站', () => {
     // 未选去向 + 未勾确认：诊毕禁用
     expect(findButton(wrapper, '诊毕').attributes('disabled')).toBeDefined();
 
-    // 勾选在途单据确认（在途 1 笔）后仍禁用（去向未选）
-    wrapper.findComponent({ name: 'ElCheckbox' }).vm.$emit('update:modelValue', true);
+    // 选择去向（emit 回填 v-model）后仍禁用——在途 1 笔未勾选显式确认（§8.3 门禁语义）
+    await selectDisposition(wrapper, 'DISCHARGE_HOME');
     expect(findButton(wrapper, '诊毕').attributes('disabled')).toBeDefined();
 
-    // 选择去向（emit 回填 v-model，口径同存量 spec 的 select 替身）
-    const selects = wrapper.findAllComponents({ name: 'ElSelect' });
-    // 诊毕去向是页面最后一个 ElSelect（前两个属开单/开方卡）
-    const dispositionSelect = selects.at(-1);
-    await dispositionSelect?.vm.$emit('update:modelValue', 'DISCHARGE_HOME');
+    // 真实 DOM 点击路径勾选确认（在途单据存在时勾选框启用，jsdom 原生 input change）
+    await wrapper.find('.el-checkbox input').setValue(true);
     await flushPromises();
     expect(findButton(wrapper, '诊毕').attributes('disabled')).toBeUndefined();
 
@@ -263,6 +275,33 @@ describe('门诊医生站', () => {
       '诊毕确认',
       expect.objectContaining({ confirmButtonText: '确认诊毕' }),
     );
+    expect(vi.mocked(finishVisit)).toHaveBeenCalledWith('O2026092100001', {
+      disposition: 'DISCHARGE_HOME',
+      explicitConfirm: true,
+    });
+    wrapper.unmount();
+  });
+
+  it('诊毕门禁（纯问诊无在途单据）：勾选框禁用但无需确认即可诊毕（canFinish 短路）', async () => {
+    vi.mocked(listPatientQueue).mockResolvedValue([queueRowMock()]);
+    vi.mocked(admitVisit).mockResolvedValue(visitMock());
+    // listOrdersByVisit 兜底空（beforeEach）：纯问诊无任何单据——门诊最常见路径
+    vi.mocked(finishVisit).mockResolvedValue({ ...visitMock(), status: 'FINISHED' });
+    const wrapper = mount(DoctorStationView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await admitFirstRow(wrapper);
+
+    // 无在途单据：勾选框禁用（无可确认项）且文案承载「无需确认」语义
+    expect(wrapper.find('.el-checkbox').classes()).toContain('is-disabled');
+    expect(wrapper.text()).toContain('无在途单据，无需确认');
+
+    // 仅选去向（不勾选）→ 诊毕即可提交（无单据时勾选不构成门禁，R1 死锁修复回归锚）
+    await selectDisposition(wrapper, 'DISCHARGE_HOME');
+    await flushPromises();
+    expect(findButton(wrapper, '诊毕').attributes('disabled')).toBeUndefined();
+
+    await clickButton(wrapper, '诊毕');
+    await flushPromises();
     expect(vi.mocked(finishVisit)).toHaveBeenCalledWith('O2026092100001', {
       disposition: 'DISCHARGE_HOME',
       explicitConfirm: true,
@@ -284,13 +323,8 @@ describe('门诊医生站', () => {
     await flushPromises();
     await admitFirstRow(wrapper);
 
-    // 齐门禁：勾选确认（无在途单据时勾选可先行）+ 选去向
-    wrapper.findComponent({ name: 'ElCheckbox' }).vm.$emit('update:modelValue', true);
-    const selects = wrapper.findAllComponents({ name: 'ElSelect' });
-    // 诊毕去向是页面最后一个 ElSelect（前两个属开单/开方卡）
-    const dispositionSelect = selects.at(-1);
-    await dispositionSelect?.vm.$emit('update:modelValue', 'DISCHARGE_HOME');
-    await flushPromises();
+    // 纯问诊路径齐门禁：仅选去向（无在途单据，无需勾选确认）
+    await selectDisposition(wrapper, 'DISCHARGE_HOME');
 
     await clickButton(wrapper, '诊毕');
     await flushPromises();
