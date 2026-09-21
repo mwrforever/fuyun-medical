@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -28,6 +29,7 @@ import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
 import com.fuyun.outpatient.dto.OrderCreateRequest;
 import com.fuyun.outpatient.dto.OrderItemRequest;
+import com.fuyun.outpatient.dto.PrescriptionOpenRequest;
 import com.fuyun.outpatient.entity.ClinicOrder;
 import com.fuyun.outpatient.entity.ClinicOrderItem;
 import com.fuyun.outpatient.entity.Visit;
@@ -42,6 +44,9 @@ import com.fuyun.outpatient.mapper.VisitMapper;
 import com.fuyun.outpatient.mapper.VisitStatusLogMapper;
 import com.fuyun.outpatient.service.IClinicOrderService;
 import com.fuyun.outpatient.vo.ClinicOrderVO;
+import com.fuyun.pharmacy.api.PrescriptionOpenCommand;
+import com.fuyun.pharmacy.api.PrescriptionOpenPort;
+import com.fuyun.pharmacy.api.PrescriptionOpenResult;
 import com.fuyun.system.api.PracticeCheckPort;
 import com.fuyun.system.api.PracticeCheckResult;
 import java.time.LocalDate;
@@ -56,6 +61,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -95,6 +101,9 @@ class ClinicOrderServiceImplTest {
     private OutpatientBillingPort billingPort;
 
     @Mock
+    private PrescriptionOpenPort prescriptionOpenPort;
+
+    @Mock
     private StringRedisTemplate redisTemplate;
 
     @Mock
@@ -132,6 +141,7 @@ class ClinicOrderServiceImplTest {
                 visitStatusLogMapper,
                 practiceCheckPort,
                 billingPort,
+                prescriptionOpenPort,
                 redisTemplate,
                 events);
         // 单号签发的公共底座（lenient：仅 create 路径触达，cancel/回执用例不使用不报严格桩告警）
@@ -208,6 +218,15 @@ class ClinicOrderServiceImplTest {
                 .thenReturn(new PracticeCheckResult(true, "执业授权有效：PRESCRIPTION"));
     }
 
+    /** 开方请求替身（OUTPATIENT 一明细行：drugId 11，quantity "2" DECIMAL string）。 */
+    private PrescriptionOpenRequest openRequest() {
+        return new PrescriptionOpenRequest(
+                "OUTPATIENT",
+                List.of("J06.900"),
+                false,
+                List.of(new PrescriptionOpenRequest.Item(11L, "2", "盒", "0.5g", "ORAL", "TID", 3, "饭后服")));
+    }
+
     /** 主单 insert 桩：模拟 MP ASSIGN_ID 回填主键 881。 */
     private void stubOrderInsertAssignsId() {
         doAnswer(inv -> {
@@ -282,6 +301,45 @@ class ClinicOrderServiceImplTest {
         verify(clinicOrderMapper, times(2)).insert(orderCaptor.capture());
         assertThat(orderCaptor.getAllValues().get(0).getOrderNo()).isEqualTo(orderNoOf(1));
         assertThat(orderCaptor.getAllValues().get(1).getOrderNo()).isEqualTo(orderNoOf(2));
+    }
+
+    @Test
+    @DisplayName("开方衔接：RX_REF 引用行 ext_ref=rxNo+零明细行落库+零事件（红线 3/M-4 零双头），OP-1017 前置于端口调用（InOrder）")
+    void openPrescriptionRegistersRxRefWithoutCopyingDrugLines() {
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.IN_CONSULT));
+        stubPracticePass();
+        when(prescriptionOpenPort.open(any(PrescriptionOpenCommand.class)))
+                .thenReturn(new PrescriptionOpenResult("R20260921000001", "APPROVED", "PASS", false));
+
+        ClinicOrderVO vo = service.openPrescription("O2026092100001", openRequest());
+
+        // 授权前置于端口调用（纵深防御 M03 侧先校验后开方）
+        InOrder ordered = inOrder(practiceCheckPort, prescriptionOpenPort);
+        ordered.verify(practiceCheckPort).check(501L, "PRESCRIPTION");
+        ArgumentCaptor<PrescriptionOpenCommand> cmdCaptor = ArgumentCaptor.forClass(PrescriptionOpenCommand.class);
+        ordered.verify(prescriptionOpenPort).open(cmdCaptor.capture());
+        // 命令身份锚点由 visit 供给（patientId/visitId/deptCode 服务端解析，前端不传——红线 3 同款）
+        assertThat(cmdCaptor.getValue().patientId()).isEqualTo(9L);
+        assertThat(cmdCaptor.getValue().visitId()).isEqualTo("O2026092100001");
+        assertThat(cmdCaptor.getValue().deptCode()).isEqualTo("DEP001");
+        assertThat(cmdCaptor.getValue().rxType()).isEqualTo("OUTPATIENT");
+        assertThat(cmdCaptor.getValue().items()).hasSize(1);
+
+        // RX_REF 引用行登记：ext_ref=rxNo、status=CREATED
+        verify(clinicOrderMapper).insert(orderCaptor.capture());
+        ClinicOrder row = orderCaptor.getValue();
+        assertThat(row.getOrderNo()).isEqualTo(orderNoOf(1));
+        assertThat(row.getOrderType()).isEqualTo(OrderType.RX_REF);
+        assertThat(row.getExtRef()).isEqualTo("R20260921000001");
+        assertThat(row.getStatus()).isEqualTo(OrderStatus.CREATED);
+        // 红线 3：不复制药品明细——零明细行落库
+        verify(clinicOrderItemMapper, never()).insert(anyCollection());
+        // M-4 零双头：引用行无计费行 → 不发布 order.created（药品计费行由 pharmacy.prescription.created 权威携带）
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+        // 出参直出（extRef 承载 rxNo，items 空）
+        assertThat(vo.extRef()).isEqualTo("R20260921000001");
+        assertThat(vo.orderType()).isEqualTo(OrderType.RX_REF);
+        assertThat(vo.items()).isEmpty();
     }
 
     @Test

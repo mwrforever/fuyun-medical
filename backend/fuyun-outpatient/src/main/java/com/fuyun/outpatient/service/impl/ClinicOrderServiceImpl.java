@@ -10,6 +10,7 @@ import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
 import com.fuyun.outpatient.dto.OrderCreateRequest;
 import com.fuyun.outpatient.dto.OrderItemRequest;
+import com.fuyun.outpatient.dto.PrescriptionOpenRequest;
 import com.fuyun.outpatient.entity.ClinicOrder;
 import com.fuyun.outpatient.entity.ClinicOrderItem;
 import com.fuyun.outpatient.entity.Visit;
@@ -25,6 +26,9 @@ import com.fuyun.outpatient.mapper.VisitStatusLogMapper;
 import com.fuyun.outpatient.service.IClinicOrderService;
 import com.fuyun.outpatient.service.OutpatientVisitStateMachine;
 import com.fuyun.outpatient.vo.ClinicOrderVO;
+import com.fuyun.pharmacy.api.PrescriptionOpenCommand;
+import com.fuyun.pharmacy.api.PrescriptionOpenPort;
+import com.fuyun.pharmacy.api.PrescriptionOpenResult;
 import com.fuyun.system.api.PracticeCheckPort;
 import com.fuyun.system.api.PracticeCheckResult;
 import java.time.Duration;
@@ -47,7 +51,9 @@ import org.springframework.transaction.annotation.Transactional;
  * DECIMAL string 与操作者 employeeId 均显式校验 OP-1019）→开单执业授权强校验（统一校验 PRESCRIPTION
  * 处方权，Spec :140，未过 OP-1017 403）→order_no 签发（OP+yyyyMMdd+6 位流水，Redis 当日键 INCR
  * TTL 48h，visit-seq 同型三行直写禁抽象）→CREATED 主单+明细行落库（quantity DECIMAL string 红线）
- * →事务内 publishEvent 发布 order.created（AFTER_COMMIT 出 MQ，A.4.2-7）。作废走状态机 CAS+
+ * →事务内 publishEvent 发布 order.created（AFTER_COMMIT 出 MQ，A.4.2-7）。开方衔接（Task 9）：
+ * openPrescription 授权前置（OP-1017）后经 pharmacy 开方端口同步开方+本域 RX_REF 引用行登记
+ * （ext_ref=rxNo，不复制药品明细且零计费行——红线 3/M-4 零双头）。作废走状态机 CAS+
  * billing 端口 PENDING 行逐行作废（端口异常一律转译为可读业务错误码，W-20 关联面）；RX_REF 行
  * 引导性 409（作废必须经 M06 作废 API 发起，Spec :119 R2-10）。缴费回执推进 CREATED→PENDING_FEE
  * 与 visit IN_CONSULT→PENDING_FEE（状态机单点+每迁必记，重投幂等=CAS 0 行重读定性跳过）。
@@ -104,6 +110,9 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
 
     private final OutpatientBillingPort billingPort;
 
+    /** 开方端口（pharmacy api 契约），非空；开方衔接动作同步开方（进程内同事务） */
+    private final PrescriptionOpenPort prescriptionOpenPort;
+
     private final StringRedisTemplate redisTemplate;
 
     private final ApplicationEventPublisher events;
@@ -117,6 +126,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
      * @param visitStatusLogMapper  迁移日志 mapper，非空；红线 5 每迁必记（IN_CONSULT→PENDING_FEE）
      * @param practiceCheckPort     执业授权校验端口（system api 契约），非空；开单 PRESCRIPTION 强校验
      * @param billingPort           门诊域收费端口（billing api 契约），非空；作废 PENDING 费用行
+     * @param prescriptionOpenPort  开方端口（pharmacy api 契约），非空；开方衔接同步开方
      * @param redisTemplate         Redis 字符串模板，非空；单号当日流水 INCR 键
      * @param events                Spring 应用事件发布器，非空；事务内发布 order.created
      */
@@ -127,6 +137,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
             VisitStatusLogMapper visitStatusLogMapper,
             PracticeCheckPort practiceCheckPort,
             OutpatientBillingPort billingPort,
+            PrescriptionOpenPort prescriptionOpenPort,
             StringRedisTemplate redisTemplate,
             ApplicationEventPublisher events) {
         this.clinicOrderMapper = clinicOrderMapper;
@@ -135,6 +146,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
         this.visitStatusLogMapper = visitStatusLogMapper;
         this.practiceCheckPort = practiceCheckPort;
         this.billingPort = billingPort;
+        this.prescriptionOpenPort = prescriptionOpenPort;
         this.redisTemplate = redisTemplate;
         this.events = events;
     }
@@ -232,6 +244,105 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 order.getOrderDoctorId(),
                 itemRows.size());
         return toVO(order, itemRows);
+    }
+
+    /**
+     * 开立处方（M03↔M06 衔接动作，接口 javadoc 契约）：全程同一事务——pharmacy 开方（端口 REQUIRED
+     * 传播加入）与本域 RX_REF 引用行落库一体成败；执业授权校验前置于端口调用（纵深防御 M03 侧
+     * 第一道，OP-1017）。引用行不复制药品明细且零计费行（红线 3/M-4 零双头），药品计费行由
+     * pharmacy.prescription.created 权威携带（billing 消费生成，本域不发布 order.created）。
+     *
+     * @param visitId 就诊号，非空
+     * @param request 开方请求（处方内容面），非空
+     * @return 引用行出参（orderType=RX_REF、extRef=rxNo、零明细行），非空
+     * @throws BizException OP-1001/OP-1011/OP-1017/OP-1019 及 pharmacy PH-* 透传（语义见接口 javadoc）
+     */
+    @Override
+    @Transactional
+    public ClinicOrderVO openPrescription(String visitId, PrescriptionOpenRequest request) {
+        // ① visit 定位与终态守卫（红线 5：FINISHED/CANCELLED 后拒绝一切开单/缴费/执行动作）
+        Visit visit = visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, visitId));
+        if (visit == null) {
+            throw new BizException(
+                    OutpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "就诊记录不存在：visitId=" + visitId);
+        }
+        if (visit.getStatus() == VisitStatus.FINISHED || visit.getStatus() == VisitStatus.CANCELLED) {
+            log.warn(
+                    "开方拒绝：visit 已终态（FINISHED/CANCELLED 后拒绝一切开单/缴费/执行动作）：visitId={}，status={}",
+                    visitId,
+                    visit.getStatus().getCode());
+            throw new BizException(
+                    OutpatientErrorCode.VISIT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "就诊已终态（" + visit.getStatus().getCode() + "），拒绝开方：visitId=" + visitId);
+        }
+        // ② 开方执业授权强校验（PRESCRIPTION，未过 OP-1017 403）：先校验后开方（InOrder 契约锚）
+        long employeeId = parseOperatorAsEmployeeId();
+        PracticeCheckResult practice = practiceCheckPort.check(employeeId, PRACTICE_GRANT_PRESCRIPTION);
+        if (!practice.passed()) {
+            log.warn(
+                    "开方拒绝：执业授权未过：visitId={}，employeeId={}，grantType={}，reason={}",
+                    visitId,
+                    employeeId,
+                    PRACTICE_GRANT_PRESCRIPTION,
+                    practice.reason());
+            throw new BizException(
+                    OutpatientErrorCode.PRACTICE_CHECK_FAILED, HttpStatus.FORBIDDEN, "开方执业授权未过：" + practice.reason());
+        }
+        // ③ pharmacy 开方端口同步调用（进程内同事务 REQUIRED 传播；PH-* 码透传，M06 create 内纵深
+        //    校验为第二道；rxNo/status 随处方生效即时回执）
+        PrescriptionOpenResult rx = prescriptionOpenPort.open(toCommand(visit, request));
+        // ④ RX_REF 引用行落库（ext_ref=rxNo、status=CREATED；不复制药品明细——红线 3；零计费行
+        //    ——M-4 零双头，故不发布 order.created）
+        ClinicOrder order = new ClinicOrder();
+        order.setOrderNo(issueOrderNo());
+        order.setVisitId(visitId);
+        order.setPatientId(visit.getPatientId());
+        order.setOrderType(OrderType.RX_REF);
+        order.setExtRef(rx.rxNo());
+        order.setOrderDoctorId(OperatorContextHolder.get());
+        order.setStatus(OrderStatus.CREATED);
+        order.setCreatedBy(OperatorContextHolder.get());
+        order.setUpdatedBy(OperatorContextHolder.get());
+        // 数据库写操作：RX_REF 引用行落库（无明细行——药品明细归 M06 prescription_item 权威）
+        clinicOrderMapper.insert(order);
+        log.info(
+                "处方引用行登记完成：orderNo={}，visitId={}，rxNo={}，orderDoctorId={}",
+                order.getOrderNo(),
+                visitId,
+                rx.rxNo(),
+                order.getOrderDoctorId());
+        // ⑤ 出参直出（extRef 承载 rxNo；引用行零明细行）
+        return toVO(order, List.of());
+    }
+
+    /**
+     * 开方请求 → 开方命令投影（身份锚点由 visit 供给——patientId/visitId/deptCode 服务端解析，
+     * 前端不传——红线 3 同款；明细内容面逐组件镜像映射，api 面禁外引 dto）。
+     *
+     * @param visit   已过终态守卫的就诊记录，非空
+     * @param request 开方请求，非空
+     * @return 开方命令（pharmacy api 契约载体），非空
+     */
+    private static PrescriptionOpenCommand toCommand(Visit visit, PrescriptionOpenRequest request) {
+        return new PrescriptionOpenCommand(
+                visit.getPatientId(),
+                visit.getVisitId(),
+                request.rxType(),
+                visit.getDeptCode(),
+                request.diagnosisCodes(),
+                request.skinTestRequired(),
+                request.items().stream()
+                        .map(item -> new PrescriptionOpenCommand.Item(
+                                item.drugId(),
+                                item.quantity(),
+                                item.unit(),
+                                item.singleDose(),
+                                item.routeCode(),
+                                item.frequency(),
+                                item.days(),
+                                item.usageNote()))
+                        .toList());
     }
 
     /**

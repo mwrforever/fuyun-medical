@@ -3,7 +3,9 @@ package com.fuyun.pharmacy.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,6 +17,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.billing.api.PrescriptionFeePort;
+import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
@@ -31,9 +34,13 @@ import com.fuyun.pharmacy.mapper.DrugMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
 import com.fuyun.pharmacy.vo.PrescriptionVO;
+import com.fuyun.system.api.PracticeCheckPort;
+import com.fuyun.system.api.PracticeCheckResult;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +50,7 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -68,6 +76,9 @@ class PrescriptionServiceImplTest {
     private PrescriptionFeePort prescriptionFeePort;
 
     @Mock
+    private PracticeCheckPort practiceCheckPort;
+
+    @Mock
     private ApplicationEventPublisher events;
 
     @BeforeAll
@@ -78,9 +89,24 @@ class PrescriptionServiceImplTest {
                 new MapperBuilderAssistant(new MybatisConfiguration(), ""), PrescriptionItem.class);
     }
 
+    @BeforeEach
+    void setUp() {
+        // 运行态 userId 直作 employeeId（Task 2 身份链口径，V704 种子 employee_id 对齐=3）——纵深防御校验主体
+        OperatorContextHolder.set("3");
+        // 纵深防御 ① 处方权放行公共底座（lenient：作废/分页用例不触达，禁严格桩告警）
+        lenient()
+                .when(practiceCheckPort.check(3L, "PRESCRIPTION"))
+                .thenReturn(new PracticeCheckResult(true, "执业授权有效：PRESCRIPTION"));
+    }
+
+    @AfterEach
+    void tearDown() {
+        OperatorContextHolder.clear();
+    }
+
     private PrescriptionServiceImpl newService() {
         PrescriptionServiceImpl impl = new PrescriptionServiceImpl(
-                prescriptionMapper, prescriptionItemMapper, drugMapper, prescriptionFeePort, events);
+                prescriptionMapper, prescriptionItemMapper, drugMapper, prescriptionFeePort, practiceCheckPort, events);
         ReflectionTestUtils.setField(impl, "baseMapper", prescriptionMapper);
         return impl;
     }
@@ -352,6 +378,8 @@ class PrescriptionServiceImplTest {
         Drug narcotic = drug();
         narcotic.setNarcoticClass("NARCOTIC");
         when(drugMapper.selectById(11L)).thenReturn(narcotic);
+        // 麻精命中 → 纵深防御 ② 追加 NARCOTIC 授权校验（Task 9 接线后既有用例同步演进）
+        when(practiceCheckPort.check(3L, "NARCOTIC")).thenReturn(new PracticeCheckResult(true, "执业授权有效：NARCOTIC"));
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
             inv.getArgument(0, Prescription.class).setId(100L);
             return 1;
@@ -364,6 +392,103 @@ class PrescriptionServiceImplTest {
         }
 
         assertThat(vo.rxCategory()).isEqualTo("NARCOTIC"); // maxNarcotic 升级分支：候选严格高于现值才替换
+    }
+
+    /** 造药：限制级抗菌药（antibio_class=RESTRICTED → 命中 ANTIBIO_RESTRICT 授权） */
+    private Drug antibioDrug() {
+        Drug d = drug();
+        d.setAntibioClass("RESTRICTED");
+        return d;
+    }
+
+    /** 造药：麻醉类药品（narcotic_class=NARCOTIC → 命中 NARCOTIC 授权，非抗菌药） */
+    private Drug narcoticDrug() {
+        Drug d = drug();
+        d.setId(12L);
+        d.setDrugCode("D-IT-002");
+        d.setNarcoticClass("NARCOTIC");
+        return d;
+    }
+
+    /** 造双行开方请求：限制级抗菌药 + 麻精药各一行（纵深防御 ② 命中集用例） */
+    private PrescriptionCreateRequest antibioNarcoticRequest() {
+        return new PrescriptionCreateRequest(
+                700101L,
+                VISIT,
+                "OUTPATIENT",
+                "NEIKE",
+                List.of("J06.900"),
+                false,
+                List.of(
+                        new RxItemRequest(11L, "2", "盒", "0.5g", "ORAL", "TID", 3, "饭后服"),
+                        new RxItemRequest(12L, "1", "盒", "0.25g", "ORAL", "BID", 5, null)));
+    }
+
+    @Test
+    @DisplayName("开方纵深防御①：处方权（PRESCRIPTION）授权未过拒 PH-1017（403）且零写（裁决 9/Spec :226）")
+    void createRejectsWhenPrescriptionGrantMissing() {
+        PrescriptionServiceImpl impl = newService();
+        when(practiceCheckPort.check(3L, "PRESCRIPTION"))
+                .thenReturn(new PracticeCheckResult(false, "无有效执业授权记录：PRESCRIPTION"));
+
+        assertThatThrownBy(() -> impl.create(request(VISIT, "OUTPATIENT", "ORAL")))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PharmacyErrorCode.PRACTICE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+        // 零写：授权校验前置于一切落库
+        verify(prescriptionMapper, never()).insert(any(Prescription.class));
+    }
+
+    @Test
+    @DisplayName("开方纵深防御②：按命中集三次校验（PRESCRIPTION/ANTIBIO_RESTRICT/NARCOTIC）全过放行，任一未过拒 PH-1017")
+    void createChecksAntibioAndNarcoticGrantsByTopClass() {
+        PrescriptionServiceImpl impl = newService();
+        when(drugMapper.selectById(11L)).thenReturn(antibioDrug());
+        when(drugMapper.selectById(12L)).thenReturn(narcoticDrug());
+        when(practiceCheckPort.check(3L, "ANTIBIO_RESTRICT"))
+                .thenReturn(new PracticeCheckResult(true, "执业授权有效：ANTIBIO_RESTRICT"));
+        when(practiceCheckPort.check(3L, "NARCOTIC")).thenReturn(new PracticeCheckResult(true, "执业授权有效：NARCOTIC"));
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            impl.create(antibioNarcoticRequest());
+        }
+        // 命中集三次校验：①处方权 + ②抗菌药最高分级（RESTRICTED）+ ②麻精命中（纯普通药仅 ① 一次）
+        verify(practiceCheckPort).check(3L, "PRESCRIPTION");
+        verify(practiceCheckPort).check(3L, "ANTIBIO_RESTRICT");
+        verify(practiceCheckPort).check(3L, "NARCOTIC");
+
+        // 任一未过即拒：抗菌药授权翻 false 复跑 → PH-1017（403）且明细零落库（事务整体回滚语义）
+        when(practiceCheckPort.check(3L, "ANTIBIO_RESTRICT"))
+                .thenReturn(new PracticeCheckResult(false, "授权已过期：ANTIBIO_RESTRICT"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.create(antibioNarcoticRequest()))
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(PharmacyErrorCode.PRACTICE_NOT_ALLOWED);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                    });
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+        }
+    }
+
+    @Test
+    @DisplayName("开方纵深防御守卫：操作者标识非数字（无法定位执业授权主体）拒 PH-1016（W-22⑦ 禁裸 parse，工号脱敏出文案）")
+    void createRejectsUnparsableOperatorAsPh1016() {
+        PrescriptionServiceImpl impl = newService();
+        OperatorContextHolder.set("doctor-x");
+
+        assertThatThrownBy(() -> impl.create(request(VISIT, "OUTPATIENT", "ORAL")))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PharmacyErrorCode.NUMERIC_FIELD_MALFORMED);
+                    assertThat(e.getMessage()).contains("d***x"); // 工号脱敏（首尾保留中间遮蔽）
+                });
+        verify(practiceCheckPort, never()).check(anyLong(), anyString());
+        verify(prescriptionMapper, never()).insert(any(Prescription.class));
     }
 
     @Test
