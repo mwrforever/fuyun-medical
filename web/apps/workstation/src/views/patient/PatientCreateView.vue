@@ -11,6 +11,7 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { createPatient, matchCheck } from '@/api/patient';
 import type { MatchCheckVO, PatientCreateRequest } from '@/api/patient';
+import { patientArchiveSourceOptions, patientRegisterChannelOptions } from '@/utils/patientDisplay';
 
 const router = useRouter();
 
@@ -201,19 +202,24 @@ async function handleSubmit(): Promise<void> {
         </el-form-item>
         <div class="fuy-section-title">建档属性</div>
         <el-form-item label="建档渠道" prop="registerChannel">
+          <!-- 选项经 patientDisplay 词表单源派生（批次 2 移交打磨项：与详情页文案同源零双份） -->
           <el-select v-model="form.registerChannel">
-            <el-option value="WINDOW" label="窗口" />
-            <el-option value="SELF_SERVICE" label="自助机" />
-            <el-option value="ONLINE" label="线上" />
-            <el-option value="INPATIENT_REGISTER" label="住院登记" />
-            <el-option value="EMERGENCY" label="急诊" />
+            <el-option
+              v-for="channel in patientRegisterChannelOptions"
+              :key="channel.value"
+              :value="channel.value"
+              :label="channel.label"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="档案来源" prop="archiveSource">
           <el-select v-model="form.archiveSource">
-            <el-option value="STANDARD" label="正式档案" />
-            <el-option value="TEMP_ANONYMOUS" label="急诊无名氏（临时）" />
-            <el-option value="TEMP_NEWBORN" label="新生儿（临时）" />
+            <el-option
+              v-for="source in patientArchiveSourceOptions"
+              :key="source.value"
+              :value="source.value"
+              :label="source.label"
+            />
           </el-select>
           <span v-if="isEmergency" class="patient-create-tip"
             >临时档案标记未实名，取得身份后转正式</span

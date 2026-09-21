@@ -157,6 +157,13 @@
   display: none;
 }
 
+/* 折叠态单字缩写严格居中（§9.3.1 折叠态 24×24 缩略形态）：EP 折叠项默认左 padding 使
+   单字在 64px 项宽内偏左，归零后由 text-align 承担水平居中（批次 1 移交打磨项） */
+.fuy-menu.el-menu--collapse .el-menu-item {
+  padding: 0;
+  text-align: center;
+}
+
 /* 侧栏品牌头：高 48px flex 居中（§9.3.1 布局树第一层） */
 .fuy-menu-head {
   height: 48px;

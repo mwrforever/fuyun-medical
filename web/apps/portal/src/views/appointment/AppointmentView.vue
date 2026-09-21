@@ -431,10 +431,11 @@ onBeforeUnmount(() => {
           <h2 class="appt-card-title">3 确认出票</h2>
           <p v-if="!poolDone && ticket === null" class="appt-locked-note">先完成上一步</p>
 
-          <!-- 出票卡（v-if 替换表单区；fuy-ticket 过冲 + 打印色条 §6.8） -->
+          <!-- 出票卡（v-if 替换表单区；fuy-ticket 过冲 + 打印色条 §6.8——色条动画经全局
+               .fuy-ticket-bar 类承载（motion.css 唯一 keyframes 来源），页内零副本 -->
           <Transition name="fuy-ticket">
             <div v-if="ticket !== null" ref="ticketCard" class="appt-ticket" tabindex="-1">
-              <span class="appt-ticket-bar" aria-hidden="true"></span>
+              <span class="appt-ticket-bar fuy-ticket-bar" aria-hidden="true"></span>
               <p class="appt-ticket-heading">预约成功</p>
               <p class="fuy-num appt-ticket-no">{{ ticket.apptNo }}</p>
               <dl class="appt-ticket-meta">
@@ -571,7 +572,8 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 步骤指示条：3 圆点 + 连接线（§3.3） */
+/* 步骤指示条：3 圆点 + 连接线（§3.3）：当前点品牌实心、已完成 success、未到中性描边；
+   连接线悬于相邻圆点间隙中点（32px gap 内 16px 线段），未到段中性、已越过段随完成态转 success */
 .appt-steps {
   display: flex;
   align-items: center;
@@ -582,11 +584,26 @@ onBeforeUnmount(() => {
   list-style: none;
 }
 .appt-step-dot {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--fuy-space-2);
 }
+.appt-step-dot:not(:last-child) .appt-dot::after {
+  content: '';
+  position: absolute;
+  top: 5px; /* 锚定 12px 圆点本体：垂直中心 6px 减线高半值 */
+  left: calc(100% + 12px); /* 悬于「点-点」40px 间距（8+32）的中段，16px 线段光学居中 */
+  width: var(--fuy-space-4);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--fuy-palette-brand-200);
+}
+.appt-step-dot.is-done:not(:last-child) .appt-dot::after {
+  background: var(--fuy-color-success-text);
+}
 .appt-dot {
+  position: relative;
   width: 12px;
   height: 12px;
   border-radius: var(--fuy-radius-full);
@@ -838,7 +855,8 @@ onBeforeUnmount(() => {
   font-weight: 500;
 }
 
-/* 出票卡（§6.8）：fuy-ticket 过冲在 motion.css；顶部 3px 品牌色条 scaleX 打印隐喻 */
+/* 出票卡（§6.8）：fuy-ticket 过冲在 motion.css；顶部 3px 品牌色条 scaleX 打印隐喻——
+   动画经全局 .fuy-ticket-bar 类承载（motion.css），本块只留色条定位形态 */
 .appt-ticket {
   position: relative;
   overflow: hidden;
@@ -854,7 +872,6 @@ onBeforeUnmount(() => {
   right: 0;
   height: 3px;
   background: var(--fuy-color-brand);
-  animation: fuy-ticket-bar-grow 480ms var(--fuy-ease-standard) 160ms both;
 }
 .appt-ticket-heading {
   margin: 0;

@@ -81,3 +81,12 @@ export function patientRegisterChannelText(channel?: string): string {
 export function patientArchiveSourceText(source?: string): string {
   return ARCHIVE_SOURCE_TEXT[source ?? ''] ?? source ?? '';
 }
+
+/** 建档渠道 el-option 选项（词表单源派生，键序即渲染序——批次 2 移交打磨项：消除与
+ * 患者建档页 el-option 字面量的双份手工维护） */
+export const patientRegisterChannelOptions: ReadonlyArray<{ value: string; label: string }> =
+  Object.entries(REGISTER_CHANNEL_TEXT).map(([value, label]) => ({ value, label }));
+
+/** 档案来源 el-option 选项（同上单源派生） */
+export const patientArchiveSourceOptions: ReadonlyArray<{ value: string; label: string }> =
+  Object.entries(ARCHIVE_SOURCE_TEXT).map(([value, label]) => ({ value, label }));

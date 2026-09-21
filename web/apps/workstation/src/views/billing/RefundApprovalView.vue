@@ -201,11 +201,13 @@ async function handleReject(row: RefundVO): Promise<void> {
     let input: { value: string };
     try {
       // R-3：ElMessageBox.prompt 函数式挂载不继承 ConfigProvider locale（默认英文 OK/Cancel），
-      // 按钮文案显式中文（PatientDetailView 先例同款）
+      // 按钮文案显式中文（PatientDetailView 先例同款）；驳回为终态不可逆（§5.2 高风险档），
+      // 确认按钮 danger 红样式承载警示（批次 3 移交打磨项）
       input = await ElMessageBox.prompt('请输入驳回理由', '驳回退费申请', {
         inputValidator: (text: string) => (text.trim() === '' ? '驳回理由必填' : true),
         confirmButtonText: '确认驳回',
         cancelButtonText: '取消',
+        confirmButtonClass: 'el-button--danger',
       });
     } catch {
       // 用户关闭弹窗=放弃驳回

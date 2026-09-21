@@ -200,7 +200,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="queue-board-clock-wrap">
         <span
-          class="queue-board-dot fuy-loading-essential"
+          class="queue-board-dot fuy-breath fuy-loading-essential"
           :class="breathingDotClass"
           aria-hidden="true"
         ></span>
@@ -228,7 +228,9 @@ onBeforeUnmount(() => {
 
     <!-- 候诊榜：前 8 条两列 grid 4×2，斑马纹偶数行（§3.4/§8.5） -->
     <section class="queue-board-waiting" aria-label="候诊名单">
-      <p v-if="snapshotFailed" class="queue-board-reconnect">快照加载失败，等待下次刷新</p>
+      <p v-if="snapshotFailed" class="queue-board-reconnect">
+        快照加载失败，请切换诊区或刷新页面重试
+      </p>
       <TransitionGroup v-else name="fuy-flip" tag="ol" class="queue-board-waiting-grid">
         <li
           v-for="(row, index) in waitingTop"
@@ -316,6 +318,8 @@ onBeforeUnmount(() => {
 .queue-board-dept-input:focus {
   outline: none;
   border-color: var(--fuy-screen-brand);
+  /* 暗色焦点基线（§9.5.1）：brand 描边 + 0 0 0 3px 柔光环，3 米外值守场景焦点可见 */
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.25);
 }
 .queue-board-clock-wrap {
   display: flex;
@@ -330,8 +334,8 @@ onBeforeUnmount(() => {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: var(--fuy-radius-full);
-  /* 常驻呼吸动画 keyframe 在 motion.css（.fuy-breath 类承载豁免面与动画定义，§7.5） */
-  animation: fuy-breath 1.2s linear infinite alternate;
+  /* 常驻呼吸动画经全局 .fuy-breath 类承载（motion.css 唯一 keyframes 来源，批次 5 移交项：
+     scoped animation 副本已删）；.fuy-loading-essential 豁免面 reduce 下降速不清除 */
 }
 .queue-board-dot.is-ok {
   background: var(--fuy-screen-ok);

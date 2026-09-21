@@ -94,9 +94,13 @@ async function handleDisconnect(): Promise<void> {
     <!-- 链路状态区：连接状态徽标（呼吸点 + 文字）+ 当前订阅主题路径 + 已接收帧计数 -->
     <section class="link-panel">
       <span class="link-panel-state" :class="`link-panel-state--${connectionState}`">
-        <!-- 呼吸点为纯装饰（状态语义由文字承载）；常驻呼吸动画挂 .fuy-loading-essential
+        <!-- 呼吸点为纯装饰（状态语义由文字承载）；常驻呼吸动画经全局 .fuy-breath 类承载
+             （motion.css 唯一 keyframes 来源，批次 5 移交项：scoped 副本已删）+ .fuy-loading-essential
              豁免类（motion.css reduce 兜底下降速不清除，值守语义停转=卡死误判） -->
-        <span class="link-panel-state-dot fuy-loading-essential" aria-hidden="true"></span>
+        <span
+          class="link-panel-state-dot fuy-breath fuy-loading-essential"
+          aria-hidden="true"
+        ></span>
         {{ stateLabel }}
       </span>
       <span>订阅主题：{{ topicPath ?? '未订阅' }}</span>
@@ -208,27 +212,12 @@ async function handleDisconnect(): Promise<void> {
 }
 
 .link-panel-state-dot {
-  animation: fuy-dot-breathe 1.2s linear infinite alternate;
+  /* 呼吸动画定义在全局 .fuy-breath（motion.css），本块只留点形态；opacity 1→.4 alternate
+     1.2s linear 仅 opacity 单属性（§6 常驻动画唯一允许面：连接状态呼吸点） */
   background: currentColor;
   border-radius: var(--fuy-radius-full);
   display: inline-block;
   height: 8px;
   width: 8px;
-}
-
-/* 常驻呼吸（§6：opacity 1→.4 alternate 1.2s linear，仅 opacity 单属性；状态指示豁免面，
-   reduce 下经 .fuy-loading-essential 降速 1.5s 不清除） */
-@keyframes fuy-dot-breathe {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0.4;
-  }
-}
-
-/* 数字等宽防宽度跳动（§9.7-2）：bigscreen 无 EP 无全局工具类，SFC 内最小定义 */
-.fuy-num {
-  font-variant-numeric: tabular-nums;
 }
 </style>

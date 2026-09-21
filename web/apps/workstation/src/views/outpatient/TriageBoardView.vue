@@ -95,7 +95,9 @@ async function onCheckIn(): Promise<void> {
 
 /* ---------- 队列快照：5s 轮询 + merge 更新（§6.2 禁整表重挂） ---------- */
 const tickets = ref<QueueTicketVO[]>([]);
-const snapshotLoading = ref(false);
+/** 首拉遮罩开关：v-loading 仅承载首拉（§4.4「刷新一律 v-loading」不适用于轮询——
+ * 5s 周期遮罩闪现破坏 §7.1「轮询刷新无整表闪烁」预算，后续轮询静默 merge） */
+const snapshotBooting = ref(true);
 /** 轮询状态点三态（§8.2）：ok=正常刷新 / paused=页面隐藏暂停 / error=上次刷新失败 */
 const pollHealth = ref<'ok' | 'paused' | 'error'>('ok');
 /** 轮询定时器句柄（visibilitychange 暂停/恢复共用；onBeforeUnmount 必清理） */
@@ -108,7 +110,6 @@ const POLL_INTERVAL_MS = 5000;
  * 失败置 error 态（轮询状态点转红）并驻留旧数据。
  */
 async function refreshSnapshot(): Promise<void> {
-  snapshotLoading.value = true;
   try {
     const latest = await getQueueSnapshot({ queueId: deptCode.value });
     // merge：同 id 行原位替换（引用更新驱动单元格级 tag 流转），增删行自然触发列表 diff
@@ -122,7 +123,7 @@ async function refreshSnapshot(): Promise<void> {
     // 上次刷新失败：状态点转红，旧快照驻留（弹错归响应拦截器）
     pollHealth.value = 'error';
   } finally {
-    snapshotLoading.value = false;
+    snapshotBooting.value = false;
   }
 }
 
@@ -154,9 +155,10 @@ onBeforeUnmount(() => {
   document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 
-/** 诊区切换：清空选中行并立即重拉首屏 */
+/** 诊区切换：清空选中行并立即重拉首屏（手动刷新走 v-loading 遮罩，§4.4 二分口径） */
 function onDeptChange(): void {
   selectedTicket.value = null;
+  snapshotBooting.value = true;
   void refreshSnapshot();
 }
 
@@ -313,6 +315,9 @@ async function onAdjust(): Promise<void> {
       await ElMessageBox.confirm(summary, '分诊处置确认', {
         type: adjustAction.value === 'QUEUE_TRANSFER' ? 'warning' : 'info',
         confirmButtonText: adjustAction.value === 'QUEUE_TRANSFER' ? '确认转队列' : '确认调整',
+        // 转队列跨诊区属 §5.2 高风险档：确认按钮 danger 红样式承载不可逆警示
+        confirmButtonClass:
+          adjustAction.value === 'QUEUE_TRANSFER' ? 'el-button--danger' : undefined,
       });
     } catch {
       return;
@@ -343,11 +348,43 @@ const pollText = computed(() => {
   }
   return '每 5 秒自动刷新';
 });
+
+/* ---------- 快捷键（§5.3 分诊台档：Alt+R 叫出队首） ---------- */
+/** 快捷键句柄（onMounted 注册 / onBeforeUnmount 移除，§5.3 实现口径） */
+function onHotkeyKeydown(event: KeyboardEvent): void {
+  if (!event.altKey || event.key.toLowerCase() !== 'r') {
+    return;
+  }
+  // 输入控件聚焦时让位（§5.3「输入框聚焦时快捷键让位」条款）
+  const target = event.target as HTMLElement | null;
+  if (target !== null && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) {
+    return;
+  }
+  // 在途互斥（报到/行动作/处置任一在途不叠加触发）
+  if (checkingIn.value || acting.value || adjusting.value) {
+    return;
+  }
+  const firstWaiting = tickets.value.find((row) => row.status === 'WAITING');
+  if (firstWaiting === undefined) {
+    return;
+  }
+  event.preventDefault();
+  void onCall(firstWaiting);
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onHotkeyKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onHotkeyKeydown);
+});
 </script>
 
 <template>
   <div class="fuy-page triage-board">
-    <!-- 操作条 56px 常驻（§3.2）：报到输入 240px + 报到钮 + 诊区切换 160px + 轮询状态点 -->
+    <!-- 操作条 56px 常驻（§3.2）：报到输入 240px + 优先因子（报到参数，与报到钮同域）+
+         报到钮 + 诊区切换 160px + Alt+R kbd 提示（§5.3）+ 轮询状态点 -->
     <div class="triage-board-toolbar">
       <el-input
         v-model="visitIdInput"
@@ -356,6 +393,20 @@ const pollText = computed(() => {
         autofocus
         @keyup.enter="onCheckIn"
       />
+      <!-- 老幼残优先因子：报到请求参数（checkIn.priorityFactors），与报到动作同域呈现；
+           原置于右列处置表单受 selectedTicket 禁用态误困（Task 16 归位修正） -->
+      <el-checkbox-group
+        v-model="priorityFactors"
+        class="triage-board-factors"
+        aria-label="报到优先因子"
+      >
+        <el-checkbox
+          v-for="factor in PRIORITY_FACTOR_OPTIONS"
+          :key="factor.code"
+          :value="factor.code"
+          >{{ factor.label }}</el-checkbox
+        >
+      </el-checkbox-group>
       <el-button type="primary" :loading="checkingIn" :disabled="checkingIn" @click="onCheckIn"
         >分诊报到</el-button
       >
@@ -364,6 +415,9 @@ const pollText = computed(() => {
         <el-option label="外科（DEPT-SUR）" value="DEPT-SUR" />
         <el-option label="儿科（DEPT-PED）" value="DEPT-PED" />
       </el-select>
+      <span class="triage-board-kbd" aria-hidden="true">
+        <kbd>Alt</kbd>+<kbd>R</kbd> 叫出队首
+      </span>
       <span class="triage-board-poll">
         <span class="triage-board-poll-dot" :class="`is-${pollHealth}`" aria-hidden="true"></span>
         <span class="triage-board-poll-text">{{ pollText }}</span>
@@ -375,7 +429,8 @@ const pollText = computed(() => {
       <el-col :md="24" :lg="17" :style="{ '--fuy-stagger-index': 0 }">
         <el-card>
           <template #header>候诊队列（{{ deptCode }}）</template>
-          <div v-loading="snapshotLoading" class="triage-board-table-wrap">
+          <!-- 遮罩仅首拉（§7.1 轮询无闪烁）：后续 5s 轮询静默 merge，不再整表遮罩 -->
+          <div v-loading="snapshotBooting" class="triage-board-table-wrap">
             <el-table
               :data="tickets"
               class="fuy-dense"
@@ -388,10 +443,11 @@ const pollText = computed(() => {
                   <span class="fuy-num">{{ row.ticketNo }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="patientName" label="姓名" width="140" />
+              <!-- 列宽照 §3.2 结构树（姓名 100 / 优先级 80）：Task 13 自定 140/90 回归设计值 -->
+              <el-table-column prop="patientName" label="姓名" width="100" />
               <!-- QueueTicketVO 契约面无 triageLevel 字段（分诊级别挂 visit 侧未随票出网，
                    禁虚构契约）——级别语义由优先级分承载，徽标列随 P1 契约增补回补 -->
-              <el-table-column prop="priorityScore" label="优先级" width="90" align="right">
+              <el-table-column prop="priorityScore" label="优先级" width="80" align="right">
                 <template #default="{ row }">
                   <span class="fuy-num">{{ row.priorityScore }}</span>
                 </template>
@@ -512,16 +568,6 @@ const pollText = computed(() => {
             <el-form-item v-if="adjustAction === 'RE_TRIAGE'" label="目标医生">
               <el-input v-model="targetDoctorId" placeholder="目标医生 ID" />
             </el-form-item>
-            <el-form-item label="优先因子">
-              <el-checkbox-group v-model="priorityFactors">
-                <el-checkbox
-                  v-for="factor in PRIORITY_FACTOR_OPTIONS"
-                  :key="factor.code"
-                  :value="factor.code"
-                  >{{ factor.label }}</el-checkbox
-                >
-              </el-checkbox-group>
-            </el-form-item>
             <el-form-item>
               <el-button
                 type="primary"
@@ -551,6 +597,30 @@ const pollText = computed(() => {
 }
 .triage-board-dept {
   width: 160px;
+}
+
+/* 报到优先因子组（checkIn.priorityFactors 参数域）：checkbox 间距收紧贴合同条控件节奏 */
+.triage-board-factors {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 快捷键 kbd 提示（§5.3：kbd 底 var(--el-fill-color) 圆角 2px、12px 字号） */
+.triage-board-kbd {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--fuy-color-text-secondary);
+  font-size: var(--fuy-font-size-xs);
+}
+.triage-board-kbd kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--fuy-radius-sm);
+  background: var(--el-fill-color);
+  font-family: inherit;
+  font-size: var(--fuy-font-size-xs);
+  color: var(--el-text-color-regular);
 }
 
 /* 轮询状态点三色：绿=正常、灰=暂停、红=刷新失败（点旁 12px 文字） */

@@ -238,6 +238,15 @@ async function onSettle(): Promise<void> {
   }
 }
 
+/** 页头刷新（§3.2 布局树「页面题 + 当日计数 + 刷新按钮」缺项补齐）：重拉当前就诊费用行；
+ * 无联动就诊（未挂号或预约号）时按钮禁用（无可刷新面），点击零出网 */
+async function onRefreshFees(): Promise<void> {
+  if (chargeVisitId.value === '' || feesLoading.value) {
+    return;
+  }
+  await loadFees(chargeVisitId.value);
+}
+
 /* ---------- 当日挂号记录（会话内追加，fuy-flip 入场） ---------- */ interface RegistrationRecord {
   apptNo: string;
   patientName: string;
@@ -303,10 +312,18 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="fuy-page registration-charge">
-    <!-- 页头 48px：页面题 + 当日挂号计数（.fuy-num 防宽度跳动） -->
+    <!-- 页头 48px（§3.2 布局树）：页面题 + 当日挂号计数（.fuy-num 防宽度跳动）+ 刷新按钮 -->
     <header class="registration-charge-header">
       <h2 class="registration-charge-title">挂号收费</h2>
       <span class="fuy-num registration-charge-count">今日挂号 {{ todayCountDisplay }}</span>
+      <el-button
+        class="registration-charge-refresh"
+        :loading="feesLoading"
+        :disabled="chargeVisitId === ''"
+        title="重新拉取当前就诊的收费联动费用行"
+        @click="onRefreshFees"
+        >刷新</el-button
+      >
     </header>
 
     <el-row :gutter="16" class="registration-charge-main">
@@ -490,7 +507,7 @@ onBeforeUnmount(() => {
               <template v-if="settled === null">
                 <p class="fuy-section-title">待缴费用</p>
                 <div v-loading="feesLoading" class="registration-charge-fees">
-                  <el-table :data="unpaidFees" class="fuy-dense" size="default">
+                  <el-table :data="unpaidFees" class="fuy-dense">
                     <el-table-column prop="itemNameSnapshot" label="项目" min-width="110" />
                     <el-table-column prop="quantity" label="数量" width="64" align="right">
                       <template #default="{ row }">
@@ -595,6 +612,10 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--fuy-color-text-emphasis);
 }
+/* 刷新按钮靠页头右缘（§3.2 布局树页头三元素两端排布） */
+.registration-charge-refresh {
+  margin-left: auto;
+}
 
 /* 上区高度锁定（§3.2 min-height 480px）与步骤卡间距 */
 .registration-charge-main {
@@ -614,7 +635,7 @@ onBeforeUnmount(() => {
   margin-right: var(--fuy-space-2);
   border-radius: var(--fuy-radius-full);
   background: var(--fuy-color-brand);
-  color: #fff;
+  color: var(--el-color-white);
   font-size: var(--fuy-font-size-xs);
   font-weight: 600;
   vertical-align: middle;
@@ -684,7 +705,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--el-border-color);
   border-left-width: 3px;
   border-radius: var(--fuy-radius-md);
-  background: #fff;
+  background: var(--el-bg-color);
   text-align: left;
   cursor: pointer;
   /* 点选号源：描边+底色 120ms 色值过渡（paint 级单元素状态反馈，§8.1 限定条款） */
@@ -786,7 +807,7 @@ onBeforeUnmount(() => {
   height: 32px;
   border-radius: var(--fuy-radius-full);
   background: var(--el-color-success);
-  color: #fff;
+  color: var(--el-color-white);
   font-size: var(--fuy-font-size-lg);
   font-weight: 700;
 }

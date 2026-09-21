@@ -52,6 +52,45 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
 /** 分诊级别徽标文案（Ⅰ危/Ⅱ急/Ⅲ重/Ⅳ普；VisitVO.triageLevel 生成物在位，色值走 §4.3 徽标 token） */
 const TRIAGE_LEVEL_LABELS: Record<number, string> = { 1: 'Ⅰ级', 2: 'Ⅱ级', 3: 'Ⅲ级', 4: 'Ⅳ级' };
 
+/**
+ * visit 状态标签映射（§4.3「visit 状态沿用映射法」六值原样落码 + 同法延伸三值：
+ * IN_EXECUTION/PENDING_MEDICATION 随 PENDING_FEE 归 warning 在途系，NO_SHOW 比照
+ * CANCELLED 灰删除线——色型仅复用映射表既有 palette，无自造色）。
+ */
+const VISIT_STATUS_META: Record<
+  string,
+  { type: 'primary' | 'warning' | 'success' | 'info'; text: string; strike?: boolean }
+> = {
+  REGISTERED: { type: 'info', text: '已挂号' },
+  WAITING: { type: 'primary', text: '候诊中' },
+  IN_CONSULT: { type: 'success', text: '接诊中' },
+  PENDING_FEE: { type: 'warning', text: '待缴费' },
+  IN_EXECUTION: { type: 'warning', text: '执行中' },
+  PENDING_MEDICATION: { type: 'warning', text: '待取药' },
+  FINISHED: { type: 'info', text: '已完成' },
+  CANCELLED: { type: 'info', text: '已取消', strike: true },
+  NO_SHOW: { type: 'info', text: '已失约', strike: true },
+};
+
+/** 患者上下文状态 tag 映射（未知态灰底原文回显，防后端扩态白屏） */
+function visitStatusMeta(status: string | undefined): {
+  type: 'primary' | 'warning' | 'success' | 'info';
+  text: string;
+  strike?: boolean;
+} {
+  return VISIT_STATUS_META[status ?? ''] ?? { type: 'info', text: status ?? '—' };
+}
+
+/** 就诊类型词表（VisitVO.visitType 六值枚举展示映射，F-8 同款枚举直出修复口径） */
+const VISIT_TYPE_LABELS: Record<string, string> = {
+  GENERAL: '普通',
+  EMERGENCY: '急诊',
+  SPECIAL: '专病',
+  INTERNET: '互联网',
+  MDT: '多学科',
+  OTHER: '其他',
+};
+
 /** 中列头部级别徽标类（1-4 越界防御：契约值域外不渲染徽标） */
 function triageBadgeClass(level: number | undefined): string | null {
   if (level === undefined || level === null || level < 1 || level > 4) {
@@ -348,7 +387,12 @@ async function onFinish(): Promise<void> {
       await ElMessageBox.confirm(
         `即将完成就诊 ${visit.visitId ?? ''}（去向：${label}），诊毕后不可恢复，确认？`,
         '诊毕确认',
-        { type: 'warning', confirmButtonText: '确认诊毕' },
+        {
+          type: 'warning',
+          confirmButtonText: '确认诊毕',
+          // 诊毕属 §5.2 高风险档（终态不可恢复）：确认按钮 danger 红样式承载不可逆警示
+          confirmButtonClass: 'el-button--danger',
+        },
       );
     } catch {
       return;
@@ -482,9 +526,19 @@ onMounted(() => {
                 <el-descriptions-item label="患者 ID">
                   <span class="fuy-num">{{ currentVisit.patientId }}</span>
                 </el-descriptions-item>
-                <el-descriptions-item label="状态">{{ currentVisit.status }}</el-descriptions-item>
+                <el-descriptions-item label="状态">
+                  <!-- aa 修正对 warning/success/danger 生效文字色 AA，primary/info 无副作用（§4.3）；
+                       strike 承载已取消/已失约弱化态 -->
+                  <el-tag
+                    size="small"
+                    :type="visitStatusMeta(currentVisit.status).type"
+                    class="fuy-tag-aa"
+                    :class="{ 'fuy-tag-strike': visitStatusMeta(currentVisit.status).strike }"
+                    >{{ visitStatusMeta(currentVisit.status).text }}</el-tag
+                  >
+                </el-descriptions-item>
                 <el-descriptions-item label="就诊类型">{{
-                  currentVisit.visitType
+                  VISIT_TYPE_LABELS[currentVisit.visitType ?? ''] ?? currentVisit.visitType ?? '—'
                 }}</el-descriptions-item>
               </el-descriptions>
             </el-card>
@@ -575,12 +629,13 @@ onMounted(() => {
               </el-button>
             </div>
           </template>
-          <!-- 开单表单：v-show + scaleY 200ms §6.6（禁 grid/max-height 布局动画） -->
+          <!-- 开单表单：v-show + scaleY 200ms §6.6（禁 grid/max-height 布局动画）；
+               label-width 110px 系 §4.4 开单档（与处置档 96px 分档） -->
           <Transition name="doctor-station-fold">
             <el-form
               v-show="orderFormVisible"
               label-position="right"
-              label-width="96px"
+              label-width="110px"
               :disabled="currentVisit === null"
               class="doctor-station-fold-origin"
             >
@@ -634,11 +689,12 @@ onMounted(() => {
               </el-button>
             </div>
           </template>
+          <!-- 开方表单同开单档 label-width 110px（§4.4） -->
           <Transition name="doctor-station-fold">
             <el-form
               v-show="rxFormVisible"
               label-position="right"
-              label-width="96px"
+              label-width="110px"
               :disabled="currentVisit === null"
               class="doctor-station-fold-origin"
             >
@@ -864,7 +920,8 @@ onMounted(() => {
   justify-content: flex-end;
   align-items: center;
 }
-/* 「在途单据」未结数徽标（warning 底白字圆形 18px，挂诊毕按钮左侧 §8.3） */
+/* 「在途单据」未结数徽标（warning 底白字圆形 18px，挂诊毕按钮左侧 §8.3；白字走 EP 白色变量
+   通道——§7.6-1 零裸 hex） */
 .doctor-station-ongoing {
   display: inline-flex;
   align-items: center;
@@ -874,7 +931,7 @@ onMounted(() => {
   margin-right: var(--fuy-space-2);
   border-radius: var(--fuy-radius-full);
   background: var(--el-color-warning);
-  color: #fff;
+  color: var(--el-color-white);
   font-size: var(--fuy-font-size-xs);
   font-weight: 700;
 }
