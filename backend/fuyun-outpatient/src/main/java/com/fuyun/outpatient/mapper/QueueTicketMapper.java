@@ -51,6 +51,20 @@ public interface QueueTicketMapper extends BaseMapper<QueueTicket> {
     int casCall(@Param("id") long id, @Param("fromStatus") String fromStatus, @Param("operator") String operator);
 
     /**
+     * 接诊 CAS（CALLED→SERVING，Task 8 admit 联动）：状态迁移+接诊时间回填单步原子。影响行数
+     * 0=行不存在/并发已迁移（调用方重读定性后判 OP-1013）。serve_time=国标接诊时刻（库端 now()，
+     * 禁应用服务器时钟）。
+     *
+     * @param id       票据主键；来源：markServing 按就诊号定位的 CALLED 票
+     * @param operator 操作者标识（接诊医生），非空；留痕 updated_by
+     * @return 影响行数：1=接诊成功（serve_time 已回填）；0=并发落败或行不存在
+     */
+    @Update("UPDATE outpatient.queue_ticket SET status = 'SERVING', serve_time = now(), "
+            + "updated_by = #{operator}, updated_at = now() "
+            + "WHERE id = #{id} AND deleted = 0 AND status = 'CALLED'")
+    int casAdmit(@Param("id") long id, @Param("operator") String operator);
+
+    /**
      * 队列当日待重叫权威行整体读取（叫号前置惰性重建数据源，Spec :210「叫号服务重启后队列从排队表
      * 完整恢复」）：词表覆盖 WAITING 候诊 + PASSED 过号再入——pass 降级分重入 ZSET 的票在 Redis
      * 重启/淘汰后不得静默跌出队列（fix round 1 Important-2 主控裁决①；方法名沿 brief 冻结面

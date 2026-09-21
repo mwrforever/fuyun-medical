@@ -92,4 +92,15 @@ public interface ITriageService {
      * @throws com.fuyun.common.exception.BizException OP-1019（400 状态词表外）时触发
      */
     List<QueueTicketVO> snapshot(String queueId, String status);
+
+    /**
+     * 接诊联动（医生站 /visits/{visitId}/admit 调用，Task 8 随 IVisitService 扩展交付）：定位本
+     * 就诊 CALLED 票（最近叫号优先）并 CAS→SERVING+serve_time 回填（国标接诊时间，库端 now()）。
+     * 叫号≠接诊的守卫面：无 CALLED 票（未叫号/已过号/已接诊）OP-1013 拒绝接诊。
+     *
+     * @param visitId 就诊号，非空；来源：医生站接诊动作
+     * @return 接诊后票据出参（status=SERVING，含脱敏姓名），非空
+     * @throws com.fuyun.common.exception.BizException OP-1013（409 无已叫号票据或票据并发迁移）时触发
+     */
+    QueueTicketVO markServing(String visitId);
 }

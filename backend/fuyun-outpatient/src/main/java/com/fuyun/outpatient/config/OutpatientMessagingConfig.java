@@ -11,6 +11,7 @@ import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
 import com.fuyun.outpatient.internal.DelayEnvelopeSender;
 import com.fuyun.outpatient.internal.OutpatientAppointmentTimeoutListener;
 import com.fuyun.outpatient.internal.OutpatientEventPublisher;
+import com.fuyun.outpatient.internal.OutpatientFeeCreatedListener;
 import com.fuyun.outpatient.internal.OutpatientRefundApprovedListener;
 import com.fuyun.outpatient.properties.OutpatientProperties;
 import java.util.Arrays;
@@ -32,7 +33,8 @@ import org.springframework.context.annotation.Import;
     OutpatientEventPublisher.class,
     DelayEnvelopeSender.class,
     OutpatientAppointmentTimeoutListener.class,
-    OutpatientRefundApprovedListener.class
+    OutpatientRefundApprovedListener.class,
+    OutpatientFeeCreatedListener.class
 })
 @EnableConfigurationProperties(OutpatientProperties.class)
 public class OutpatientMessagingConfig {

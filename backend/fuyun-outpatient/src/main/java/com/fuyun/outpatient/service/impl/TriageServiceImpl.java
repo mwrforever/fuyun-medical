@@ -24,6 +24,7 @@ import com.fuyun.outpatient.mapper.TriageRecordMapper;
 import com.fuyun.outpatient.mapper.VisitMapper;
 import com.fuyun.outpatient.mapper.VisitStatusLogMapper;
 import com.fuyun.outpatient.service.ITriageService;
+import com.fuyun.outpatient.service.OutpatientVisitStateMachine;
 import com.fuyun.outpatient.vo.QueueCalledNotice;
 import com.fuyun.outpatient.vo.QueueTicketVO;
 import com.fuyun.patient.api.PatientDisplayName;
@@ -177,7 +178,9 @@ public class TriageServiceImpl implements ITriageService {
         }
         // 老幼残因子词表校验（词表外 OP-1019）
         List<String> factors = validateFactors(request.priorityFactors());
-        // visit 状态 CAS（REGISTERED→WAITING 合法迁移对，红线 5）：0 行=已报到/终态/并发迁移，判 OP-1011
+        // 状态机单点校验（红线 5）：迁入 WAITING 唯一合法来源=REGISTERED（终态/已报到均拒，CAS 前置）
+        OutpatientVisitStateMachine.require(visit.getStatus().getCode(), VisitStatus.WAITING.getCode());
+        // visit 状态 CAS（REGISTERED→WAITING 合法迁移对，红线 5）：0 行=并发迁移，判 OP-1011
         if (visitMapper.casStatus(visit.getId(), VisitStatus.REGISTERED.getCode(), VisitStatus.WAITING.getCode())
                 == 0) {
             log.warn(
@@ -508,6 +511,49 @@ public class TriageServiceImpl implements ITriageService {
         return tickets.stream()
                 .map(ticket -> toVO(ticket, displayNames.get(visitPatients.get(ticket.getVisitId()))))
                 .toList();
+    }
+
+    /**
+     * 接诊联动（ITriageService.markServing，Task 8 随 IVisitService 扩展交付）：定位本就诊 CALLED
+     * 票（最近叫号优先；P1 口径——本就诊的 CALLED 票即本医生票，叫号医生与接诊医生同一诊室流程，
+     * 票面 doctor_id 指派不作为过滤谓词）并 CAS→SERVING+serve_time 回填（国标接诊时间，库端
+     * now()，禁应用服务器时钟）。无 CALLED 票（未叫号/已过号/已接诊）或并发迁移 OP-1013 拒绝。
+     *
+     * @param visitId 就诊号，非空
+     * @return 接诊后票据出参（status=SERVING，含脱敏姓名），非空
+     * @throws BizException OP-1013（无已叫号票据或票据并发迁移）时触发
+     */
+    @Override
+    @Transactional
+    public QueueTicketVO markServing(String visitId) {
+        // 数据库读操作：本就诊 CALLED 票定位（最近叫号优先——重复叫号后以末次叫票为准）
+        QueueTicket ticket = queueTicketMapper.selectOne(Wrappers.<QueueTicket>lambdaQuery()
+                .eq(QueueTicket::getVisitId, visitId)
+                .eq(QueueTicket::getStatus, TicketStatus.CALLED)
+                .orderByDesc(QueueTicket::getCallTime)
+                .last("LIMIT 1"));
+        if (ticket == null) {
+            log.warn("接诊拒绝：无已叫号票据（未叫号/已过号/已接诊）：visitId={}", visitId);
+            throw new BizException(
+                    OutpatientErrorCode.TICKET_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "接诊须先叫号（无 CALLED 态票据）：visitId=" + visitId);
+        }
+        // 数据库写操作：接诊 CAS（CALLED→SERVING+serve_time）；0 行=并发已迁移，判 OP-1013
+        if (queueTicketMapper.casAdmit(ticket.getId(), OperatorContextHolder.get()) == 0) {
+            log.warn("接诊 CAS 落败（并发已迁移）：ticketId={}，ticketNo={}", ticket.getId(), ticket.getTicketNo());
+            throw new BizException(
+                    OutpatientErrorCode.TICKET_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "票据状态不允许接诊（并发已迁移）：ticketNo=" + ticket.getTicketNo());
+        }
+        ticket.setStatus(TicketStatus.SERVING);
+        log.info(
+                "接诊联动完成（CALLED→SERVING+serve_time）：ticketNo={}，visitId={}，operator={}",
+                ticket.getTicketNo(),
+                visitId,
+                OperatorContextHolder.get());
+        return toVO(ticket, maskedNameOf(visitId));
     }
 
     // ---------------------------------------------------------------- 私有辅助

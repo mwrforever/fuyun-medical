@@ -20,6 +20,7 @@ import com.fuyun.system.service.impl.DictItemServiceImpl;
 import com.fuyun.system.service.impl.DictQueryServiceImpl;
 import com.fuyun.system.service.impl.DictTypeServiceImpl;
 import com.fuyun.system.service.impl.DictVersionServiceImpl;
+import com.fuyun.system.service.impl.PracticeCheckPortImpl;
 import com.fuyun.system.service.impl.PracticeServiceImpl;
 import com.fuyun.system.service.impl.RoleServiceImpl;
 import com.fuyun.system.service.impl.TokenServiceImpl;
@@ -38,7 +39,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
  * 系统模块 Web 装配（BRIEF-PR3-01 §1.5/§3.2）：认证拦截器注册（401 白名单策略）+
- * 认证与字典域链路 Bean 装配集中点。
+ * 认证与字典域链路 Bean 装配集中点（Task 8 追加：PracticeCheckPort 跨模块 api 面实现——
+ * M03 开单执业授权强校验进程内消费通道）。
  *
  * <p>com.fuyun.system 包不在 @SpringBootApplication 扫描范围（com.fuyun.app.*）内，
  * 本类经 fuyun-app SystemConfig @Import 生效（PR #4 既有裁决：装配归 app，不放宽扫描）；
@@ -65,6 +67,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     AuditLogServiceImpl.class,
     AuditLogAspect.class,
     PracticeServiceImpl.class,
+    PracticeCheckPortImpl.class,
     PracticeController.class,
     PracticeGrantController.class
 })

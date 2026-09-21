@@ -61,7 +61,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
 /**
- * 分诊台与候诊队列服务单测（M03 FU-M03-04，Task 7 冻结用例集 16 例 + 守卫用例）：报到状态迁移与
+ * 分诊台与候诊队列服务单测（M03 FU-M03-04，Task 7 冻结用例集 16 例 + 守卫用例；Task 8 追加接诊
+ * 联动 markServing 三例）：报到状态迁移与
  * ZSET 入队编码、冻结优先级公式（急诊分级/老幼残跨类叠加/类别分取最高单项/封顶 999）、调级重排
  * 不改号、跨队列转接放旧建新、叫号惰性重建与原子出队与双 topic 推送、过号降级重入、重呼、快照
  * 脱敏与同分库端排序。守卫用例承载 OP-1001/OP-1012/OP-1013/OP-1019 分支行覆盖
@@ -290,7 +291,6 @@ class TriageServiceImplTest {
     void checkInRejectsNonRegisteredVisit() {
         Visit visit = visit(VisitStatus.FINISHED, null, (short) 0);
         when(visitMapper.selectOne(any())).thenReturn(visit);
-        when(visitMapper.casStatus(77L, "REGISTERED", "WAITING")).thenReturn(0);
 
         assertThatThrownBy(() -> service.checkIn(new CheckInRequest("O2026092100001", "STATION-01", null)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
@@ -299,6 +299,21 @@ class TriageServiceImplTest {
                 });
         verify(queueTicketMapper, never()).insert(any(QueueTicket.class));
         verify(queueZsetStore, never()).enqueue(anyString(), anyLong(), anyLong());
+    }
+
+    @Test
+    @DisplayName("守卫：报到 visit CAS 并发落败（读时 REGISTERED、CAS 前被并发迁移）——OP-1011 且零建票")
+    void checkInRejectsWhenCasConcurrentLose() {
+        Visit visit = visit(VisitStatus.REGISTERED, null, (short) 0);
+        when(visitMapper.selectOne(any())).thenReturn(visit);
+        when(visitMapper.casStatus(77L, "REGISTERED", "WAITING")).thenReturn(0);
+
+        assertThatThrownBy(() -> service.checkIn(new CheckInRequest("O2026092100001", "STATION-01", null)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.VISIT_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        verify(queueTicketMapper, never()).insert(any(QueueTicket.class));
     }
 
     @Test
@@ -835,5 +850,51 @@ class TriageServiceImplTest {
         // getSqlSegment 触发条件格式化（MP 惰性填充 paramNameValuePairs），随后断言过滤参数
         assertThat(wrapper.getSqlSegment()).contains("status =");
         assertThat(wrapper.getParamNameValuePairs()).containsValue(TicketStatus.WAITING);
+    }
+
+    // ---------------------------------------------------------------- 接诊联动（Task 8 markServing）
+
+    @Test
+    @DisplayName("接诊联动：CALLED 票 CAS→SERVING+serve_time 回填（casAdmit 单步原子）")
+    void markServingTransitionsCalledTicketToServing() {
+        QueueTicket ticket = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.CALLED, 1);
+        when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
+        when(queueTicketMapper.casAdmit(501L, "nurse001")).thenReturn(1);
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.IN_CONSULT, null, (short) 0));
+        when(patientNameQuery.displayNamesOf(anyCollection())).thenReturn(List.of(new PatientDisplayName(9L, "张*")));
+
+        QueueTicketVO vo = service.markServing("O2026092100001");
+
+        verify(queueTicketMapper).casAdmit(501L, "nurse001");
+        assertThat(ticket.getStatus()).isEqualTo(TicketStatus.SERVING);
+        assertThat(vo.status()).isEqualTo(TicketStatus.SERVING);
+        assertThat(vo.patientName()).isEqualTo("张*");
+    }
+
+    @Test
+    @DisplayName("接诊拒绝：无 CALLED 票（未叫号/已过号/已接诊）——OP-1013（409）且零 CAS")
+    void markServingRejectsWhenNoCalledTicket() {
+        when(queueTicketMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.markServing("O2026092100001"))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.TICKET_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        verify(queueTicketMapper, never()).casAdmit(anyLong(), anyString());
+    }
+
+    @Test
+    @DisplayName("接诊拒绝：CAS 并发落败（并发已迁移）——OP-1013（409）")
+    void markServingRejectsWhenCasLost() {
+        QueueTicket ticket = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.CALLED, 1);
+        when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
+        when(queueTicketMapper.casAdmit(501L, "nurse001")).thenReturn(0);
+
+        assertThatThrownBy(() -> service.markServing("O2026092100001"))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.TICKET_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
     }
 }
