@@ -166,7 +166,7 @@ onMounted(loadQueue);
 </script>
 
 <template>
-  <div class="dispense-workbench">
+  <div class="dispense-workbench fuy-page">
     <el-row :gutter="16">
       <el-col :span="10">
         <el-card>

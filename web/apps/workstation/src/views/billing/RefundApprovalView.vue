@@ -229,7 +229,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="refund-approval">
+  <div class="refund-approval fuy-page">
     <el-card class="refund-approval-main">
       <template #header>退费申请</template>
       <div class="refund-approval-bar">

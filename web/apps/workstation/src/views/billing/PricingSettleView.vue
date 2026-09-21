@@ -237,7 +237,7 @@ async function handleSettle(): Promise<void> {
 </script>
 
 <template>
-  <div class="pricing-settle">
+  <div class="pricing-settle fuy-page">
     <el-card class="pricing-settle-main">
       <template #header>划价结算</template>
       <div class="pricing-settle-bar">
