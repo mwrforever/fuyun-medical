@@ -75,13 +75,19 @@ public class SystemWebConfig implements WebMvcConfigurer {
 
     /**
      * 免认证白名单：登录/刷新两端点 + portal 患者匿名预约通道（裁决 13：/api/v1/outpatient/portal/**
-     * 免 401，服务端经介质解析定 patientId、操作者留痕取哨兵 PORTAL；限流/风控随 M18 注记）。
-     * 常量收口防散落，供装配与测试断言共用。
+     * 免 401，服务端经介质解析定 patientId、操作者留痕取哨兵 PORTAL；限流/风控随 M18 注记）
+     * + bigscreen 候诊榜只读快照（UI 设计文档 §8.5「REST 快照首屏、路由 query 书签化」的
+     * 无登录态设备直开场景，bigscreen http.ts 匿名只读面口径——大屏无 Authorization 注入；
+     * 端点自身脱敏出网（patientName 掩码、无证件号字段），且该路径仅映射只读 GET，动作类
+     * POST 在 /queue/... 单数路径不受放行影响）。常量收口防散落，供装配与测试断言共用。
      *
      * <p>注意 logout 不在白名单：登出请求本身需通过 401 认证（防止伪造/无效令牌触发会话删除探测）。
      */
-    public static final List<String> AUTH_WHITELIST =
-            List.of("/api/v1/system/auth/login", "/api/v1/system/auth/refresh", "/api/v1/outpatient/portal/**");
+    public static final List<String> AUTH_WHITELIST = List.of(
+            "/api/v1/system/auth/login",
+            "/api/v1/system/auth/refresh",
+            "/api/v1/outpatient/portal/**",
+            "/api/v1/outpatient/queues/*/tickets");
 
     /** 认证拦截拦截路径：全部业务 API（含未来模块，P0 只做认证 401 不做 403 鉴权） */
     private static final String INTERCEPT_PATH_PATTERN = "/api/v1/**";
