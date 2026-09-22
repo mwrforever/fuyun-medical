@@ -1,10 +1,12 @@
 package com.fuyun.nursing.config;
 
 import com.fuyun.nursing.cache.NursingSeqGate;
+import com.fuyun.nursing.controller.IoController;
 import com.fuyun.nursing.controller.NursingRecordController;
 import com.fuyun.nursing.controller.TemperatureChartController;
 import com.fuyun.nursing.controller.VitalSignController;
 import com.fuyun.nursing.controller.WardController;
+import com.fuyun.nursing.service.impl.IoRecordServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
@@ -19,7 +21,8 @@ import org.springframework.context.annotation.Import;
  * @MapperScan 按注解自动覆盖，不入本清单）。Task 3 交付：病区元数据服务、OngoingVisitQuery
  * SPI 实现（patient 合并前置检查按接口类型收集）与病区元数据控制器；订阅监听器归
  * NursingMessagingConfig（消息装配集中点）。Task 4 追加：NR 号段发号器、护理记录服务、
- * 体温单服务与两控制器。Task 5 追加：生命体征服务与体征控制器。
+ * 体温单服务与两控制器。Task 5 追加：生命体征服务与体征控制器。Task 6 追加：出入量服务与
+ * 出入量控制器。
  */
 @Configuration
 @Import({
@@ -30,8 +33,10 @@ import org.springframework.context.annotation.Import;
     NursingRecordServiceImpl.class,
     TemperatureChartServiceImpl.class,
     VitalSignServiceImpl.class,
+    IoRecordServiceImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
-    VitalSignController.class
+    VitalSignController.class,
+    IoController.class
 })
 public class NursingWebConfig {}
