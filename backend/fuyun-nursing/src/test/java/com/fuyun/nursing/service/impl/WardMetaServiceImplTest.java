@@ -26,9 +26,14 @@ import com.fuyun.nursing.dto.NurseAssignmentRequest;
 import com.fuyun.nursing.dto.WardPatientRegisterRequest;
 import com.fuyun.nursing.dto.WardPatientRemoveRequest;
 import com.fuyun.nursing.entity.NurseAssignment;
+import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.entity.NursingWardConfig;
 import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.enums.NursingLevel;
+import com.fuyun.nursing.enums.TaskPriority;
+import com.fuyun.nursing.enums.TaskSource;
+import com.fuyun.nursing.enums.TaskStatus;
+import com.fuyun.nursing.enums.TaskType;
 import com.fuyun.nursing.enums.WardPatientSource;
 import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.internal.NursingEventPublisher;
@@ -38,7 +43,9 @@ import com.fuyun.nursing.internal.PatientSplitListener;
 import com.fuyun.nursing.mapper.NurseAssignmentMapper;
 import com.fuyun.nursing.mapper.NursingWardConfigMapper;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
+import com.fuyun.nursing.service.INursingTaskService;
 import com.fuyun.nursing.vo.NurseAssignmentVO;
+import com.fuyun.nursing.vo.NursingTaskVO;
 import com.fuyun.nursing.vo.WardConfigVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
 import com.fuyun.nursing.vo.WardPatientVO;
@@ -123,6 +130,9 @@ class WardMetaServiceImplTest {
     private AllergyChecker allergyChecker;
 
     @Mock
+    private INursingTaskService taskService;
+
+    @Mock
     private NursingEventPublisher nursingEventPublisher;
 
     @Mock
@@ -158,6 +168,7 @@ class WardMetaServiceImplTest {
                 wardConfigMapper,
                 patientContextResolver,
                 allergyChecker,
+                taskService,
                 new ObjectMapper());
         ReflectionTestUtils.setField(service, "baseMapper", wardPatientMapper);
         OperatorContextHolder.set("nurse-01");
@@ -411,12 +422,18 @@ class WardMetaServiceImplTest {
                 .thenReturn(List.of(
                         new AllergyItem(1L, "PENICILLIN", "青霉素", "SEVERE"), new AllergyItem(2L, null, "海鲜", "MILD")));
         when(assignmentMapper.selectList(any())).thenReturn(List.of(assignmentRow(11L, "nurse-09", "BED", "01")));
+        // Task 7 在途任务段：详情卡经 INursingTaskService#inFlightByVisit 实时填充
+        when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of(inFlightTaskVO()));
 
         WardPatientDetailVO detail = service.detail(VISIT);
 
         assertThat(detail.allergies()).hasSize(2);
         assertThat(detail.assignments()).hasSize(1);
-        assertThat(detail.inFlightTasks()).isNotNull().isEmpty();
+        // Task 7 断言落点：在途任务段由任务服务填充（非空清单 + 字段透传 + 填充来源钉死）
+        assertThat(detail.inFlightTasks()).hasSize(1);
+        assertThat(detail.inFlightTasks().get(0).taskNo()).isEqualTo("TK2026092200001");
+        assertThat(detail.inFlightTasks().get(0).overdueFlag()).isTrue();
+        verify(taskService).inFlightByVisit(VISIT);
         assertThat(detail.visitId()).isEqualTo(VISIT);
         assertThat(detail.patientId()).isEqualTo(7L);
         // 详情卡不含体征摘要：前端另调体征查询组装（防 WardMeta ↔ VitalSign 循环依赖；
@@ -644,6 +661,7 @@ class WardMetaServiceImplTest {
         when(wardConfigMapper.selectOne(any())).thenReturn(null);
         when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
         when(assignmentMapper.selectList(any())).thenReturn(List.of());
+        when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
 
         WardPatientDetailVO detail = service.detail(VISIT);
 
@@ -672,6 +690,7 @@ class WardMetaServiceImplTest {
                         configRow("[{\"code\":\"NIGHT-X\",\"name\":\"跨零班\",\"start\":\"22:00\",\"end\":\"06:00\"}]"));
         when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
         when(assignmentMapper.selectList(any())).thenReturn(List.of());
+        when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
 
         WardPatientDetailVO detail = service.detail(VISIT);
 
@@ -857,6 +876,24 @@ class WardMetaServiceImplTest {
         row.setValidFrom(LocalDate.of(2026, 9, 22));
         row.setStatus("ACTIVE");
         return row;
+    }
+
+    /** 在途任务出参替身（详情卡在途任务段断言载体：逾期 MEDICATION 任务）。 */
+    private NursingTaskVO inFlightTaskVO() {
+        NursingTask row = new NursingTask();
+        row.setId(601L);
+        row.setTaskNo("TK2026092200001");
+        row.setPatientId(7L);
+        row.setVisitId(VISIT);
+        row.setWardId("W01");
+        row.setTaskType(TaskType.MEDICATION.getCode());
+        row.setSource(TaskSource.MANUAL.getCode());
+        row.setPlanTime(OffsetDateTime.now().minusMinutes(60));
+        row.setPriority(TaskPriority.NORMAL.getCode());
+        row.setOverdueFlag(true);
+        row.setEscalationCount(1);
+        row.setStatus(TaskStatus.PENDING.getCode());
+        return NursingTaskVO.from(row);
     }
 
     /** 患者合并/拆分/健康档案事件信封替身（Long 以 string 承载与线格式同源）。 */

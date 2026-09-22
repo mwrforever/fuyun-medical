@@ -6,11 +6,12 @@ import java.util.List;
 
 /**
  * 患者详情卡出参（GET /api/v1/nursing/ward-patients/{visitId}，冻结字段面）：
- * 基础视图属性 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士 + 在途任务占位。
+ * 基础视图属性 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士 + 在途任务段。
  *
  * <p><b>不含体征摘要</b>——「最新体征」由前端另调 GET /api/v1/nursing/vital-signs 组装
  * （避免 WardMetaServiceImpl ↔ VitalSignServiceImpl 循环依赖：体征服务已单向依赖病区服务做在区校验）。
- * inFlightTasks 为 Task 7 占位（P1 恒空清单，执行域上线后补填任务摘要并同步扩展断言）。
+ * inFlightTasks 由 INursingTaskService#inFlightByVisit 实时填充（Task 7 补入；仅 PENDING/
+ * IN_PROGRESS 行，读时惰性逾期判定后 overdueFlag 与库态一致）。
  *
  * @param wardId        病区编码
  * @param bedNo         床位号
@@ -26,7 +27,7 @@ import java.util.List;
  * @param admittedAt    入区时间
  * @param allergies     当前有效过敏项（AllergyChecker 实时嵌查）
  * @param assignments   当班责任护士分配
- * @param inFlightTasks 在途任务占位（Task 7 补填，P1 恒空清单）
+ * @param inFlightTasks 在途任务（仅 PENDING/IN_PROGRESS，计划时间升序；无行返回空清单）
  */
 public record WardPatientDetailVO(
         String wardId,
@@ -43,4 +44,4 @@ public record WardPatientDetailVO(
         OffsetDateTime admittedAt,
         List<AllergyItem> allergies,
         List<NurseAssignmentVO> assignments,
-        List<String> inFlightTasks) {}
+        List<NursingTaskVO> inFlightTasks) {}

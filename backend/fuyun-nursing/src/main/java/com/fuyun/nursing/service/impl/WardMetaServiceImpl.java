@@ -22,8 +22,10 @@ import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.mapper.NurseAssignmentMapper;
 import com.fuyun.nursing.mapper.NursingWardConfigMapper;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
+import com.fuyun.nursing.service.INursingTaskService;
 import com.fuyun.nursing.service.IWardMetaService;
 import com.fuyun.nursing.vo.NurseAssignmentVO;
+import com.fuyun.nursing.vo.NursingTaskVO;
 import com.fuyun.nursing.vo.WardConfigVO;
 import com.fuyun.nursing.vo.WardConfigVO.ShiftDefinition;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
@@ -51,7 +53,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 病区元数据域服务实现（V801 三表业务面）。入区登记守卫链（GC16 过渡通道强制）：
  * VisitIdValidator 结构校验 → PatientContextResolver 拦截（FROZEN 拒 / MERGED 收敛主档）→
  * 床位占用前置检查 → insert（双唯一约束兜底转 NS-1002）。移出走单表单语句 CAS（GC38 四护栏），
- * 订阅面（合并/拆分/过敏刷新）归 internal 监听器直驱 mapper 条件更新。
+ * 订阅面（合并/拆分/过敏刷新）归 internal 监听器直驱 mapper 条件更新。详情卡聚合在途任务段
+ * 委托 INursingTaskService#inFlightByVisit（Task 7 补入；单向依赖——任务服务不回依赖本服务）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
@@ -69,6 +72,8 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
 
     private final AllergyChecker allergyChecker;
 
+    private final INursingTaskService taskService;
+
     private final ObjectMapper objectMapper;
 
     /**
@@ -79,6 +84,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
      * @param wardConfigMapper       病区护理配置 mapper，非空
      * @param patientContextResolver 患者上下文解析（patient api），非空；入区归一/拦截
      * @param allergyChecker         过敏项嵌查（patient api），非空；详情卡实时过敏面
+     * @param taskService            护理任务服务，非空；详情卡在途任务段填充（Task 7 补入）
      * @param objectMapper           JSON 解析器（Boot 自动装配），非空；JSONB 列结构化
      */
     public WardMetaServiceImpl(
@@ -87,11 +93,13 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
             NursingWardConfigMapper wardConfigMapper,
             PatientContextResolver patientContextResolver,
             AllergyChecker allergyChecker,
+            INursingTaskService taskService,
             ObjectMapper objectMapper) {
         this.assignmentMapper = assignmentMapper;
         this.wardConfigMapper = wardConfigMapper;
         this.patientContextResolver = patientContextResolver;
         this.allergyChecker = allergyChecker;
+        this.taskService = taskService;
         this.objectMapper = objectMapper;
     }
 
@@ -247,7 +255,8 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
 
     /**
      * 患者详情卡聚合：在区行 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士（配置班次按时钟判定）
-     * + 在途任务占位（Task 7 补填）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
+     * + 在途任务（INursingTaskService#inFlightByVisit，Task 7 补入；仅 PENDING/IN_PROGRESS 行，
+     * 读时惰性逾期判定随查询同步）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
      *
      * @param visitId 住院就诊号，非空；来源：路径参数
      * @return 详情卡出参，非空
@@ -276,14 +285,17 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         List<NurseAssignment> assignments = assignmentMapper.selectList(wrapper);
         // 第三方接口调用：patient 过敏项实时嵌查（详情卡过敏明细，allergy_flag 为订阅缓存镜像）
         List<AllergyItem> allergies = allergyChecker.listActiveAllergies(row.getPatientId());
+        // 数据库读操作：在途任务清单（护理任务域读时惰性逾期判定随查询同步，Task 7 补入）
+        List<NursingTaskVO> inFlightTasks = taskService.inFlightByVisit(visitId);
         log.info(
-                "患者详情卡聚合：visitId={}，wardId={}，bedNo={}，shiftCode={}，allergies={}，assignments={}",
+                "患者详情卡聚合：visitId={}，wardId={}，bedNo={}，shiftCode={}，allergies={}，assignments={}，inFlightTasks={}",
                 visitId,
                 row.getWardId(),
                 row.getBedNo(),
                 shiftCode,
                 allergies.size(),
-                assignments.size());
+                assignments.size(),
+                inFlightTasks.size());
         return new WardPatientDetailVO(
                 row.getWardId(),
                 row.getBedNo(),
@@ -299,8 +311,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
                 row.getAdmittedAt(),
                 allergies,
                 assignments.stream().map(NurseAssignmentVO::from).toList(),
-                // Task 7 占位：执行域在途任务清单上线后补填并同步扩展断言
-                List.of());
+                inFlightTasks);
     }
 
     /**
