@@ -12,7 +12,9 @@ import lombok.Setter;
 /**
  * 处方明细实体（pharmacy.prescription_item，V701）：计费行快照载体（item_code+数量+用法摘要
  * 随 created 事件携带）。明细只读（Spec :107：改方=驳回后重新开立新版本），
- * returned_quantity/status 由退药链回写。
+ * returned_quantity 由退药链回写；status 为预留列——主代码对该列零写入点，
+ * 恒为插入期默认值 NORMAL（「发药中明细退场」语义实际由 dispense_item.item_status 承载，
+ * 权威口径见 V706 列注释；W-23）。
  */
 @Getter
 @Setter
@@ -65,7 +67,7 @@ public class PrescriptionItem {
     /** 已退数量（退药回写） */
     private BigDecimal returnedQuantity;
 
-    /** 明细状态 NORMAL/CANCELLED（发药中明细退场） */
+    /** 预留状态列 NORMAL/CANCELLED（主代码零写入点，恒为默认值 NORMAL；退场语义见 dispense_item.item_status，权威口径见 V706 列注释，W-23） */
     private String status;
 
     /** 创建时刻 */

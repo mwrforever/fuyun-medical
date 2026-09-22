@@ -9,15 +9,19 @@
   setStatus/注解 SQL/mapper 写路径后，唯一写入为 PrescriptionItemMapper.accumulateReturnedQuantity 的
   returned_quantity 原子累加；发药中明细退场写 pharmacy.dispense_item.item_status，V703:95）；宪法 A.4.1-3
   禁改已应用迁移，故以新迁移 COMMENT ON COLUMN 就地更新权威口径（V606 同款先例），迁移头部自解释列明
-  核实结论与承载理由（防后人误信旧注释）。
+  核实结论与承载理由（防后人误信旧注释）。代码侧残留一并收口：mapper javadoc 已随 W-22 fix PR 订正，
+  **实体 PrescriptionItem javadoc 两处（类/字段）本次订正**（原句与 V701:66 逐字同源，质量门 F-1 实证）。
 - **号段登记**：docs/migrations/flyway-version-registry.md 同 PR 登记 V706（V500+ 通用段续号——全局最大
   V705 的下一号，满足乱序守卫；用户批复硬要求「号段立即登记台账」）。
 - **W-24 销项**：DispenseServiceImpl.getByRxNo 取消态排除修复已随 PR-5 Task 11 交付，「行删除待合并后执行」
   触发条件成立——TASK.md W-23/W-24 两行删除（闭合即删行）。
 - **门禁记录**：迁移治理守卫 `MIGRATION_BASE_REF=dev` 通过（43 个迁移文件）；后端 `mvn verify` 全 24 模块
-  BUILD SUCCESS（Testcontainers 全新库日志实证「Successfully applied 45 migrations … now at version v706」）；
-  真栈探针（重建容器对 dev 卷）——flyway_schema_history V706 success=t、`col_description` 列注释全文在位。
-- **裁决留痕（2026-09-22 用户五项决策）**：W-23「批准，立即执行」；W-24「与 W-23 同 PR 删行」。
+  BUILD SUCCESS（Testcontainers 全新库日志实证「Successfully applied 45 migrations … now at version v706」，
+  45=43 源文件 + 2 处 PR-1a 期改名遗留 target 构建产物 V6__create_event_publication / V7__create_shedlock，
+  守卫脚本 docstring 已注记该产物不在扫描面内）；真栈探针（重建容器对 dev 卷）——flyway_schema_history
+  V706 success=t、`col_description` 列注释全文在位。
+- **裁决留痕（2026-09-22 用户批复，本 PR 落实 W-23/W-24 两项）**：W-23「批准，立即执行」；W-24「与 W-23
+  同 PR 删行」。
 
 ## 2026-09-22 · P1 PR-5 M03 门诊主流程收口：outpatient 全链+门诊三前端交付（CF-5 冻结载体实装）
 
