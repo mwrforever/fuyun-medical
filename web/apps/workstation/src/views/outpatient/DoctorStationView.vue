@@ -49,6 +49,22 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   CANCELLED: '已作废',
 };
 
+/** 门诊侧发药镜像状态中文词表（W-29 D-3 契约消费：ClinicOrderVO.dispenseStatus 三值，
+ * M06 发药/退药回执回流镜像；照药房工作台单状态词表先例形态） */
+const DISPENSE_MIRROR_LABELS: Record<string, string> = {
+  DISPENSED: '已发药',
+  PART_RETURNED: '部分退药',
+  FULL_RETURNED: '全额退药',
+};
+
+/** 发药镜像状态 tag 色型映射（照 DispenseWorkbenchView 单状态 tag 先例：已发药 success、
+ * 部分退药 warning、全额退药 info；未知值不在册→纯文本原样回显不猜色，防后端扩值误导） */
+const DISPENSE_MIRROR_TAG_TYPES: Record<string, 'success' | 'warning' | 'info'> = {
+  DISPENSED: 'success',
+  PART_RETURNED: 'warning',
+  FULL_RETURNED: 'info',
+};
+
 /** 分诊级别徽标文案（Ⅰ危/Ⅱ急/Ⅲ重/Ⅳ普；VisitVO.triageLevel 生成物在位，色值走 §4.3 徽标 token） */
 const TRIAGE_LEVEL_LABELS: Record<number, string> = { 1: 'Ⅰ级', 2: 'Ⅱ级', 3: 'Ⅲ级', 4: 'Ⅳ级' };
 
@@ -594,6 +610,24 @@ onMounted(() => {
                       <el-table-column prop="status" label="状态" width="90">
                         <template #default="{ row }">
                           {{ ORDER_STATUS_LABELS[row.status] ?? row.status }}
+                        </template>
+                      </el-table-column>
+                      <!-- 发药状态镜像列（W-29 D-3 消费面：医生站可见已发药 Spec :142）；
+                           空=未发生发药回流，「未发药」纯文本承载初始语义 -->
+                      <el-table-column label="发药状态" width="96">
+                        <template #default="{ row }">
+                          <el-tag
+                            v-if="DISPENSE_MIRROR_TAG_TYPES[row.dispenseStatus ?? ''] !== undefined"
+                            size="small"
+                            class="fuy-tag-aa"
+                            :type="DISPENSE_MIRROR_TAG_TYPES[row.dispenseStatus ?? '']"
+                            >{{ DISPENSE_MIRROR_LABELS[row.dispenseStatus ?? ''] }}</el-tag
+                          >
+                          <span v-else>{{
+                            DISPENSE_MIRROR_LABELS[row.dispenseStatus ?? ''] ??
+                            row.dispenseStatus ??
+                            '未发药'
+                          }}</span>
                         </template>
                       </el-table-column>
                       <template #empty>

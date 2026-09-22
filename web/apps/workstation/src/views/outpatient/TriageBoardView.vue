@@ -44,6 +44,20 @@ const TICKET_STATUS_META: Record<
 /** 分诊级别徽标文案（Ⅰ危/Ⅱ急/Ⅲ重/Ⅳ普，色值走 .fuy-triage-badge--l1..l4 token） */
 const TRIAGE_LEVEL_LABELS: Record<number, string> = { 1: 'Ⅰ级', 2: 'Ⅱ级', 3: 'Ⅲ级', 4: 'Ⅳ级' };
 
+/**
+ * 级别徽标类（W-29 D-2 契约回补：QueueTicketVO.triageLevel=visit 权威分级随票出网）。
+ * 1-4 越界防御：契约值域外不渲染徽标；可空=非分级流程票据，列内显示占位「—」。
+ *
+ * @param level 票面分诊级别（后端 Integer 可空）
+ * @return 徽标 modifier 类；值域外返回 null（模板据此降级为占位文本）
+ */
+function triageBadgeClass(level: number | undefined): string | null {
+  if (level === undefined || level === null || level < 1 || level > 4) {
+    return null;
+  }
+  return `fuy-triage-badge--l${level}`;
+}
+
 /* ---------- 操作条：报到与诊区切换 ---------- */
 const visitIdInput = ref('');
 const checkingIn = ref(false);
@@ -287,6 +301,8 @@ const adjustAction = ref('LEVEL_ADJUST');
 const adjustLevel = ref(3);
 const targetQueue = ref('');
 const targetDoctorId = ref('');
+/** 动作理由（W-29 D-9 契约消费：落 triage_record.reason 供质控回溯；调级必填其余选填） */
+const adjustReason = ref('');
 const adjusting = ref(false);
 
 /** 分诊级别选项（1 危 → 4 普，色值语义见级别徽标） */
@@ -294,7 +310,8 @@ const LEVEL_OPTIONS = [1, 2, 3, 4];
 
 /**
  * 分诊处置提交：调级=中风险（confirm 带回显摘要）；转队列=高风险（danger 确认，目标队列必填
- * 前置拦截）；二次分诊=中风险（目标医生必填前置拦截）。成功后重拉快照传达 FLIP 重排语义。
+ * 前置拦截）；二次分诊=中风险（目标医生必填前置拦截）。调级理由为 LEVEL_ADJUST 必填（前端先
+ * 校验空值禁提交零出网，与后端服务层同语义双保险），其余动作选填透传留痕。成功后重拉快照。
  */
 async function onAdjust(): Promise<void> {
   if (adjusting.value || selectedTicket.value === null) {
@@ -307,6 +324,12 @@ async function onAdjust(): Promise<void> {
   }
   if (adjustAction.value === 'RE_TRIAGE' && targetDoctorId.value.trim() === '') {
     void ElMessage.warning('请填写目标医生 ID');
+    return;
+  }
+  // 调级理由前置校验（D-9 呈现面）：空白即拦截在确认弹窗之前，违规零出网
+  const reason = adjustReason.value.trim();
+  if (adjustAction.value === 'LEVEL_ADJUST' && reason === '') {
+    void ElMessage.warning('请填写调级理由');
     return;
   }
   adjusting.value = true;
@@ -335,6 +358,8 @@ async function onAdjust(): Promise<void> {
       triageLevel: adjustAction.value === 'LEVEL_ADJUST' ? adjustLevel.value : undefined,
       targetQueue: adjustAction.value === 'QUEUE_TRANSFER' ? targetQueue.value.trim() : undefined,
       doctorId: adjustAction.value === 'RE_TRIAGE' ? targetDoctorId.value.trim() : undefined,
+      // 理由留痕出网（D-9）：调级必填已前置拦截，其余动作空串不携带（选填语义）
+      reason: reason === '' ? undefined : reason,
     });
     void ElMessage.success('分诊处置完成');
     await refreshSnapshot();
@@ -450,10 +475,20 @@ onBeforeUnmount(() => {
                   <span class="fuy-num">{{ row.ticketNo }}</span>
                 </template>
               </el-table-column>
-              <!-- 列宽照 §3.2 结构树（姓名 100 / 优先级 80）：Task 13 自定 140/90 回归设计值 -->
+              <!-- 列宽照 §3.2 结构树（姓名 100 / 级别徽标 64 / 优先级 80）：Task 13 自定 140/90
+                   回归设计值；级别徽标为 W-29 D-2 契约回补列（原「禁虚构契约」注记随出网字段在位删除） -->
               <el-table-column prop="patientName" label="姓名" width="100" />
-              <!-- QueueTicketVO 契约面无 triageLevel 字段（分诊级别挂 visit 侧未随票出网，
-                   禁虚构契约）——级别语义由优先级分承载，徽标列随 P1 契约增补回补 -->
+              <el-table-column label="级别" width="64">
+                <template #default="{ row }">
+                  <span
+                    v-if="triageBadgeClass(row.triageLevel) !== null"
+                    class="fuy-triage-badge"
+                    :class="triageBadgeClass(row.triageLevel)"
+                    >{{ TRIAGE_LEVEL_LABELS[row.triageLevel ?? 0] ?? '—' }}</span
+                  >
+                  <span v-else>—</span>
+                </template>
+              </el-table-column>
               <el-table-column prop="priorityScore" label="优先级" width="80" align="right">
                 <template #default="{ row }">
                   <span class="fuy-num">{{ row.priorityScore }}</span>
@@ -574,6 +609,17 @@ onBeforeUnmount(() => {
             </el-form-item>
             <el-form-item v-if="adjustAction === 'RE_TRIAGE'" label="目标医生">
               <el-input v-model="targetDoctorId" placeholder="目标医生 ID" />
+            </el-form-item>
+            <!-- 动作理由（W-29 D-9 契约消费）：落 triage_record.reason 质控回溯列；调级必填
+                 前端先校验，转队列/二次分诊选填；maxLength=255 与列宽 VARCHAR(255) 对齐 -->
+            <el-form-item label="理由">
+              <el-input
+                v-model="adjustReason"
+                type="textarea"
+                :rows="2"
+                maxlength="255"
+                placeholder="动作理由（调级必填，≤255 字）"
+              />
             </el-form-item>
             <el-form-item>
               <el-button
