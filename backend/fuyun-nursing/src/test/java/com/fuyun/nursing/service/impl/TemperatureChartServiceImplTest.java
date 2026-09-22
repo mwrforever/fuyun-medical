@@ -2,6 +2,7 @@ package com.fuyun.nursing.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -25,6 +26,7 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.util.List;
+import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -275,6 +277,20 @@ class TemperatureChartServiceImplTest {
         verify(pageMapper, times(1)).insert(any(TemperatureChartPage.class));
     }
 
+    @Test
+    @DisplayName("VITAL 条目引用回填（Task 5 体征链接入锚）：casFillVitalEntry 必须为 @Update 注解 SQL 条件更新（GC26）")
+    void casFillVitalEntryAnnotatedSqlPinsFillPredicates() {
+        // Task 4 审查移交义务：casFillVitalEntry 在 Task 4 零测试锚，Task 5 接入体征链时补 SQL 文本锚
+        String sql = recordSql("casFillVitalEntry", long.class, OffsetDateTime.class, String.class, long.class);
+        assertThat(sql)
+                .contains("SET vital_ref = #{vitalRef}")
+                .contains("entry_type = 'VITAL'")
+                .contains("type_key = #{typeKey}")
+                // 仅回填空引用（首值权威，已有引用一律不动）+ 显式 deleted=0（GC26）
+                .contains("vital_ref IS NULL")
+                .contains("deleted = 0");
+    }
+
     // ===================== 测试数据与断言辅助 =====================
 
     /** 既有月页替身（id=77、2026-09、ACTIVE）。 */
@@ -296,5 +312,24 @@ class TemperatureChartServiceImplTest {
         row.setEntryType(entryType);
         row.setTypeKey(typeKey);
         return row;
+    }
+
+    /**
+     * 直读 mapper 方法 @Update 注解 SQL（GC26 可执行锚：条件更新必须为注解 SQL 承载）。
+     *
+     * @param method     mapper 方法名
+     * @param paramTypes 方法参数类型（重载定位）
+     * @return 拼接后的注解 SQL 全文
+     */
+    private String recordSql(String method, Class<?>... paramTypes) {
+        try {
+            Update update = TemperatureChartEntryMapper.class
+                    .getMethod(method, paramTypes)
+                    .getAnnotation(Update.class);
+            assertThat(update).as("条件更新必须为 @Update 注解 SQL（GC26）").isNotNull();
+            return String.join("", update.value());
+        } catch (NoSuchMethodException e) {
+            return fail("mapper 方法不存在：" + method, e);
+        }
     }
 }
