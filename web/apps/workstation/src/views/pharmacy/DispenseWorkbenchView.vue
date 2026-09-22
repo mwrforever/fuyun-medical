@@ -158,8 +158,13 @@ async function onIssue(): Promise<void> {
   dispensing.value = true;
   try {
     try {
-      // 注意：此处未显式传 confirmButtonText（ElMessageBox 函数式挂载渲染英文 OK/Cancel）亦未带单号回显——spec 断言 toHaveBeenCalledWith 锁死两参元数与文案，补传即破断言；偏差已移交主控，待专项裁决后随后续 PR 闭合
-      await ElMessageBox.confirm('发药签名后药品出库且不可逆，确认发药？', '发药签名');
+      // 不可逆终笔的防错确认（§4.4 禁裸确认）：单号前置（先单据后动作的阅读顺序）+ 显式中文按钮——
+      // ElMessageBox 函数式挂载不继承 ConfigProvider locale，不传 confirmButtonText 会渲染英文 OK/Cancel（D-21 断言现代化 PR 闭合，批复留痕见 CHANGELOG）
+      await ElMessageBox.confirm(
+        `发药单 ${sheet.dispenseNo ?? ''} 签名后药品出库且不可逆，确认发药？`,
+        '发药签名',
+        { confirmButtonText: '确认发药', cancelButtonText: '取消' },
+      );
     } catch {
       // 用户取消：发药单驻留，可再次点击发药（在途复位交外层 finally）
       return;
