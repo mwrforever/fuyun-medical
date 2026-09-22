@@ -194,10 +194,13 @@ describe('发药工作台', () => {
 
     await clickButton(wrapper, '发药签名');
     await flushPromises();
-    // 发药不可逆：终笔签名前必须经确认弹框（防误触面）
+    // 发药不可逆：终笔签名前必须经确认弹框（防误触面）。
+    // D-21 断言现代化（2026-09-22 用户批复选项①破例）：由两参精确匹配升为三参全量精确匹配——
+    // 钉死单号前置文案与中文按钮 options（R-3 缺口第三处闭合）；严格度上升，非回归弱化
     expect(vi.mocked(ElMessageBox.confirm)).toHaveBeenCalledWith(
-      '发药签名后药品出库且不可逆，确认发药？',
+      '发药单 D1 签名后药品出库且不可逆，确认发药？',
       '发药签名',
+      { confirmButtonText: '确认发药', cancelButtonText: '取消' },
     );
     expect(vi.mocked(issueDispense)).toHaveBeenCalledWith('D1');
 
