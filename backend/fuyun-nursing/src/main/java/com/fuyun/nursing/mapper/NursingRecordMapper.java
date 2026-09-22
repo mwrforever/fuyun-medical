@@ -2,8 +2,10 @@ package com.fuyun.nursing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.fuyun.nursing.entity.NursingRecord;
+import java.time.OffsetDateTime;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 /**
@@ -38,4 +40,13 @@ public interface NursingRecordMapper extends BaseMapper<NursingRecord> {
     @Update("UPDATE nursing.nursing_record SET observation = COALESCE(observation, '') || E'\\n' || #{content}, "
             + "updated_by = #{updatedBy} WHERE id = #{id} AND deleted = 0")
     int appendObservation(@Param("id") long id, @Param("content") String content, @Param("updatedBy") String updatedBy);
+
+    /**
+     * 数据库服务器时间取值（文书业务时间统一时钟源，GC25）：与 casSubmit 内 now() 同源，
+     * 修订件签名时点等需与 DB 盖章时序严格一致（消除签名链时序倒挂窗口）的场景使用。
+     *
+     * @return 数据库当前时刻，非空
+     */
+    @Select("SELECT now()")
+    OffsetDateTime dbNow();
 }

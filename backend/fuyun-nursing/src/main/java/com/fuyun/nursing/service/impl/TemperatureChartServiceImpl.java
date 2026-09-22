@@ -31,12 +31,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 体温单域服务实现（V802 temperature_chart_page/entry 业务面）。ensurePage 查—无则插 + 唯一
- * 索引冲突重查兜底并发建页；条目写入主链为 insert（type_key 由服务按条目类型写入：VITAL=体温
- * 部位（空部位落空串）/ SPECIAL_EVENT=事件类型 / DAILY_VALUE=日行值类型），唯一约束冲突一律
- * 转 NS-1016 幂等拒绝（不覆盖首值）；文书业务时间一律服务器时间（GC25，vital 条目时点取体征域
- * 权威测量时点）。getChart 三段分组各自按 entryTime 升序（服务端排序兜底，前端直渲染）。
- * 线程安全：无状态 singleton；写操作 @Transactional 收口。
+ * 体温单域服务实现（V802 temperature_chart_page/entry 业务面）。ensurePage 查—无则插（唯一
+ * 索引冲突转 NS-1016 幂等拒绝，调用方重试语义）；条目写入主链为 insert（type_key 由服务按条目
+ * 类型写入：VITAL=体温部位（空部位落空串）/ SPECIAL_EVENT=事件类型 / DAILY_VALUE=日行值类型），
+ * 唯一约束冲突一律转 NS-1016 幂等拒绝（不覆盖首值）；文书业务时间一律服务器时间（GC25，vital
+ * 条目时点取体征域权威测量时点）。getChart 三段分组各自按 entryTime 升序（服务端排序兜底，
+ * 前端直渲染）。线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
 public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPageMapper, TemperatureChartPage>
@@ -205,12 +205,12 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
 
     /**
      * 月页自动创建/取回：(visit_id, chart_month) 查—无则 insert；并发建页命中唯一索引冲突时
-     * 重查兜底取回既有页（重查仍无定性 NS-1016，防御性不可达分支）。
+     * 转 NS-1016 幂等拒绝（PG 同事务重查不可达，调用方整单重试——重试时首查即取回既有页）。
      *
      * @param visitId 住院就诊号，非空
      * @param month   住院月页，非空
      * @return 月页 id，非空
-     * @throws BizException NS-1016（409 并发建页兜底重查仍失败）
+     * @throws BizException NS-1016（409 并发建页同键冲突）
      */
     @Override
     @Transactional
@@ -229,15 +229,12 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
             // 数据库写操作：月页创建（uk_chart_page_visit_month 兜底并发）
             baseMapper.insert(page);
         } catch (DuplicateKeyException e) {
-            // 并发建页兜底：唯一索引冲突重查取回既有页（幂等语义，不视为错误）
-            TemperatureChartPage concurrent = locatePage(visitId, month);
-            if (concurrent == null) {
-                throw new BizException(
-                        NursingErrorCode.CONFLICT,
-                        HttpStatus.CONFLICT,
-                        "体温单月页并发创建冲突且重查失败：visitId=" + visitId + "，chartMonth=" + month);
-            }
-            return concurrent.getId();
+            // 并发建页同键冲突：PG 同事务内语句失败即事务 aborted（重查抛 25P02 不可达），
+            // 直接转 NS-1016 幂等拒绝，由调用方整单重试（重试时首查即可取回既有页）
+            throw new BizException(
+                    NursingErrorCode.CONFLICT,
+                    HttpStatus.CONFLICT,
+                    "体温单月页并发创建冲突：visitId=" + visitId + "，chartMonth=" + month);
         }
         log.info("体温单月页创建：visitId={}，chartMonth={}", visitId, page.getChartMonth());
         return page.getId();

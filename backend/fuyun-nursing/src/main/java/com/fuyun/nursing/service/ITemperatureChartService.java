@@ -65,12 +65,13 @@ public interface ITemperatureChartService {
     void appendDailyValue(String visitId, String dailyValueType, String valueText, String recorderId);
 
     /**
-     * 月页自动创建/取回：(visit_id, chart_month) 查—无则 insert（唯一索引冲突重查兜底并发建页）。
+     * 月页自动创建/取回：(visit_id, chart_month) 查—无则 insert；并发建页命中唯一索引冲突时
+     * 转 NS-1016 幂等拒绝（调用方整单重试语义——重试时首查即取回既有页）。
      *
      * @param visitId 住院就诊号，非空
      * @param month   住院月页，非空
      * @return 月页 id，非空
-     * @throws BizException NS-1016（409 并发建页兜底重查仍失败）
+     * @throws BizException NS-1016（409 并发建页同键冲突）
      */
     Long ensurePage(String visitId, YearMonth month);
 }

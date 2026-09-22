@@ -21,6 +21,7 @@ CREATE TABLE nursing.nursing_record (
     ref_vital_id    BIGINT       NULL,                                     -- 关联体征记录引用（Task 5 回填）
     ref_event_ref   VARCHAR(64)  NULL,                                     -- 关联特殊事件引用（type_key）
     auto_generated  BOOLEAN      NOT NULL DEFAULT false,                   -- 是否由体征归集自动生成（观察行）
+    abnormal_flag   BOOLEAN      NOT NULL DEFAULT false,                   -- 观察行异常标记——异常归集新建行置 true，正常归集合并谓词限定 false，兼防 selectOne 多行
     signature_ref   VARCHAR(64)  NULL,                                     -- 电子签名引用（M01 CA，P2 接；P1 留痕=operator+signed_at）
     signed_operator VARCHAR(64)  NULL,                                     -- 签名操作者（P1 有效留痕）
     signed_at       TIMESTAMPTZ  NULL,                                     -- 签名时间

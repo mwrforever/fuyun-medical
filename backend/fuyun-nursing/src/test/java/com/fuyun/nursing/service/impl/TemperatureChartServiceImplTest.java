@@ -258,20 +258,8 @@ class TemperatureChartServiceImplTest {
     }
 
     @Test
-    @DisplayName("月页并发创建：唯一索引冲突重查兜底取回既有页（幂等语义，并发建页不报错）")
-    void ensurePageRecoversFromConcurrentCreation() {
-        when(pageMapper.selectOne(any())).thenReturn(null).thenReturn(pageRow());
-        when(pageMapper.insert(any(TemperatureChartPage.class)))
-                .thenThrow(new DuplicateKeyException("uk_chart_page_visit_month"));
-
-        Long pageId = service.ensurePage(VISIT, YearMonth.of(2026, 9));
-
-        assertThat(pageId).isEqualTo(77L);
-    }
-
-    @Test
-    @DisplayName("月页并发创建：冲突且重查仍失败拒 NS-1016（防御性兜底分支）")
-    void ensurePageRejectsWhenConcurrentRequeryMisses() {
+    @DisplayName("月页并发创建：唯一索引冲突转 NS-1016 幂等拒绝（PG 同事务重查不可达，调用方整单重试）")
+    void ensurePageRejectsConcurrentDuplicateKey() {
         when(pageMapper.selectOne(any())).thenReturn(null);
         when(pageMapper.insert(any(TemperatureChartPage.class)))
                 .thenThrow(new DuplicateKeyException("uk_chart_page_visit_month"));
@@ -280,7 +268,11 @@ class TemperatureChartServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.CONFLICT);
                     assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1016");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
+        // I2 可执行锚：仅首查一次（无同事务重查——PG 语句失败事务 aborted，25P02）
+        verify(pageMapper, times(1)).selectOne(any());
+        verify(pageMapper, times(1)).insert(any(TemperatureChartPage.class));
     }
 
     // ===================== 测试数据与断言辅助 =====================
