@@ -2,6 +2,22 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-22 · P1 PR-6 M05 护理基础：nursing 号段登记与门禁适配（先记再改）
+
+- **nursing 专属固定百位段 V800–V899 新登记**：M05 为 schema 基线零迁移的新模块，首批迁移占百位段
+  V800–V807（患者元数据/护理文书/体征/出入量/护理任务/评估/交接班/事件登记八批）；批次合入后
+  nursing 后续迁移一律走 V500+ 通用段（W-12 口径，patient/outpatient 先例）。
+  **段位语义（2026-09-22 用户批复条件 1）：V800–V899 为 nursing 专属固定段位、非通用段，仅供 nursing
+  模块迁移占用，其他模块不得使用**——防止后人把 V8xx 误读为通用段。
+- **免存量卷重置**：首批 V800–V807 高于基线全局最大已应用版本 V706，Flyway outOfOrder=false
+  对存量 dev 卷不构成 pending 阻断——本 PR 无需 down -v（与 PR-5 V200<V703 的处置不同）。
+- **事件 id 排定**：CF-6 契约冻结载体与 M05 发布面共 24 行，id 41–64（当前最大 40）；status
+  一律 ACTIVE；CF-6 冻结行 desc 标注「(CF-6 冻结载体)」，占位行标注「(P1 占位登记，P2 实装)」。
+- **JaCoCo 规则二扩名单**：`com.fuyun.nursing.service.impl` 纳入 PACKAGE LINE=1.00（护理文书为
+  病历要件、体征落卡状态机与评估判级属核心面）。
+- **迁移守卫登记**：`scripts/check-migration-governance.py` `_SEGMENTS` 增 nursing 百位段；
+  `docs/migrations/flyway-version-registry.md` 同步登记 V800–V807。
+
 ## 2026-09-22 · W-29 后端 PR 开工：门诊契约缝三条补齐 + D-4 schema 坍缩治理
 
 - **范围**：①D-2 `QueueTicketVO` 补 `triageLevel`（数据源 visit.triage_level 权威快照，snapshot 路径零新增

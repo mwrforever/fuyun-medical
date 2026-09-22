@@ -152,6 +152,14 @@
       <artifactId>fuyun-outpatient</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M05 护理管理（P1 PR-6）：模块装配经本模块 NursingConfig @Import（OutpatientConfig 同模式，
+         装配归 app，B.1）；V800–V807 迁移资源随本依赖进入 fuyun-app 的 Flyway classpath
+         （spring.flyway.locations 已显式枚举 nursing 目录） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-nursing</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>
