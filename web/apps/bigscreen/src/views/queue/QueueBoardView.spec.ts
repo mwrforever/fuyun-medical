@@ -42,7 +42,11 @@ vi.mock('@/composables/useQueueStomp', () => {
 // eslint 提示：与 mock 工厂共享模块作用域，非未使用导入
 import { connectionState } from '@/composables/useQueueStomp';
 
-function ticketMock(no: string, status: QueueTicketVO['status'] = 'WAITING'): QueueTicketVO {
+function ticketMock(
+  no: string,
+  status: QueueTicketVO['status'] = 'WAITING',
+  triageLevel?: number,
+): QueueTicketVO {
   return {
     id: no,
     visitId: `O20260921${no}`,
@@ -53,6 +57,8 @@ function ticketMock(no: string, status: QueueTicketVO['status'] = 'WAITING'): Qu
     queueSeq: 1,
     status,
     patientName: '张*',
+    // 票面分诊级别（W-29 契约消费）：undefined=可空态（非分级流程票据）
+    triageLevel,
   };
 }
 
@@ -112,6 +118,23 @@ describe('候诊叫号大屏', () => {
     expect(wrapper.findAll('.queue-board-row')).toHaveLength(8);
     expect(wrapper.text()).toContain('A001');
     expect(wrapper.text()).toContain('候诊');
+    wrapper.unmount();
+  });
+
+  it('分诊级别角标：快照行有分级渲染对应级别角标，可空行不渲染占位（W-29 契约消费）', async () => {
+    h.tokenConfigured = true;
+    vi.mocked(getQueueSnapshot).mockResolvedValue([
+      ticketMock('A001', 'WAITING', 1),
+      ticketMock('A002', 'WAITING'),
+    ]);
+    const { wrapper } = await mountBoard('?dept=DEPT-INT');
+    await flushPromises();
+
+    // 有分级行：角标携级别词表文案与四级色 modifier；可空行整段隐藏（榜单不出现第二枚角标）
+    const badges = wrapper.findAll('.queue-board-row-triage');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].text()).toBe('Ⅰ级');
+    expect(badges[0].classes()).toContain('is-l1');
     wrapper.unmount();
   });
 

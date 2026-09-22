@@ -1,7 +1,8 @@
 // 门诊医生站页单测（FU-M03-05/06 前端面）：渲染断言（页头医生名/三栏标题/空态）、接诊链
 // （confirm 带患者摘要 → admit 出网 → 上下文与在诊单据回显）、开单数量显式整数校验（W-22⑦：
 // 非整数置回并 4xx 口径提示，拦截零出网）、诊毕门禁（去向+在途单据确认勾选未齐禁用，danger
-// 确认弹窗后出网）、诊毕在途守卫（W-22⑥：慢响应窗口二次点击零出网）。
+// 确认弹窗后出网）、诊毕在途守卫（W-22⑥：慢响应窗口二次点击零出网）、处方引用发药状态镜像
+// 两态呈现（W-29 D-3：已发药 tag 词表 / 未回流「未发药」）。
 // api mock 承载，不打真实网络；会话经 sessionStorage 种子恢复（出诊医生=登录用户）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
@@ -336,6 +337,39 @@ describe('门诊医生站', () => {
 
     releaseFinish();
     await flushPromises();
+    wrapper.unmount();
+  });
+
+  it('处方引用发药状态镜像：已发药渲染 tag 词表，未回流显示未发药（W-29 D-3 消费面）', async () => {
+    vi.mocked(listPatientQueue).mockResolvedValue([queueRowMock()]);
+    vi.mocked(admitVisit).mockResolvedValue(visitMock());
+    vi.mocked(listOrdersByVisit).mockResolvedValue([
+      {
+        ...orderMock(),
+        id: '801',
+        orderType: 'RX_REF',
+        extRef: 'RX-1',
+        status: 'COMPLETED',
+        dispenseStatus: 'DISPENSED',
+      },
+      { ...orderMock(), id: '802', orderType: 'RX_REF', extRef: 'RX-2', status: 'COMPLETED' },
+    ]);
+    const wrapper = mount(DoctorStationView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await admitFirstRow(wrapper);
+
+    // 切到处方引用 Tab（发药状态列呈现面）
+    const rxTab = wrapper.findAll('.el-tabs__item').find((node) => node.text() === '处方引用');
+    await rxTab?.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('RX-1');
+    // 有镜像值：tag 承载词表文案（DISPENSED→已发药）
+    const dispensedTag = wrapper.findAll('.el-tag').find((node) => node.text() === '已发药');
+    expect(dispensedTag).toBeDefined();
+    // 空镜像：未发生发药回流，「未发药」纯文本承载初始语义
+    expect(wrapper.text()).toContain('RX-2');
+    expect(wrapper.text()).toContain('未发药');
     wrapper.unmount();
   });
 

@@ -30,6 +30,24 @@ const STATUS_BADGES: Record<string, { text: string; tone: 'secondary' | 'warn' |
   CANCELLED: { text: '已取消', tone: 'secondary' },
 };
 
+/** 分诊级别角标词表（W-29 D-2 契约消费：QueueTicketVO.triageLevel 随票出网；Ⅰ危/Ⅱ急/Ⅲ重/Ⅳ普
+ * 沿用 workstation 徽标四级色彩语义，色值走 --fuy-screen-triage-l1..l4 暗色 token） */
+const TRIAGE_LEVEL_BADGES: Record<number, string> = { 1: 'Ⅰ级', 2: 'Ⅱ级', 3: 'Ⅲ级', 4: 'Ⅳ级' };
+
+/**
+ * 级别角标类（1-4 越界防御：契约值域外不渲染角标；可空=非分级流程票据，行内不渲染占位——
+ * 大屏榜单保持既有三段节奏，避免远距观看时的空占位噪音）。
+ *
+ * @param level 票面分诊级别（后端 Integer 可空）
+ * @return 角标 modifier 类；值域外返回 null（模板据此整段隐藏）
+ */
+function triageBadgeClass(level: number | undefined): string | null {
+  if (level === undefined || level === null || level < 1 || level > 4) {
+    return null;
+  }
+  return `is-l${level}`;
+}
+
 const route = useRoute();
 const router = useRouter();
 
@@ -240,6 +258,13 @@ onBeforeUnmount(() => {
         >
           <span class="fuy-num queue-board-row-index">{{ index + 1 }}</span>
           <span class="fuy-num queue-board-row-ticket">{{ row.ticketNo }}</span>
+          <!-- 分诊级别角标（W-29）：急诊分级大屏可视化；可空=非分级流程整段隐藏 -->
+          <span
+            v-if="triageBadgeClass(row.triageLevel) !== null"
+            class="queue-board-row-triage"
+            :class="triageBadgeClass(row.triageLevel)"
+            >{{ TRIAGE_LEVEL_BADGES[row.triageLevel ?? 0] ?? '—' }}</span
+          >
           <span class="queue-board-row-badge" :class="`is-${statusBadge(row).tone}`">{{
             statusBadge(row).text
           }}</span>
@@ -424,6 +449,25 @@ onBeforeUnmount(() => {
   flex: 1;
   font-size: 2.5rem;
   font-weight: 700;
+}
+/* 分诊级别角标（W-29）：workstation 四级色彩语义的暗色承载——四级 token 为暗底亮色文字色
+   （设计文档 §2.2.3），实底白字会跌破大字 AA，故与行内状态角标同构走文本色形态；
+   1.25rem 与状态角标同级，3-10 米远距可读 */
+.queue-board-row-triage {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+.queue-board-row-triage.is-l1 {
+  color: var(--fuy-screen-triage-l1);
+}
+.queue-board-row-triage.is-l2 {
+  color: var(--fuy-screen-triage-l2);
+}
+.queue-board-row-triage.is-l3 {
+  color: var(--fuy-screen-triage-l3);
+}
+.queue-board-row-triage.is-l4 {
+  color: var(--fuy-screen-triage-l4);
 }
 .queue-board-row-badge {
   font-size: 1.25rem;

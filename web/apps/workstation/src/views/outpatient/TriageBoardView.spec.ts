@@ -1,7 +1,8 @@
-// 分诊台页单测（FU-M03-04 前端面）：渲染断言（操作条/轮询提示/空态）、报到显式格式校验
-// （空值与形态违规两道前置拦截零出网——W-22⑦ 同款禁裸提交）、报到出网参数、行动作在途守卫
-// （W-22⑥：慢响应窗口按钮禁用且二次点击零出网）、调级确认带回显摘要、轮询 merge 可变字段
-// 同步（真机 D-3：二次分诊改派 doctorId 后叫号须携新值出网）。
+// 分诊台页单测（FU-M03-04 前端面）：渲染断言（操作条/轮询提示/空态/分诊级别徽标两态）、
+// 报到显式格式校验（空值与形态违规两道前置拦截零出网——W-22⑦ 同款禁裸提交）、报到出网参数、
+// 行动作在途守卫（W-22⑥：慢响应窗口按钮禁用且二次点击零出网）、调级确认带回显摘要、
+// 调级理由必填前置拦截与出网携带（W-29 D-9）、轮询 merge 可变字段同步（真机 D-3：二次分诊
+// 改派 doctorId 后叫号须携新值出网）。
 // api mock 承载，不打真实网络；轮询 5s 周期在用例时间窗内零触发（merge 用例经
 // visibilitychange 事件驱动单次刷新），卸载清理定时器。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -156,9 +157,9 @@ describe('分诊台', () => {
     wrapper.unmount();
   });
 
-  it('队列表渲染断言：票号/脱敏姓名/优先级/状态 tag 与等待时长列', async () => {
+  it('队列表渲染断言：票号/脱敏姓名/级别徽标两态/优先级/状态 tag 与等待时长列', async () => {
     vi.mocked(getQueueSnapshot).mockResolvedValue([
-      ticketMock({ id: '1', ticketNo: 'A003', status: 'WAITING' }),
+      ticketMock({ id: '1', ticketNo: 'A003', status: 'WAITING', triageLevel: 2 }),
       ticketMock({
         id: '2',
         ticketNo: 'A004',
@@ -173,6 +174,11 @@ describe('分诊台', () => {
     expect(wrapper.text()).toContain('张*');
     expect(wrapper.text()).toContain('候诊中');
     expect(wrapper.text()).toContain('已叫号');
+    // 级别徽标两态（W-29 D-2 消费面）：票面有分级渲染对应级别徽标，可空行仅占位不出徽标
+    const levelBadge = wrapper.find('.fuy-triage-badge--l2');
+    expect(levelBadge.exists()).toBe(true);
+    expect(levelBadge.text()).toBe('Ⅱ级');
+    expect(wrapper.findAll('.fuy-triage-badge')).toHaveLength(1);
     // 等待 ≥30 分钟预警列渲染（45 分钟）
     expect(wrapper.text()).toContain('45 分钟');
     wrapper.unmount();
@@ -213,7 +219,7 @@ describe('分诊台', () => {
     wrapper.unmount();
   });
 
-  it('调级提交：confirm 带回显摘要（票号+目标级别）且出网参数携 LEVEL_ADJUST 与 triageLevel', async () => {
+  it('调级提交：confirm 带回显摘要（票号+目标级别）且出网参数携 LEVEL_ADJUST/triageLevel/reason', async () => {
     vi.mocked(getQueueSnapshot).mockResolvedValue([
       ticketMock({ id: '1', ticketNo: 'A003', status: 'WAITING' }),
     ]);
@@ -221,8 +227,11 @@ describe('分诊台', () => {
     const wrapper = mount(TriageBoardView);
     await flushPromises();
 
-    // 选中行 → 提交处置（默认动作 LEVEL_ADJUST，默认目标级别 Ⅲ级）
+    // 选中行 → 填调级理由（必填）→ 提交处置（默认动作 LEVEL_ADJUST，默认目标级别 Ⅲ级）
     await wrapper.findAll('.el-table__row')[0].trigger('click');
+    await wrapper
+      .find('textarea[placeholder="动作理由（调级必填，≤255 字）"]')
+      .setValue('患者症状加重');
     await clickButton(wrapper, '提交处置');
     await flushPromises();
     expect(vi.mocked(ElMessageBox.confirm)).toHaveBeenCalledWith(
@@ -236,7 +245,26 @@ describe('分诊台', () => {
       triageLevel: 3,
       targetQueue: undefined,
       doctorId: undefined,
+      reason: '患者症状加重',
     });
+    wrapper.unmount();
+  });
+
+  it('调级理由前置校验：LEVEL_ADJUST 空理由被拦截，确认与出网零发生（W-29 D-9 必填呈现面）', async () => {
+    vi.mocked(getQueueSnapshot).mockResolvedValue([
+      ticketMock({ id: '1', ticketNo: 'A003', status: 'WAITING' }),
+    ]);
+    const wrapper = mount(TriageBoardView);
+    await flushPromises();
+    // 跨用例累积 mock 先清零，证明确认弹窗在本用例内未触发（拦截先于确认）
+    vi.mocked(ElMessageBox.confirm).mockClear();
+
+    await wrapper.findAll('.el-table__row')[0].trigger('click');
+    await clickButton(wrapper, '提交处置');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('请填写调级理由');
+    expect(vi.mocked(ElMessageBox.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(adjustTriage)).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 
