@@ -2520,7 +2520,7 @@ export interface components {
             /** @example 0 */
             patientId: string;
         };
-        Item: {
+        PrescriptionItem: {
             /** @example 0 */
             drugId: string;
             quantity: string;
@@ -2536,7 +2536,12 @@ export interface components {
             rxType: string;
             diagnosisCodes?: string[];
             skinTestRequired?: boolean;
-            items: components["schemas"]["Item"][];
+            items: components["schemas"]["PrescriptionItem"][];
+        };
+        ClinicOrderItem: {
+            itemCode?: string;
+            quantity?: string;
+            usageSummary?: string;
         };
         ClinicOrderVO: {
             /** @example 0 */
@@ -2553,9 +2558,10 @@ export interface components {
             validTo?: string;
             /** @enum {string} */
             status?: "CREATED" | "PENDING_FEE" | "CHARGED" | "IN_EXECUTION" | "COMPLETED" | "CANCELLED";
+            dispenseStatus?: string;
             /** @example 0 */
             feeSettlementId?: string;
-            items?: components["schemas"]["Item"][];
+            items?: components["schemas"]["ClinicOrderItem"][];
         };
         OrderCreateRequest: {
             orderType: string;
@@ -2618,6 +2624,8 @@ export interface components {
             /** @enum {string} */
             status?: "WAITING" | "CALLED" | "SERVING" | "SERVED" | "PASSED" | "CANCELLED";
             patientName?: string;
+            /** Format: int32 */
+            triageLevel?: number;
         };
         TriageAdjustRequest: {
             visitId: string;
@@ -2627,6 +2635,7 @@ export interface components {
             /** Format: int32 */
             triageLevel?: number;
             priorityFactors?: string[];
+            reason?: string;
         };
         StopScheduleRequest: {
             reason: string;

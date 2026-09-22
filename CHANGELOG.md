@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-22 · W-29 后端 PR 开工：门诊契约缝三条补齐 + D-4 schema 坍缩治理
+
+- **范围**：①D-2 `QueueTicketVO` 补 `triageLevel`（数据源 visit.triage_level 权威快照，snapshot 路径零新增
+  查询）；②D-3 `ClinicOrderVO` 补 `dispenseStatus`（发药回流镜像纯投影漏带）；③D-9 `TriageAdjustRequest` 补
+  `reason`（落既有 triage_record.reason 列，零迁移；LEVEL_ADJUST 服务层必携校验）+ 修复 adjust 留痕错位传参
+  （第 8 实参误传 targetQueue → 改传 reason）；④D-4 `@Schema(name=...)` 治 springdoc 同名嵌套 record 注册坍缩
+  （`ClinicOrderVO.Item`→`ClinicOrderItem`、`PrescriptionOpenRequest.Item`→`PrescriptionItem`，backend 首例，
+  不动类名、不动 Line 侧 6 条载荷）。
+- **依据**：调研报告 `.superpowers/w29-recon.md`（需求锚 TASK.md W-29；偏差登记
+  docs/specs/modules/03-outpatient.md:226-231，PR 内回填修复状态并订正 :229 归因措辞）。
+- **门禁承诺**：后端 `mvn verify`（Spotless + 单测 + JaCoCo 双阈值）与前端五连全绿后方可交付；契约与生成物
+  （web/api-docs.json + api.d.ts）同 PR 原子，`DoctorStationView.spec.ts` mock 由 drugId 坍缩形态改回 itemCode
+  形态属 D-4 修复本义、非断言放宽。
+
 ## 2026-09-22 · D-21 断言现代化：发药签名 confirm 补中文按钮与单号回显 + 根宪法新增「回归红线出口」
 
 - **宪法修订（先记再改）**：根 `AGENTS.md` §7 跨切约定新增「**回归红线出口（测试断言现代化流程）**」条目——既有

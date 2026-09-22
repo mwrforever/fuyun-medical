@@ -16,6 +16,9 @@ import java.util.List;
  * @param doctorId        指派医生 id，二次分诊时必携；来源：医生选择
  * @param triageLevel     急诊分级（Ⅰ~Ⅳ=1~4），调级时必携；来源：分诊台判定
  * @param priorityFactors 老幼残优先级因子（全量口径，可空）；来源：分诊台人工判定
+ * @param reason          动作理由（调级/转队列留痕，落 triage_record.reason 供质控回溯）；
+ *                        LEVEL_ADJUST 服务层强制必携（空白拒绝），RE_TRIAGE/QUEUE_TRANSFER 无
+ *                        理由语义不作 @NotBlank 强制——避免误伤无理由动作；来源：分诊台输入
  */
 public record TriageAdjustRequest(
         @NotBlank(message = "visitId 不得为空白") String visitId,
@@ -23,4 +26,5 @@ public record TriageAdjustRequest(
         String targetQueue,
         String doctorId,
         Integer triageLevel,
-        List<String> priorityFactors) {}
+        List<String> priorityFactors,
+        String reason) {}

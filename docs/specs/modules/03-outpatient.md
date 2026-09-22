@@ -224,13 +224,19 @@
 > `billing.charge.guaranteed` 不订阅、`outpatient.green-channel.opened/closed` 不登记、
 > kiosk_terminal/kiosk_txn_log 不建表；分诊台仅承载报到/二次分诊/调级（绿通置顶随排除面顺延）。
 > **契约缝三条**（P1 契约增补回补，禁虚构契约未呈现——前端对应呈现面缺失已在交付面注记归因）：
-> **D-2** QueueTicketVO 缺 triageLevel（分诊台级别徽标列无从取数）；**D-3** ClinicOrderVO 缺
-> dispense_status（医生站「已发药」镜像列无从取数）；**D-9** TriageAdjustRequest 缺 reason（调级
-> 理由必填未呈现）。**D-4 schema 同名坍缩归因**：springdoc 注册层 outpatient `ClinicOrderVO.Item`
-> （itemCode/quantity/usageSummary）与 pharmacy `PrescriptionOpenRequest.Item`（drugId/quantity/…）
-> 内嵌 record 共名 `Item`，openapi 生成物中两者坍缩为单一 `Item` schema（ClinicOrderVO.items 反向
-> 引用 pharmacy 形态；openapi-typescript 系忠实镜像，运行时消费无行为损害）；根治=后端 dto 改名，
-> 随 P1 契约增补一并处置。
+> **D-2** QueueTicketVO 缺 triageLevel（分诊台级别徽标列无从取数）——**已修复（W-29，2026-09-22，
+> 出参补列，数据源 visit.triage_level 权威快照）**；**D-3** ClinicOrderVO 缺 dispense_status
+> （医生站「已发药」镜像列无从取数）——**已修复（W-29，2026-09-22，VO 补投影）**；**D-9**
+> TriageAdjustRequest 缺 reason（调级理由必填未呈现）——**已修复（W-29，2026-09-22，DTO 补
+> reason 落既有 triage_record.reason 列，LEVEL_ADJUST 服务层必携校验并修复留痕错位传参）**。
+> **D-4 schema 同名坍缩归因**——**已修复（W-29，2026-09-22）**：springdoc 注册层 outpatient
+> `ClinicOrderVO.Item`（itemCode/quantity/usageSummary）与 outpatient dto `PrescriptionOpenRequest.Item`
+> （drugId/quantity/…；两坍缩对**均在 outpatient 模块内**——原表述「pharmacy PrescriptionOpenRequest.Item」
+> 系归因勘误，pharmacy 侧同构类为 api `PrescriptionOpenCommand.Item`，模块间出站命令不在
+> springdoc 契约面）内嵌 record 共名 `Item`，openapi 生成物中两者坍缩为单一 `Item` schema
+> （ClinicOrderVO.items 反向引用 drugId 形态；openapi-typescript 系忠实镜像，运行时消费无行为
+> 损害）；根治经 `@Schema(name=...)` 分立注册名（`ClinicOrderItem`/`PrescriptionItem`，backend
+> 首例）实现，不动类名，生成物已同 PR 重生成分立。
 
 ## 8. 集成点
 
