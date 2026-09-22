@@ -22,6 +22,8 @@ import java.time.OffsetDateTime;
  * @param callTime      最近叫号时间（未叫为 null）
  * @param status        票据状态（WAITING/CALLED/SERVING/SERVED/PASSED/CANCELLED）
  * @param patientName   脱敏展示名（patient 侧掩码收口，如 张*；无命中为 null）
+ * @param triageLevel   分诊级别（Ⅰ~Ⅳ=1~4，数据源 visit.triage_level 权威快照——queue_ticket 表无
+ *                      此列；null=未分级），可空
  */
 public record QueueTicketVO(
         Long id,
@@ -36,4 +38,5 @@ public record QueueTicketVO(
         Integer calledCount,
         OffsetDateTime callTime,
         TicketStatus status,
-        String patientName) {}
+        String patientName,
+        Integer triageLevel) {}

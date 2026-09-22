@@ -648,6 +648,8 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 order.getOrderDoctorId(),
                 order.getValidTo(),
                 order.getStatus(),
+                // 发药回流镜像透传（D-3：M06 发药/退药事件 CAS 回写值，null=未发药）
+                order.getDispenseStatus(),
                 order.getFeeSettlementId(),
                 items.stream()
                         .map(row -> new ClinicOrderVO.Item(row.getItemCode(), row.getQuantity(), row.getUsageSummary()))

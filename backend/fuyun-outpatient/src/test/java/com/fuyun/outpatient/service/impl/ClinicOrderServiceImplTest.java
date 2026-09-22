@@ -695,10 +695,12 @@ class ClinicOrderServiceImplTest {
     }
 
     @Test
-    @DisplayName("按就诊号查询申请单：两单各配明细行（批量装配，禁 N+1）")
+    @DisplayName("按就诊号查询申请单：两单各配明细行（批量装配，禁 N+1）；发药回流镜像两态投影（D-3）")
     void listByVisitReturnsOrdersWithItems() {
         ClinicOrder first = order(orderNoOf(1), OrderType.LAB, OrderStatus.CREATED);
         ClinicOrder second = order(882L, orderNoOf(2), OrderType.EXAM, OrderStatus.CHARGED);
+        // second 模拟 M06 发药回流镜像已回写（dispense.completed CAS 落值）；first 保持未发药 null
+        second.setDispenseStatus("DISPENSED");
         when(clinicOrderMapper.selectList(any())).thenReturn(List.of(second, first));
         ClinicOrderItem labRow = new ClinicOrderItem();
         labRow.setOrderId(881L);
@@ -721,5 +723,8 @@ class ClinicOrderServiceImplTest {
         assertThat(result.get(1).items())
                 .extracting(ClinicOrderVO.Item::itemCode)
                 .containsExactly("LAB001");
+        // D-3：发药回流镜像两态——已发药透传 DISPENSED，未发药为 null（VO 纯投影漏带修复）
+        assertThat(result.get(0).dispenseStatus()).isEqualTo("DISPENSED");
+        assertThat(result.get(1).dispenseStatus()).isNull();
     }
 }

@@ -1,5 +1,6 @@
 package com.fuyun.outpatient.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -27,6 +28,10 @@ public record PrescriptionOpenRequest(
      * 处方明细行（与 pharmacy api PrescriptionOpenCommand.Item 镜像同构——api 面禁外引，
      * backend 宪法 A.7 职责隔离）。
      *
+     * <p>springdoc 注册名显式化（D-4，backend 首例）：嵌套 record 简名 Item 与 ClinicOrderVO.Item
+     * 在 /v3/api-docs 同名注册坍缩（drugId 形态覆盖 itemCode 形态），经 @Schema(name=...) 分立
+     * 注册名；不动类名、不影响运行时 Jackson 反序列化（springdoc 仅文档链路）。
+     *
      * @param drugId     药品 id，必填（drug 字典引用）
      * @param quantity   数量，必填且 &gt;0（DECIMAL string 承载）
      * @param unit       单位，可空（缺省取 drug.unit）
@@ -36,6 +41,7 @@ public record PrescriptionOpenRequest(
      * @param days       用药天数，可空
      * @param usageNote  用法备注，可空
      */
+    @Schema(name = "PrescriptionItem")
     public record Item(
             @NotNull Long drugId,
             @NotBlank String quantity,

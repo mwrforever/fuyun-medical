@@ -240,12 +240,13 @@ class TriageServiceImplTest {
         assertThat(ticketCaptor.getValue().getStatus()).isEqualTo(TicketStatus.WAITING);
         // ZSET 入队编码=100*1e8+seq
         verify(queueZsetStore).enqueue("DEP001", 501L, 100 * SCORE_ENCODE_SCALE + 1);
-        // 留痕：CHECK_IN 动作+报到终端标识+无因子 JSON
+        // 留痕：CHECK_IN 动作+报到终端标识+无因子 JSON（报到动作无理由语义，reason 留空）
         verify(triageRecordMapper).insert(triageCaptor.capture());
         assertThat(triageCaptor.getValue().getAction().getCode()).isEqualTo("CHECK_IN");
         assertThat(triageCaptor.getValue().getStationId()).isEqualTo("STATION-01");
         assertThat(triageCaptor.getValue().getNurseId()).isEqualTo("nurse001");
         assertThat(triageCaptor.getValue().getPriorityFactor()).isNull();
+        assertThat(triageCaptor.getValue().getReason()).isNull();
         // 报到时间回填（国标）；实体补写同值断言：CAS 后禁携 CAS 前旧态经 updateById 覆写状态机
         // （真栈 IT 实证回归锚——覆写致 visit 恒 REGISTERED、admit 恒 OP-1011）
         ArgumentCaptor<Visit> checkInVisitCaptor = ArgumentCaptor.forClass(Visit.class);
@@ -270,6 +271,8 @@ class TriageServiceImplTest {
         assertThat(vo.priorityScore()).isEqualTo(900);
         assertThat(vo.ticketNo()).isEqualTo("A002");
         verify(queueZsetStore).enqueue("DEP001", 501L, 900 * SCORE_ENCODE_SCALE + 2);
+        // D-2：出参携 visit.triage_level 权威快照（报到路径手握 visit 实体直取）
+        assertThat(vo.triageLevel()).isEqualTo(1);
     }
 
     @Test
@@ -284,9 +287,10 @@ class TriageServiceImplTest {
 
         assertThat(vo.priorityScore()).isEqualTo(600);
         assertThat(vo.ticketType()).isEqualTo(TicketType.RETURN);
-        // 因子 JSON 留痕（triage_record.priority_factor）
+        // 因子 JSON 留痕（triage_record.priority_factor）；报到动作 reason 留空
         verify(triageRecordMapper).insert(triageCaptor.capture());
         assertThat(triageCaptor.getValue().getPriorityFactor()).isEqualTo("[\"ELDERLY\"]");
+        assertThat(triageCaptor.getValue().getReason()).isNull();
     }
 
     @Test
@@ -327,8 +331,8 @@ class TriageServiceImplTest {
         when(visitMapper.selectOne(any())).thenReturn(visit);
         when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
 
-        QueueTicketVO vo =
-                service.adjust(new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null));
+        QueueTicketVO vo = service.adjust(
+                new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null, "病情变化升Ⅰ级"));
 
         // 分值重算+ZSET 重排（同 member 换分），票号不变
         verify(queueTicketMapper).updateById(ticketCaptor.capture());
@@ -340,10 +344,13 @@ class TriageServiceImplTest {
         verify(visitMapper).updateById(any(Visit.class));
         assertThat(visit.getTriageLevel()).isEqualTo(1);
         assertThat(vo.priorityScore()).isEqualTo(900);
-        // 留痕：LEVEL_ADJUST 动作
+        // D-2：出参携 visit 当前分级快照（adjust 路径手握 visit 实体直取）
+        assertThat(vo.triageLevel()).isEqualTo(1);
+        // 留痕：LEVEL_ADJUST 动作+入参理由（W-29 错位修复锚——reason 为用户输入理由，非 null/目标队列）
         verify(triageRecordMapper).insert(triageCaptor.capture());
         assertThat(triageCaptor.getValue().getAction().getCode()).isEqualTo("LEVEL_ADJUST");
         assertThat(triageCaptor.getValue().getTriageLevel()).isEqualTo(1);
+        assertThat(triageCaptor.getValue().getReason()).isEqualTo("病情变化升Ⅰ级");
     }
 
     @Test
@@ -357,8 +364,8 @@ class TriageServiceImplTest {
                 .thenReturn(1);
         stubInsertAssignsIds(601L);
 
-        QueueTicketVO vo =
-                service.adjust(new TriageAdjustRequest("O2026092100001", "QUEUE_TRANSFER", "DEP002", null, null, null));
+        QueueTicketVO vo = service.adjust(
+                new TriageAdjustRequest("O2026092100001", "QUEUE_TRANSFER", "DEP002", null, null, null, "患者要求转诊区"));
 
         // 旧票 CAS 放票+旧队移除
         verify(queueTicketMapper).casStatus(501L, "WAITING", "CANCELLED", "nurse001");
@@ -372,10 +379,12 @@ class TriageServiceImplTest {
         assertThat(fresh.getPriorityScore()).isEqualTo(100);
         verify(queueZsetStore).enqueue("DEP002", 601L, 100 * SCORE_ENCODE_SCALE + 1);
         assertThat(vo.queueId()).isEqualTo("DEP002");
-        // 留痕：QUEUE_TRANSFER 动作目标队列
+        // 留痕：QUEUE_TRANSFER 动作目标队列+入参理由（W-29 错位修复锚——reason 为用户输入理由，
+        // 不再把目标队列副本 "DEP002" 写进 reason 列）
         verify(triageRecordMapper).insert(triageCaptor.capture());
         assertThat(triageCaptor.getValue().getAction().getCode()).isEqualTo("QUEUE_TRANSFER");
         assertThat(triageCaptor.getValue().getTargetQueue()).isEqualTo("DEP002");
+        assertThat(triageCaptor.getValue().getReason()).isEqualTo("患者要求转诊区");
     }
 
     @Test
@@ -455,13 +464,13 @@ class TriageServiceImplTest {
     }
 
     @Test
-    @DisplayName("快照：患者姓名掩码出网（张*）且无证件号字段（脱敏红线）")
+    @DisplayName("快照：患者姓名掩码出网（张*）且无证件号字段（脱敏红线）；分级快照随 visit 批查零新增查询")
     void snapshotMasksPatientName() {
         QueueTicket first = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
         QueueTicket second = ticket(502L, TicketType.FIRST, 100, 2, TicketStatus.WAITING, 0);
         second.setVisitId("O2026092100002");
         when(queueTicketMapper.selectList(any())).thenReturn(List.of(first, second));
-        Visit visitA = visit(VisitStatus.WAITING, null, (short) 0);
+        Visit visitA = visit(VisitStatus.WAITING, 2, (short) 0);
         Visit visitB = visit(VisitStatus.WAITING, null, (short) 0);
         visitB.setVisitId("O2026092100002");
         visitB.setPatientId(10L);
@@ -474,6 +483,9 @@ class TriageServiceImplTest {
         assertThat(snapshot).hasSize(2);
         assertThat(snapshot.get(0).patientName()).isEqualTo("张*");
         assertThat(snapshot.get(1).patientName()).isEqualTo("李*");
+        // D-2：快照面分级快照两态——已分级取 visit.triage_level（2），未分级为 null
+        assertThat(snapshot.get(0).triageLevel()).isEqualTo(2);
+        assertThat(snapshot.get(1).triageLevel()).isNull();
     }
 
     @Test
@@ -630,8 +642,8 @@ class TriageServiceImplTest {
     @Test
     @DisplayName("守卫：分诊动作词表外——OP-1019（400）且零业务读")
     void adjustRejectsUnknownAction() {
-        assertThatThrownBy(() ->
-                        service.adjust(new TriageAdjustRequest("O2026092100001", "MAGIC", null, null, null, null)))
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O2026092100001", "MAGIC", null, null, null, null, null)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -642,8 +654,8 @@ class TriageServiceImplTest {
     @Test
     @DisplayName("守卫：adjust 端点误携 CHECK_IN 动作——OP-1019（报到走专用端点）")
     void adjustRejectsCheckInAction() {
-        assertThatThrownBy(() ->
-                        service.adjust(new TriageAdjustRequest("O2026092100001", "CHECK_IN", null, null, null, null)))
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O2026092100001", "CHECK_IN", null, null, null, null, null)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -656,8 +668,8 @@ class TriageServiceImplTest {
     void adjustRejectsMissingVisit() {
         when(visitMapper.selectOne(any())).thenReturn(null);
 
-        assertThatThrownBy(() ->
-                        service.adjust(new TriageAdjustRequest("O9999999999999", "LEVEL_ADJUST", null, null, 1, null)))
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O9999999999999", "LEVEL_ADJUST", null, null, 1, null, "病情变化升Ⅰ级")))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.VISIT_NOT_FOUND);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -669,8 +681,8 @@ class TriageServiceImplTest {
     void adjustRejectsInvalidTriageLevel() {
         when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.WAITING, null, (short) 0));
 
-        assertThatThrownBy(() ->
-                        service.adjust(new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 5, null)))
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 5, null, "病情变化升Ⅰ级")))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -679,13 +691,38 @@ class TriageServiceImplTest {
     }
 
     @Test
+    @DisplayName("守卫：调级缺理由（null/空白）——OP-1019（400）且零票查询零留痕（LEVEL_ADJUST 必携校验，D-9）")
+    void adjustLevelWithoutReasonRejected() {
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.WAITING, null, (short) 0));
+
+        // reason=null 与空白串同为「未携理由」：LEVEL_ADJUST 留痕无理由即拒绝，校验先于任何写路径
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null, null)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null, "   ")))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        // 前置校验零副作用：零票查询、零 visit 分级回写、零留痕（RE_TRIAGE/QUEUE_TRANSFER 无理由
+        // 语义不作强制——两动作携值/空值放行由 adjustRetriage/adjustTransfer 用例承载）
+        verify(queueTicketMapper, never()).selectOne(any());
+        verify(visitMapper, never()).updateById(any(Visit.class));
+        verify(triageRecordMapper, never()).insert(any(TriageRecord.class));
+    }
+
+    @Test
     @DisplayName("守卫：调整无在队票（未报到/已离队）——OP-1012（404）")
     void adjustRejectsTicketNotFound() {
         when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.WAITING, null, (short) 0));
         when(queueTicketMapper.selectOne(any())).thenReturn(null);
 
-        assertThatThrownBy(() ->
-                        service.adjust(new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null)))
+        assertThatThrownBy(() -> service.adjust(
+                        new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null, "病情变化升Ⅰ级")))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.TICKET_NOT_FOUND);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -700,17 +737,19 @@ class TriageServiceImplTest {
         when(visitMapper.selectOne(any())).thenReturn(visit);
         when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
 
-        QueueTicketVO vo =
-                service.adjust(new TriageAdjustRequest("O2026092100001", "RE_TRIAGE", null, "DOC009", null, null));
+        QueueTicketVO vo = service.adjust(
+                new TriageAdjustRequest("O2026092100001", "RE_TRIAGE", null, "DOC009", null, null, "家属要求换医生"));
 
         verify(queueTicketMapper).updateById(ticketCaptor.capture());
         assertThat(ticketCaptor.getValue().getDoctorId()).isEqualTo("DOC009");
         verify(queueZsetStore, never()).remove(anyString(), anyLong());
         verify(queueZsetStore, never()).enqueue(anyString(), anyLong(), anyLong());
         assertThat(vo.doctorId()).isEqualTo("DOC009");
+        // 留痕：RE_TRIAGE 动作+入参理由（W-29 修复后 reason=入参理由，不再恒 null）
         verify(triageRecordMapper).insert(triageCaptor.capture());
         assertThat(triageCaptor.getValue().getAction().getCode()).isEqualTo("RE_TRIAGE");
         assertThat(triageCaptor.getValue().getDoctorId()).isEqualTo("DOC009");
+        assertThat(triageCaptor.getValue().getReason()).isEqualTo("家属要求换医生");
     }
 
     @Test
@@ -722,7 +761,7 @@ class TriageServiceImplTest {
         when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
 
         assertThatThrownBy(() -> service.adjust(
-                        new TriageAdjustRequest("O2026092100001", "QUEUE_TRANSFER", "  ", null, null, null)))
+                        new TriageAdjustRequest("O2026092100001", "QUEUE_TRANSFER", "  ", null, null, null, null)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PARAM_FORMAT_INVALID);
                     assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -741,8 +780,8 @@ class TriageServiceImplTest {
         when(queueTicketMapper.casStatus(501L, "WAITING", "CANCELLED", "nurse001"))
                 .thenReturn(0);
 
-        assertThatThrownBy(() -> service.adjust(
-                        new TriageAdjustRequest("O2026092100001", "QUEUE_TRANSFER", "DEP002", null, null, null)))
+        assertThatThrownBy(() -> service.adjust(new TriageAdjustRequest(
+                        "O2026092100001", "QUEUE_TRANSFER", "DEP002", null, null, null, "患者要求转诊区")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("CAS 落败");
         verify(queueZsetStore, never()).remove(anyString(), anyLong());

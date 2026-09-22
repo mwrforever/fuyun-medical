@@ -37,6 +37,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -236,7 +237,7 @@ public class TriageServiceImpl implements ITriageService {
                 visit.getDeptCode(),
                 score,
                 request.stationId());
-        return toVO(ticket, displayNameOf(visit.getPatientId()));
+        return toVO(ticket, visit.getTriageLevel(), displayNameOf(visit.getPatientId()));
     }
 
     /**
@@ -278,6 +279,16 @@ public class TriageServiceImpl implements ITriageService {
                     HttpStatus.BAD_REQUEST,
                     "急诊分级词表外（Ⅰ~Ⅳ=1~4）：" + request.triageLevel());
         }
+        // LEVEL_ADJUST 理由必携校验（与词表/越界校验同层前置，零副作用拒绝；留痕落
+        // triage_record.reason 供质控回溯——Spec D-9「调级理由必填」限定调级动作，
+        // RE_TRIAGE/QUEUE_TRANSFER 无理由语义不强制，避免误伤）
+        if (action == TriageAction.LEVEL_ADJUST
+                && (request.reason() == null || request.reason().isBlank())) {
+            throw new BizException(
+                    OutpatientErrorCode.PARAM_FORMAT_INVALID,
+                    HttpStatus.BAD_REQUEST,
+                    "调级动作必须携带理由 reason（triage_record 留痕追溯）：visitId=" + request.visitId());
+        }
         QueueTicket ticket = queueTicketMapper.selectOne(Wrappers.<QueueTicket>lambdaQuery()
                 .eq(QueueTicket::getVisitId, request.visitId())
                 .in(QueueTicket::getStatus, TicketStatus.WAITING, TicketStatus.PASSED));
@@ -311,7 +322,7 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getDoctorId(),
                 DEFAULT_STATION_ID,
                 factors,
-                request.targetQueue());
+                request.reason());
         log.info(
                 "分诊调整完成：action={}，visitId={}，ticketNo={}，queueId={}，priorityScore={}，doctorId={}",
                 action.getCode(),
@@ -320,7 +331,7 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getQueueId(),
                 ticket.getPriorityScore(),
                 ticket.getDoctorId());
-        return toVO(ticket, displayNameOf(visit.getPatientId()));
+        return toVO(ticket, visit.getTriageLevel(), displayNameOf(visit.getPatientId()));
     }
 
     /**
@@ -379,7 +390,7 @@ public class TriageServiceImpl implements ITriageService {
                 request.deptCode(),
                 request.doctorId(),
                 ticket.getCalledCount());
-        return toVO(ticket, maskedNameOf(ticket.getVisitId()));
+        return toVOWithVisit(ticket);
     }
 
     /**
@@ -426,7 +437,7 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getQueueId(),
                 ticket.getPriorityScore(),
                 demoted);
-        return toVO(ticket, maskedNameOf(ticket.getVisitId()));
+        return toVOWithVisit(ticket);
     }
 
     /**
@@ -469,7 +480,7 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getTicketNo(),
                 ticket.getQueueId(),
                 ticket.getCalledCount());
-        return toVO(ticket, maskedNameOf(ticket.getVisitId()));
+        return toVOWithVisit(ticket);
     }
 
     /**
@@ -500,20 +511,29 @@ public class TriageServiceImpl implements ITriageService {
             wrapper.eq(QueueTicket::getStatus, statusEnum);
         }
         List<QueueTicket> tickets = queueTicketMapper.selectList(wrapper);
-        // 批量解析脱敏展示名（visitId→patientId→掩码名两跳批查，禁循环单查）
+        // 批量读取 visit 行（患者主索引+分诊级别快照同源单次批查——D-2 快照面零新增查询，禁循环单查）
         Set<String> visitIds = tickets.stream().map(QueueTicket::getVisitId).collect(Collectors.toSet());
-        Map<String, Long> visitPatients = visitIds.isEmpty()
+        Map<String, Visit> visits = visitIds.isEmpty()
                 ? Map.of()
                 : visitMapper.selectList(Wrappers.<Visit>lambdaQuery().in(Visit::getVisitId, visitIds)).stream()
-                        .collect(Collectors.toMap(Visit::getVisitId, Visit::getPatientId));
+                        .collect(Collectors.toMap(Visit::getVisitId, Function.identity()));
+        // 批量解析脱敏展示名（visit→patientId→掩码名批查，禁 N+1）
         Map<Long, String> displayNames =
                 patientNameQuery
-                        .displayNamesOf(
-                                visitPatients.values().stream().distinct().toList())
+                        .displayNamesOf(visits.values().stream()
+                                .map(Visit::getPatientId)
+                                .distinct()
+                                .toList())
                         .stream()
                         .collect(Collectors.toMap(PatientDisplayName::patientId, PatientDisplayName::displayName));
         return tickets.stream()
-                .map(ticket -> toVO(ticket, displayNames.get(visitPatients.get(ticket.getVisitId()))))
+                .map(ticket -> {
+                    Visit visit = visits.get(ticket.getVisitId());
+                    return toVO(
+                            ticket,
+                            visit == null ? null : visit.getTriageLevel(),
+                            visit == null ? null : displayNames.get(visit.getPatientId()));
+                })
                 .toList();
     }
 
@@ -557,7 +577,7 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getTicketNo(),
                 visitId,
                 OperatorContextHolder.get());
-        return toVO(ticket, maskedNameOf(visitId));
+        return toVOWithVisit(ticket);
     }
 
     // ---------------------------------------------------------------- 私有辅助
@@ -860,13 +880,15 @@ public class TriageServiceImpl implements ITriageService {
     }
 
     /**
-     * 实体 → 票据出参投影（patientName 为脱敏展示名出网，无证件号等敏感字段——Spec §9 脱敏红线）。
+     * 实体 → 票据出参投影（patientName 为脱敏展示名出网，无证件号等敏感字段——Spec §9 脱敏红线；
+     * triageLevel 取 visit 权威快照，由调用方按各自路径供给——D-2）。
      *
      * @param ticket      票据实体，非空
+     * @param triageLevel 分诊级别快照（visit.triage_level），可空（未分级）
      * @param patientName 脱敏展示名，可空
      * @return 票据出参，非空
      */
-    private static QueueTicketVO toVO(QueueTicket ticket, String patientName) {
+    private static QueueTicketVO toVO(QueueTicket ticket, Integer triageLevel, String patientName) {
         return new QueueTicketVO(
                 ticket.getId(),
                 ticket.getVisitId(),
@@ -880,6 +902,24 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getCalledCount(),
                 ticket.getCallTime(),
                 ticket.getStatus(),
-                patientName);
+                patientName,
+                triageLevel);
+    }
+
+    /**
+     * 单票路径出参组装（call/pass/recall/markServing 共用）：按票据就诊号一次读取 visit 行，同时
+     * 取分诊级别快照（D-2：queue_ticket 无此列，权威在 visit.triage_level）与患者脱敏展示名，
+     * 禁拆两次查询；visit 缺失（数据异常防御）时两字段均 null，与既有 maskedNameOf 空语义一致。
+     *
+     * @param ticket 票据实体，非空
+     * @return 票据出参，非空
+     */
+    private QueueTicketVO toVOWithVisit(QueueTicket ticket) {
+        // 数据库读操作：visit 业务号定位（分级快照+患者主索引单次读取）
+        Visit visit = visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, ticket.getVisitId()));
+        return toVO(
+                ticket,
+                visit == null ? null : visit.getTriageLevel(),
+                visit == null ? null : displayNameOf(visit.getPatientId()));
     }
 }
