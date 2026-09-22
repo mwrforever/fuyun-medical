@@ -2,6 +2,23 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-22 · W-23/W-24 收尾：V706 prescription_item.status 列注释订正 + 两行销项
+
+- **W-23 订正（V706，pharmacy 域）**：V701 :66 内联注释「returned_quantity/status 由退药链回写」中 status
+  半句失实——主代码对 pharmacy.prescription_item.status **零写入点**（W-22⑨ 核实：全量检索 updateById/
+  setStatus/注解 SQL/mapper 写路径后，唯一写入为 PrescriptionItemMapper.accumulateReturnedQuantity 的
+  returned_quantity 原子累加；发药中明细退场写 pharmacy.dispense_item.item_status，V703:95）；宪法 A.4.1-3
+  禁改已应用迁移，故以新迁移 COMMENT ON COLUMN 就地更新权威口径（V606 同款先例），迁移头部自解释列明
+  核实结论与承载理由（防后人误信旧注释）。
+- **号段登记**：docs/migrations/flyway-version-registry.md 同 PR 登记 V706（V500+ 通用段续号——全局最大
+  V705 的下一号，满足乱序守卫；用户批复硬要求「号段立即登记台账」）。
+- **W-24 销项**：DispenseServiceImpl.getByRxNo 取消态排除修复已随 PR-5 Task 11 交付，「行删除待合并后执行」
+  触发条件成立——TASK.md W-23/W-24 两行删除（闭合即删行）。
+- **门禁记录**：迁移治理守卫 `MIGRATION_BASE_REF=dev` 通过（43 个迁移文件）；后端 `mvn verify` 全 24 模块
+  BUILD SUCCESS（Testcontainers 全新库日志实证「Successfully applied 45 migrations … now at version v706」）；
+  真栈探针（重建容器对 dev 卷）——flyway_schema_history V706 success=t、`col_description` 列注释全文在位。
+- **裁决留痕（2026-09-22 用户五项决策）**：W-23「批准，立即执行」；W-24「与 W-23 同 PR 删行」。
+
 ## 2026-09-22 · P1 PR-5 M03 门诊主流程收口：outpatient 全链+门诊三前端交付（CF-5 冻结载体实装）
 
 - **交付面**：后端 outpatient 全链——号源池域（V200 三表+V705 三类字典种子：排班模板/放号/停诊/加号）、
