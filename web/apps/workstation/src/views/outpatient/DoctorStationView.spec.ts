@@ -131,9 +131,9 @@ function orderMock(): ClinicOrderVO {
     visitId: 'O2026092100001',
     orderType: 'EXAM',
     status: 'CREATED',
-    // 生成物 Item schema 同名坍缩（pharmacy Item 与 ClinicOrderVO.Item 共名）：按生成物类型
-    // 以 drugId 键承载；后端运行时实发 itemCode 形态——契约缝登记 Task 13 报告偏差清单
-    items: [{ drugId: 'EX001', quantity: '1' }],
+    // D-4 坍缩修复（W-29）：ClinicOrderItem 分立注册后生成物回归 itemCode 权威形态，与后端
+    // 运行时实发一致，workaround 不再需要
+    items: [{ itemCode: 'EX001', quantity: '1' }],
   };
 }
 
