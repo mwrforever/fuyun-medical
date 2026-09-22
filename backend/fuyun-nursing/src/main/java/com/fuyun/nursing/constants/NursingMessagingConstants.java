@@ -3,7 +3,8 @@ package com.fuyun.nursing.constants;
 /**
  * 护理域消息治理常量：九事件字面量与 V800 种子行（id 56–64）、nursing/api 载荷 record 组件名三方一致
  * （GC4 红线，契约锚 NursingEventContractTest），任何一侧变更属 CF-6 契约变更（双向评审）。
- * 另含 CF-6 冻结载体段的消费字面量（id 41–55，M04/M06 P2 实装时按彼时契约追加订阅常量，禁在本类虚构）。
+ * 另含消费事件字面量（先登记后订阅红线）：M02 段 V105 id 11/12/16（Task 3 三订阅，成对口径 M-25）、
+ * CF-6 冻结载体段（id 41–55，M04/M06 P2 实装时按彼时契约追加订阅常量，禁在本类虚构）。
  */
 public final class NursingMessagingConstants {
 
@@ -39,6 +40,20 @@ public final class NursingMessagingConstants {
 
     /** 发布事件：执行单执行回执（id 64，P1 占位登记——execute-confirm 双路对账辅路径，FU-M05-04 归 P2 实装） */
     public static final String EVENT_ORDER_EXECUTION_COMPLETED = "nursing.order-execution.completed";
+
+    /** 消费事件：健康档案变更/过敏摘要刷新（V105 id 16，Task 3 订阅；载荷 PatientHealthSummaryUpdatedPayload） */
+    public static final String EVENT_SUB_PATIENT_HEALTH_SUMMARY_UPDATED = "patient.health-summary.updated";
+
+    /** 消费事件：患者合并完成（V105 id 11，Task 3 订阅；载荷 PatientMergedPayload；成对订阅读侧 M-25） */
+    public static final String EVENT_SUB_PATIENT_PATIENT_MERGED = "patient.patient.merged";
+
+    /** 消费事件：患者拆分恢复（V105 id 12，Task 3 成对订阅；载荷 PatientSplitPayload，merged 的逆事件） */
+    public static final String EVENT_SUB_PATIENT_PATIENT_SPLIT = "patient.patient.split";
+
+    /** 订阅事件全集（队列声明唯一来源；先登记后订阅红线，消费任务逐批追加） */
+    public static final String[] SUBSCRIBED_EVENT_TYPES = {
+        EVENT_SUB_PATIENT_HEALTH_SUMMARY_UPDATED, EVENT_SUB_PATIENT_PATIENT_MERGED, EVENT_SUB_PATIENT_PATIENT_SPLIT
+    };
 
     /** 私有构造器（A.2-6） */
     private NursingMessagingConstants() {}
