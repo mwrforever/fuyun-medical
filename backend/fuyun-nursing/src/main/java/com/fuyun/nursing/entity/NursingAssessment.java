@@ -1,9 +1,11 @@
 package com.fuyun.nursing.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fuyun.nursing.handler.JsonbStringTypeHandler;
 import java.time.OffsetDateTime;
 import lombok.Getter;
 import lombok.Setter;
@@ -11,14 +13,15 @@ import lombok.Setter;
 /**
  * 护理评估单实体（nursing.nursing_assessment，V806）：五量表（BRADEN/MORSE/NRS/BARTHEL/MEWS）
  * 评估的落库载体。量表定义以模块内 Java 常量承载（Spec :249），本表仅存条目应答快照（answers
- * JSONB 文本，pgjdbc getString 直读——NursingWardConfig 同款形态）与判级结果；assessed_at 为
+ * JSONB 文本，写侧经 {@link JsonbStringTypeHandler} 以 jsonb 类型参数落库——Task 11 IT 实测
+ * varchar 直发必被 PG 强类型拒绝；读侧 pgjdbc getString 直读）与判级结果；assessed_at 为
  * 临床实际评估时刻（业务时间，请求携带强校验），created_at/updated_at 为服务器审计时钟。
  * 高风险联动面：triggered_task_ref 引用自动生成的防范任务（nursing_task task_type=PREVENTION）；
  * adverse_event_ref 为事件后回评引用（FU-M05-09 归 P2，P1 恒空列）。
  */
 @Getter
 @Setter
-@TableName("nursing.nursing_assessment")
+@TableName(value = "nursing.nursing_assessment", autoResultMap = true)
 public class NursingAssessment {
 
     /** 雪花主键（MP ASSIGN_ID） */
@@ -40,7 +43,8 @@ public class NursingAssessment {
     /** 量表类型（ScaleType code：BRADEN/MORSE/NRS/BARTHEL/MEWS） */
     private String scaleType;
 
-    /** 条目应答快照（JSONB 文本：{"itemCode": score, ...}） */
+    /** 条目应答快照（JSONB 文本：{"itemCode": score, ...}；jsonb TypeHandler 挂载见类注） */
+    @TableField(value = "answers", typeHandler = JsonbStringTypeHandler.class)
     private String answers;
 
     /** 量表总分 */

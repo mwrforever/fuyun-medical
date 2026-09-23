@@ -1,9 +1,11 @@
 package com.fuyun.nursing.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fuyun.nursing.handler.JsonbStringTypeHandler;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import lombok.Getter;
@@ -14,11 +16,12 @@ import lombok.Setter;
  * 业务数据自动汇总生成草稿（患者摘要/待续事项 JSONB 快照 + SBAR 四段初稿文本），人工补充后
  * 双班签名 COMPLETED（双签同刻记录：交班签名=生成时刻、接班签名=完成时刻）。未完成不阻塞
  * 业务（无副作用）；待续事项的在途输注/未闭环告警引用随 M14/M16 接入（P2），P1 恒空数组。
- * JSONB 列以文本承载（pgjdbc getString 直读——NursingWardConfig/NursingAssessment 同款形态）。
+ * JSONB 列以文本承载：写侧经 {@link JsonbStringTypeHandler} 以 jsonb 类型参数落库（Task 11
+ * IT 实测 varchar 直发必被 PG 强类型拒绝），读侧 pgjdbc getString 直读。
  */
 @Getter
 @Setter
-@TableName("nursing.shift_handover")
+@TableName(value = "nursing.shift_handover", autoResultMap = true)
 public class ShiftHandover {
 
     /** 雪花主键（MP ASSIGN_ID） */
@@ -43,7 +46,8 @@ public class ShiftHandover {
     /** 接班护士（完成签署时写入） */
     private String incomingNurseId;
 
-    /** 患者摘要快照（JSONB 文本：{total,specialCount,criticalCount,newAdmissionCount,surgeryCount,todayDischargeCount,transferOutCount}） */
+    /** 患者摘要快照（JSONB 文本：{total,specialCount,criticalCount,newAdmissionCount,surgeryCount,todayDischargeCount,transferOutCount}；jsonb TypeHandler 挂载见类注） */
+    @TableField(value = "patient_summary", typeHandler = JsonbStringTypeHandler.class)
     private String patientSummary;
 
     /** S 现状（自动汇总初稿 + 人工补充） */
@@ -58,13 +62,16 @@ public class ShiftHandover {
     /** R 建议（自动汇总初稿 + 人工补充） */
     private String sbarRecommendation;
 
-    /** 待续事项：在途任务清单（JSONB 文本：[{taskNo,taskType,planTime,overdueFlag,visitId}]） */
+    /** 待续事项：在途任务清单（JSONB 文本：[{taskNo,taskType,planTime,overdueFlag,visitId}]；jsonb TypeHandler 挂载见类注） */
+    @TableField(value = "pending_items", typeHandler = JsonbStringTypeHandler.class)
     private String pendingItems;
 
-    /** 待续事项：在途输注（JSONB 文本，P2 随 M14 接入，P1 恒 '[]'） */
+    /** 待续事项：在途输注（JSONB 文本，P2 随 M14 接入，P1 恒 '[]'；jsonb TypeHandler 挂载见类注） */
+    @TableField(value = "pending_infusions", typeHandler = JsonbStringTypeHandler.class)
     private String pendingInfusions;
 
-    /** 待续事项：未闭环告警（JSONB 文本，P2 随 M16 接入，P1 恒 '[]'） */
+    /** 待续事项：未闭环告警（JSONB 文本，P2 随 M16 接入，P1 恒 '[]'；jsonb TypeHandler 挂载见类注） */
+    @TableField(value = "unclosed_alarms", typeHandler = JsonbStringTypeHandler.class)
     private String unclosedAlarms;
 
     /** 交班签名时间（生成时刻盖章） */
