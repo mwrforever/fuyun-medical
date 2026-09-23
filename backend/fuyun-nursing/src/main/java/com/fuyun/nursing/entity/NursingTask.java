@@ -39,7 +39,7 @@ public class NursingTask {
     /** 床位号（冗余展示，可空） */
     private String bedNo;
 
-    /** 任务类型（TaskType code：MEDICATION/INFUSION_CARE/TURN/PATROL/SPECIMEN/IO_MONITOR/IOT_LINKAGE/ASSESS_REMIND/MANUAL） */
+    /** 任务类型（TaskType code：MEDICATION/INFUSION_CARE/TURN/PATROL/SPECIMEN/IO_MONITOR/IOT_LINKAGE/ASSESS_REMIND/MANUAL/PREVENTION） */
     private String taskType;
 
     /** 任务来源（TaskSource code：ORDER_PLAN/INFUSION_ALARM/IOT_LINKAGE/ROUTINE/MANUAL/ASSESSMENT） */

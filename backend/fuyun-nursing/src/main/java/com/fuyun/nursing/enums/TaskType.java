@@ -4,9 +4,9 @@ import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * 护理任务类型九值（V805 nursing_task.task_type 值域，05-nursing Spec §4）：覆盖给药、输液护理、
- * 翻身、巡视、标本采集、出入量监测、IoT 联动、评估提醒与手工九类护理任务。Task 8 评估高危
- * 联动扩 {@code PREVENTION}（防范任务）至十值——扩展只增不改，既有九值逐字冻结。
+ * 护理任务类型十值（V805 nursing_task.task_type 值域，05-nursing Spec §4）：覆盖给药、输液护理、
+ * 翻身、巡视、标本采集、出入量监测、IoT 联动、评估提醒、手工与防范十类护理任务——Task 8
+ * 评估高危联动扩 {@code PREVENTION}（防范任务）至十值，扩展只增不改，既有九值逐字冻结。
  */
 public enum TaskType {
 
@@ -35,7 +35,10 @@ public enum TaskType {
     ASSESS_REMIND("ASSESS_REMIND"),
 
     /** 手工任务（护士站手工开立） */
-    MANUAL("MANUAL");
+    MANUAL("MANUAL"),
+
+    /** 防范任务（护理评估单高危结果自动生成，Task 8 评估联动写入方） */
+    PREVENTION("PREVENTION");
 
     /** 存储值：DB 列写入（@EnumValue）与 JSON 输出（@JsonValue）共用 */
     @EnumValue
