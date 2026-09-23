@@ -99,3 +99,40 @@
   --fuy-border-hairline: 1px solid #e5e7eb; /* portal/bigscreen 亮暗各自覆盖 */
   --fuy-screen-border-hairline: 1px solid #1e3a52;
 }
+
+/* ===== M05 护理模块增量（设计文档 §2.2 唯一清单，2026-09-23）=====
+   三层纪律：全部为 semantic 层语义别名或组件/场景几何值，零新色值（色值一律指向既有 palette）。 */
+
+:root {
+  /* 护理级别徽标色（实底白字场景；色值与分诊四级同源 palette，语义独立命名防混用） */
+  --fuy-color-nursing-special: var(--fuy-palette-red-600); /* 特级护理 4.8:1 */
+  --fuy-color-nursing-l1: var(--fuy-palette-orange-700); /* 病重护理 5.2:1 */
+  --fuy-color-nursing-l2: var(--fuy-palette-amber-700); /* 一级护理 5.0:1 */
+  --fuy-color-nursing-l3: var(--fuy-palette-green-800); /* 普通护理 6.3:1 */
+
+  /* 病情标记角标（卡墙 mini 徽标底色） */
+  --fuy-color-nursing-critical: var(--fuy-palette-red-600); /* 病危「危」/ 过敏「敏」 */
+  --fuy-color-nursing-serious: var(--fuy-palette-orange-700); /* 病重「重」 */
+  --fuy-color-nursing-surgery: var(--fuy-palette-blue-700); /* 手术「术」 */
+  --fuy-color-nursing-new: var(--fuy-palette-brand-700); /* 新入「新」/ 分娩「娩」 */
+  --fuy-color-nursing-exit: var(--fuy-palette-gray-600); /* 转出/今日出院（弱化不抢焦） */
+
+  /* 体温单专用（§5 渲染唯一取色来源；蓝=体温系、红=脉搏/降温/事件系，临床惯例色） */
+  --fuy-chart-temp-color: var(--fuy-palette-blue-700); /* 体温符号与连线（蓝笔惯例）6.7:1 */
+  --fuy-chart-pulse-color: var(
+    --fuy-palette-red-600
+  ); /* 脉搏/心率/物理降温/短绌/事件竖线（红笔惯例）4.8:1 */
+  --fuy-chart-grid-color: #e5e7eb; /* 网格细线（与 --fuy-border-hairline 同值，SVG stroke 场景别名） */
+  --fuy-chart-text-color: var(--fuy-palette-gray-600); /* 刻度与底栏文字 */
+
+  /* 体温单几何（§5.2 坐标系冻结值；SVG viewBox 计算唯一来源） */
+  --fuy-chart-grid-x: 16px; /* X 轴每小格宽（= 2 小时） */
+  --fuy-chart-grid-y: 8px; /* Y 轴每小格高（= 0.2℃ = 脉搏 4 次/分） */
+  --fuy-chart-symbol-size: 10px; /* 符号外接尺寸（×/●/〇 直径） */
+  --fuy-chart-line-width: 1.5px; /* 曲线连线与符号描边线宽 */
+
+  /* PDA 页移动基线（§4 冻结输入约束） */
+  --fuy-pda-touch: 48px; /* 触控目标最小尺寸（工效学最小值，全页控件高度下限） */
+  --fuy-pda-font-base: 16px; /* PDA 字号基线（正文） */
+  --fuy-pda-page-width: 480px; /* PDA 自持布局最大宽度（居中） */
+}

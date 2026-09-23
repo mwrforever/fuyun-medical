@@ -216,3 +216,67 @@
   background: var(--el-fill-color-light);
   border-radius: var(--fuy-radius-md);
 }
+
+/* ===== M05 护理模块增量工具类（设计文档 §2.3 唯一清单，2026-09-23）===== */
+
+/* 护理级别徽标（复用 .fuy-triage-badge 同形态，色值独立取护理级别 token；
+   后端 NursingLevel 词表为 SPECIAL/CRITICAL/NORMAL 三值，l1/l2 留全族定义防词表扩值 */
+.fuy-nursing-level-badge {
+  display: inline-block;
+  min-width: 36px;
+  padding: 0 8px;
+  height: 22px;
+  line-height: 22px;
+  border-radius: var(--fuy-radius-sm);
+  color: #fff;
+  font-size: var(--fuy-font-size-xs);
+  font-weight: 600;
+  text-align: center;
+}
+.fuy-nursing-level-badge--special {
+  background: var(--fuy-color-nursing-special);
+}
+.fuy-nursing-level-badge--l1 {
+  background: var(--fuy-color-nursing-l1);
+}
+.fuy-nursing-level-badge--l2 {
+  background: var(--fuy-color-nursing-l2);
+}
+.fuy-nursing-level-badge--l3 {
+  background: var(--fuy-color-nursing-l3);
+}
+
+/* 卡墙病情/风险 mini 角标（高 18px 单字/双字徽标，密度收敛） */
+.fuy-nursing-flag {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 4px;
+  height: 18px;
+  line-height: 18px;
+  border-radius: var(--fuy-radius-sm);
+  color: #fff;
+  font-size: var(--fuy-font-size-xs);
+  font-weight: 600;
+  text-align: center;
+}
+.fuy-nursing-flag--danger {
+  background: var(--fuy-color-nursing-critical); /* 危/敏 */
+}
+.fuy-nursing-flag--warning {
+  background: var(--fuy-color-nursing-serious); /* 重 */
+}
+.fuy-nursing-flag--info {
+  background: var(--fuy-color-nursing-surgery); /* 术 */
+}
+.fuy-nursing-flag--brand {
+  background: var(--fuy-color-nursing-new); /* 新/娩 */
+}
+.fuy-nursing-flag--muted {
+  background: var(--fuy-color-nursing-exit); /* 转/出 */
+}
+/* 风险标识（跌倒/压疮/管路）：红描边空心形态，与过敏实底区分（防红色实底泛滥） */
+.fuy-nursing-flag--outline {
+  background: #fff;
+  color: var(--fuy-color-danger-text);
+  border: 1px solid var(--fuy-color-danger-text);
+}

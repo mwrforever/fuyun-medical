@@ -406,6 +406,8 @@ async function onFinish(): Promise<void> {
         {
           type: 'warning',
           confirmButtonText: '确认诊毕',
+          // W-26：取消按钮补中文字案（EP 默认英文 Cancel）
+          cancelButtonText: '取消',
           // 诊毕属 §5.2 高风险档（终态不可恢复）：确认按钮 danger 红样式承载不可逆警示
           confirmButtonClass: 'el-button--danger',
         },
