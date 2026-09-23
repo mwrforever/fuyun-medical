@@ -175,6 +175,8 @@
 - 会诊：`POST /consultations`、`POST /consultations/{no}/accept|opinion|cancel`、`GET /consultations?status=&deptId=`
 - 计费入口：`POST /manual-fees`（手工计费，转调 M13）、`GET /daily-list?visitId=&date=`（转调 M13）、`POST /deposits`（转调 M13）、`GET /deposit-alarms?wardId=`（欠费清单）
 
+**CF-6 占位行注记（P1 PR-6，2026-09-22 批复条件 2）**：P2 实装 `POST /order-plans/{no}/execute-confirm` 时，须以彼时更高版本迁移 UPDATE `integration.event_registry` id 55 的 payload_desc 补齐字段级契约（P1 PR-6 已约定名占行，见 05-nursing Spec「P1 切片落地注记」第 12 条）。
+
 **内部服务接口（进程内）**：在途就诊查询实现（注册为 M02 SPI 扩展点：在院 visit 存在时阻断患者合并）；医嘱状态与执行进度查询（供 M05/M13/M19 取数，只读）；执行回签聚合（供 M05）。
 
 **MQ 事件（发布，经 `fy.topic`，信封遵循 M20 治理约定，登记 event_registry；医嘱类事件 routing key 携带类型子键，见方案 3.4）**：

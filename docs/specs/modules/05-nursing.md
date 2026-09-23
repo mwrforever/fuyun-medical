@@ -261,3 +261,23 @@
 - **R5-18**：§7 `POST /tasks` 调用方注记补 M16（紧急呼叫自动转任务，幂等键=call_no）；§8 M16 条目同步确认。
 - **M-25**：§7 订阅 `patient.merged` 处成对补订 `patient.split`。
 - **R3-12 核对**：§12-3"逾期升级为动作"转述与 M04 v1.1 新口径（会诊超时置 overdue_flag、状态停留 REQUESTED）一致，无需修改。
+
+## 13. P1 切片落地注记（2026-09-22，PR-6）
+
+> 本节为 P1 PR-6（`feat/p1-pr6-m05-nursing`）交付面相对本 Spec 的界定与降级声明，执行依据 `docs/superpowers/plans/2026-09-22-p1-pr6-m05-nursing.md` Task 14 Step 1（Global Constraints 35 硬门槛）；P1 口径以本节为准，Spec 正文不回改。
+
+1. **FU 切片界定**：P1 交付 FU-M05-01/02/03/05 的可行面；FU-M05-04（医嘱执行）与 FU-M05-06（输液闭环）归 P2（依赖 M04 实装）；**FU-M05-08 优先级口径澄清**——Spec 功能表标 P0，但 P1 实施计划 :91 因依赖 M14 完整/M16（P2）将其顺延 P2，执行以 P1 计划为准；FU-M05-07 仅落任务最小载体（工作台/常规模板/逾期升级链/延迟队列归 P2）；FU-M05-09 P1 阶段不交付（Spec 标 P1 优先级 ≠ P1 阶段交付，依据 P1 计划 :22「仅交付 P0 优先级条目」）。
+2. **P1 过渡通道与退役声明**：新增 `POST /api/v1/nursing/ward-patients`（患者入区登记）与本地视图表 `nursing_ward_patient`（本 Spec :145「维护本地视图」的落点）；M05 不自签 visit_id（仅 `VisitIdValidator` 结构校验），签发主体仍为 M04；**P2 由 `inpatient.visit.admitted/transferred/discharged` + `inpatient.bed.changed` 事件链替代后，登记通道退役**（退役条款见第 10 条）。
+3. **五项 P1 降级**：① IoT 体征通道（`iot_quality`/`conflict_ref` 列落位、`POST /vital-signs/iot-sync` 与趋势图不落、`iot_autocast_enabled` 默认 false）；② CA 电子签名（`signature_ref` 列落位，P1 签名留痕 = operator + signedAt）；③ 打印模板（交接班单/腕带/执行单打印不落）；④ 通知推送（任务提醒以任务列表可见为达意）；⑤ 摄像头扫码（P1 手工录入腕带标识/患者号，随 P2 终端容器化）。
+4. **CF-6 登记落点与 id 排定**：24 行 id 41–64 落 `nursing` 段 V800（producer 填真实生产者）；`inpatient.order-plan.execute-confirm` 以约定名占行且字段级契约待 M04 P2 定稿时 UPDATE 升级（升级义务见第 12 条）；M05 侧 P1 不订阅 M04 事件。
+5. **观察行归集量化**：本 Spec :64「符合条件时自动生成/合并护理记录观察行」落为「异常项新增/正常值合并当日行」+ 阈值常量表（正常范围与生理极限，见 `constants/NursingVitalThresholds`）；量表阈值与 `next_assess_plan` 周期（24h/72h/168h）同步注记。
+6. **FU-M05-05 PDA 范围**：P1 = 标识解析患者摘要 + 体征上传 + 巡视打卡；腕带唤起待执行/破码放行/标本采集（M07）归 P2/P3；`GET /pda/patient-summary` 入参由本 Spec :166 的 `?patientId=` 调整为 `?identifier=`（腕带就诊编码/就诊卡号/证件号三合一入口，归一词表 `ID_CARD`/`VISIT_CARD`）。
+7. **WARD 数据范围**：P1 为显式参数 + 服务层过滤，跨病区 403 全量隔离随 M01 数据范围拦截器（P1-later）。
+8. **P1 枚举与字段形态的加法扩展**（Spec 语义不冲突，形态落定登记）：`TaskType` 增 `MANUAL`（手工任务）与 `PREVENTION`（评估高危防范任务）；`TaskSource` 增 `ASSESSMENT`（评估联动）；`nursing_task.bed_no` 为 Spec `bed_id` 的展示冗余（床位号字符串，跨模块不引床位主键）；`vital_sign_record.pain_score` 为 Spec「疼痛评分引用」的 P1 直存形态（NRS 值，量表引擎接入后仍直存）；`nursing_ward_config` P1 落 `ward_id/vital_freq_config/iot_autocast_enabled/shift_definitions` 四列，Spec §4 所列 `iot_sync_interval/conflict_window/execute_time_window/override_roles/routine_task_templates/退药开关` 随 P2 迁移追加（无 P1 消费者）；`NS-1016` 为唯一的资源冲突码（床位占用保留 NS-1002）；任务创建禁止补录超 24 小时（P1 计划自增校验）。
+9. **业务时间口径**：`nursing_record.record_time`/`nursing_assessment.assessed_at`/`io_record.occur_at` 为业务时间（请求携带 + 服务端边界校验），审计五列与 `measured_at` 取服务器时间；与红线 2「文书业务时间一律服务器时间」的关系以本条澄清——红线落在**审计与落卡时间**，业务时点保留临床录入值以防跨班补录失真。
+10. **过渡通道退役条款（双侧留痕之一，2026-09-22 批复条件 3 + 二次裁定护栏四）**：`POST /ward-patients` 与 `nursing_ward_patient` 标注「**临时（P1 过渡）**」；**退役触发条件 = M04 病区/床位事件链（`inpatient.visit.admitted/transferred/discharged` + `inpatient.bed.changed`）上线并通过其验收 IT**；**退役覆盖清单（逐项，缺一不得判退役完成）**：① 端点与 DTO（`POST /ward-patients`、`POST /ward-patients/{visitId}/remove` 及其请求对象）；② 行状态值 `IN_WARD`/`REMOVED` 与 `nursing_ward_patient` 本地视图（表随退役清理）；③ 相关留痕语义（`@AuditLog` 动作与日志锚点口径）；④ `WardPatientVO` 字段面回归事件推导形状（DTO 结构等价判据，GC39）；⑤ **一览相关 IT 重跑**（换源后旧验收不构成有效证据）。
+11. **显式排除清单（2026-09-22 批复条件 4）**：FU-M05-07（仅载体不落工作台 UI）与 FU-M05-09（零落面）以**显式排除**登记，附判定链（P1 计划 :22 P0-only 规则优先于模块 Spec 的 P1 优先级标注），不以「未列即默认」推断。
+12. **CF-6 占位行升级义务（M04 侧同步，2026-09-22 批复条件 2）**：`integration.event_registry` id 55（`inpatient.order-plan.execute-confirm`）的 payload_desc 为 **pending M04 P2 定稿**状态——04-inpatient Spec §7 已同步注记（P2 实装 `POST /order-plans/{no}/execute-confirm` 时须以彼时更高版本迁移 UPDATE id 55 的 payload_desc 补齐字段级契约），TASK.md 已登记对应工单，避免跨 PR 义务单侧挂靠。
+13. **Task 12 冻结 REST 面适配**：前端按后端冻结 REST 面适配八项实况差异——护理级别词表三值 `SPECIAL/CRITICAL/NORMAL`、病区/床位清单无端点（病区选择以种子 `W01` 常量承载、登记弹窗床位自由输入）、`PdaPatientSummaryVO` 无 visitId/gender/age、短绌填充线几何（无心率值，脉率点向上固定 2 小格标记）、特殊事件无时点入参（服务器时间承载）、体征表单整数字段文本承载+显式校验、NS-1005 detail 透出通道、出区仅 remove（转科归 M04 事件链）；另补记一项：**任务表无分页**（`GET /tasks` 冻结面返回全量列表，前端不分页渲染，分页随 P2 工作台）。明细逐项见 `.superpowers/sdd/2026-09-22-p1-pr6-m05-nursing/task-12-report.md` §6.2。
+14. **P1 最小脱敏口径**：`GET /pda/patient-summary` 不返回证件号/手机号类字段（Task 10 已实装，PDA 页零超敏字段渲染），完整脱敏体系随 M02 隐私中心演进。
+15. **体温单符号契约类名**：S7 重叠红圈 `fuy-temp-overlap-ring`（体温/脉搏坐标同格判定才渲染，防不同格假阳性）、脉搏短绌起止红竖线 `fuy-event-line--deficit-start`/`--end`（照 §5.6 时段事件修饰符惯例扩展）、S10 填充线 `fuy-temp-deficit-line` 等符号类名为前后端共享契约；**符号权威 = UI 设计文档 `docs/plans/2026-09-23-p1-pr6-m05-nursing-ui-design.md`**（§5.3 符号规范总表冻结类名 + §5.6 特殊事件竖线规则）。
