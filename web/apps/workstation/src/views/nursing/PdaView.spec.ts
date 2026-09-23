@@ -1,7 +1,8 @@
 // PDA 移动护理页单测（M05 前端面，设计文档 §4）：腕带/卡号格式校验（非 I 型 14 位且非
 // 卡号格式时提示且零出网，spec 冻结）、患者卡超敏字段零渲染（DOM 不含「手机」「证件」
 // 文案——脱敏摘要数据源）、巡视打卡成功后按钮转已完成态并回显 taskNo（patrol 调用一次）、
-// 打卡在途守卫拦截重复点击（双击零二次出网）。api mock 承载，不打真实网络。
+// 打卡在途守卫拦截重复点击（双击零二次出网）、卡号路径 visitId 判空（体征录入与巡视打卡
+// 均 warning 明确提示且零出网，R1 finding ③）。api mock 承载，不打真实网络。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -165,6 +166,43 @@ describe('PDA 移动护理页', () => {
     expect(vi.mocked(pda.patrol)).toHaveBeenCalledTimes(1);
     releasePatrol();
     await flushPromises();
+    wrapper.unmount();
+  });
+
+  it('卡号路径 visitId 判空：体征录入与巡视打卡均 warning 提示且零出网', async () => {
+    // 卡号识别（8 位数字合法卡号）成功解锁段卡，但脱敏摘要面无 visitId 可回溯
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    const wrapper = mount(PdaView);
+    await wrapper.find('input[placeholder="扫描腕带或输入患者卡号"]').setValue('12345678');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '查询')
+      ?.trigger('click');
+    await flushPromises();
+    expect(vi.mocked(pda.patientSummary)).toHaveBeenCalledWith('12345678');
+    // 体征录入：visitId 为 required 必填、空串出网必 4xx——前端判空拦截（R1 finding ③）
+    await wrapper.find('input[placeholder="36.5"]').setValue('36.5');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '提交体征')
+      ?.trigger('click');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
+      '卡号识别无法录入体征，请改用腕带扫描（I 开头 14 位）后重试',
+    );
+    expect(vi.mocked(vitalSigns.record)).not.toHaveBeenCalled();
+    // 巡视打卡：同口径判空拦截，零出网
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '巡视打卡')
+      ?.trigger('click');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
+      '卡号识别无法巡视打卡，请改用腕带扫描（I 开头 14 位）后重试',
+    );
+    expect(vi.mocked(pda.patrol)).not.toHaveBeenCalled();
+    // 拦截后按钮仍处初始态（未进入在途/已完成形态）
+    expect(wrapper.text()).toContain('巡视打卡');
     wrapper.unmount();
   });
 });

@@ -28,7 +28,8 @@ export const AXIS_WIDTH = 32;
 /** 连线断点阈值：相邻时点缺口 ≥2 小格（4 小时）不跨缺口连线（§5.5-4 防趋势臆造） */
 export const LINE_GAP_LIMIT = 2 * GRID_X;
 
-/** 事件竖线修饰符映射（§5.3 S11/S12 冻结：--admission/--surgery/--delivery/--transfer/--discharge/--death/--arrest） */
+/** 事件竖线修饰符映射（§5.3 S11/S12 冻结：--admission/--surgery/--delivery/--transfer/--discharge/--death/--arrest；
+ * §5.6 脉搏短绌起止为时段事件，起止时点各画一条红竖线——修饰符照 S11 命名惯例扩展，红笔形态由基类承载） */
 const EVENT_MODIFIERS: Record<string, string> = {
   ADMISSION: 'fuy-event-line--admission',
   SURGERY: 'fuy-event-line--surgery',
@@ -36,6 +37,8 @@ const EVENT_MODIFIERS: Record<string, string> = {
   TRANSFER_OUT: 'fuy-event-line--transfer',
   DISCHARGE: 'fuy-event-line--discharge',
   DEATH: 'fuy-event-line--death',
+  PULSE_DEFICIT_START: 'fuy-event-line--deficit-start',
+  PULSE_DEFICIT_END: 'fuy-event-line--deficit-end',
   CARDIAC_ARREST: 'fuy-event-line--arrest',
 };
 
@@ -301,20 +304,27 @@ export function buildTempChart(
         title: `${timeLabel} 脉搏 ${vital.pulse}`,
       });
     }
-    // 体温脉搏同点重叠：体温符号外画红圈（§5.3 S7）
+    // §5.3 S7 重叠判定为「坐标重合」而非两值齐备：同条目体温与脉搏齐备但落点不同格是常规
+    // 形态，不构成临床意义上的「体温脉搏重叠」，不得画红圈（防假阳性，R1 finding ①）
     if (
       vital.temperature !== undefined &&
       vital.temperature !== null &&
       vital.pulse !== undefined &&
       vital.pulse !== null
     ) {
-      symbols.push({
-        key: `overlap-${String(entry.id ?? x)}`,
-        className: 'fuy-temp-overlap-ring',
-        x,
-        y: yOfTemp(vital.temperature),
-        title: `${timeLabel} 体温与脉搏重叠`,
-      });
+      // 体温 0.1℃ 精度常落于格间，按「吸附最近小格」口径换算格行号判同格（与 §5.2 点吸附
+      // 格中心的画法口径一致）；两轴 35 小格完全共格，行号相等即坐标重合/同格
+      const tempRow = Math.round((TEMP_MAX - vital.temperature) / TEMP_STEP);
+      const pulseRow = Math.round((PULSE_MAX - vital.pulse) / PULSE_STEP);
+      if (tempRow === pulseRow) {
+        symbols.push({
+          key: `overlap-${String(entry.id ?? x)}`,
+          className: 'fuy-temp-overlap-ring',
+          x,
+          y: yOfTemp(vital.temperature),
+          title: `${timeLabel} 体温与脉搏重叠`,
+        });
+      }
     }
   }
 

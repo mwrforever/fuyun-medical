@@ -1827,8 +1827,10 @@ onMounted(() => {
               <!-- 患者摘要行 -->
               <div class="ward-handover-summary fuy-num">
                 <span>总数 {{ handover.patientSummary?.total ?? 0 }}</span>
-                <span>病危 {{ handover.patientSummary?.criticalCount ?? 0 }}</span>
-                <span>病重 {{ handover.patientSummary?.specialCount ?? 0 }}</span>
+                <!-- 摘要口径后端权威（ShiftHandoverVO javadoc + V801 列注释）：SPECIAL=特级 /
+                     CRITICAL=病重，两标签与计数字段一一对应禁止互换（R1 finding ④） -->
+                <span>特级 {{ handover.patientSummary?.specialCount ?? 0 }}</span>
+                <span>病重 {{ handover.patientSummary?.criticalCount ?? 0 }}</span>
                 <span>新入 {{ handover.patientSummary?.newAdmissionCount ?? 0 }}</span>
                 <span>手术 {{ handover.patientSummary?.surgeryCount ?? 0 }}</span>
                 <span>转出 {{ handover.patientSummary?.transferOutCount ?? 0 }}</span>

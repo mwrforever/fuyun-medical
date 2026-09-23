@@ -1,9 +1,10 @@
 // 护士工作站页单测（M05 前端面，设计文档 §3 八区块）：病区一览床位序渲染（spec 冻结语序
 // 断言）、入区登记显式校验零出网（visit 号 14 位格式）、体征录入非整数显式校验零出网、
 // 录入在途守卫双击零二次出网、NS-1005 超生理极限 detail 透出（4xx 口径）、待复核确认后
-// 该行移除、体温单符号类名契约（fuy-temp-x/fuy-temp-dot/fuy-temp-deficit-line，机器判据）、
-// 评估总分与高危容器类（fuy-assess-result--high）、任务逾期行类（fuy-task-overdue）与完成
-// 出网、交接班双签 DRAFT 可点 / COMPLETED 置灰。api mock 承载，不打真实网络；会话经
+// 该行移除、体温单符号类名契约（fuy-temp-x/fuy-temp-dot/fuy-temp-deficit-line/短绌起止
+// 竖线/重叠红圈同格判定，机器判据）、评估总分与高危容器类（fuy-assess-result--high）、任务
+// 逾期行类（fuy-task-overdue）与完成出网、交接班双签 DRAFT 可点 / COMPLETED 置灰与摘要
+// 特级/病重标签映射。api mock 承载，不打真实网络；会话经
 // sessionStorage 种子恢复（当班护士=登录用户）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -377,7 +378,7 @@ describe('护士工作站', () => {
     wrapper.unmount();
   });
 
-  it('体温单按部位渲染符号类名（腋温 fuy-temp-x / 口温 fuy-temp-dot / 短绌填充线）', async () => {
+  it('体温单按部位渲染符号类名（腋温 fuy-temp-x / 口温 fuy-temp-dot / 短绌填充线与起止竖线）', async () => {
     vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
     vi.mocked(chart.query).mockResolvedValue({
       visitId: 'I20260923000000001',
@@ -405,6 +406,12 @@ describe('护士工作站', () => {
           entryType: 'SPECIAL_EVENT',
           specialEventType: 'PULSE_DEFICIT_START',
         },
+        {
+          id: '9501',
+          entryTime: localIso([22, 14]),
+          entryType: 'SPECIAL_EVENT',
+          specialEventType: 'PULSE_DEFICIT_END',
+        },
       ],
       dailyValues: [],
     });
@@ -419,8 +426,53 @@ describe('护士工作站', () => {
     // 符号类名契约（§5.3 冻结，机器判据）
     expect(wrapper.find('.fuy-temp-x').exists()).toBe(true);
     expect(wrapper.find('.fuy-temp-dot').exists()).toBe(true);
-    // 脉搏短绌窗口（06:00 起）内 08:00 脉率点画填充线
+    // 脉搏短绌窗口（06:00–14:00）内 08:00 脉率点画填充线
     expect(wrapper.find('.fuy-temp-deficit-line').exists()).toBe(true);
+    // 短绌起止竖线（§5.6 时段事件：起止时点各画一条红竖线，R1 finding ②）
+    expect(wrapper.find('.fuy-event-line--deficit-start').exists()).toBe(true);
+    expect(wrapper.find('.fuy-event-line--deficit-end').exists()).toBe(true);
+    // 9001 两值齐备但 36.5℃（28 行）与 80 次/分（20 行）落点不同格——常规形态不画重叠红圈
+    // （S7 坐标重合判定防假阳性，R1 finding ①）
+    expect(wrapper.find('.fuy-temp-overlap-ring').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('体温脉搏同格重叠渲染红圈、不同格不渲染（S7 坐标重合判定防假阳性）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
+    vi.mocked(chart.query).mockResolvedValue({
+      visitId: 'I20260923000000001',
+      chartMonth: currentMonth(),
+      vitals: [
+        {
+          id: '9001',
+          entryTime: localIso([22, 8]),
+          entryType: 'VITAL',
+          typeKey: 'AXILLARY',
+          vitalRef: '9001',
+        },
+        {
+          id: '9002',
+          entryTime: localIso([22, 12]),
+          entryType: 'VITAL',
+          typeKey: 'AXILLARY',
+          vitalRef: '9002',
+        },
+      ],
+      specialEvents: [],
+      dailyValues: [],
+    });
+    // 9001：37℃ 与 60 次/分吸附同一小格行（共格轴均第 25 行）→ 坐标重合画红圈；
+    // 9002：37℃ 与 80 次/分（第 25 行 vs 第 20 行）不同格 → 不画（R1 finding ①）
+    vi.mocked(vitalSigns.list).mockResolvedValue([
+      { id: '9001', temperature: 37, tempSite: 'AXILLARY', pulse: 60 },
+      { id: '9002', temperature: 37, tempSite: 'AXILLARY', pulse: 80 },
+    ]);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await selectFirstBed(wrapper);
+    await flushPromises();
+    // 双向断言：仅重合点渲染红圈（fuy-temp-overlap-ring，§5.3 S7）
+    expect(wrapper.findAll('.fuy-temp-overlap-ring')).toHaveLength(1);
     wrapper.unmount();
   });
 
@@ -513,6 +565,10 @@ describe('护士工作站', () => {
     await flushPromises();
     const draftButton = findButton(wrapper, '完成交接');
     expect(draftButton.attributes('disabled')).toBeUndefined();
+    // 摘要标签映射（后端权威 ShiftHandoverVO javadoc：SPECIAL=特级 / CRITICAL=病重，防互换回归 R1 finding ④）
+    expect(wrapper.text()).toContain('特级 2');
+    expect(wrapper.text()).toContain('病重 1');
+    expect(wrapper.text()).not.toContain('病危');
     // 场景二：COMPLETED 置灰 + 文案「已完成交接」
     vi.mocked(handovers.list).mockResolvedValue([
       {

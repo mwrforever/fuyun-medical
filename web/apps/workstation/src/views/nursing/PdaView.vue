@@ -135,6 +135,13 @@ async function onRecordVitals(): Promise<void> {
   if (recording.value || summary.value === null) {
     return;
   }
+  // 脱敏摘要面无 visitId：I 型腕带就诊码即 visitId；卡号路径 visitId 为 required 必填、
+  // 空串出网必被后端 4xx 拒——前端判空拦截零出网并明确提示改用腕带（R1 finding ③）
+  const visitId = WRISTBAND_PATTERN.test(lastIdentifier.value) ? lastIdentifier.value : '';
+  if (visitId === '') {
+    void ElMessage.warning('卡号识别无法录入体征，请改用腕带扫描（I 开头 14 位）后重试');
+    return;
+  }
   const form = vitalForm.value;
   if (form.temperature !== '' && !isValidDecimal(form.temperature, 35, 42)) {
     void ElMessage.warning('体温应为 35.0–42.0 的数值（如 36.5），请重新测量输入');
@@ -173,8 +180,6 @@ async function onRecordVitals(): Promise<void> {
   }
   recording.value = true;
   try {
-    // 脱敏摘要面无 visitId 字段：I 型腕带就诊码即 visitId（卡号路径同打卡口径，P2 补面）
-    const visitId = WRISTBAND_PATTERN.test(lastIdentifier.value) ? lastIdentifier.value : '';
     await vitalSigns.record({
       visitId,
       source: 'PDA',
@@ -214,13 +219,18 @@ const patrolling = ref(false);
 const patrolTask = ref<NursingTaskVO | null>(null);
 
 /** 巡视打卡（identifier 透传；visitId 取 I 型腕带就诊码——脱敏摘要面无 visitId 字段，
- * 卡号路径由后端归属校验拒绝并经拦截器透出，P2 摘要补 visitId 后切换）。 */
+ * 卡号路径空串必被后端 4xx 拒，前端判空拦截零出网并提示改用腕带，P2 摘要补 visitId 后切换）。 */
 async function onPatrol(): Promise<void> {
   if (patrolling.value || summary.value === null || patrolTask.value !== null) {
     return;
   }
   const identifier = lastIdentifier.value;
+  // 卡号路径 visitId 为空串：required 必填出网必 4xx——判空拦截零出网（R1 finding ③）
   const visitId = WRISTBAND_PATTERN.test(identifier) ? identifier : '';
+  if (visitId === '') {
+    void ElMessage.warning('卡号识别无法巡视打卡，请改用腕带扫描（I 开头 14 位）后重试');
+    return;
+  }
   patrolling.value = true;
   try {
     patrolTask.value = await pda.patrol({ identifier, visitId });
