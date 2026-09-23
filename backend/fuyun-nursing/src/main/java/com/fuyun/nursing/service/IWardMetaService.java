@@ -55,8 +55,9 @@ public interface IWardMetaService {
     List<WardPatientVO> listByWard(String wardId);
 
     /**
-     * 患者详情卡聚合：在区行 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士 + 在途任务占位
-     * （Task 7 补填）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
+     * 患者详情卡聚合：在区行 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士 + 在途任务段
+     * （INursingTaskService#inFlightByVisit 实时填充，Task 7 补入；读路径含惰性逾期写，禁 readOnly）。
+     * 不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
      *
      * @param visitId 住院就诊号，非空；来源：路径参数
      * @return 详情卡出参，非空

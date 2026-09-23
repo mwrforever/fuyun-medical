@@ -216,7 +216,7 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
 
     /**
      * 病区任务清单：wardId 必选，status/date 可选（当日窗口含头不含尾），DB 侧按计划时间升序；
-     * 读时惰性逾期判定先行（越阈值在途行单次置位递增）。
+     * 先查后标再返回——查询后对返回集内越阈值在途行做惰性逾期 CAS（单次置位递增），出参与库态一致。
      *
      * @param wardId 病区编码，非空；来源：查询参数
      * @param status 状态过滤，可空（空=全状态）；来源：查询参数
@@ -224,8 +224,10 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
      * @return 任务出参清单（无行返回空清单，非 null）；按计划时间升序
      */
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<NursingTaskVO> list(String wardId, TaskStatus status, LocalDate date) {
+        // 读路径含惰性逾期写（markOverdueLazily 触发 casMarkOverdue UPDATE），禁 readOnly——
+        // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
         LambdaQueryWrapper<NursingTask> wrapper =
                 Wrappers.<NursingTask>lambdaQuery().eq(NursingTask::getWardId, wardId);
         if (status != null) {
@@ -245,14 +247,16 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
 
     /**
      * 患者在途任务清单（仅 PENDING/IN_PROGRESS，计划时间升序）：Task 9 交接班待续事项与
-     * Task 3 详情卡「在途任务」段消费落点；读时惰性逾期判定同 {@link #list}。
+     * Task 3 详情卡「在途任务」段消费落点；先查后标再返回，惰性逾期 CAS 同 {@link #list}。
      *
      * @param visitId 住院就诊号，非空；来源：路径/载荷
      * @return 在途任务出参清单（无行返回空清单，非 null）；按计划时间升序
      */
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public List<NursingTaskVO> inFlightByVisit(String visitId) {
+        // 读路径含惰性逾期写（markOverdueLazily 触发 casMarkOverdue UPDATE），禁 readOnly——
+        // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
         // 数据库读操作：在途任务（status IN 谓词滤除终态行；命中 idx_nursing_task_visit_status）
         List<NursingTask> rows = baseMapper.selectList(Wrappers.<NursingTask>lambdaQuery()
                 .eq(NursingTask::getVisitId, visitId)

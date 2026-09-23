@@ -60,8 +60,8 @@ public interface INursingTaskService {
 
     /**
      * 病区任务清单：wardId 必选，status/date 可选（当日窗口含头不含尾），按计划时间升序。
-     * 读时惰性逾期判定：返回集内在途行越过阈值（NursingProperties.taskOverdueMinutes）先经
-     * casMarkOverdue 单次置位递增，出参与库态一致。
+     * 先查后标再返回：查询后对返回集内越过阈值（NursingProperties.taskOverdueMinutes）的
+     * 在途行经 casMarkOverdue 单次置位递增，出参与库态一致（读路径含惰性逾期写，禁 readOnly）。
      *
      * @param wardId 病区编码，非空；来源：查询参数
      * @param status 状态过滤，可空（空=全状态）；来源：查询参数
@@ -72,7 +72,7 @@ public interface INursingTaskService {
 
     /**
      * 患者在途任务清单（仅 PENDING/IN_PROGRESS，计划时间升序）：Task 9 交接班待续事项与
-     * Task 3 详情卡「在途任务」段的消费落点。读时惰性逾期判定同 {@link #list}。
+     * Task 3 详情卡「在途任务」段的消费落点。先查后标再返回，惰性逾期 CAS 同 {@link #list}。
      *
      * @param visitId 住院就诊号，非空；来源：路径/载荷
      * @return 在途任务出参清单（无行返回空清单，非 null）；按计划时间升序

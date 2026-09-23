@@ -3,6 +3,7 @@ package com.fuyun.nursing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
@@ -35,6 +36,7 @@ import com.fuyun.nursing.properties.NursingProperties;
 import com.fuyun.nursing.vo.NursingTaskVO;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -253,9 +255,14 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("读时惰性逾期：planTime 超 30 分钟阈值 → casMarkOverdue 单次递增（escalationCount=1），再查不重复递增")
     void listMarksOverdueLazilyOncePerRow() {
-        NursingTask row =
+        NursingTask firstRow =
                 taskRow(TASK_NO, TaskStatus.PENDING, OffsetDateTime.now().minusMinutes(60));
-        when(taskMapper.selectList(any())).thenReturn(List.of(row));
+        // 再查替身：真实再查语义——DB 行已被首查 CAS 置位（overdue_flag=true、count=1），非同一内存对象
+        NursingTask secondRow =
+                taskRow(TASK_NO, TaskStatus.PENDING, OffsetDateTime.now().minusMinutes(60));
+        secondRow.setOverdueFlag(true);
+        secondRow.setEscalationCount(1);
+        when(taskMapper.selectList(any())).thenReturn(List.of(firstRow), List.of(secondRow));
         when(taskMapper.casMarkOverdue(ROW_ID)).thenReturn(1);
 
         List<NursingTaskVO> first = service.list(WARD, null, null);
@@ -266,8 +273,9 @@ class NursingTaskServiceImplTest {
         assertThat(first.get(0).escalationCount()).isEqualTo(1);
         verify(taskMapper, times(1)).casMarkOverdue(ROW_ID);
 
-        // 再查：行已带 overdue_flag=true（DB 谓词 overdue_flag=false 防重复递增），escalationCount 仍为 1
+        // 再查：行已带 overdue_flag=true（overdue_flag=false 谓词防重复递增），不再触发 CAS，count 仍为 1
         List<NursingTaskVO> second = service.list(WARD, null, null);
+        assertThat(second.get(0).overdueFlag()).isTrue();
         assertThat(second.get(0).escalationCount()).isEqualTo(1);
         verify(taskMapper, times(1)).casMarkOverdue(ROW_ID);
 
@@ -349,6 +357,8 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("巡视打卡：建 PATROL 行直落 COMPLETED（source=MANUAL、assignedNurse=当前操作者、planTime=打卡时刻）")
     void patrolCreatesCompletedPatrolTask() {
+        // 打卡基准时刻（服务调用前取值：planTime/completedAt 须落在基准时刻之后的 2 秒容差窗内）
+        OffsetDateTime patrolledAt = OffsetDateTime.now();
         when(seqGate.nextNo("TK")).thenReturn("TK2026092200002");
         when(taskMapper.insert(any(NursingTask.class))).thenAnswer(insertWithId(ROW_ID));
 
@@ -360,9 +370,9 @@ class NursingTaskServiceImplTest {
         assertThat(row.getSource()).isEqualTo(TaskSource.MANUAL.getCode());
         assertThat(row.getStatus()).isEqualTo(TaskStatus.COMPLETED.getCode());
         assertThat(row.getAssignedNurse()).isEqualTo("nurse-01");
-        // planTime = 打卡时刻（服务器时间），completedAt 同刻盖章（生而终态）
-        assertThat(row.getPlanTime()).isNotNull();
-        assertThat(row.getCompletedAt()).isNotNull();
+        // planTime = 打卡时刻（服务器时间，GC25），completedAt 同刻盖章（生而终态）
+        assertThat(row.getPlanTime()).isCloseTo(patrolledAt, within(2, ChronoUnit.SECONDS));
+        assertThat(row.getCompletedAt()).isCloseTo(patrolledAt, within(2, ChronoUnit.SECONDS));
         assertThat(vo.status()).isEqualTo(TaskStatus.COMPLETED.getCode());
         assertThat(vo.taskNo()).isEqualTo("TK2026092200002");
     }

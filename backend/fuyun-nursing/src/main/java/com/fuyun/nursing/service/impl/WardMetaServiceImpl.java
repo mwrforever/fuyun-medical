@@ -256,15 +256,18 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
     /**
      * 患者详情卡聚合：在区行 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士（配置班次按时钟判定）
      * + 在途任务（INursingTaskService#inFlightByVisit，Task 7 补入；仅 PENDING/IN_PROGRESS 行，
-     * 读时惰性逾期判定随查询同步）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
+     * 先查后标再返回的惰性逾期 CAS 随查询同步）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
      *
      * @param visitId 住院就诊号，非空；来源：路径参数
      * @return 详情卡出参，非空
      * @throws BizException NS-1001（404 在区行不存在）
      */
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public WardPatientDetailVO detail(String visitId) {
+        // 本方法纯读，但在途任务段经 inFlightByVisit 含惰性逾期写（casMarkOverdue UPDATE），
+        // 且 Spring 默认传播（REQUIRED）下 readOnly 标记随本事务传播至内层——禁 readOnly，
+        // 否则过夜逾期任务场景下 PG 只读事务内 UPDATE 直接报错
         NursingWardPatient row = requireInWardByVisit(visitId);
         if (row == null) {
             throw new BizException(
