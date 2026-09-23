@@ -1079,6 +1079,337 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nursing/ward-patients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区在区患者一览 */
+        get: operations["listByWard"];
+        put?: never;
+        /** 入区登记（P1 过渡通道，幂等 upsert） */
+        post: operations["register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/ward-patients/{visitId}/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 移出病区一览 */
+        post: operations["remove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/vital-signs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 患者体征查询 */
+        get: operations["listByPatient"];
+        put?: never;
+        /** 体征录入（手工/PDA 点测） */
+        post: operations["record"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/vital-signs/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 体征复核驳回 */
+        post: operations["reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/vital-signs/{id}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 体征复核转正 */
+        post: operations["confirm"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/temperature-charts/{visitId}/special-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 体温单特殊事件录入 */
+        post: operations["addSpecialEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区任务清单 */
+        get: operations["list_2"];
+        put?: never;
+        /** 护理任务创建（手工开立） */
+        post: operations["create_4"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/tasks/{taskNo}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 护理任务完成 */
+        post: operations["complete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/tasks/{taskNo}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 护理任务取消 */
+        post: operations["cancel_4"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/pda/patrol": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** PDA 巡视打卡（扫码直落 COMPLETED） */
+        post: operations["patrol"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/nursing-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 护理记录清单 */
+        get: operations["listByVisit"];
+        put?: never;
+        /** 创建护理记录（草稿） */
+        post: operations["create_5"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/nursing-records/{recordNo}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 提交锁定护理记录 */
+        post: operations["submit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/nursing-records/{recordNo}/revise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 修订护理记录（留痕） */
+        post: operations["revise"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/io-summaries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 出入量小结清单 */
+        get: operations["summaries"];
+        put?: never;
+        /** 出入量小结生成（班次/24h） */
+        post: operations["summarize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/io-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 出入量明细清单 */
+        get: operations["listByVisit_1"];
+        put?: never;
+        /** 出入量明细录入 */
+        post: operations["create_6"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/handovers/{handoverNo}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 交接班完成（双签确认） */
+        post: operations["complete_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/handovers/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 交接班单生成（SBAR 自动汇总初稿） */
+        post: operations["generate_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 当班责任护士分配清单 */
+        get: operations["listAssignments"];
+        put?: never;
+        /** 新增责任护士分配 */
+        post: operations["assign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 患者评估单清单 */
+        get: operations["listByVisit_2"];
+        put?: never;
+        /** 护理评估单创建（五量表判级 + 高危联动） */
+        post: operations["create_7"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integration/mdm-subscriptions": {
         parameters: {
             query?: never;
@@ -1086,9 +1417,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_2"];
+        get: operations["list_3"];
         put?: never;
-        post: operations["register"];
+        post: operations["register_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1593,7 +1924,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_3"];
+        get: operations["list_4"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1741,7 +2072,7 @@ export interface paths {
             cookie?: never;
         };
         /** 按就诊号查询申请单 */
-        get: operations["listByVisit"];
+        get: operations["listByVisit_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1801,14 +2132,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/received-events": {
+    "/api/v1/nursing/ward-patients/{visitId}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["list_4"];
+        /** 患者详情卡 */
+        get: operations["detail_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1817,13 +2149,82 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/event-registry": {
+    "/api/v1/nursing/vital-signs/pending-review": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
+        /** 病区待复核体征清单 */
+        get: operations["pendingReview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/temperature-charts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 体温单月页查询 */
+        get: operations["getChart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/pda/patient-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** PDA 患者摘要（标识三合一解析，脱敏输出） */
+        get: operations["patientSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/nursing-records/{recordNo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 护理记录详情 */
+        get: operations["get_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/handovers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区交接班清单（按日检索） */
         get: operations["list_5"];
         put?: never;
         post?: never;
@@ -1833,7 +2234,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/event-publications": {
+    "/api/v1/nursing/assessment-scales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 评估量表定义清单（评估表单渲染唯一数据源） */
+        get: operations["scales"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/received-events": {
         parameters: {
             query?: never;
             header?: never;
@@ -1849,7 +2267,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/dead-letters": {
+    "/api/v1/integration/event-registry": {
         parameters: {
             query?: never;
             header?: never;
@@ -1865,6 +2283,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integration/event-publications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_8"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/dead-letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_9"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integration/dead-letters/{id}": {
         parameters: {
             query?: never;
@@ -1872,7 +2322,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["detail_3"];
+        get: operations["detail_4"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1995,6 +2445,23 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/assignments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** 撤销责任分配 */
+        delete: operations["unassign"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2719,6 +3186,364 @@ export interface components {
             /** @example 0 */
             newPoolId: string;
         };
+        WardPatientRegisterRequest: {
+            visitId: string;
+            /** @example 0 */
+            patientId: string;
+            wardId: string;
+            bedNo: string;
+            patientName: string;
+            gender?: string;
+            /** Format: int32 */
+            age?: number;
+            nursingLevel?: string;
+            conditionTags?: string;
+        };
+        WardPatientVO: {
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            bedNo?: string;
+            nursingLevel?: string;
+            /** Format: date-time */
+            admittedAt?: string;
+        };
+        WardPatientRemoveRequest: {
+            reason: string;
+        };
+        VitalSignRecordRequest: {
+            visitId: string;
+            source?: string;
+            temperature?: number;
+            tempSite?: string;
+            /** Format: int32 */
+            pulse?: number;
+            /** Format: int32 */
+            respiration?: number;
+            /** Format: int32 */
+            systolicBp?: number;
+            /** Format: int32 */
+            diastolicBp?: number;
+            /** Format: int32 */
+            spo2?: number;
+            weight?: number;
+            height?: number;
+            /** Format: int32 */
+            painScore?: number;
+        };
+        VitalSignVO: {
+            /** @example 0 */
+            id?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            /** Format: date-time */
+            measuredAt?: string;
+            temperature?: number;
+            tempSite?: string;
+            /** Format: int32 */
+            pulse?: number;
+            /** Format: int32 */
+            respiration?: number;
+            /** Format: int32 */
+            systolicBp?: number;
+            /** Format: int32 */
+            diastolicBp?: number;
+            /** Format: int32 */
+            spo2?: number;
+            weight?: number;
+            height?: number;
+            /** Format: int32 */
+            painScore?: number;
+            source?: string;
+            reviewStatus?: string;
+            reviewedBy?: string;
+            /** Format: date-time */
+            reviewedAt?: string;
+            abnormalFlag?: boolean;
+            iotQuality?: string;
+            /** @example 0 */
+            conflictRef?: string;
+            remark?: string;
+        };
+        VitalSignRejectRequest: {
+            reason: string;
+        };
+        SpecialEventRequest: {
+            eventType: string;
+            remark?: string;
+        };
+        ChartEntryVO: {
+            /** @example 0 */
+            id?: string;
+            /** Format: date-time */
+            entryTime?: string;
+            entryType?: string;
+            typeKey?: string;
+            /** @example 0 */
+            vitalRef?: string;
+            specialEventType?: string;
+            dailyValueType?: string;
+            valueText?: string;
+            recorderId?: string;
+            recorderName?: string;
+            remark?: string;
+        };
+        NursingTaskCreateRequest: {
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            wardId: string;
+            bedNo?: string;
+            taskType: string;
+            source?: string;
+            sourceRef?: string;
+            /** Format: date-time */
+            planTime: string;
+            assignedNurse?: string;
+            priority?: string;
+        };
+        NursingTaskVO: {
+            /** @example 0 */
+            id?: string;
+            taskNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            wardId?: string;
+            bedNo?: string;
+            taskType?: string;
+            source?: string;
+            sourceRef?: string;
+            /** Format: date-time */
+            planTime?: string;
+            assignedNurse?: string;
+            priority?: string;
+            overdueFlag?: boolean;
+            /** Format: int32 */
+            escalationCount?: number;
+            status?: string;
+            /** Format: date-time */
+            completedAt?: string;
+            cancelReason?: string;
+        };
+        NursingTaskCancelRequest: {
+            reason: string;
+        };
+        PdaPatrolRequest: {
+            identifier: string;
+            visitId: string;
+        };
+        NursingRecordCreateRequest: {
+            visitId: string;
+            recordClass?: string;
+            observation?: string;
+            measures?: string;
+            evaluation?: string;
+            freeText?: string;
+        };
+        NursingRecordVO: {
+            recordNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            recordClass?: string;
+            /** Format: date-time */
+            recordTime?: string;
+            observation?: string;
+            measures?: string;
+            evaluation?: string;
+            freeText?: string;
+            autoGenerated?: boolean;
+            signedOperator?: string;
+            /** Format: date-time */
+            signedAt?: string;
+            status?: string;
+            revisedFrom?: string;
+        };
+        NursingRecordReviseRequest: {
+            observation?: string;
+            measures?: string;
+            evaluation?: string;
+            freeText?: string;
+        };
+        IoSummaryCreateRequest: {
+            visitId: string;
+            summaryType: string;
+            shiftCode?: string;
+        };
+        IoSummaryVO: {
+            /** @example 0 */
+            id?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            summaryType?: string;
+            /** Format: date-time */
+            periodStart?: string;
+            /** Format: date-time */
+            periodEnd?: string;
+            totalIntake?: string;
+            totalOutput?: string;
+            balance?: string;
+            shiftCode?: string;
+            /** @example 0 */
+            chartEntryRef?: string;
+            recorderId?: string;
+        };
+        IoRecordCreateRequest: {
+            visitId: string;
+            ioType: string;
+            itemCode: string;
+            quantity: string;
+            unit?: string;
+            source?: string;
+            remark?: string;
+        };
+        IoRecordVO: {
+            /** @example 0 */
+            id?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            /** Format: date-time */
+            occurAt?: string;
+            ioType?: string;
+            itemCode?: string;
+            itemName?: string;
+            quantity?: string;
+            unit?: string;
+            source?: string;
+            sourceRef?: string;
+            shiftCode?: string;
+            recorderId?: string;
+            remark?: string;
+        };
+        HandoverCompleteRequest: {
+            incomingNurseId: string;
+            sbarSituation?: string;
+            sbarBackground?: string;
+            sbarAssessment?: string;
+            sbarRecommendation?: string;
+        };
+        PatientSummary: {
+            /** Format: int32 */
+            total?: number;
+            /** Format: int32 */
+            specialCount?: number;
+            /** Format: int32 */
+            criticalCount?: number;
+            /** Format: int32 */
+            newAdmissionCount?: number;
+            /** Format: int32 */
+            surgeryCount?: number;
+            /** Format: int32 */
+            todayDischargeCount?: number;
+            /** Format: int32 */
+            transferOutCount?: number;
+        };
+        PendingItem: {
+            taskNo?: string;
+            taskType?: string;
+            /** Format: date-time */
+            planTime?: string;
+            overdueFlag?: boolean;
+            visitId?: string;
+        };
+        ShiftHandoverVO: {
+            /** @example 0 */
+            id?: string;
+            handoverNo?: string;
+            wardId?: string;
+            shiftCode?: string;
+            /** Format: date */
+            handoverDate?: string;
+            outgoingNurseId?: string;
+            incomingNurseId?: string;
+            patientSummary?: components["schemas"]["PatientSummary"];
+            sbarSituation?: string;
+            sbarBackground?: string;
+            sbarAssessment?: string;
+            sbarRecommendation?: string;
+            pendingItems?: components["schemas"]["PendingItem"][];
+            pendingInfusions?: unknown[];
+            unclosedAlarms?: unknown[];
+            /** Format: date-time */
+            outgoingSignedAt?: string;
+            /** Format: date-time */
+            incomingSignedAt?: string;
+            status?: string;
+        };
+        HandoverGenerateRequest: {
+            wardId: string;
+            shiftCode: string;
+        };
+        NurseAssignmentRequest: {
+            wardId: string;
+            nurseId: string;
+            assignmentType: string;
+            shiftCode: string;
+            bedNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** Format: date */
+            validFrom?: string;
+            /** Format: date */
+            validTo?: string;
+        };
+        NurseAssignmentVO: {
+            /** @example 0 */
+            id?: string;
+            wardId?: string;
+            nurseId?: string;
+            assignmentType?: string;
+            shiftCode?: string;
+            bedNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** Format: date */
+            validFrom?: string;
+            /** Format: date */
+            validTo?: string;
+            status?: string;
+        };
+        NursingAssessmentCreateRequest: {
+            visitId: string;
+            scaleType: string;
+            answers: {
+                [key: string]: number;
+            };
+            /** Format: date-time */
+            assessedAt: string;
+        };
+        NursingAssessmentVO: {
+            /** @example 0 */
+            id?: string;
+            assessNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            wardId?: string;
+            scaleType?: string;
+            answers?: {
+                [key: string]: number;
+            };
+            /** Format: int32 */
+            totalScore?: number;
+            riskLevel?: string;
+            /** Format: date-time */
+            assessedAt?: string;
+            assessedBy?: string;
+            /** Format: date-time */
+            nextAssessPlan?: string;
+            triggeredTaskRef?: string;
+            adverseEventRef?: string;
+        };
         MdmSubscriptionCreateRequest: {
             topic: string;
             subscriberModule: string;
@@ -3226,6 +4051,68 @@ export interface components {
             queueTime?: string;
             /** Format: int32 */
             calledCount?: number;
+        };
+        AllergyItem: {
+            /** @example 0 */
+            itemId?: string;
+            itemCode?: string;
+            itemName?: string;
+            severity?: string;
+        };
+        WardPatientDetailVO: {
+            wardId?: string;
+            bedNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            patientName?: string;
+            gender?: string;
+            /** Format: int32 */
+            age?: number;
+            nursingLevel?: string;
+            conditionTags?: string;
+            allergyFlag?: boolean;
+            riskFlags?: string;
+            /** Format: date-time */
+            admittedAt?: string;
+            allergies?: components["schemas"]["AllergyItem"][];
+            assignments?: components["schemas"]["NurseAssignmentVO"][];
+            inFlightTasks?: components["schemas"]["NursingTaskVO"][];
+        };
+        ChartQueryRequest: {
+            visitId: string;
+            month: string;
+        };
+        TemperatureChartVO: {
+            visitId?: string;
+            chartMonth?: string;
+            /** @example 0 */
+            pageId?: string;
+            pageStatus?: string;
+            vitals?: components["schemas"]["ChartEntryVO"][];
+            specialEvents?: components["schemas"]["ChartEntryVO"][];
+            dailyValues?: components["schemas"]["ChartEntryVO"][];
+        };
+        PdaPatientSummaryVO: {
+            /** @example 0 */
+            patientId?: string;
+            patientName?: string;
+            wardId?: string;
+            bedNo?: string;
+            nursingLevel?: string;
+            allergies?: components["schemas"]["AllergyItem"][];
+            latestVitals?: components["schemas"]["VitalSignVO"];
+            /** Format: int32 */
+            inFlightTaskCount?: number;
+        };
+        ScaleDefinitionVO: {
+            scaleType?: string;
+            itemCodes?: string[];
+            itemLabels?: string[];
+            choices?: {
+                [key: string]: number[];
+            };
+            totalRule?: string;
         };
         PageResultReceivedEventVO: {
             content?: components["schemas"]["ReceivedEventVO"][];
@@ -5240,7 +6127,654 @@ export interface operations {
             };
         };
     };
+    listByWard: {
+        parameters: {
+            query: {
+                wardId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardPatientVO"][];
+                };
+            };
+        };
+    };
+    register: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WardPatientRegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardPatientVO"];
+                };
+            };
+        };
+    };
+    remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WardPatientRemoveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardPatientVO"];
+                };
+            };
+        };
+    };
+    listByPatient: {
+        parameters: {
+            query: {
+                patientId: string;
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VitalSignVO"][];
+                };
+            };
+        };
+    };
+    record: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VitalSignRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VitalSignVO"];
+                };
+            };
+        };
+    };
+    reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VitalSignRejectRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VitalSignVO"];
+                };
+            };
+        };
+    };
+    confirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VitalSignVO"];
+                };
+            };
+        };
+    };
+    addSpecialEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpecialEventRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ChartEntryVO"];
+                };
+            };
+        };
+    };
     list_2: {
+        parameters: {
+            query: {
+                wardId: string;
+                status?: string;
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingTaskVO"][];
+                };
+            };
+        };
+    };
+    create_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NursingTaskCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingTaskVO"];
+                };
+            };
+        };
+    };
+    complete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingTaskVO"];
+                };
+            };
+        };
+    };
+    cancel_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NursingTaskCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingTaskVO"];
+                };
+            };
+        };
+    };
+    patrol: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PdaPatrolRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingTaskVO"];
+                };
+            };
+        };
+    };
+    listByVisit: {
+        parameters: {
+            query: {
+                visitId: string;
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingRecordVO"][];
+                };
+            };
+        };
+    };
+    create_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NursingRecordCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingRecordVO"];
+                };
+            };
+        };
+    };
+    submit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingRecordVO"];
+                };
+            };
+        };
+    };
+    revise: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NursingRecordReviseRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingRecordVO"];
+                };
+            };
+        };
+    };
+    summaries: {
+        parameters: {
+            query: {
+                visitId: string;
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["IoSummaryVO"][];
+                };
+            };
+        };
+    };
+    summarize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IoSummaryCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["IoSummaryVO"];
+                };
+            };
+        };
+    };
+    listByVisit_1: {
+        parameters: {
+            query: {
+                visitId: string;
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["IoRecordVO"][];
+                };
+            };
+        };
+    };
+    create_6: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IoRecordCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["IoRecordVO"];
+                };
+            };
+        };
+    };
+    complete_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                handoverNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoverCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ShiftHandoverVO"];
+                };
+            };
+        };
+    };
+    generate_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HandoverGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ShiftHandoverVO"];
+                };
+            };
+        };
+    };
+    listAssignments: {
+        parameters: {
+            query: {
+                wardId: string;
+                shiftCode: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NurseAssignmentVO"][];
+                };
+            };
+        };
+    };
+    assign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NurseAssignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NurseAssignmentVO"];
+                };
+            };
+        };
+    };
+    listByVisit_2: {
+        parameters: {
+            query: {
+                visitId: string;
+                scaleType?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingAssessmentVO"][];
+                };
+            };
+        };
+    };
+    create_7: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NursingAssessmentCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingAssessmentVO"];
+                };
+            };
+        };
+    };
+    list_3: {
         parameters: {
             query?: {
                 topic?: string;
@@ -5265,7 +6799,7 @@ export interface operations {
             };
         };
     };
-    register: {
+    register_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -6038,7 +7572,7 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    list_4: {
         parameters: {
             query?: {
                 status?: string;
@@ -6250,7 +7784,7 @@ export interface operations {
             };
         };
     };
-    listByVisit: {
+    listByVisit_3: {
         parameters: {
             query: {
                 visitId: string;
@@ -6341,7 +7875,160 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    detail_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardPatientDetailVO"];
+                };
+            };
+        };
+    };
+    pendingReview: {
+        parameters: {
+            query: {
+                wardId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VitalSignVO"][];
+                };
+            };
+        };
+    };
+    getChart: {
+        parameters: {
+            query: {
+                query: components["schemas"]["ChartQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TemperatureChartVO"];
+                };
+            };
+        };
+    };
+    patientSummary: {
+        parameters: {
+            query: {
+                identifier: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PdaPatientSummaryVO"];
+                };
+            };
+        };
+    };
+    get_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recordNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingRecordVO"];
+                };
+            };
+        };
+    };
+    list_5: {
+        parameters: {
+            query: {
+                wardId: string;
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ShiftHandoverVO"][];
+                };
+            };
+        };
+    };
+    scales: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ScaleDefinitionVO"][];
+                };
+            };
+        };
+    };
+    list_6: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -6370,7 +8057,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_7: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -6396,7 +8083,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_8: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -6423,7 +8110,7 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    list_9: {
         parameters: {
             query?: {
                 status?: string;
@@ -6450,7 +8137,7 @@ export interface operations {
             };
         };
     };
-    detail_3: {
+    detail_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -6626,6 +8313,26 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["ChargeItemVO"];
                 };
+            };
+        };
+    };
+    unassign: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

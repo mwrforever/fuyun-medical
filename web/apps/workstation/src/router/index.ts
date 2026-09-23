@@ -111,7 +111,21 @@ export const router = createRouter({
           component: () => import('@/views/outpatient/DoctorStationView.vue'),
           meta: { permission: 'outpatient:doctor:consult' },
         },
+        {
+          path: 'nursing/ward',
+          name: 'nursing-ward',
+          component: () => import('@/views/nursing/WardBoardView.vue'),
+          meta: { permission: 'nursing:ward:view' },
+        },
       ],
+    },
+    {
+      // PDA 移动护理页：顶层自持布局（MainLayout 之外，照 login 路由形态）——床旁
+      // 单手操作面不载侧栏/顶栏；权限语义登记，403 接线随 P1 鉴权拦截接入（patient 三页先例）
+      path: '/pda',
+      name: 'pda',
+      component: () => import('@/views/nursing/PdaView.vue'),
+      meta: { permission: 'nursing:pda:use' },
     },
   ],
 });

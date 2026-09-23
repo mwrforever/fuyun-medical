@@ -275,6 +275,8 @@ async function onRecall(row: QueueTicketVO): Promise<void> {
       await ElMessageBox.confirm(
         `即将重呼 ${row.ticketNo ?? ''} ${row.patientName ?? ''}，确认？`,
         '重呼确认',
+        // W-26：确认弹窗补中文双按钮（EP 默认英文 OK/Cancel）
+        { confirmButtonText: '确认重呼', cancelButtonText: '取消' },
       );
     } catch {
       return;
@@ -345,6 +347,8 @@ async function onAdjust(): Promise<void> {
       await ElMessageBox.confirm(summary, '分诊处置确认', {
         type: adjustAction.value === 'QUEUE_TRANSFER' ? 'warning' : 'info',
         confirmButtonText: adjustAction.value === 'QUEUE_TRANSFER' ? '确认转队列' : '确认调整',
+        // W-26：取消按钮补中文字案（EP 默认英文 Cancel）
+        cancelButtonText: '取消',
         // 转队列跨诊区属 §5.2 高风险档：确认按钮 danger 红样式承载不可逆警示
         confirmButtonClass:
           adjustAction.value === 'QUEUE_TRANSFER' ? 'el-button--danger' : undefined,

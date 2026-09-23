@@ -78,7 +78,11 @@ function onReaderClick(): void {
   if (readerAvailable) {
     return;
   }
-  void ElMessageBox.alert('读卡器接口位尚未接入，请手工录入证件信息', '提示', { type: 'info' });
+  void ElMessageBox.alert('读卡器接口位尚未接入，请手工录入证件信息', '提示', {
+    type: 'info',
+    // W-26：提示弹窗确认按钮补中文字案（EP 默认英文 OK）
+    confirmButtonText: '知道了',
+  });
 }
 
 /** 建档前预检：AUTO_MATCH 提示归一、SUSPECT 提示转人工核对 */

@@ -2,6 +2,79 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-24 · P1 PR-6 M05 修复环 R2（审计切面标识白名单掩码，安全 Important）
+
+- R2 审查发现：fuyun-system 共享切面 `AuditLogAspect#buildDetail` 对非 Bearer 的 String 参数与
+  方法入参 record 直出（仅口令/令牌类打码），PR-6 新增的 PDA 两端点（`GET
+  /api/v1/nursing/pda/patient-summary?identifier=` SENSITIVE_QUERY 与 `POST
+  /api/v1/nursing/pda/patrol` WRITE）会把证件号/卡号明文写进 `audit_log.detail`（留存 ≥6 个月）
+  ——违反「日志禁打印敏感信息」等保红线。
+- 处置取增量白名单路径（策略 b；实测无参数级脱敏扩展点，`@AuditLog` 仅 `actionType()`）：
+  仅「参数名为 identifier 的 String 入参」与「含 identifier 组件的 record 入参」尾四位掩码
+  （`****` + 后四位，与 nursing `identifierTail` 同形态）；全平台影响面实测仅 PdaController 两
+  落点（patient 模块 identifierType/identifierValue 等近名参数不命中），白名单外端点 detail
+  行为逐字节不变，不改全平台审计语义。掩码逻辑收口切面私有方法
+  `maskIdentifierArgIfNeeded`/`maskIdentifierTail`，参数名经编译期 `-parameters` 提供。
+- 测试：AuditLogAspectTest 补四锚（identifier String 尾四位掩码精确匹配 / ≤4 位短标识全星回退 /
+  白名单外 keyword 参数逐字节原样 / PdaPatrolRequest 形态 record identifier 组件掩码其余组件原样）；
+  存量断言零触碰。验证：`mvn -pl fuyun-system -am test` 154/0 全绿，`mvn -pl fuyun-app -am verify`
+  BUILD SUCCESS。
+
+## 2026-09-24 · P1 PR-6 M05 修复环 R1（后端四项 Important）
+
+- 五视角审查 R1 后端四项修复：①`com.fuyun.nursing.api` 包补 `package-info.java`
+  `@NamedInterface("api")` 声明（逐字对齐 outpatient/patient/system 形态，宪法 B.1 对外契约出口；
+  spring-modulith-api 依赖自此有消费点，P2 消费方引用不再被 Modulith 边界拦截）；
+  ②巡视打卡日志改 `identifierTail` 尾四位摘要口径（对齐 PdaServiceImpl，扫码标识明文禁入日志）；
+  ③patrol `source_ref` 按标识形态分流——I 型腕带就诊编码（`VisitIdValidator` 冻结结构，
+  visitId 形态非敏感）原值留痕，证件号/就诊卡号形态落尾四位掩码值（V805 列注释口径 +
+  等保「敏感字段脱敏落库」红线）；④评估复评降级（非高危）同事务移除对应床旁风险标识
+  （`IWardMetaService#removeRiskFlag` 新增；映射与高危追加同源 `NursingScaleConstants#riskFlagOf`，
+  幂等零写兜底）——床旁风险标识权威 = 最新评估判级，防 FALL/PRESSURE 降级后永久残留误导临床。
+- 测试：NursingTaskServiceImplTest 补 patrol 留痕三形态分流、WardMetaServiceImplTest 补移除
+  （保序回写/清空落空串/幂等零写/NS-1001）、NursingAssessmentServiceImplTest 补升→降全链路
+  （高危追加 PRESSURE → 复评 MEDIUM 清标识，防范任务零新增）；冻结用例断言零触碰。
+  Spec 同步：05-nursing.md §13 追加第 16 条注记。
+
+## 2026-09-24 · P1 PR-6 M05 护理基础收口
+
+- 交付面：V800–V807 八迁移（CF-6 事件登记 24 行 id 41–64；病区元数据/护理文书/体征/出入量/护理任务/
+  评估/交接班七域）+ nursing 模块服务面（`com.fuyun.nursing.service.impl` LINE=1.00，实测
+  COVERED=1343/MISSED=0）+ 三条锚点 IT（体征归集链 8 / 文书与交接班链 9 / 患者上下文拦截链 6）+
+  workstation 护士站页与 PDA 页 + UI 设计文档（865e535）+ 前端审查修复环 R1（65faa32：S7 重叠红圈
+  改坐标同格判定、短绌起止红竖线、PDA 卡号路径判空零出网、交接班摘要「特级/病重」标签归位）。
+- 纯新增迁移段 V800–V899（nursing）且 V800>V706 → 免存量卷重置；存量 spec 断言零回退（仅新增
+  `WardBoardView.spec.ts` +592 / `PdaView.spec.ts` +208）。
+- 合入前全量门禁四步全绿：后端 `-pl fuyun-app -am verify` BUILD SUCCESS（09:51，三锚点 IT、
+  `MessagingGovernanceIT` 64 行断言、`ModulithBoundaryTest` 全绿）；BUNDLE LINE 0.9606 ≥ 0.80；
+  前端五连 32 文件 150 用例全绿；迁移守卫 51 文件基线 dev 通过。
+- Spec 落地注记：`05-nursing.md` 新增 §13「P1 切片落地注记」（FU 界定 / 过渡通道退役三处留痕 /
+  五项降级 / CF-6 落点 / 归集量化 / WARD 降级 / Task 12 八项 REST 面适配 / PDA 最小脱敏口径 /
+  体温单符号契约类名）；`04-inpatient.md` §7 补 CF-6 id 55 占位行升级义务注记（双侧留痕）。
+- TASK.md：W-26、W-29 销项；新登记 W-31（ArchUnit 分层规则缺口）～W-35（「P1」双义词消歧）、
+  W-36（任务列表日期过滤与业务号日期段时区口径错位，真机实测发现）、D-22～D-24（计划级张力与
+  裁定三项：体征唯一约束 vs 服务器时间、归集并发双行竞态、连续取值域 vs 离散档位）。
+- 真栈探针四项通过：迁移计数 8（V800–V807 连续无缺号）/ 事件登记 64 行 / `/v3/api-docs` 200 且含
+  `/api/v1/nursing/` 契约面（含 PDA 两端点）/ compose 六服务全 healthy。
+- 浏览器真机两页六流程：4 通过 + 2 部分通过（异常体温呈现经核对为体温单 S1 腋温部位符号体系、
+  符合设计权威；任务列表时区错位登记 W-36 非阻断），截图存 `.superpowers/gui-test-screenshots/pr6-*`。
+
+## 2026-09-22 · P1 PR-6 M05 护理基础：nursing 号段登记与门禁适配（先记再改）
+
+- **nursing 专属固定百位段 V800–V899 新登记**：M05 为 schema 基线零迁移的新模块，首批迁移占百位段
+  V800–V807（患者元数据/护理文书/体征/出入量/护理任务/评估/交接班/事件登记八批）；批次合入后
+  nursing 后续迁移一律走 V500+ 通用段（W-12 口径，patient/outpatient 先例）。
+  **段位语义（2026-09-22 用户批复条件 1）：V800–V899 为 nursing 专属固定段位、非通用段，仅供 nursing
+  模块迁移占用，其他模块不得使用**——防止后人把 V8xx 误读为通用段。
+- **免存量卷重置**：首批 V800–V807 高于基线全局最大已应用版本 V706，Flyway outOfOrder=false
+  对存量 dev 卷不构成 pending 阻断——本 PR 无需 down -v（与 PR-5 V200<V703 的处置不同）。
+- **事件 id 排定**：CF-6 契约冻结载体与 M05 发布面共 24 行，id 41–64（当前最大 40）；status
+  一律 ACTIVE；CF-6 冻结行 desc 标注「(CF-6 冻结载体)」，占位行标注「(P1 占位登记，P2 实装)」。
+- **JaCoCo 规则二扩名单**：`com.fuyun.nursing.service.impl` 纳入 PACKAGE LINE=1.00（护理文书为
+  病历要件、体征落卡状态机与评估判级属核心面）。
+- **迁移守卫登记**：`scripts/check-migration-governance.py` `_SEGMENTS` 增 nursing 百位段；
+  `docs/migrations/flyway-version-registry.md` 同步登记 V800–V807。
+
 ## 2026-09-22 · W-29 后端 PR 开工：门诊契约缝三条补齐 + D-4 schema 坍缩治理
 
 - **范围**：①D-2 `QueueTicketVO` 补 `triageLevel`（数据源 visit.triage_level 权威快照，snapshot 路径零新增

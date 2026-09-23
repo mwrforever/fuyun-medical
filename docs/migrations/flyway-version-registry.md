@@ -5,6 +5,7 @@
 > 2. **与守卫互补**：本表与 `scripts/check-migration-governance.py` 的 `_SEGMENTS` 段守卫互补——守卫拦乱序与段越界（机制强制），本表供落文件前人工查重（流程前置）；两者不可互替。
 > 3. **活文档**：后续 PR 新增迁移时，同 PR 更新本表（先记再改同款纪律）；数据源为 `backend/*/src/main/resources/db/migration/*/*.sql` 目录实况与 `flyway_schema_history` 实况，**禁凭记忆写版本号**。
 > 4. **段位规则**：各模块 schema 基线首批占百位段（如 outpatient V200–V204）；后续迁移一律走 V500+ 通用段（乱序守卫全局规则——schema 非零基线后新迁移必须大于基线全局最大版本，V607/V704/V705 先例）。
+>    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
 ## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加）
@@ -54,6 +55,14 @@
 | V704 | V704__create_practice_grant.sql | system / fuyun-system | 执业授权表（抗菌药分级授权，PR-5） |
 | V705 | V705__seed_outpatient_dict.sql | system / fuyun-system | 门诊三类字典种子（appt-type/visit-type/disposition 19 条，PR-5） |
 | V706 | V706__comment_prescription_item_status.sql | pharmacy / fuyun-pharmacy | prescription_item.status 列注释订正（W-23：主代码零写入点，权威口径经 COMMENT ON 更新；V500+ 通用段续号——全局最大 V705 的下一号，满足乱序守卫） |
+| V800 | V800__seed_nursing_event_registry.sql | integration（种子落 nursing 段） | CF-6 冻结载体与 M05 发布事件登记 24 行（id 41–64） |
+| V801 | V801__create_nursing_ward_meta.sql | nursing / fuyun-nursing | 病区护理配置/责任护士分配/病区患者本地视图 + 三班种子 |
+| V802 | V802__create_nursing_document.sql | nursing / fuyun-nursing | 护理记录 + 体温单页 + 体温单条目 |
+| V803 | V803__create_vital_sign.sql | nursing / fuyun-nursing | 生命体征记录 |
+| V804 | V804__create_io.sql | nursing / fuyun-nursing | 出入量明细 + 出入量小结 |
+| V805 | V805__create_nursing_task.sql | nursing / fuyun-nursing | 护理任务（最小载体） |
+| V806 | V806__create_nursing_assessment.sql | nursing / fuyun-nursing | 护理评估单 |
+| V807 | V807__create_shift_handover.sql | nursing / fuyun-nursing | 交接班 |
 
 ## 冻结段速查（禁落新文件）
 
@@ -67,4 +76,4 @@
 | V500–V503 | integration 通用段 | 通用段按版本升序追加，禁改已应用 |
 | V600–V607 | billing 首批 + V607 字典 | 禁改已应用；V605 id 23 / V702 id 25/31 仅允许 V204 内数据行 UPDATE |
 | V700–V703 | pharmacy 首批 | pharmacy 后续迁移走 V500+ 通用段 |
-| V704、V705、V706 | V500+ 通用段（V704/V705=system·PR-5；V706=pharmacy·W-23） | 当前全局最大已应用版本=V706，新迁移必须 > V706 |
+| V704、V705、V706 | V500+ 通用段（V704/V705=system·PR-5；V706=pharmacy·W-23） | 当前全局最大已应用版本=V807（PR-6 nursing 首批 V800–V807 同 PR 落地，本行随登记先行更新至落地后口径），新迁移必须 > V807 |

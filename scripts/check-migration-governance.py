@@ -36,6 +36,9 @@ _SEGMENTS = {
     "billing": ((600, 699), (500, None)),
     # pharmacy 固定百位段（PR-4 首批 V700–V703，CHANGELOG 2026-09-18 条目先记再改）
     "pharmacy": ((700, 799), (500, None)),
+    # nursing 专属固定百位段 V800–V899（非通用段，仅供 nursing 模块，其他模块不得占用）
+    # PR-6 首批 V800–V807，CHANGELOG 2026-09-22 条目先记再改
+    "nursing": ((800, 899), (500, None)),
 }
 
 # 未登记号段模块的唯一合法区间（V500+ 通用段）

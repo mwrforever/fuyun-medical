@@ -278,6 +278,8 @@
                   <!-- outpatient 域核心包（P1 PR-5 起随首个 impl 实装生效；号源权威库存扣减/visit
                        主状态机/退号退费联动直接驱动资金联动，CHANGELOG 2026-09-20 条目先记再改） -->
                   <include>com.fuyun.outpatient.service.impl</include>
+                  <!-- nursing 护理文书/体征状态机/评估判级（PR-6，CHANGELOG 2026-09-22 条目先记再改） -->
+                  <include>com.fuyun.nursing.service.impl</include>
                 </includes>
                 <limits>
                   <limit>

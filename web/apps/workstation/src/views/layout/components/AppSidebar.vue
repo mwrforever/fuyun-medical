@@ -28,6 +28,8 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/pharmacy/drug-dict', label: '药品字典', abbr: '药', group: '药房管理' },
   { index: '/pharmacy/dispense-workbench', label: '发药工作台', abbr: '发', group: '药房管理' },
   { index: '/pharmacy/dispense-return', label: '退药受理', abbr: '收', group: '药房管理' },
+  { index: '/nursing/ward', label: '护士站', abbr: '护', group: '护理管理' },
+  { index: '/pda', label: 'PDA 扫码', abbr: '扫', group: '护理管理' },
 ];
 
 /** 顶层菜单项（group 空串），渲染在各分组之前 */
