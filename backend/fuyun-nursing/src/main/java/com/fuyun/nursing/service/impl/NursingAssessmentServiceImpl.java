@@ -43,11 +43,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 护理评估单域服务实现（V806 nursing_assessment 业务面，五量表引擎）。创建八件套（量表类型
- * 校验 → 条目校验 → 判级 → 在区与业务时间校验 → 发号 → insert → 高危联动 → 评估完成事件）
- * 收口单事务：高危联动的防范任务生成（INursingTaskService#create）与风险标识回写
- * （IWardMetaService#appendRiskFlag）任一失败整体回滚，禁单侧落库（联动原子性）。判级阈值
- * 逐值冻结于 NursingScaleConstants；业务时间双口径（assessed_at 业务时钟 + 审计列服务器时钟，
- * Spec 红线 2 注记）。线程安全：无状态 singleton；写操作 @Transactional 收口。
+ * 校验 → 条目校验 → 判级 → 在区与业务时间校验 → 发号 → insert → 判级联动 → 评估完成事件）
+ * 收口单事务：判级联动与评估落库同生共死任一失败整体回滚，禁单侧落库（联动原子性）——
+ * 高危分支生成防范任务（INursingTaskService#create）并追加风险标识（IWardMetaService#appendRiskFlag），
+ * 复评降级分支（非高危）移除对应风险标识（IWardMetaService#removeRiskFlag，床旁标识权威 =
+ * 最新评估判级，防降级后残留误导临床）。判级阈值逐值冻结于 NursingScaleConstants；业务时间
+ * 双口径（assessed_at 业务时钟 + 审计列服务器时钟，Spec 红线 2 注记）。
+ * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
 public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentMapper, NursingAssessment>
@@ -157,9 +159,12 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
             throw new BizException(
                     NursingErrorCode.CONFLICT, HttpStatus.CONFLICT, "评估单号唯一冲突（幂等拒绝）：assessNo=" + assessNo);
         }
-        // 步骤⑦：高危分支联动——防范任务生成 + 风险标识回写 + 任务引用回填（任一失败整体回滚）
+        // 步骤⑦：判级联动——高危分支追加床旁风险标识并生成防范任务；复评降级分支（非高危）
+        // 移除对应风险标识（任一失败整体回滚，与评估落库同事务）
         if (riskLevel == RiskLevel.HIGH) {
             linkHighRisk(row, scaleType);
+        } else {
+            unlinkDowngradedRiskFlag(row, scaleType);
         }
         // 步骤⑧：评估完成事件（事务内发布，AFTER_COMMIT 出站 GC8；高危结论供下游联动消费）
         events.publishEvent(new NursingDomainEvent(
@@ -273,6 +278,32 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
                 row.getVisitId(),
                 scaleType.getCode(),
                 task.taskNo(),
+                riskFlag == null ? "无（量表无床旁标识映射）" : riskFlag);
+    }
+
+    /**
+     * 复评降级风险标识解除（步骤⑦非高危分支）：仅压疮/跌倒两类有床旁标识映射的量表在最新
+     * 判级脱离高危时移除对应标识（与 {@link #linkHighRisk} 的映射同源 NursingScaleConstants#
+     * riskFlagOf），防复评降级后床旁 FALL/PRESSURE 标识永久残留误导临床；无映射量表
+     * （NRS/BARTHEL/MEWS）零触达，未含该标识时由 removeRiskFlag 幂等零写兜底。移除与评估
+     * 落库同事务（联动原子性），在区行已被移出时 NS-1001 原样上抛整体回滚。
+     *
+     * @param row       已落库的评估单行（非高危判级），非空
+     * @param scaleType 量表类型枚举（风险标识映射键），非空
+     * @throws BizException 患者已不在区（NS-1001）时原样上抛，评估事务整体回滚
+     */
+    private void unlinkDowngradedRiskFlag(NursingAssessment row, ScaleType scaleType) {
+        // 床旁风险标识解除：仅两类有映射量表触达（判重/幂等语义由 removeRiskFlag 内部承载）
+        String riskFlag = NursingScaleConstants.riskFlagOf(scaleType);
+        if (riskFlag != null) {
+            wardMetaService.removeRiskFlag(row.getVisitId(), riskFlag);
+        }
+        log.info(
+                "评估复评降级标识解除：assessNo={}，visitId={}，scaleType={}，riskLevel={}，riskFlag={}",
+                row.getAssessNo(),
+                row.getVisitId(),
+                scaleType.getCode(),
+                row.getRiskLevel(),
                 riskFlag == null ? "无（量表无床旁标识映射）" : riskFlag);
     }
 

@@ -44,6 +44,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -491,6 +492,37 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         // 数据库写操作：风险标识条件回写（Task 8 评估高危结果）
         baseMapper.updateRiskFlags(visitId, merged, operator());
         log.info("风险标识追加：visitId={}，flag={}，riskFlags={}", visitId, flag, merged);
+    }
+
+    /**
+     * 风险标识移除回写（评估复评降级消费，接口注见 IWardMetaService#removeRiskFlag）：
+     * 移除指定项后整体回写剩余标识（保持既有顺序）；不含该标识时零写入直接返回（幂等护栏）。
+     *
+     * @param visitId 住院就诊号，非空；来源：评估单载荷
+     * @param flag    风险标识 code（如 FALL/PRESSURE），非空；来源：评估单非高危结果
+     * @throws BizException NS-1001（404 在区行不存在）
+     */
+    @Override
+    @Transactional
+    public void removeRiskFlag(String visitId, String flag) {
+        NursingWardPatient row = requireInWardByVisit(visitId);
+        if (row == null) {
+            throw new BizException(
+                    NursingErrorCode.WARD_PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "病区在区患者不存在：" + visitId);
+        }
+        List<String> flags = Arrays.stream(orEmpty(row.getRiskFlags()).split(","))
+                .filter(s -> !s.isBlank())
+                .toList();
+        // 不含目标标识即零写入（幂等护栏：复评本就非高危的场景不得产生多余写触达）
+        if (!flags.contains(flag)) {
+            log.info("风险标识不存在（零写入）：visitId={}，flag={}", visitId, flag);
+            return;
+        }
+        // 移除目标项后整体回写剩余标识（与追加侧同为「服务层拼串、SQL 整体置值」分工）
+        String merged = flags.stream().filter(f -> !f.equals(flag)).collect(Collectors.joining(","));
+        // 数据库写操作：风险标识条件回写（评估复评降级，最新判级脱离高危）
+        baseMapper.updateRiskFlags(visitId, merged, operator());
+        log.info("风险标识移除：visitId={}，flag={}，riskFlags={}", visitId, flag, merged);
     }
 
     /** 按 visit_id 定位在区行（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */

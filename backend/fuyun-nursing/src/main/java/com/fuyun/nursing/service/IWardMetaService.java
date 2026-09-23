@@ -111,4 +111,15 @@ public interface IWardMetaService {
      * @throws BizException NS-1001（404 在区行不存在）
      */
     void appendRiskFlag(String visitId, String flag);
+
+    /**
+     * 风险标识移除回写（评估复评降级消费）：复评判级脱离高危时移除对应床旁风险标识，
+     * 防降级后标识永久残留误导临床（风险标识权威 = 最新评估判级）；移除后整体回写剩余
+     * 标识（逗号分隔、保持既有顺序），不含该标识时零写入直接返回（幂等护栏）。
+     *
+     * @param visitId 住院就诊号，非空；来源：评估单载荷
+     * @param flag    风险标识 code（如 FALL/PRESSURE），非空；来源：评估单非高危结果
+     * @throws BizException NS-1001（404 在区行不存在）
+     */
+    void removeRiskFlag(String visitId, String flag);
 }

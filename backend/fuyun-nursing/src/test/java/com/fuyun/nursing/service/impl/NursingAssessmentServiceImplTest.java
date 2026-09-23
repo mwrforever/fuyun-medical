@@ -344,6 +344,25 @@ class NursingAssessmentServiceImplTest {
     }
 
     @Test
+    @DisplayName("复评降级清标识（升→降全链路）：BRADEN 高危追加 PRESSURE 后复评 MEDIUM 移除 PRESSURE" + "（同事务联动，床旁标识权威 = 最新评估判级）；防范任务仅高危生成一次")
+    void createDowngradeRemovesRiskFlagAfterPriorHigh() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(seqGate.nextNo("AS")).thenReturn(ASSESS_NO, ASSESS_NO + "X");
+        when(assessmentMapper.insert(any(NursingAssessment.class))).thenAnswer(insertWithId(ROW_ID));
+        when(taskService.create(any())).thenReturn(taskVO());
+
+        // 升：首次评估 BRADEN 8 分 → HIGH，追加床旁压疮风险标识 + 生成防范任务
+        service.create(request("BRADEN", braden(2, 1, 1, 1, 1, 2)));
+        verify(wardMetaService, times(1)).appendRiskFlag(VISIT, "PRESSURE");
+
+        // 降：复评 BRADEN 18 分 → MEDIUM（非高危），同事务移除对应风险标识，防范任务零新增
+        service.create(request("BRADEN", braden(3, 3, 3, 3, 3, 3)));
+        verify(wardMetaService, times(1)).removeRiskFlag(VISIT, "PRESSURE");
+        verify(wardMetaService, never()).removeRiskFlag(VISIT, "FALL");
+        verify(taskService, times(1)).create(any());
+    }
+
+    @Test
     @DisplayName("复评计划盖章：HIGH +24h / MEDIUM +72h / LOW +168h（以 assessedAt 为基准）")
     void createStampsNextAssessPlanByRiskLevel() {
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO());

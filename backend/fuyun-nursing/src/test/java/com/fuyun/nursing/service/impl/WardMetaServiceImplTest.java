@@ -822,6 +822,47 @@ class WardMetaServiceImplTest {
         verify(wardPatientMapper).updateRiskFlags(VISIT, "FALL", "nurse-01");
     }
 
+    @Test
+    @DisplayName("风险标识移除（复评降级消费面）：移除指定项整体回写剩余标识（保持顺序、清空落空串）；" + "不含该标识零写入幂等")
+    void removeRiskFlagRemovesTargetAndSkipsAbsent() {
+        // 双标识行移除其一：剩余标识保持既有顺序整体回写
+        NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
+        row.setRiskFlags("FALL,PRESSURE");
+        when(wardPatientMapper.selectOne(any())).thenReturn(row);
+        when(wardPatientMapper.updateRiskFlags(VISIT, "FALL", "nurse-01")).thenReturn(1);
+
+        service.removeRiskFlag(VISIT, "PRESSURE");
+
+        verify(wardPatientMapper).updateRiskFlags(VISIT, "FALL", "nurse-01");
+
+        // 仅存标识被移除：回写空串（DDL NOT NULL 默认空串口径，非 NULL）
+        NursingWardPatient single = inWardRow(5L, 7L, "W01", "01");
+        single.setRiskFlags("PRESSURE");
+        when(wardPatientMapper.selectOne(any())).thenReturn(single);
+        when(wardPatientMapper.updateRiskFlags(VISIT, "", "nurse-01")).thenReturn(1);
+
+        service.removeRiskFlag(VISIT, "PRESSURE");
+
+        verify(wardPatientMapper).updateRiskFlags(VISIT, "", "nurse-01");
+
+        // 不含目标标识（本就非高危的复评）：零写入幂等，无多余写触达
+        NursingWardPatient noFlag = inWardRow(5L, 7L, "W01", "01");
+        noFlag.setRiskFlags("");
+        when(wardPatientMapper.selectOne(any())).thenReturn(noFlag);
+        service.removeRiskFlag(VISIT, "PRESSURE");
+        verify(wardPatientMapper, never()).updateRiskFlags(VISIT, "PRESSURE", "nurse-01");
+    }
+
+    @Test
+    @DisplayName("风险标识移除：在区行不存在拒 NS-1001")
+    void removeRiskFlagRejectsMissingRow() {
+        when(wardPatientMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.removeRiskFlag(VISIT, "PRESSURE"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(NursingErrorCode.WARD_PATIENT_NOT_FOUND));
+    }
+
     // ===================== 测试数据与断言辅助 =====================
 
     /** 登记入参构造（patientId 固定 7，其余缺省）。 */

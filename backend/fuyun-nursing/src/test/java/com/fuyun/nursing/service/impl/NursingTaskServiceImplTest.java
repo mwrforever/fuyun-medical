@@ -455,6 +455,27 @@ class NursingTaskServiceImplTest {
                 });
     }
 
+    @Test
+    @DisplayName("巡视打卡标识留痕分流：I 型腕带码原值落 source_ref（非敏感）；证件号/短标识落尾四位掩码" + "（敏感字段明文禁落库，V805 列注释口径 + 等保红线）")
+    void patrolSourcesRefTrailByIdentifierForm() {
+        when(seqGate.nextNo("TK")).thenReturn("TK2026092200002");
+        when(taskMapper.insert(any(NursingTask.class))).thenAnswer(insertWithId(ROW_ID));
+
+        // 三形态各打一次卡：I 型腕带就诊编码 / 18 位证件号 / ≤4 位短标识
+        service.patrol(7L, VISIT, WARD, "I2026091600001");
+        service.patrol(7L, VISIT, WARD, "11010119900101123X");
+        service.patrol(7L, VISIT, WARD, "AB12");
+
+        verify(taskMapper, times(3)).insert(rowCaptor.capture());
+        List<NursingTask> rows = rowCaptor.getAllValues();
+        // I 型腕带就诊编码（CF-3 冻结结构，visitId 形态非敏感）：原值留痕可追溯打卡介质
+        assertThat(rows.get(0).getSourceRef()).isEqualTo("I2026091600001");
+        // 证件号形态属敏感字段：明文禁落 source_ref，落尾四位掩码值
+        assertThat(rows.get(1).getSourceRef()).isEqualTo("****123X");
+        // ≤4 位短标识：全星回退（identifierTail 口径，与 PdaServiceImpl 同源）
+        assertThat(rows.get(2).getSourceRef()).isEqualTo("****");
+    }
+
     // ===================== 测试数据与断言辅助 =====================
 
     /**

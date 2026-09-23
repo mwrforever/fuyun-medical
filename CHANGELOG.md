@@ -2,6 +2,22 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-24 · P1 PR-6 M05 修复环 R1（后端四项 Important）
+
+- 五视角审查 R1 后端四项修复：①`com.fuyun.nursing.api` 包补 `package-info.java`
+  `@NamedInterface("api")` 声明（逐字对齐 outpatient/patient/system 形态，宪法 B.1 对外契约出口；
+  spring-modulith-api 依赖自此有消费点，P2 消费方引用不再被 Modulith 边界拦截）；
+  ②巡视打卡日志改 `identifierTail` 尾四位摘要口径（对齐 PdaServiceImpl，扫码标识明文禁入日志）；
+  ③patrol `source_ref` 按标识形态分流——I 型腕带就诊编码（`VisitIdValidator` 冻结结构，
+  visitId 形态非敏感）原值留痕，证件号/就诊卡号形态落尾四位掩码值（V805 列注释口径 +
+  等保「敏感字段脱敏落库」红线）；④评估复评降级（非高危）同事务移除对应床旁风险标识
+  （`IWardMetaService#removeRiskFlag` 新增；映射与高危追加同源 `NursingScaleConstants#riskFlagOf`，
+  幂等零写兜底）——床旁风险标识权威 = 最新评估判级，防 FALL/PRESSURE 降级后永久残留误导临床。
+- 测试：NursingTaskServiceImplTest 补 patrol 留痕三形态分流、WardMetaServiceImplTest 补移除
+  （保序回写/清空落空串/幂等零写/NS-1001）、NursingAssessmentServiceImplTest 补升→降全链路
+  （高危追加 PRESSURE → 复评 MEDIUM 清标识，防范任务零新增）；冻结用例断言零触碰。
+  Spec 同步：05-nursing.md §13 追加第 16 条注记。
+
 ## 2026-09-24 · P1 PR-6 M05 护理基础收口
 
 - 交付面：V800–V807 八迁移（CF-6 事件登记 24 行 id 41–64；病区元数据/护理文书/体征/出入量/护理任务/

@@ -22,6 +22,7 @@ import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.properties.NursingProperties;
 import com.fuyun.nursing.service.INursingTaskService;
 import com.fuyun.nursing.vo.NursingTaskVO;
+import com.fuyun.patient.api.VisitIdValidator;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -268,13 +269,15 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
 
     /**
      * 巡视打卡（Task 10 PDA 面落点）：建 PATROL 行直落 COMPLETED——assignedNurse=当前操作者、
-     * planTime/completedAt=打卡时刻、sourceRef=扫码标识留痕。行生而终态（未经历任务生命周期，
-     * 不发 created/completed 事件——打卡记录语义，非任务流转）。
+     * planTime/completedAt=打卡时刻、sourceRef=扫码标识留痕（按标识形态分流，见
+     * {@link #sourceRefTrail}：I 型腕带就诊编码原值，证件号/卡号形态落掩码值）。行生而终态
+     * （未经历任务生命周期，不发 created/completed 事件——打卡记录语义，非任务流转）。
      *
      * @param patientId  患者主索引，非空；来源：PDA 标识解析（Task 10）
      * @param visitId    住院就诊号，非空；来源：PDA 标识解析（Task 10）
      * @param wardId     病区编码，非空；来源：PDA 当前登录病区（Task 10）
-     * @param identifier 扫码标识（腕带号等），非空；来源：PDA 扫码，落 sourceRef 留痕
+     * @param identifier 扫码标识（腕带就诊编码/就诊卡号/证件号三合一），非空；来源：PDA 扫码，
+     *                   分流后落 sourceRef 留痕，明文禁入日志（identifierTail 摘要口径）
      * @return 打卡任务出参（COMPLETED 态），非空
      * @throws BizException NS-1016（409 任务号唯一冲突幂等拒绝——PDA 连点防重）
      */
@@ -291,7 +294,9 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
         row.setWardId(wardId);
         row.setTaskType(TaskType.PATROL.getCode());
         row.setSource(TaskSource.MANUAL.getCode());
-        row.setSourceRef(identifier);
+        // source_ref 留痕按标识形态分流：I 型腕带就诊编码（visitId 形态，非敏感）原值落库；
+        // 证件号/就诊卡号形态属敏感字段，按「敏感字段应用层脱敏后落库」红线落掩码值
+        row.setSourceRef(sourceRefTrail(identifier));
         row.setPlanTime(patrolledAt);
         row.setAssignedNurse(operator);
         row.setPriority(TaskPriority.NORMAL.getCode());
@@ -308,14 +313,47 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
             throw new BizException(
                     NursingErrorCode.CONFLICT, HttpStatus.CONFLICT, "任务号唯一冲突（幂等拒绝）：taskNo=" + row.getTaskNo());
         }
+        // 日志脱敏：扫码标识按 identifierTail 摘要口径输出（与 PdaServiceImpl 同源），明文禁入日志
         log.info(
-                "巡视打卡完成：taskNo={}，visitId={}，wardId={}，identifier={}，operator={}",
+                "巡视打卡完成：taskNo={}，visitId={}，wardId={}，identifierTail={}，operator={}",
                 row.getTaskNo(),
                 visitId,
                 wardId,
-                identifier,
+                identifierTail(identifier),
                 operator);
         return NursingTaskVO.from(row);
+    }
+
+    /**
+     * 巡视打卡标识留痕分流（source_ref 落库口径）：V805 列注释定义 source_ref 为「执行单号/
+     * 告警号/规则号」类来源引用——I 型腕带就诊编码（CF-3 冻结结构，即 visitId 形态，非敏感）
+     * 与该口径相容，原值留痕可追溯打卡介质；证件号/就诊卡号形态属敏感字段，按等保三级
+     * 「敏感字段应用层加密（脱敏）后落库」红线落 identifierTail 掩码值，禁明文证件号落库。
+     *
+     * @param identifier 扫码标识明文，非空；来源：PDA 扫码（Task 10 三合一入口）
+     * @return 可落 source_ref 的留痕值：I 型腕带码原值，其余形态为尾四位掩码值
+     */
+    private String sourceRefTrail(String identifier) {
+        // I 型腕带就诊编码判定复用 patient api 冻结结构校验（类型码 I + 真实日历日期段，
+        // 比 PdaServiceImpl 解析路由的宽松形态判定更严——宁掩码勿明文，误掩码仅损留痕信息量）
+        if (VisitIdValidator.isValid(identifier)) {
+            return identifier;
+        }
+        return identifierTail(identifier);
+    }
+
+    /**
+     * 标识日志/留痕脱敏：仅保留后四位（≤4 位全星回退）——腕带/卡号/证件号明文禁入日志与
+     * 敏感留痕（等保红线），口径与 PdaServiceImpl#identifierTail 同源。
+     *
+     * @param identifier 标识明文，可空（null 按全星处理）
+     * @return 尾四位掩码文本（如 ****5678；≤4 位或 null 返回 ****）
+     */
+    private String identifierTail(String identifier) {
+        if (identifier == null || identifier.length() <= 4) {
+            return "****";
+        }
+        return "****" + identifier.substring(identifier.length() - 4);
     }
 
     /**
