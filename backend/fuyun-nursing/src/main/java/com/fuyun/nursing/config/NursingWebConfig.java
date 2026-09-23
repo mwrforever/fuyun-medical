@@ -5,6 +5,7 @@ import com.fuyun.nursing.controller.IoController;
 import com.fuyun.nursing.controller.NursingAssessmentController;
 import com.fuyun.nursing.controller.NursingRecordController;
 import com.fuyun.nursing.controller.NursingTaskController;
+import com.fuyun.nursing.controller.PdaController;
 import com.fuyun.nursing.controller.ShiftHandoverController;
 import com.fuyun.nursing.controller.TemperatureChartController;
 import com.fuyun.nursing.controller.VitalSignController;
@@ -15,6 +16,7 @@ import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
 import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
+import com.fuyun.nursing.service.impl.PdaServiceImpl;
 import com.fuyun.nursing.service.impl.ShiftHandoverServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
 import com.fuyun.nursing.service.impl.VitalSignServiceImpl;
@@ -33,7 +35,8 @@ import org.springframework.context.annotation.Import;
  * 出入量控制器。Task 7 追加：护理任务服务与任务控制器、护理域参数
  * （{@link NursingProperties}，BillingWebConfig @EnableConfigurationProperties 先例形态）。
  * Task 8 追加：护理评估服务（五量表引擎 + 高危联动）与评估控制器。Task 9 追加：交接班服务
- * （SBAR 自动汇总/双签/事件发布）与交接班控制器。
+ * （SBAR 自动汇总/双签/事件发布）与交接班控制器。Task 10 追加：PDA 护理面服务
+ * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -49,12 +52,14 @@ import org.springframework.context.annotation.Import;
     NursingTaskServiceImpl.class,
     NursingAssessmentServiceImpl.class,
     ShiftHandoverServiceImpl.class,
+    PdaServiceImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,
     IoController.class,
     NursingTaskController.class,
     NursingAssessmentController.class,
-    ShiftHandoverController.class
+    ShiftHandoverController.class,
+    PdaController.class
 })
 public class NursingWebConfig {}
