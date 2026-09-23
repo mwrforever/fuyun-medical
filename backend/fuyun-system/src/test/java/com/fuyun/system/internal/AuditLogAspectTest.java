@@ -38,7 +38,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * <p>覆盖：成功路径记 SUCCESS（操作人取上下文、traceId 取 MDC、resource/client_ip 取当前请求）、
  * 免认证登录端点无操作人上下文时回退取入参登录名（审计主体口径）、BizException/任意异常记 FAIL
  * 且原样 rethrow、fail_reason 脱敏 + 500 字符截断、审计落库失败全吞不阻断业务（成功与失败双路径）、
- * 请求上下文缺失兜底 unknown。落库字段语义的真库落点归 AuthFlowIT 步骤 7 端到端断言。
+ * 请求上下文缺失兜底 unknown、标识白名单掩码（PR-6 修复环 R2：identifier 参数/含 identifier 组件
+ * 的 record 尾四位掩码不落明文，白名单外参数逐字节原样）。落库字段语义的真库落点归 AuthFlowIT
+ * 步骤 7 端到端断言。
  */
 @ExtendWith(MockitoExtension.class)
 class AuditLogAspectTest {
@@ -142,6 +144,49 @@ class AuditLogAspectTest {
     }
 
     @Test
+    @DisplayName("identifier 入参（PDA 扫码标识三合一）：detail 尾四位掩码不落明文，与 nursing identifierTail 同形态")
+    void identifierStringArgIsTailMaskedInDetail() {
+        proxy.sensitiveQuery("110101199001011234");
+
+        verify(auditLogService).append(entryCaptor.capture());
+        AuditLogEntry entry = entryCaptor.getValue();
+        // 掩码形态锚定：仅保留后四位、前缀全星（与 nursing identifierTail 同口径），证号明文禁入审计
+        assertThat(entry.detail()).isEqualTo("****1234");
+        assertThat(entry.detail()).doesNotContain("110101199001011234");
+    }
+
+    @Test
+    @DisplayName("标识边界：≤4 位短标识回退全星，防短值回推明文")
+    void shortIdentifierArgFallsBackToFullMask() {
+        proxy.sensitiveQuery("1234");
+
+        verify(auditLogService).append(entryCaptor.capture());
+        assertThat(entryCaptor.getValue().detail()).isEqualTo("****");
+    }
+
+    @Test
+    @DisplayName("白名单外参数逐字节不变：同方法非标识参数 keyword 原样进 detail，仅 identifier 掩码")
+    void nonIdentifierArgStaysIntactBesideMaskedIdentifier() {
+        proxy.mixedQuery("张三", "110101199001011234");
+
+        verify(auditLogService).append(entryCaptor.capture());
+        // 精确匹配锚定：keyword 原样 + identifier 掩码，分隔符与拼接顺序与既有口径一致
+        assertThat(entryCaptor.getValue().detail()).isEqualTo("张三, ****1234");
+    }
+
+    @Test
+    @DisplayName("含 identifier 组件的 record 入参（PDA 巡视打卡形态）：identifier 掩码、其余组件原样")
+    void recordIdentifierComponentIsMaskedWhileOtherComponentsKept() {
+        proxy.patrol(new SampleService.PatrolSampleRequest("11010119900101123X", "V20260923001"));
+
+        verify(auditLogService).append(entryCaptor.capture());
+        AuditLogEntry entry = entryCaptor.getValue();
+        // 组件重排锚定：identifier 尾四位掩码（含 X 校验位）+ visitId 原样，默认 toString 不再直出
+        assertThat(entry.detail()).isEqualTo("identifier=****123X, visitId=V20260923001");
+        assertThat(entry.detail()).doesNotContain("11010119900101123X");
+    }
+
+    @Test
     @DisplayName("业务异常：记 FAIL 行（fail_reason=异常消息）后原样 rethrow；无参无上下文操作人回退 system")
     void bizExceptionRecordsFailEntryAndRethrows() {
         BizException expected =
@@ -238,5 +283,26 @@ class AuditLogAspectTest {
         public String failNoArgs() {
             throw pendingFailure;
         }
+
+        /** 注解落点形态与 PdaController.patientSummary 一致：唯一入参为名为 identifier 的扫码标识 */
+        @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
+        public String sensitiveQuery(String identifier) {
+            return "ok";
+        }
+
+        /** 双入参混排形态：非标识参数（keyword）与标识参数同方法，锚定白名单只掩 identifier */
+        @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
+        public String mixedQuery(String keyword, String identifier) {
+            return "ok";
+        }
+
+        /** 注解落点形态与 PdaController.patrol 一致：含 identifier 组件的 record 入参 */
+        @AuditLog(actionType = AuditActionType.WRITE)
+        public String patrol(PatrolSampleRequest request) {
+            return "ok";
+        }
+
+        /** 样本 record（组件形态与 PdaPatrolRequest 一致：identifier 扫码标识 + visitId 归属键） */
+        public record PatrolSampleRequest(String identifier, String visitId) {}
     }
 }

@@ -2,6 +2,24 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-24 · P1 PR-6 M05 修复环 R2（审计切面标识白名单掩码，安全 Important）
+
+- R2 审查发现：fuyun-system 共享切面 `AuditLogAspect#buildDetail` 对非 Bearer 的 String 参数与
+  方法入参 record 直出（仅口令/令牌类打码），PR-6 新增的 PDA 两端点（`GET
+  /api/v1/nursing/pda/patient-summary?identifier=` SENSITIVE_QUERY 与 `POST
+  /api/v1/nursing/pda/patrol` WRITE）会把证件号/卡号明文写进 `audit_log.detail`（留存 ≥6 个月）
+  ——违反「日志禁打印敏感信息」等保红线。
+- 处置取增量白名单路径（策略 b；实测无参数级脱敏扩展点，`@AuditLog` 仅 `actionType()`）：
+  仅「参数名为 identifier 的 String 入参」与「含 identifier 组件的 record 入参」尾四位掩码
+  （`****` + 后四位，与 nursing `identifierTail` 同形态）；全平台影响面实测仅 PdaController 两
+  落点（patient 模块 identifierType/identifierValue 等近名参数不命中），白名单外端点 detail
+  行为逐字节不变，不改全平台审计语义。掩码逻辑收口切面私有方法
+  `maskIdentifierArgIfNeeded`/`maskIdentifierTail`，参数名经编译期 `-parameters` 提供。
+- 测试：AuditLogAspectTest 补四锚（identifier String 尾四位掩码精确匹配 / ≤4 位短标识全星回退 /
+  白名单外 keyword 参数逐字节原样 / PdaPatrolRequest 形态 record identifier 组件掩码其余组件原样）；
+  存量断言零触碰。验证：`mvn -pl fuyun-system -am test` 154/0 全绿，`mvn -pl fuyun-app -am verify`
+  BUILD SUCCESS。
+
 ## 2026-09-24 · P1 PR-6 M05 修复环 R1（后端四项 Important）
 
 - 五视角审查 R1 后端四项修复：①`com.fuyun.nursing.api` 包补 `package-info.java`
