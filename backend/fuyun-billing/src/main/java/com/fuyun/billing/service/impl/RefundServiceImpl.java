@@ -2,6 +2,7 @@ package com.fuyun.billing.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -26,6 +27,7 @@ import com.fuyun.billing.mapper.RefundFeeLinkMapper;
 import com.fuyun.billing.mapper.RefundRequestMapper;
 import com.fuyun.billing.mapper.SettlementMapper;
 import com.fuyun.billing.properties.BillingRefundProperties;
+import com.fuyun.billing.record.FeeRefundedFenRow;
 import com.fuyun.billing.service.IRefundService;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
@@ -118,7 +120,7 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * → 申请单与 link 负向台账同事务落表 → 免审命中即发 refund.approved。
      *
      * <p>并发收口（2026-09-18 用户裁决）：行锁前置于守卫——并发双申请同费用行时后到者阻塞至
-     * 先到者提交，锁内重读的费用行与 refundedFen 已退聚合（每条语句取新快照）均含先到者已落
+     * 先到者提交，锁内重读的费用行与 refundedFenByFeeIds 已退聚合（每条语句取新快照）均含先到者已落
      * 的 APPROVED 负向台账，超可退守卫即拒；免审阈值内「双双自动批准全自动重复退款」的
      * TOCTOU 窗口就此根除（uk_refund_fee 仅 (refund_id,fee_id) 无跨申请保护，靠本行锁补位）。
      *
@@ -156,11 +158,15 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                             + st.getStatus().getCode());
         }
         // 行锁抢占目标费用行集至事务提交（并发收口锚点）：后到并发申请在此阻塞，先到者提交后
-        //   本事务读到的行与下方 refundedFen 聚合即最新口径——守卫读值不再是过期快照
+        //   本事务读到的行与下方可退余额聚合即最新口径——守卫读值不再是过期快照
         List<Long> feeIds =
                 req.lines().stream().map(RefundLine::feeId).distinct().toList();
         Map<Long, FeeRecord> lockedFees =
                 feeRecordMapper.lockByIds(feeIds).stream().collect(Collectors.toMap(FeeRecord::getId, f -> f));
+        // 超可退守卫聚合批量预载（PERF-01 SQL 下推）：同批 feeId 已决+在途各一次索引聚合（替代旧逐行
+        //   refundedFen 的每明细两次全表实体拉取），锁内装载保证 TOCTOU 收口语义不变；取值与旧
+        //   refundedFen(feeId,null) 逐行计算完全等价（W-17 口径：已决全量+在途全量，apply 侧不排斥）
+        Map<Long, Long> refundedFenByFeeId = refundedFenByFeeIds(feeIds, null);
         // 逐行守卫与服务端算额（锁内口径）：行金额=单价快照×退费数量 HALF_UP 取整到分（与计价同口径）
         long amount = 0L;
         boolean crossDay = false;
@@ -204,9 +210,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     .setScale(0, RoundingMode.HALF_UP)
                     .longValueExact();
             // 超可退守卫：历史已退+在途（W-17：已决 APPROVED/EXECUTED 与兄弟单待审批在途均计入，
-            //   防并发在途申请双双过守卫——与 execute 判态的仅已决口径刻意分立，见 refundedFen javadoc）
-            //   + 本次 > 费用行金额 → 拒
-            long alreadyRefunded = refundedFen(fee.getId(), null);
+            //   防并发在途申请双双过守卫——与 execute 判态的仅已决口径刻意分立，见 refundedFenByFeeIds
+            //   javadoc）+ 本次 > 费用行金额 → 拒（聚合值循环外批量预载，锁内快照逐行查表复用）
+            long alreadyRefunded = refundedFenByFeeId.getOrDefault(fee.getId(), 0L);
             if (alreadyRefunded + lineAmount > fee.getAmount()) {
                 log.warn(
                         "退费超可退拦截：refundSettlement={}，feeId={}，行金额={}分，已退={}分，原额={}分",
@@ -245,8 +251,11 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         refund.setApplicant(applicant);
         refund.setAutoApproved(autoApproved);
         refund.setStatus(autoApproved ? RefundStatus.APPROVED : RefundStatus.PENDING_APPROVAL);
-        // 数据库写操作：申请单落库 + link 负向台账逐行落表（同事务；禁 fee_record 负向行——裁决⑫）
+        // 数据库写操作：申请单落库 + link 负向台账一次批插（同事务；禁 fee_record 负向行——裁决⑫；
+        //   PERF-01：逐行 insert 改 saveBatch JDBC 批处理，落库行集与行序不变、ASSIGN_ID 自动填充，
+        //   先例 DispenseServiceImpl，A.4.3-16 须在事务内调用——本方法 @Transactional 承载）
         save(refund);
+        List<RefundFeeLink> linkRows = new ArrayList<>(req.lines().size());
         for (int i = 0; i < req.lines().size(); i++) {
             RefundLine line = req.lines().get(i);
             RefundFeeLink linkRow = new RefundFeeLink();
@@ -254,8 +263,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             linkRow.setFeeId(line.feeId());
             linkRow.setRefundQuantity(line.refundQuantity());
             linkRow.setRefundAmount(lineAmounts.get(i));
-            refundFeeLinkMapper.insert(linkRow);
+            linkRows.add(linkRow);
         }
+        Db.saveBatch(linkRows);
         if (autoApproved) {
             // 免审直退同事件承载（CF-4）：APPROVED 即发 refund.approved，autoApproved=true 审计检索键
             events.publishEvent(new BillingDomainEvent(
@@ -479,13 +489,24 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         }
         // link 负向台账聚合判态：该行「既有已退 + 本次退」≥ 费用行金额 → FULL_REFUND，否则 PART_REFUND
         //   （负向表达归 refund_fee_link，不生成 fee_record 负向行——裁决⑫同源；本单 link 于 apply 已落表）。
-        //   聚合口径=仅已决（decidedRefundedFen，APPROVED/EXECUTED——本单已 CAS 至 EXECUTED 必然计入，
-        //   剔除即永判不满）；在途（待审批）兄弟单禁计入——其可被驳回而驳回不回滚费用行，混入会把驳回额
-        //   误标 FULL_REFUND、剩余可退额被 apply 行状态守卫永久锁死（code-review W-17 口径漂移修复）
-        for (RefundFeeLink link : refundFeeLinkMapper.selectList(
-                Wrappers.<RefundFeeLink>lambdaQuery().eq(RefundFeeLink::getRefundId, refund.getId()))) {
-            FeeRecord fee = feeRecordMapper.selectById(link.getFeeId());
-            long refunded = decidedRefundedFen(fee.getId());
+        //   聚合口径=仅已决（decidedRefundedFenByFeeIds，APPROVED/EXECUTED——本单已 CAS 至 EXECUTED 必然
+        //   计入，剔除即永判不满）；在途（待审批）兄弟单禁计入——其可被驳回而驳回不回滚费用行，混入会把
+        //   驳回额误标 FULL_REFUND、剩余可退额被 apply 行状态守卫永久锁死（code-review W-17 口径漂移修复）
+        List<RefundFeeLink> links = refundFeeLinkMapper.selectList(
+                Wrappers.<RefundFeeLink>lambdaQuery().eq(RefundFeeLink::getRefundId, refund.getId()));
+        // PERF-01 批量预载：费用行集一次 selectBatchIds + 已决聚合一次，循环外不变集合复用（替代逐 link
+        //   selectById + decidedRefundedFen 全量拉取的 N 倍查询），聚合取值与旧逐行计算完全等价；
+        //   零 link 时零查询（与旧空循环语义对齐，uk_refund_fee 保证正常数据 link 恒非空）
+        List<Long> linkFeeIds =
+                links.stream().map(RefundFeeLink::getFeeId).distinct().toList();
+        Map<Long, FeeRecord> feeById = linkFeeIds.isEmpty()
+                ? Map.of()
+                : feeRecordMapper.selectBatchIds(linkFeeIds).stream()
+                        .collect(Collectors.toMap(FeeRecord::getId, f -> f));
+        Map<Long, Long> decidedFenByFeeId = linkFeeIds.isEmpty() ? Map.of() : decidedRefundedFenByFeeIds(linkFeeIds);
+        for (RefundFeeLink link : links) {
+            FeeRecord fee = feeById.get(link.getFeeId());
+            long refunded = decidedFenByFeeId.getOrDefault(link.getFeeId(), 0L);
             fee.setStatus(refunded >= fee.getAmount() ? FeeStatus.FULL_REFUND : FeeStatus.PART_REFUND);
             feeRecordMapper.updateById(fee);
         }
@@ -602,71 +623,55 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     }
 
     /**
-     * 单费用行累计已退+在途占用金额（分；W-17 聚合口径，<b>仅 apply 超可退守卫消费</b>）：
-     * 已决（APPROVED/EXECUTED）全量计入 + 在途（PENDING_APPROVAL/PENDING_SECOND_APPROVAL）
-     * 计入但排除自身 refund_id（防同单审批期自我占用误判——当前调用面自身要么未落库要么已决、
-     * 排除位为防御性语义锁定，W-17 单测直驱）。在途额计入是 apply 侧「兄弟单在途占位不得再被
-     * 超额申请通过」的守卫面；execute 判费用行终态<b>禁用本口径</b>——在途单可被驳回，混入即把
-     * 驳回额标成已退，须走 {@link #decidedRefundedFen(long)}（code-review W-17 口径漂移修复）。
+     * 批量单费用行累计已退+在途占用金额（分；W-17 聚合口径，<b>仅 apply 超可退守卫消费</b>）：
+     * 已决（APPROVED/EXECUTED）全量计入 + 在途（PENDING_APPROVAL/PENDING_SECOND_APPROVAL）计入但
+     * 排除 {@code excludeInFlightRefundId} 指定的自身在途单（防同单审批期自我占用误判——当前调用面
+     * 自身要么未落库要么已决，排除位为防御性语义锁定，W-17 单测直驱）。在途额计入是 apply 侧
+     * 「兄弟单在途占位不得再被超额申请通过」的守卫面；execute 判费用行终态<b>禁用本口径</b>——在途单
+     * 可被驳回，混入即把驳回额标成已退，须走 {@link #decidedRefundedFenByFeeIds(List)}（code-review
+     * W-17 口径漂移修复）。
      *
-     * @param feeId                   费用行 id；来源：apply 在途超额守卫
+     * <p>实现（PERF-01 SQL 下推）：已决与在途各一次索引聚合（{@link RefundRequestMapper} XML 承载
+     * refund_fee_link JOIN refund_request + SUM，状态过滤在 SQL 侧完成），计算结果与原 refundedFen
+     * 逐费用行的「已决全表拉取求和 + 在途全表拉取求和」两步内存路径完全等价；同批 fee 一次装载
+     * 循环复用，替代每明细两次全表实体拉取（EXECUTED 终态无界增长不再拖累资金热路径）。
+     *
+     * @param feeIds                  费用行 id 集（聚合分组键），非空；来源：apply 锁内同批明细
      * @param excludeInFlightRefundId 在途聚合排除的自身单 id，可空（null=不排除）
-     * @return 累计占用金额（分）
+     * @return feeId → 累计占用金额（分）；无占用行的费用不出现在图中（调用侧 getOrDefault 0 兜底）
      */
-    long refundedFen(long feeId, Long excludeInFlightRefundId) {
-        long total = decidedRefundedFen(feeId);
-        // 数据库读操作：在途单 id 集（排除自身）
-        List<Long> inFlightIds = lambdaQuery()
-                .in(RefundRequest::getStatus, RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL)
-                .ne(excludeInFlightRefundId != null, RefundRequest::getId, excludeInFlightRefundId)
-                .list()
-                .stream()
-                .map(RefundRequest::getId)
-                .toList();
-        if (!inFlightIds.isEmpty()) {
-            total += sumLinks(feeId, inFlightIds);
-        }
+    Map<Long, Long> refundedFenByFeeIds(List<Long> feeIds, Long excludeInFlightRefundId) {
+        // 数据库读操作：已决口径聚合计入（不可逆金额）后并入在途口径聚合（可驳回金额占位）——
+        //   两支 SUM 状态谓词互斥不重叠，merge 求和即旧 refundedFen 的 total 累加语义
+        Map<Long, Long> total = decidedRefundedFenByFeeIds(feeIds);
+        baseMapper
+                .sumInFlightRefundedFenByFeeIds(feeIds, excludeInFlightRefundId)
+                .forEach(row -> total.merge(row.feeId(), row.refundedFen(), Long::sum));
         return total;
     }
 
     /**
-     * 单费用行累计已退金额（分；<b>仅已决口径</b>——APPROVED/EXECUTED 态退费单 link 负向聚合）：
+     * 批量单费用行累计已退金额（分；<b>仅已决口径</b>——APPROVED/EXECUTED 态退费单 link 负向聚合）：
      * execute 判费用行终态（FULL_REFUND/PART_REFUND）唯一合法口径。已决额不可逆（APPROVED 后
      * 驳回不可达、EXECUTED 资金已动），据其判「行已退满」安全；在途（待审批）额可被驳回归零，
      * 混入即把驳回额误标 FULL_REFUND、apply 行状态守卫（仅 SETTLED/PART_REFUND 可退）使剩余额
      * 永不可再退——W-17 曾把本口径在途扩展误带入 execute，本方法即修复后的收口（apply 在途守卫
-     * 维持 {@link #refundedFen(long, Long)} 不变）。
+     * 维持 {@link #refundedFenByFeeIds(List, Long)} 不变）。
      *
-     * @param feeId 费用行 id；来源：execute 判态循环
-     * @return 累计已退金额（分，无已决退费为 0）
+     * @param feeIds 费用行 id 集（聚合分组键），非空；来源：execute 本单 link 集归并
+     * @return feeId → 累计已退金额（分）；无已退行的费用不出现在图中（调用侧 getOrDefault 0 兜底）
      */
-    long decidedRefundedFen(long feeId) {
-        // 数据库读操作：已决单 id 集（execute 判态时点本单已 CAS 至 EXECUTED 或仍 APPROVED，必含自身）
-        List<Long> decidedIds =
-                lambdaQuery().in(RefundRequest::getStatus, RefundStatus.APPROVED, RefundStatus.EXECUTED).list().stream()
-                        .map(RefundRequest::getId)
-                        .toList();
-        if (decidedIds.isEmpty()) {
-            return 0L;
-        }
-        return sumLinks(feeId, decidedIds);
-    }
-
-    /** 集内本费用行 link 负向金额求和（抽取自原 refundedFen 尾段，口径不变） */
-    private long sumLinks(long feeId, List<Long> refundIds) {
-        // 数据库读操作：集内本费用行 link 负向金额求和（禁 XML，lambdaQuery 口径）
-        return refundFeeLinkMapper
-                .selectList(Wrappers.<RefundFeeLink>lambdaQuery()
-                        .eq(RefundFeeLink::getFeeId, feeId)
-                        .in(RefundFeeLink::getRefundId, refundIds))
-                .stream()
-                .mapToLong(RefundFeeLink::getRefundAmount)
-                .sum();
+    Map<Long, Long> decidedRefundedFenByFeeIds(List<Long> feeIds) {
+        // 数据库读操作：已决口径索引聚合下推（SQL 侧 status IN (APPROVED,EXECUTED) 过滤 + SUM，
+        //   execute 判态时点本单已 CAS 至 EXECUTED 或仍 APPROVED，必含自身）
+        return baseMapper.sumDecidedRefundedFenByFeeIds(feeIds).stream()
+                .collect(Collectors.toMap(FeeRefundedFenRow::feeId, FeeRefundedFenRow::refundedFen));
     }
 
     /**
      * 结算单累计已退金额（分；仅已决口径——APPROVED/EXECUTED 态退费单 link 负向聚合，按结算单维度
-     * 归集，与 {@link #decidedRefundedFen(long)} 费用行判态同口径；在途单不参与结算终态判定）。
+     * 归集，与 {@link #decidedRefundedFenByFeeIds(List)} 费用行判态同口径；在途单不参与结算终态判定；
+     * 单次调用非循环热路径，维持 id 集两步查询形态）。
      *
      * @param settlementId 结算单 id；来源：原路退回目标结算行
      * @return 累计已退金额（分，无历史已退为 0）

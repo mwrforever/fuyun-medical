@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  退费链可退余额聚合下推（PERF-01，宪法 A.4.3-15 连表/聚合 SQL 走 mapper+XML）：
+  旧实现按 status 全量捞出退费单整行实体、仅取 id 后再对 link 逐费用求和——EXECUTED 终态单调
+  无界增长使资金热路径随运营年限量级劣化。本 XML 把求和下推为 JOIN + SUM 的索引聚合
+  （refund_fee_link.fee_id 侧驱动），计算结果与旧两步内存求和完全等价（W-17 口径不变）：
+  已决支 = status IN (APPROVED, EXECUTED)（execute 判费用行终态唯一合法口径，在途两态绝不混入）；
+  在途支 = status IN (PENDING_APPROVAL, PENDING_SECOND_APPROVAL) 且可按 excludeRefundId 排除
+  自身在途单（防同单审批期自我占用误判，apply 侧调用传 null 不排斥）。
+  约束：两表逻辑删均显式补 deleted=0（@TableLogic 仅自动作用于 wrapper，原生 SQL 不继承）；
+  GROUP BY l.fee_id + SUM(l.refund_amount) 且必带 ORDER BY l.fee_id（分组键唯一顺序，A.4.3-15/17）。
+  状态字面量与 RefundStatus code 同源（APPROVED/EXECUTED/PENDING_APPROVAL/PENDING_SECOND_APPROVAL
+  恒等常量名）；SQL 资金语义守卫测试逐子句钉死（RefundAggregateSqlGuardTest），防后人顺手改谓词。
+-->
+<mapper namespace="com.fuyun.billing.mapper.RefundRequestMapper">
+
+    <!-- 聚合投影按构造器映射到 record（FeeRefundedFenRow 规范构造器，列名与组件名一一同源） -->
+    <resultMap id="feeRefundedFenRowMap" type="com.fuyun.billing.record.FeeRefundedFenRow">
+        <constructor>
+            <arg column="fee_id" javaType="java.lang.Long"/>
+            <arg column="refunded_fen" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 已决聚合：金额恒为分（SUM(refund_amount)），行序=fee_id 升序 -->
+    <select id="sumDecidedRefundedFenByFeeIds" resultMap="feeRefundedFenRowMap">
+        SELECT l.fee_id AS fee_id, SUM(l.refund_amount) AS refunded_fen
+        FROM billing.refund_fee_link l
+        JOIN billing.refund_request r ON r.id = l.refund_id
+        WHERE l.deleted = 0
+          AND r.deleted = 0
+          AND r.status IN ('APPROVED', 'EXECUTED')
+          AND l.fee_id IN
+          <foreach collection="feeIds" item="feeId" open="(" separator="," close=")">#{feeId}</foreach>
+        GROUP BY l.fee_id
+        ORDER BY l.fee_id
+    </select>
+
+    <!-- 在途聚合：excludeRefundId 非空时排除该在途单自身（W-17 排斥语义在 SQL 侧承载） -->
+    <select id="sumInFlightRefundedFenByFeeIds" resultMap="feeRefundedFenRowMap">
+        SELECT l.fee_id AS fee_id, SUM(l.refund_amount) AS refunded_fen
+        FROM billing.refund_fee_link l
+        JOIN billing.refund_request r ON r.id = l.refund_id
+        WHERE l.deleted = 0
+          AND r.deleted = 0
+          AND r.status IN ('PENDING_APPROVAL', 'PENDING_SECOND_APPROVAL')
+          <if test="excludeRefundId != null">
+          AND r.id != #{excludeRefundId}
+          </if>
+          AND l.fee_id IN
+          <foreach collection="feeIds" item="feeId" open="(" separator="," close=")">#{feeId}</foreach>
+        GROUP BY l.fee_id
+        ORDER BY l.fee_id
+    </select>
+</mapper>
