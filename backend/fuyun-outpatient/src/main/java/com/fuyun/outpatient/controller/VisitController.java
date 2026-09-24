@@ -1,5 +1,8 @@
 package com.fuyun.outpatient.controller;
 
+import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.dto.FinishVisitRequest;
 import com.fuyun.outpatient.dto.OrderCreateRequest;
 import com.fuyun.outpatient.service.IClinicOrderService;
@@ -14,6 +17,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -27,7 +32,12 @@ import org.springframework.web.bind.annotation.RestController;
  * 候诊列表/开单。接诊/诊毕/开单为诊疗关键动作全量 @AuditLog(WRITE) 留痕（Global Constraints 审计
  * 口径）；操作者留痕经 OperatorContextHolder（接诊医生身份）。职责边界：仅 @Valid 校验+调用
  * service+编排响应，禁业务逻辑与事务（宪法 B.1/A.1-8）。
+ *
+ * <p>安全收口（SEC-02）：候诊列表 doctorId 语义为「当前登录医生自身」（workstation
+ * DoctorStationView 传 auth.user.userId），与会话身份比对——不一致 403 前置拒绝，
+ * 阻断任意登录用户传他人 doctorId 横向窥看他医生候诊队列（IDOR，Spec :271 验收面）。
  */
+@Slf4j
 @Tag(name = "门诊医生站")
 @RestController
 @RequestMapping("/api/v1/outpatient")
@@ -68,14 +78,30 @@ public class VisitController {
 
     /**
      * 医生站候诊列表：本队列 WAITING/CALLED 票+脱敏摘要+过敏声明位（P1 恒 false）。
+     * SEC-02 安全收口：doctorId 语义为「当前登录医生自身」（前端 DoctorStationView 传
+     * auth.user.userId），与会话身份比对——不一致 403 前置拒绝，阻断任意登录用户横向
+     * 窥看他医生候诊队列（IDOR）；会话身份不可得（系统态/无登录上下文调用）放行并
+     * warn 注记，保持既有内部链路可用。
      *
      * @param deptCode 队列标识（=dept_code），非空
-     * @param doctorId 医生 id，非空
+     * @param doctorId 医生 id（=会话 userId 十进制串），非空
      * @return 候诊列表行（优先级降序）；空队列返回空列表
+     * @throws BizException OP-1020（403 doctorId 与会话身份不一致，服务零触达）
      */
     @Operation(summary = "医生站候诊列表")
     @GetMapping("/doctor/patient-queue")
     public List<DoctorQueueItemVO> patientQueue(@RequestParam String deptCode, @RequestParam String doctorId) {
+        // 身份比对（SEC-02）：会话身份经认证拦截器注入（userId 十进制串），与 doctorId 严格相等才放行
+        String operatorId = OperatorContextHolder.get();
+        if (operatorId == null || operatorId.isBlank()) {
+            // 系统态/无登录上下文调用：无可比对象，放行并注记（不阻断既有内部链路；生产行请求经认证拦截器恒有身份）
+            log.warn("医生站候诊列表无会话身份可比对，按系统态放行：deptCode={}，doctorId={}", deptCode, doctorId);
+        } else if (!operatorId.equals(doctorId)) {
+            // 横向越权：doctorId 声称他人身份读取其候诊队列，403 拒绝（记录双方标识便于审计追溯）
+            log.warn("医生站候诊列表身份不匹配拒绝：operator={}，doctorId={}，deptCode={}", operatorId, doctorId, deptCode);
+            throw new BizException(
+                    OutpatientErrorCode.DOCTOR_QUEUE_IDENTITY_MISMATCH, HttpStatus.FORBIDDEN, "候诊列表仅允许查询本人队列");
+        }
         return visitService.patientQueue(deptCode, doctorId);
     }
 
