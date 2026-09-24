@@ -132,10 +132,8 @@ class PdaServiceImplTest {
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO(WARD, BED, "NORMAL", "张三", 2));
         when(allergyChecker.listActiveAllergies(PATIENT_ID))
                 .thenReturn(List.of(new AllergyItem(1L, "PENICILLIN", "青霉素", "SEVERE")));
-        OffsetDateTime earlier = OffsetDateTime.now().minusHours(2);
         OffsetDateTime latest = OffsetDateTime.now().minusHours(1);
-        when(vitalSignService.listByPatient(PATIENT_ID, null, null))
-                .thenReturn(List.of(vitalVO(11L, earlier), vitalVO(12L, latest)));
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(vitalVO(12L, latest));
 
         PdaPatientSummaryVO vo = service.patientSummary(CARD);
 
@@ -144,7 +142,7 @@ class PdaServiceImplTest {
         assertThat(vo.wardId()).isEqualTo(WARD);
         assertThat(vo.bedNo()).isEqualTo(BED);
         assertThat(vo.nursingLevel()).isEqualTo("NORMAL");
-        // 随行字段：过敏实时嵌查、最近一次体征（升序末位）、在途任务计数
+        // 随行字段：过敏实时嵌查、最近一次体征（单行点查直取）、在途任务计数
         assertThat(vo.allergies()).hasSize(1);
         assertThat(vo.latestVitals().id()).isEqualTo(12L);
         assertThat(vo.inFlightTaskCount()).isEqualTo(2);
@@ -172,14 +170,14 @@ class PdaServiceImplTest {
         when(wardPatientMapper.selectList(any())).thenReturn(List.of(wardRow(VISIT, SURVIVOR_ID, WARD)));
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO(WARD, BED, "NORMAL", "李四", 0));
         when(allergyChecker.listActiveAllergies(SURVIVOR_ID)).thenReturn(List.of());
-        when(vitalSignService.listByPatient(SURVIVOR_ID, null, null)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(SURVIVOR_ID)).thenReturn(null);
 
         PdaPatientSummaryVO vo = service.patientSummary(CARD);
 
         // MERGED 收敛：出参 patientId 为存活主档（业务数据一律挂收敛主档，CF-3）
         assertThat(vo.patientId()).isEqualTo(SURVIVOR_ID);
         verify(allergyChecker).listActiveAllergies(SURVIVOR_ID);
-        verify(vitalSignService).listByPatient(SURVIVOR_ID, null, null);
+        verify(vitalSignService).latestByPatient(SURVIVOR_ID);
     }
 
     @Test
@@ -193,7 +191,7 @@ class PdaServiceImplTest {
                         NursingErrorCode.WARD_PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "病区在区患者不存在：" + VISIT));
         when(allergyChecker.listActiveAllergies(PATIENT_ID))
                 .thenReturn(List.of(new AllergyItem(2L, null, "海鲜", "MODERATE")));
-        when(vitalSignService.listByPatient(PATIENT_ID, null, null)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
 
         PdaPatientSummaryVO vo = service.patientSummary(CARD);
 
@@ -229,7 +227,7 @@ class PdaServiceImplTest {
         when(wardPatientMapper.selectList(any())).thenReturn(List.of(wardRow(VISIT, PATIENT_ID, WARD)));
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO(WARD, BED, "NORMAL", "张三", 0));
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
-        when(vitalSignService.listByPatient(PATIENT_ID, null, null)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
 
         PdaPatientSummaryVO vo = service.patientSummary(CARD);
 
@@ -302,7 +300,7 @@ class PdaServiceImplTest {
         when(contextResolver.resolve(PATIENT_ID)).thenReturn(context(PATIENT_ID, PATIENT_ID, "NORMAL", false));
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO(WARD, BED, "NORMAL", "张三", 1));
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
-        when(vitalSignService.listByPatient(PATIENT_ID, null, null)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
 
         PdaPatientSummaryVO vo = service.patientSummary(VISIT);
 
@@ -333,7 +331,7 @@ class PdaServiceImplTest {
         when(contextResolver.resolve(PATIENT_ID)).thenReturn(context(PATIENT_ID, PATIENT_ID, "NORMAL", false));
         when(wardPatientMapper.selectList(any())).thenReturn(List.of());
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
-        when(vitalSignService.listByPatient(PATIENT_ID, null, null)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
 
         PdaPatientSummaryVO vo = service.patientSummary(CARD);
 
@@ -367,7 +365,7 @@ class PdaServiceImplTest {
         when(wardPatientMapper.selectList(any())).thenReturn(List.of(wardRow(VISIT, PATIENT_ID, WARD)));
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO(WARD, BED, "NORMAL", "张三", 0));
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
-        when(vitalSignService.listByPatient(PATIENT_ID, null, null)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
 
         PdaPatientSummaryVO vo = service.patientSummary(ID_CARD);
 

@@ -11,6 +11,8 @@ import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
+import com.fuyun.nursing.service.IVitalSignService;
+import com.fuyun.nursing.vo.VitalSignVO;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -92,6 +95,19 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
 
     /** 待复核体征夹具行 id（状态机边界夹具：PENDING_REVIEW 行经 jdbcTemplate 构造，批复口径允许项） */
     private static final long PENDING_FIXTURE_ID = 920601L;
+
+    /** ALGO-01 对照夹具：早刻孤立行 id（比 tie 组早 10 分钟，锚定升序中间位） */
+    private static final long TIE_EARLIER_ID = 920611L;
+
+    /** ALGO-01 对照夹具：同刻 tie 组较小 id 行（与 TIE_LAST_ID 同 measured_at） */
+    private static final long TIE_FIRST_ID = 920612L;
+
+    /** ALGO-01 对照夹具：同刻 tie 组较大 id 行（确定性 tie-break 期望命中行） */
+    private static final long TIE_LAST_ID = 920613L;
+
+    /** 体征域服务（ALGO-01 真栈对照：新旧取值路径直调比对） */
+    @Autowired
+    private IVitalSignService vitalSignService;
 
     /** 跨用例链路状态（JUnit 每用例新实例，登录令牌与行锚经 static 传递） */
     private static String token = "";
@@ -454,6 +470,42 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                 .as("PERF-02：患者维度前导索引必须存在且前导列为 patient_id、第二列为 measured_at")
                 .isNotBlank()
                 .contains("(patient_id, measured_at)");
+    }
+
+    @Test
+    @Order(10)
+    @DisplayName("ALGO-01 行为保持对照：latestByPatient 单行点查与旧升序末位取值一致，同刻 tie 确定性取 id 最大行")
+    void step10_latestByPatientMatchesAscendingTailSelection() {
+        // 对照夹具：单语句三行——tie 组两行同 now()（同事务时间戳恒等、异部位避开
+        // uk_vital_sign_visit_time_site 唯一第四维，同刻异部位并存为业务允许形态）+ 一行早
+        // 10 分钟；本步执行时刻晚于 step2/3/4 录入行，tie 组即患者全史最近测量时点
+        jdbcTemplate.update(
+                "INSERT INTO nursing.vital_sign_record"
+                        + " (id, visit_id, patient_id, ward_id, measured_at, temperature, temp_site, source,"
+                        + " review_status, abnormal_flag, created_by, updated_by)"
+                        + " VALUES (?, ?, ?, 'W01', now() - interval '10 minutes', 36.5, 'AXILLARY', 'MANUAL',"
+                        + " 'CONFIRMED', false, 'it-fixture', 'it-fixture'),"
+                        + " (?, ?, ?, 'W01', now(), 36.6, 'ORAL', 'MANUAL', 'CONFIRMED', false, 'it-fixture', 'it-fixture'),"
+                        + " (?, ?, ?, 'W01', now(), 36.9, 'RECTAL', 'MANUAL', 'CONFIRMED', false, 'it-fixture', 'it-fixture')",
+                TIE_EARLIER_ID,
+                VISIT_ID,
+                PATIENT_ID,
+                TIE_FIRST_ID,
+                VISIT_ID,
+                PATIENT_ID,
+                TIE_LAST_ID,
+                VISIT_ID,
+                PATIENT_ID);
+        // 旧取值路径：升序全量清单取末位（ALGO-01 改造前的 PDA 摘要取数口径）
+        List<VitalSignVO> legacy = vitalSignService.listByPatient(PATIENT_ID, null, null);
+        VitalSignVO legacyTail = legacy.get(legacy.size() - 1);
+        // 新取值路径：ORDER BY measured_at DESC, id DESC LIMIT 1 单行点查
+        VitalSignVO latest = vitalSignService.latestByPatient(PATIENT_ID);
+        assertThat(latest).as("有体征史患者点查必须命中单行").isNotNull();
+        // 对照①（行为保持）：与旧升序末位同为最近测量时点——对外可观察行为不变
+        assertThat(latest.measuredAt()).isEqualTo(legacyTail.measuredAt());
+        // 对照②（tie 确定化）：同刻两行收敛取 id 最大（最新落卡）行，消除旧路径 DB 返回顺序漂移
+        assertThat(latest.id()).isEqualTo(TIE_LAST_ID);
     }
 
     /**

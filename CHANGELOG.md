@@ -2,6 +2,28 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-24 · N4 修复环 ALGO-01：PDA 患者摘要体征取值改单行点查（算法）
+
+- **根因（ALGO-01，性能与算法优化清单定稿，吸收 P1-08/A2-03）**：`PdaServiceImpl.patientSummary`
+  取最近一次体征走 `listByPatient(patientId, null, null)`——按患者主索引跨全部住院史无窗口无
+  LIMIT 全量拉入内存 + 全量 VO 转换，仅为取最后一条作摘要；长期住院/慢性病患者数千行，PDA
+  每次扫码摘要均付出 O(患者终身体征行数) 传输与转换代价（叠加 PERF-02 落地前的缺索引为全表扫）。
+- **修复（行为保持对照）**：`IVitalSignService` 新增 `latestByPatient(patientId)` 点查——
+  ORDER BY measured_at DESC, id DESC LIMIT 1（MyBatis-Plus `last("LIMIT 1")`，
+  IoRecordServiceImpl 同款先例）：与旧「升序清单取末位」同为最近测量时点，id DESC 为同刻 tie
+  的确定性 tie-break（旧升序无次键、同刻多行取值依赖 DB 返回顺序，本实现收敛取最新落卡行）；
+  patientSummary 改用之，listByPatient 既有调用方零触碰。时间/空间复杂度：O(患者终身体征行数)
+  全量拉取+转换 → O(1) 单行回表（配合 PERF-02 idx_vital_sign_patient_time 逆序扫描首行即止）。
+- **测试与验证（ALGO 对照协议：先对照断言再优化）**：VitalSignServiceImplTest 先行落对照用例
+  并验证 RED（点查未实现红）再改实现转 GREEN——`latestByPatientMatchesAscendingTailSelection-
+  WithDeterministicTieBreak`（两行异刻 + 同刻 tie 两行：点查与旧升序末位同测量时点、tie 确定性
+  取 id 最大行、SQL 片段钉死 ORDER BY measured_at DESC / id DESC / LIMIT 1 下推 DB）与
+  `latestByPatientReturnsNullWhenPatientHasNoRows`（无记录返回 null 边界）；PdaServiceImplTest
+  八处 mock 随调用面切换。NursingVitalSignFlowIT 补 step10 真栈对照（单语句三行夹具含同刻
+  tie：latestByPatient 与旧 listByPatient 升序末位同测量时点、tie 命中 id 最大行）。门禁：
+  worktree 根 `mvn -B test -pl fuyun-nursing -am` 全绿（198/0）+ NursingVitalSignFlowIT 真栈
+  单类重放 10/0 全绿。
+
 ## 2026-09-24 · N4 修复环 PERF-03：V900 patient.patient 姓名检索 trigram GIN 索引（性能）
 
 - **根因（PERF-03，性能与算法优化清单定稿，置信 82）**：`PatientServiceImpl.search` 对姓名

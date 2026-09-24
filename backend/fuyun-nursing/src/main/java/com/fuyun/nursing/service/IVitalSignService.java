@@ -46,6 +46,18 @@ public interface IVitalSignService {
     List<VitalSignVO> listByPatient(long patientId, Instant from, Instant to);
 
     /**
+     * 按患者主索引取最近一次体征（单行点查，ALGO-01）：ORDER BY measured_at DESC, id DESC
+     * LIMIT 1——与旧「升序清单取末位」取值语义一致（同为最近测量时点），id DESC 为同刻 tie
+     * 的确定性 tie-break（同刻多行收敛取最新落卡行，消除旧路径 DB 无次序保证下的取值漂移）。
+     * PDA 患者摘要专用取数面：替代全史拉取取末位的 O(患者终身体征行数) 全量路径为 O(1)
+     * 单行回表（配合 PERF-02 idx_vital_sign_patient_time 前导索引）。
+     *
+     * @param patientId 患者主索引，非空；来源：PDA 摘要标识解析归一后的主档 id
+     * @return 最近一次体征出参；患者无体征记录时返回 null（可空语义，与旧路径空清单取 null 对齐）
+     */
+    VitalSignVO latestByPatient(long patientId);
+
+    /**
      * 病区待复核体征清单（复核工作台数据源）：仅 review_status=PENDING_REVIEW 行，按测量时点
      * 升序。P1 待复核行无生产写入方（IoT 归 P2），本端点随状态机 P1 可达。
      *
