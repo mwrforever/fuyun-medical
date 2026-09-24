@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -63,6 +63,7 @@
 | V805 | V805__create_nursing_task.sql | nursing / fuyun-nursing | 护理任务（最小载体） |
 | V806 | V806__create_nursing_assessment.sql | nursing / fuyun-nursing | 护理评估单 |
 | V807 | V807__create_shift_handover.sql | nursing / fuyun-nursing | 交接班 |
+| V808 | V808__add_vital_sign_patient_time_index.sql | nursing / fuyun-nursing | 体征表患者维度前导索引（PERF-02：(patient_id, measured_at)，患者维度查询顺序扫描→索引范围扫描；nursing 段续号——全局最大 V807 的下一号，满足乱序守卫） |
 
 ## 冻结段速查（禁落新文件）
 
@@ -76,4 +77,4 @@
 | V500–V503 | integration 通用段 | 通用段按版本升序追加，禁改已应用 |
 | V600–V607 | billing 首批 + V607 字典 | 禁改已应用；V605 id 23 / V702 id 25/31 仅允许 V204 内数据行 UPDATE |
 | V700–V703 | pharmacy 首批 | pharmacy 后续迁移走 V500+ 通用段 |
-| V704、V705、V706 | V500+ 通用段（V704/V705=system·PR-5；V706=pharmacy·W-23） | 当前全局最大已应用版本=V807（PR-6 nursing 首批 V800–V807 同 PR 落地，本行随登记先行更新至落地后口径），新迁移必须 > V807 |
+| V704、V705、V706 | V500+ 通用段（V704/V705=system·PR-5；V706=pharmacy·W-23） | 当前全局最大已应用版本=V808（PR-6 nursing 首批 V800–V807 + PERF-02 V808 患者维度索引），新迁移必须 > V808 |

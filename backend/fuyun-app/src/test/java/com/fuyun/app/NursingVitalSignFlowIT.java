@@ -439,6 +439,23 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
         assertThat(confirmFrame.payload().path("source").asText()).isEqualTo("MANUAL");
     }
 
+    @Test
+    @Order(9)
+    @DisplayName("迁移索引断言：V808 idx_vital_sign_patient_time 落位且列序为 (patient_id, measured_at)")
+    void step9_vitalSignPatientTimeIndexExists() {
+        // PERF-02 迁移交付物断言（IotMigrationIT 断言③同款形态）：上下文启动即 Flyway 全量重放
+        // 迁移链（含 V808），此处显式锚定索引落位与列序——工作站体征清单与 PDA 患者摘要按
+        // patient_id 维度查询的索引范围扫描载体，防迁移静默缺失或列序颠倒导致修复意图落空
+        String indexDef = jdbcTemplate.queryForObject(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'nursing' AND indexname = ?",
+                String.class,
+                "idx_vital_sign_patient_time");
+        assertThat(indexDef)
+                .as("PERF-02：患者维度前导索引必须存在且前导列为 patient_id、第二列为 measured_at")
+                .isNotBlank()
+                .contains("(patient_id, measured_at)");
+    }
+
     /**
      * 帧测量时点与库内时点近似判定（±2s 容差）：载荷 Instant 由应用时钟生成、库内 TIMESTAMP
      * 微秒截断，且 step5/step7 前后存在毫秒级偏移——按时点锚定帧身份而非字符串全等。
