@@ -2,6 +2,46 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-25 · P1 PR-7 收口
+
+- 交付面：扫描成果回流 dev（PR #51 纯 merge，CI 六 job 绿，新基线 dev@97fc7af）+ 演示预检 W-28 销项
+  + 门诊全流程真栈演示与 portal 预约演示留痕（见同日演示条目）+ TASK.md 销项核对留痕（W-4/W-5/W-6/D-8
+  已销复核零命中、W-28 删除零残留——行级 `\| W-28 \|` 零命中，裸 grep 命中 TASK.md:50 系 W-27 行内
+  历史交叉引用、既有惯例保留不改写；W-7 按用户裁决改期登记：P2 承载，届时 P2 主题不符则开独立 IoT
+  数据面专项）+ 本阶段新发现盘点确认（W-30~W-36 七行 TASK.md:51-57、D-22~D-24 三行 TASK.md:15-17
+  在案，内容不改）+ 扫描待裁决 4 项按裁决登记 W-37~W-41 五行（含用户另指示 W-41：
+  PricingSettleView.vue:200 SELF_PAY 硬编码→UI payerType 参数化，承载 P2 UI 面）+ P1 实施计划 §3
+  七 PR 完成项内联标注（merge hash 实取）与 §4 DoD 五条出口核验 + P1 终验小结
+  （docs/prompt/2026-09-25-P1终验报告.md）。
+- CI 口径：DoD 第 2 条「五 required checks」为 P1 计划撰写时口径，按现行六 job 执行；PR-7 纯文档 PR 的
+  CI 证据=回流 PR 六 job 绿 + 本地全量门禁绿组合（终验报告 §1.2）。
+
+## 2026-09-25 · P1 收口：门诊全流程真栈演示（挂号→就诊→收费→发药）与 portal 预约渠道演示
+
+- **前提**：PR #51 扫描成果回流 dev@97fc7af 后重建 fuyun/backend:dev 镜像并起栈，compose 六服务全
+  healthy；演示预检 W-28 三步执行（号源对账 Redis/DB 余量比对一致——0 池键+0 池行零漂移=当日未预热
+  正常态、fy.delay（delay.appointment-timeout）队列深度 0、purge 未触发），W-28 工单销项。
+- **门诊四环节（workstation 端，playwright-cli 真机，截图 .superpowers/gui-test-screenshots/pr7-*）**：
+  ① 挂号——DEP-IT-FLOW 当日普通号 WINDOW 渠道，visit_id=O2026092400001（O+日期+5 位流水，CF-3），
+  挂号费手工计费+结算 settleNo=S543157389167001；② 分诊报到+叫号——队列状态转已叫；③ 就诊——接诊后
+  开检查单（PENDING_FEE）与处方（PENDING_DISPENSE）；④ 收费——就诊费用预结算+结算
+  settleNo=S544348037045074（CASH）；发药——pick/verify/issue 三步链发药单号=D20260924013108；
+  诊毕——去向确认后 visit finished_at 落库（psql 实证）。
+- **portal 预约渠道（决策 5）**：/portal/appointment 免登录证件号预约，出票 apptNo=AP20260924000005
+  （AP+日期+6 位流水）+ 支付时限倒计时；衔接断言：appointment 行 RESERVED/PORTAL/15 分钟 pay_deadline、
+  池行 used_count +1、Redis pay-hold 占位键在案。
+- **DoD 第 5 条抽查**：患者查询/收费票据/发药记录三处 system.audit_log 行各 1 行摘录
+  （operator/action_type/resource/result 全 SUCCESS）；脱敏——检索页证件号/手机号掩码截图 +
+  backend 日志 grep 演示证件号 0 命中。
+- **口径注明**：医保段=7a 实演成功口径（未触发降级）——UI 收费面 payerType 固定 SELF_PAY
+  （PricingSettleView.vue:200），本次经 API preview CITY_INS 实演拆分 60/20/20（total 1000 分=统筹
+  600+个账 200+自付 200）+ SIM- 回执（SIM-S546062211559206）+ insurance_call_log 2102 SUCCESS；
+  医保模拟拆分由 InsuranceSimulatorAdapter 承载、PR-3 IT 覆盖。语音外放属现场外设（PR-5 口径沿袭）；
+  bigscreen 叫号页非 DoD 义务面未纳入本次演示。演示偏差（登记不修复）：分诊叫号 API 降级（分诊台诊区
+  下拉硬编码三诊区）、主链诊毕 API 降级+第二 visit（O2026092400003）UI 补演（医生站无在诊恢复）、
+  portal 诊区常量不含 DEP-IT-FLOW 落 DEPT-INT 池（衔接断言全过）、患者查询 GET 面未挂 @AuditLog
+  不产审计行（患者域以 WRITE 建档行在案）。
+
 ## 2026-09-24 · N4 修复环 PERF-01：退费链 apply/execute 可退余额聚合 SQL 下推 + 批量预载 + link 批插（性能）
 
 - **根因（PERF-01，性能与算法优化清单定稿，置信 88，吸收 P1-01/P1-04/P3-05/A2-01/A2-02）**：
