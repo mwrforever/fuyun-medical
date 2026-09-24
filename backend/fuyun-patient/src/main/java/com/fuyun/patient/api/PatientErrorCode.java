@@ -79,7 +79,11 @@ public enum PatientErrorCode implements ErrorCode {
     CARD_TXN_AMOUNT_INVALID("PAT-1022"),
 
     /** 入参日期/时刻格式非法（400；onsetDate 与授权 signedAtIso/validToIso 解析失败统一口径，D-15） */
-    PARAM_FORMAT_INVALID("PAT-1023");
+    PARAM_FORMAT_INVALID("PAT-1023"),
+
+    /** 脱敏规则维护未授权（403；规则维护写端点仅限 ADMIN 角色，SEC-01 安全收口——阻断
+     * 非管理员改写 exemptRoles 自授豁免、再经 unmask 提权解密的攻击链） */
+    PRIVACY_RULE_MAINTENANCE_FORBIDDEN("PAT-1024");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

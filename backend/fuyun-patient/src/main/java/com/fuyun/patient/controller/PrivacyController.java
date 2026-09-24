@@ -1,5 +1,7 @@
 package com.fuyun.patient.controller;
 
+import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.PatientErrorCode;
@@ -41,6 +43,8 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>审计落点：POST /privacy-auths 与 PUT /privacy-mask-rules 挂 WRITE；POST /privacy/unmask 挂
  * SENSITIVE_QUERY（双留痕的审计侧，台账侧在 PrivacyServiceImpl 落 privacy_access_log）。
+ * 安全收口（SEC-01）：PUT /privacy-mask-rules 仅限 ADMIN 角色（403 前置），阻断非管理员改写
+ * exemptRoles 自授豁免再经 unmask 提权解密的攻击链；读端点与 unmask 豁免链路不受影响。
  * controller 禁业务逻辑与事务（A.1-8）：豁免校验/解密/落痕全在 service impl 方法级；
  * 授权出参的派生状态经 {@link PrivacyAuthServiceImpl#deriveStatus} 静态工具组装（零定时任务口径）。
  */
@@ -48,6 +52,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/patient")
 public class PrivacyController {
+
+    /** 脱敏规则维护的管理员角色编码（与 V303 sys_role 种子 ADMIN 对齐，SEC-01 门禁判定依据） */
+    private static final String MASK_RULE_ADMIN_ROLE = "ADMIN";
 
     private final IPrivacyAuthService privacyAuthService;
 
@@ -138,17 +145,29 @@ public class PrivacyController {
 
     /**
      * 脱敏规则维护（PUT /privacy-mask-rules/{ruleCode}，WRITE 审计；部分更新语义，
-     * 落库后经引擎每请求加载即时生效）。
+     * 落库后经引擎每请求加载即时生效）。SEC-01 安全收口：仅 ADMIN 角色可维护——规则维护属
+     * 管理面配置写操作，若任意登录用户可改写 exemptRoles，即可自授豁免再经 unmask 提权解密，
+     * 故非 ADMIN 一律 403 前置拒绝（拒绝由审计切面 FAIL 行留痕，与 unmask 403 同模式）。
      *
      * @param ruleCode 规则编码（路径变量，业务唯一）
      * @param request  维护请求（@Valid，非空字段覆盖库值）
      * @return 维护后规则出参；200
-     * @throws com.fuyun.common.exception.BizException PAT-1021（404 规则编码无命中）
+     * @throws com.fuyun.common.exception.BizException PAT-1024（403 非 ADMIN 角色，SEC-01 门禁）
+     *                                                 / PAT-1021（404 规则编码无命中）
      */
     @PutMapping("/privacy-mask-rules/{ruleCode}")
     @AuditLog(actionType = AuditActionType.WRITE)
     public PrivacyMaskRuleVO updateRule(
             @PathVariable String ruleCode, @Valid @RequestBody PrivacyMaskRuleUpdateRequest request) {
+        // 权限校验：规则维护仅限 ADMIN（角色经认证拦截器注入 RoleContextHolder，V303 种入）
+        if (!RoleContextHolder.get().contains(MASK_RULE_ADMIN_ROLE)) {
+            log.warn("脱敏规则维护拒绝（非 ADMIN 角色）：operator={}，ruleCode={}",
+                    OperatorContextHolder.get(), ruleCode);
+            throw new BizException(
+                    PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN,
+                    HttpStatus.FORBIDDEN,
+                    "脱敏规则维护仅限系统管理员");
+        }
         return privacyMaskService.updateRule(ruleCode, request);
     }
 
