@@ -10,17 +10,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.web.GlobalExceptionHandler;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.service.IPrivacyAuthService;
 import com.fuyun.patient.service.PrivacyMaskService;
 import com.fuyun.patient.service.PrivacyService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
+import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +39,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
  * 隐私端点薄层单测（M02 Spec §7）：unmask 缺 purpose 400 校验拒绝、unmask 200 值集委托直出与
  * 台账分页 200（controller 禁业务逻辑与事务，豁免/落痕归 service 单测；SENSITIVE_QUERY/WRITE
  * 审计落点由切面承载，standalone 骨架不加载）。
+ *
+ * <p>SEC-01 安全收口用例：脱敏规则维护写端点 ADMIN 门禁——非 ADMIN（含空角色）403 PAT-1024
+ * 不触达服务、ADMIN 200 委托直出；读端点（规则清单）与 unmask 链路无 ADMIN 亦行为保持。
  */
 @ExtendWith(MockitoExtension.class)
 class PrivacyControllerTest {
@@ -61,6 +67,12 @@ class PrivacyControllerTest {
                 .build();
     }
 
+    @AfterEach
+    void clearRoleContext() {
+        // 清理角色 ThreadLocal：门禁用例显式 set 后防线程复用残留污染后续用例（与拦截器 afterCompletion 同口径）
+        RoleContextHolder.clear();
+    }
+
     @Test
     @DisplayName("明文查阅端点：缺 purpose 校验失败返回 400，不触达服务（明文出口守门）")
     void unmaskWithoutPurposeRejectedAs400() throws Exception {
@@ -80,6 +92,73 @@ class PrivacyControllerTest {
                 .andExpect(status().isBadRequest());
         // 词表外值在 @Valid 前置即拒：不触达服务（不落库、引擎不会被未知策略污染）
         verifyNoInteractions(privacyMaskService);
+    }
+
+    @Test
+    @DisplayName("SEC-01：非 ADMIN 角色维护脱敏规则 403 PAT-1024，不触达服务（阻断自授豁免提权链）")
+    void updateRuleRejectedAs403ForNonAdminRole() throws Exception {
+        // 业务角色（非管理员）试图改写规则：门禁 403 前置，服务零触达（exemptRoles 不可被污染）
+        RoleContextHolder.set(List.of("DOCTOR"));
+
+        String body = mockMvc.perform(put("/api/v1/patient/privacy-mask-rules/ID_CARD")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"exemptRoles\":\"DOCTOR\"}"))
+                .andExpect(status().isForbidden())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("PAT-1024");
+        verifyNoInteractions(privacyMaskService);
+    }
+
+    @Test
+    @DisplayName("SEC-01：无角色上下文（空角色清单）维护脱敏规则同样 403（拦截器未注入/无角色一并不放行）")
+    void updateRuleRejectedAs403ForEmptyRoles() throws Exception {
+        // 空角色=非 ADMIN：显式置空清单覆盖「未设置」路径（get 回退空清单，门禁语义一致）
+        RoleContextHolder.set(List.of());
+
+        mockMvc.perform(put("/api/v1/patient/privacy-mask-rules/ID_CARD")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(status().isForbidden());
+        verifyNoInteractions(privacyMaskService);
+    }
+
+    @Test
+    @DisplayName("SEC-01：ADMIN 角色维护脱敏规则 200 委托服务直出（管理员正常维护通道保持）")
+    void updateRuleDelegatesForAdminRole() throws Exception {
+        RoleContextHolder.set(List.of("ADMIN", "DOCTOR"));
+        when(privacyMaskService.updateRule(any(), any()))
+                .thenReturn(new PrivacyMaskRuleVO("ID_CARD", "idCardNo", "KEEP_6_4", List.of("DOCTOR"), true));
+
+        String body = mockMvc.perform(put("/api/v1/patient/privacy-mask-rules/ID_CARD")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"exemptRoles\":\"DOCTOR\"}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("\"ruleCode\":\"ID_CARD\"").contains("\"exemptRoles\":[\"DOCTOR\"]");
+        verify(privacyMaskService).updateRule(any(), any());
+    }
+
+    @Test
+    @DisplayName("SEC-01 行为保持：非 ADMIN 读脱敏规则清单 200（只收写端点，读端点不设门禁）")
+    void maskRulesReadableForNonAdminRole() throws Exception {
+        RoleContextHolder.set(List.of("NURSE"));
+        when(privacyMaskService.listRules())
+                .thenReturn(List.of(new PrivacyMaskRuleVO("MOBILE", "mobile", "KEEP_3_4", List.of(), true)));
+
+        String body = mockMvc.perform(get("/api/v1/patient/privacy-mask-rules"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("\"ruleCode\":\"MOBILE\"");
+        verify(privacyMaskService).listRules();
     }
 
     @Test

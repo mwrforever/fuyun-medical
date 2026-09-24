@@ -149,9 +149,8 @@ public class PdaServiceImpl implements IPdaService {
         }
         // 第三方接口调用：patient 过敏项实时嵌查（按收敛主档取数，合并后过敏面挂主档）
         List<AllergyItem> allergies = allergyChecker.listActiveAllergies(resolvedPatientId);
-        // 数据库读操作（模块内）：体征清单（升序）取末位为最近一次摘要，无记录为 null（可空语义）
-        List<VitalSignVO> vitals = vitalSignService.listByPatient(resolvedPatientId, null, null);
-        VitalSignVO latestVitals = vitals.isEmpty() ? null : vitals.get(vitals.size() - 1);
+        // 数据库读操作（模块内）：最近一次体征单行点查（ALGO-01：O(1)，替代全史清单拉取取末位），无记录为 null（可空语义）
+        VitalSignVO latestVitals = vitalSignService.latestByPatient(resolvedPatientId);
         PdaPatientSummaryVO vo = new PdaPatientSummaryVO(
                 resolvedPatientId,
                 // 脱敏输出：姓名掩码出网（保留姓氏），证件号/手机号类字段不进 VO 面

@@ -67,7 +67,11 @@ public enum OutpatientErrorCode implements ErrorCode {
     DISPOSITION_INVALID("OP-1018"),
 
     /** 入参显式格式校验失败（400；W-22⑦「禁裸 parse」先例，格式违例显式拒绝） */
-    PARAM_FORMAT_INVALID("OP-1019");
+    PARAM_FORMAT_INVALID("OP-1019"),
+
+    /** 医生站自身视角身份不匹配（403；请求 doctorId 与认证会话身份不一致，SEC-02 IDOR
+     * 收口——阻断任意登录用户传他人 doctorId 横向窥看他医生候诊队列） */
+    DOCTOR_QUEUE_IDENTITY_MISMATCH("OP-1020");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

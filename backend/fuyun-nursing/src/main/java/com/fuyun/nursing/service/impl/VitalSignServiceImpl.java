@@ -224,6 +224,28 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
     }
 
     /**
+     * 按患者主索引取最近一次体征（ALGO-01 行为保持优化点查）：ORDER BY measured_at DESC,
+     * id DESC LIMIT 1 单行点查——与旧「升序清单取末位」同为最近测量时点；id DESC 为同刻 tie
+     * 的确定性 tie-break（旧升序无次键，同刻多行取值依赖 DB 返回顺序，本实现收敛取最新落卡行）。
+     * 复杂度改善：O(患者终身体征行数) 全量拉取+VO 转换 → O(1) 单行回表（配合 PERF-02
+     * idx_vital_sign_patient_time 前导索引逆序扫描首行即止）。
+     *
+     * @param patientId 患者主索引，非空；来源：PDA 摘要标识解析归一后的主档 id
+     * @return 最近一次体征出参；患者无体征记录时返回 null（与旧路径空清单取 null 语义对齐）
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public VitalSignVO latestByPatient(long patientId) {
+        // 数据库读操作：患者最近一次体征单行点查（排序与截断下推 DB；逻辑删由 @TableLogic 自动过滤）
+        VitalSignRecord row = baseMapper.selectOne(Wrappers.<VitalSignRecord>lambdaQuery()
+                .eq(VitalSignRecord::getPatientId, patientId)
+                .orderByDesc(VitalSignRecord::getMeasuredAt)
+                .orderByDesc(VitalSignRecord::getId)
+                .last("LIMIT 1"));
+        return row == null ? null : VitalSignVO.from(row);
+    }
+
+    /**
      * 病区待复核体征清单（复核工作台数据源）：仅 review_status=PENDING_REVIEW 行，按测量时点
      * 升序。P1 待复核行无生产写入方（IoT 归 P2），本端点随复核状态机 P1 可达。
      *

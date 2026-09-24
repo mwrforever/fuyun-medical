@@ -430,6 +430,46 @@ class VitalSignServiceImplTest {
     }
 
     @Test
+    @DisplayName("最近一次体征点查（ALGO-01 行为保持对照，O(患者全史体征行数)→O(1)）：与旧升序末位取值一致、同刻 tie 确定性取 id 最大行")
+    void latestByPatientMatchesAscendingTailSelectionWithDeterministicTieBreak() {
+        // 行集：两行异刻 + 同刻 tie 两行（id 501/502），四行代表患者跨住院史体征累积
+        VitalSignRecord older = vitalRow(301L, T1000.minusHours(2));
+        VitalSignRecord newer = vitalRow(302L, T1000.minusHours(1));
+        VitalSignRecord tieFirst = vitalRow(501L, T1000);
+        VitalSignRecord tieLast = vitalRow(502L, T1000);
+        // 旧路径 DB 语义替身：ORDER BY measured_at ASC 全量返回（同刻 tie 无次键，取索引扫描常见 id 升序形态）
+        when(vitalMapper.selectList(any())).thenReturn(List.of(older, newer, tieFirst, tieLast));
+        // 新路径 DB 语义替身：ORDER BY measured_at DESC, id DESC LIMIT 1 → 同刻组 id 最大行
+        when(vitalMapper.selectOne(any())).thenReturn(tieLast);
+
+        VitalSignVO latest = service.latestByPatient(7L);
+        List<VitalSignVO> legacy = service.listByPatient(7L, null, null);
+        VitalSignVO legacyTail = legacy.get(legacy.size() - 1);
+
+        // 对照①（行为保持）：点查与旧「升序清单取末位」同为最近测量时点——对外可观察行为不变
+        assertThat(latest.measuredAt()).isEqualTo(legacyTail.measuredAt());
+        // 对照②（tie 确定化）：同刻多行收敛取 id 最大（最新落卡）行；旧路径此场景取值依赖 DB 返回顺序
+        assertThat(latest.id()).isEqualTo(502L);
+        // SQL 语义锚：排序与截断必须下推 DB（ORDER BY measured_at DESC, id DESC LIMIT 1 单行点查）
+        verify(vitalMapper).selectOne(queryCaptor.capture());
+        LambdaQueryWrapper<VitalSignRecord> wrapper = rendered(queryCaptor.getValue());
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(7L);
+        assertThat(wrapper.getSqlSegment())
+                .contains("ORDER BY measured_at DESC")
+                .contains("id DESC")
+                .contains("LIMIT 1");
+    }
+
+    @Test
+    @DisplayName("最近一次体征点查边界：患者无体征记录返回 null（与旧路径空清单取 null 语义对齐）")
+    void latestByPatientReturnsNullWhenPatientHasNoRows() {
+        when(vitalMapper.selectOne(any())).thenReturn(null);
+
+        assertThat(service.latestByPatient(7L)).isNull();
+        verify(vitalMapper).selectOne(any());
+    }
+
+    @Test
     @DisplayName("阈值边界判定：正常范围含端点（36.0/37.2/60/100/12/20/90/140/60/90/95/NRS3 全正常）")
     void thresholdNormalBoundariesAreInclusive() {
         VitalSignValues allAtBounds = new VitalSignValues(new BigDecimal("36.0"), "AXILLARY", 60, 12, 90, 60, 95, 3);
@@ -609,6 +649,21 @@ class VitalSignServiceImplTest {
         row.setSource("IOT");
         row.setReviewStatus(VitalReviewStatus.PENDING_REVIEW.getCode());
         row.setAbnormalFlag(true);
+        return row;
+    }
+
+    /** 带时点体征行替身（点查对照用例载体：仅 id 与 measuredAt 有区分度，其余字段最小填充）。 */
+    private VitalSignRecord vitalRow(long id, OffsetDateTime measuredAt) {
+        VitalSignRecord row = new VitalSignRecord();
+        row.setId(id);
+        row.setVisitId(VISIT);
+        row.setPatientId(7L);
+        row.setWardId(WARD);
+        row.setMeasuredAt(measuredAt);
+        row.setTemperature(new BigDecimal("36.5"));
+        row.setTempSite("AXILLARY");
+        row.setSource("MANUAL");
+        row.setReviewStatus(VitalReviewStatus.CONFIRMED.getCode());
         return row;
     }
 

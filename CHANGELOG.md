@@ -2,6 +2,105 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-24 · N4 修复环 PERF-01：退费链 apply/execute 可退余额聚合 SQL 下推 + 批量预载 + link 批插（性能）
+
+- **根因（PERF-01，性能与算法优化清单定稿，置信 88，吸收 P1-01/P1-04/P3-05/A2-01/A2-02）**：
+  `RefundServiceImpl.apply` 逐费用行调 `refundedFen`——每次把全部 PENDING_* 在途退费单整行拉入
+  内存仅取 id；`decidedRefundedFen` 每次把全部 APPROVED/EXECUTED 退费单（EXECUTED 终态单调无界
+  增长）整行实体拉入内存仅取 id，且 status 无前导索引（V603 仅 idx_refund_settlement）顺序扫描；
+  `execute` 每 link 串 selectById + decidedRefundedFen（循环内不变集合重复全量拉取）；
+  `apply` 逐行 insert fee_link。N 行明细退费单 → 数倍 N 条查询 + N 次全表实体拉取，资金热路径
+  随运营年限量级劣化。
+- **修复（行为保持）**：①`RefundRequestMapper` 新增两支聚合下推 SQL（`resources/mapper/
+  RefundRequestMapper.xml`，A.4.3-15 连表聚合走 mapper+XML）：refund_fee_link JOIN
+  refund_request 按 status 过滤 SUM(refund_amount) GROUP BY fee_id——已决支（APPROVED/
+  EXECUTED）与在途支（PENDING_*，含 excludeRefundId 非空时 `r.id != #{excludeRefundId}`
+  在途排斥自身语义），计算结果与旧 refundedFen/decidedRefundedFen「全量捞单取 id + 集内
+  link 逐费用求和」两步内存路径完全等价（W-17 已决/在途分立口径原样保留）；②apply 同批
+  feeId 已决+在途各一次聚合、lockByIds 行锁内装载（TOCTOU 收口语义不变），逐行 insert
+  link 改 `Db.saveBatch` 批插（A.4.3-16，先例 DispenseServiceImpl）；③execute 费用行集一次
+  selectBatchIds + 已决聚合一次循环外复用，循环内零查询；零 link 零查询与旧空循环语义对齐。
+  旧 refundedFen/decidedRefundedFen/sumLinks 由批量形态 refundedFenByFeeIds/
+  decidedRefundedFenByFeeIds 替代并删除；totalRefundedFen（单次调用非循环热路径）维持原形态。
+  对外契约、状态机语义、DB schema 零变更。
+- **测试与验证（行为保持对照）**：既有单测全部随门禁保持绿（超可退守卫/免审直退/部分退全额退/
+  分级阈值边界/驳回解锁/卡侧守卫；打桩点从两次全量 selectList 切换至两支聚合，断言面从
+  wrapper 谓词切换至聚合调用参数 + XML 文本守卫）；新增金额边界对照用例——多费用行已决+在途
+  混合逐行守卫（聚合同批各恰一次）、多费用行第二行超可退整单拒零批插、跨单部分退累计判态
+  FULL/PART 各行独立，对照基准=旧逐行两步求和手工等值；在途排斥自身（W-17 单测直驱）切换为
+  excludeRefundId 参数下推断言；新增 RefundAggregateSqlGuardTest 逐子句钉死 XML 聚合 SQL
+  （状态谓词两支互斥不混入、在途排斥 `<if>` 按需生效、两表 deleted=0、JOIN 主键勾稽、
+  GROUP BY + ORDER BY fee_id）。门禁：worktree 根 `mvn -B test -pl fuyun-billing -am`
+  全绿（billing 215/0，含 RefundServiceImplTest 46/0）。
+- **复杂度改善**：时间——查询次数 O(明细数×全表行数) 顺序扫描 → apply/execute 各常数条索引
+  聚合（fee_id IN 过滤 + GROUP BY，走 fee_id 侧索引）+ O(1) 次批插/批读；空间——
+  O(全院已决/在途退费单整行实体) 内存驻留 → O(聚合结果行)。
+
+## 2026-09-24 · N4 修复环 ALGO-01：PDA 患者摘要体征取值改单行点查（算法）
+
+- **根因（ALGO-01，性能与算法优化清单定稿，吸收 P1-08/A2-03）**：`PdaServiceImpl.patientSummary`
+  取最近一次体征走 `listByPatient(patientId, null, null)`——按患者主索引跨全部住院史无窗口无
+  LIMIT 全量拉入内存 + 全量 VO 转换，仅为取最后一条作摘要；长期住院/慢性病患者数千行，PDA
+  每次扫码摘要均付出 O(患者终身体征行数) 传输与转换代价（叠加 PERF-02 落地前的缺索引为全表扫）。
+- **修复（行为保持对照）**：`IVitalSignService` 新增 `latestByPatient(patientId)` 点查——
+  ORDER BY measured_at DESC, id DESC LIMIT 1（MyBatis-Plus `last("LIMIT 1")`，
+  IoRecordServiceImpl 同款先例）：与旧「升序清单取末位」同为最近测量时点，id DESC 为同刻 tie
+  的确定性 tie-break（旧升序无次键、同刻多行取值依赖 DB 返回顺序，本实现收敛取最新落卡行）；
+  patientSummary 改用之，listByPatient 既有调用方零触碰。时间/空间复杂度：O(患者终身体征行数)
+  全量拉取+转换 → O(1) 单行回表（配合 PERF-02 idx_vital_sign_patient_time 逆序扫描首行即止）。
+- **测试与验证（ALGO 对照协议：先对照断言再优化）**：VitalSignServiceImplTest 先行落对照用例
+  并验证 RED（点查未实现红）再改实现转 GREEN——`latestByPatientMatchesAscendingTailSelection-
+  WithDeterministicTieBreak`（两行异刻 + 同刻 tie 两行：点查与旧升序末位同测量时点、tie 确定性
+  取 id 最大行、SQL 片段钉死 ORDER BY measured_at DESC / id DESC / LIMIT 1 下推 DB）与
+  `latestByPatientReturnsNullWhenPatientHasNoRows`（无记录返回 null 边界）；PdaServiceImplTest
+  八处 mock 随调用面切换。NursingVitalSignFlowIT 补 step10 真栈对照（单语句三行夹具含同刻
+  tie：latestByPatient 与旧 listByPatient 升序末位同测量时点、tie 命中 id 最大行）。门禁：
+  worktree 根 `mvn -B test -pl fuyun-nursing -am` 全绿（198/0）+ NursingVitalSignFlowIT 真栈
+  单类重放 10/0 全绿。
+
+## 2026-09-24 · N4 修复环 PERF-03：V900 patient.patient 姓名检索 trigram GIN 索引（性能）
+
+- **根因（PERF-03，性能与算法优化清单定稿，置信 82）**：`PatientServiceImpl.search` 对姓名
+  关键词生成 `name LIKE '%kw%'`（MP like 前后通配），V100 idx_patient_name 普通 B-tree 无法
+  服务前导通配谓词，挂号/建档台最高频检索入口对百万级主档全表扫描 + 全表 COUNT（分页
+  total），随档案量增长线性劣化。
+- **修复（行为保持）**：新增增量迁移 V900 幂等启用 pg_trgm 扩展并建
+  `idx_patient_name_trgm gin (name gin_trgm_ops)`——'%kw%' 谓词由顺序扫描 → trigram 索引
+  扫描，时间复杂度 O(全表) → O(索引候选集)；查询语句、结果集与排序零变化，查询代码与既有
+  迁移 V100 均未触碰（A.4.1-3 红线）。扩展归属边界说明：A.4.1-5 的 initdb 独占口径约束
+  TimescaleDB 扩展（须容器级预载共享库），pg_trgm 为 trusted 扩展经幂等 CREATE EXTENSION
+  IF NOT EXISTS 随迁移启用——迁移是唯一能对全环境（compose / IT 容器 / 生产托管库）一致
+  保证扩展在位的载体。普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，P1 数据量
+  锁表窗口可接受，V808 同款取舍）。
+- **测试与验证**：search 行为保持由既有 PatientServiceImplTest `searchDispatchesKeywordForms`
+  （姓名形态 name LIKE '%张%' 分派与分页语义）与 `blankKeywordShortCircuitsToEmptyPageWithoutDb`
+  （空串/空白/null 边界）承载，零改动随门禁回归；EmpiGovernanceIT 补 step8 迁移断言
+  （V900 success 落库、pg_trgm 扩展在位且 CREATE EXTENSION IF NOT EXISTS 幂等重放、GIN
+  索引 gin_trgm_ops 落位、真栈单字关键词检索返回集与 patientId 降序一致）。门禁：worktree
+  根 `mvn -B test -pl fuyun-patient -am` 全绿 + EmpiGovernanceIT 真栈单类重放全绿。
+- **号段登记**：docs/migrations/flyway-version-registry.md 同 PR 登记 V900（patient 后续
+  迁移走 V500+ 通用段；V800–V899 为 nursing 专属段不得占用，故取全局最大 V808 之后的首个
+  合法号 V900；全局最大随登记更新为 V900）。
+
+## 2026-09-24 · N4 修复环 PERF-02：V808 vital_sign_record 患者维度前导索引（性能）
+
+- **根因（PERF-02，性能与算法优化清单定稿，置信 80）**：`VitalSignServiceImpl.listByPatient`
+  按 patient_id 过滤（工作站 GET /vital-signs?patientId= 与 PDA 患者摘要每次扫码均调用），
+  V803 仅有 (visit_id, measured_at) 与 (ward_id, review_status) 前导索引，患者维度查询只能
+  顺序扫描；体征表为全院持续增长的高速写入表（P2 IoT 接入后写入量放大），随运营年限量级劣化。
+- **修复（行为保持）**：新增增量迁移 V808 建 `idx_vital_sign_patient_time (patient_id,
+  measured_at)` 复合索引——查询计划由顺序扫描 → 索引范围扫描，时间复杂度 O(全表) →
+  O(log n + 患者行数)；查询代码零改动即受益，既有迁移 V803 未触碰（A.4.1-3 红线）。
+  普通 CREATE INDEX（Flyway 迁移在事务内执行，CONCURRENTLY 不可用于事务块；P1 阶段
+  数据量有限锁表窗口可接受，P2 后大表补索引另行评估并发建索引方案）。
+- **测试与验证**：listByPatient 行为保持由既有 VitalSignServiceImplTest
+  `listByPatientSupportsWindowAndOrdersByMeasuredAt`（patientId 过滤 + 窗口含头不含尾 +
+  升序钉死）承载，零改动随门禁回归；NursingVitalSignFlowIT 补 step9 迁移断言
+  （pg_indexes 断言索引落位且列序 (patient_id, measured_at)，IotMigrationIT 断言③同款形态）。
+  门禁：worktree 根 `mvn -B test -pl fuyun-nursing -am` 全绿。
+- **号段登记**：docs/migrations/flyway-version-registry.md 同 PR 登记 V808（nursing 专属段
+  V800–V899 续号——全局最大已应用版本 V807 的下一号，满足乱序守卫；全局最大随登记更新为 V808）。
+
 ## 2026-09-24 · P1 PR-6 M05 修复环 R2（审计切面标识白名单掩码，安全 Important）
 
 - R2 审查发现：fuyun-system 共享切面 `AuditLogAspect#buildDetail` 对非 Bearer 的 String 参数与
