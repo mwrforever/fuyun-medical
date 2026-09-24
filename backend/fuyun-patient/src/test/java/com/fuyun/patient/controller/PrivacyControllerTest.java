@@ -140,9 +140,7 @@ class PrivacyControllerTest {
                 .getResponse()
                 .getContentAsString(StandardCharsets.UTF_8);
 
-        assertThat(body)
-                .contains("\"ruleCode\":\"ID_CARD\"")
-                .contains("\"exemptRoles\":[\"DOCTOR\"]");
+        assertThat(body).contains("\"ruleCode\":\"ID_CARD\"").contains("\"exemptRoles\":[\"DOCTOR\"]");
         verify(privacyMaskService).updateRule(any(), any());
     }
 

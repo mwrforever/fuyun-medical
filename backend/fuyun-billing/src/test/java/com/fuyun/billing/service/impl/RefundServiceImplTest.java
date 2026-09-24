@@ -342,7 +342,8 @@ class RefundServiceImplTest {
         //   status IN (APPROVED,EXECUTED) 过滤 + SUM 下推）；在途聚合空集（无 PENDING_* 兄弟单）
         when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
                 .thenReturn(List.of(new FeeRefundedFenRow(1L, 2000L)));
-        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L), null)).thenReturn(List.of());
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L), null))
+                .thenReturn(List.of());
 
         try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
             assertThatThrownBy(() -> service.apply(
@@ -1129,7 +1130,8 @@ class RefundServiceImplTest {
         //  （REJECTED 被 SQL 状态谓词排除）
         when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
                 .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
-        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L), null)).thenReturn(List.of());
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L), null))
+                .thenReturn(List.of());
         when(refundRequestMapper.insert(any(RefundRequest.class))).thenAnswer(inv -> {
             inv.getArgument(0, RefundRequest.class).setId(103L);
             return 1;
@@ -1137,8 +1139,7 @@ class RefundServiceImplTest {
 
         long id;
         try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
-            id = service.apply(
-                    new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "驳回后剩余额再退"));
+            id = service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "驳回后剩余额再退"));
             @SuppressWarnings("unchecked")
             ArgumentCaptor<List<RefundFeeLink>> rowsCaptor = ArgumentCaptor.forClass(List.class);
             mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
@@ -1286,8 +1287,7 @@ class RefundServiceImplTest {
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":9000,\"channelRef\":null}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
         // 本单两 link：fee1 退 2000、fee2 退 1000（本单已 CAS 至 EXECUTED，其 link 已入已决聚合）
-        when(refundFeeLinkMapper.selectList(any()))
-                .thenReturn(List.of(link(100L, 1L, 2000L), link(100L, 2L, 1000L)));
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 2000L), link(100L, 2L, 1000L)));
         // 对照基准（旧 decidedRefundedFen 逐行两步求和的手工等值）：fee1 = 历史 EXECUTED 单 101 退 2000
         //  + 历史 APPROVED 单 102 退 1000 + 本单 2000 = 5000 ≥ 行额 5000 → FULL；fee2 = 本单 1000
         //  < 行额 4000 → PART（跨退费单累计在 SQL SUM 内一次完成）

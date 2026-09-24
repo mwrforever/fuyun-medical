@@ -161,12 +161,9 @@ public class PrivacyController {
             @PathVariable String ruleCode, @Valid @RequestBody PrivacyMaskRuleUpdateRequest request) {
         // 权限校验：规则维护仅限 ADMIN（角色经认证拦截器注入 RoleContextHolder，V303 种入）
         if (!RoleContextHolder.get().contains(MASK_RULE_ADMIN_ROLE)) {
-            log.warn("脱敏规则维护拒绝（非 ADMIN 角色）：operator={}，ruleCode={}",
-                    OperatorContextHolder.get(), ruleCode);
+            log.warn("脱敏规则维护拒绝（非 ADMIN 角色）：operator={}，ruleCode={}", OperatorContextHolder.get(), ruleCode);
             throw new BizException(
-                    PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN,
-                    HttpStatus.FORBIDDEN,
-                    "脱敏规则维护仅限系统管理员");
+                    PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN, HttpStatus.FORBIDDEN, "脱敏规则维护仅限系统管理员");
         }
         return privacyMaskService.updateRule(ruleCode, request);
     }

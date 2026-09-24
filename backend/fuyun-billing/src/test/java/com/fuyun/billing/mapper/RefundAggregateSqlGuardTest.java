@@ -19,7 +19,8 @@ class RefundAggregateSqlGuardTest {
 
     /** 从主资源 classpath 读 XML 全文（main/resources 随 target/classes 进入测试类路径）。 */
     private static String xmlText() {
-        try (InputStream in = RefundAggregateSqlGuardTest.class.getResourceAsStream("/mapper/RefundRequestMapper.xml")) {
+        try (InputStream in =
+                RefundAggregateSqlGuardTest.class.getResourceAsStream("/mapper/RefundRequestMapper.xml")) {
             if (in == null) {
                 throw new IllegalStateException("未找到聚合映射 XML：resources/mapper/RefundRequestMapper.xml");
             }

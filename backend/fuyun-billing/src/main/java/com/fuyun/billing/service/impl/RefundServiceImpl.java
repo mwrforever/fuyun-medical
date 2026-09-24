@@ -497,14 +497,13 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         // PERF-01 批量预载：费用行集一次 selectBatchIds + 已决聚合一次，循环外不变集合复用（替代逐 link
         //   selectById + decidedRefundedFen 全量拉取的 N 倍查询），聚合取值与旧逐行计算完全等价；
         //   零 link 时零查询（与旧空循环语义对齐，uk_refund_fee 保证正常数据 link 恒非空）
-        List<Long> linkFeeIds = links.stream().map(RefundFeeLink::getFeeId).distinct().toList();
+        List<Long> linkFeeIds =
+                links.stream().map(RefundFeeLink::getFeeId).distinct().toList();
         Map<Long, FeeRecord> feeById = linkFeeIds.isEmpty()
                 ? Map.of()
                 : feeRecordMapper.selectBatchIds(linkFeeIds).stream()
                         .collect(Collectors.toMap(FeeRecord::getId, f -> f));
-        Map<Long, Long> decidedFenByFeeId = linkFeeIds.isEmpty()
-                ? Map.of()
-                : decidedRefundedFenByFeeIds(linkFeeIds);
+        Map<Long, Long> decidedFenByFeeId = linkFeeIds.isEmpty() ? Map.of() : decidedRefundedFenByFeeIds(linkFeeIds);
         for (RefundFeeLink link : links) {
             FeeRecord fee = feeById.get(link.getFeeId());
             long refunded = decidedFenByFeeId.getOrDefault(link.getFeeId(), 0L);
@@ -645,7 +644,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         // 数据库读操作：已决口径聚合计入（不可逆金额）后并入在途口径聚合（可驳回金额占位）——
         //   两支 SUM 状态谓词互斥不重叠，merge 求和即旧 refundedFen 的 total 累加语义
         Map<Long, Long> total = decidedRefundedFenByFeeIds(feeIds);
-        baseMapper.sumInFlightRefundedFenByFeeIds(feeIds, excludeInFlightRefundId)
+        baseMapper
+                .sumInFlightRefundedFenByFeeIds(feeIds, excludeInFlightRefundId)
                 .forEach(row -> total.merge(row.feeId(), row.refundedFen(), Long::sum));
         return total;
     }
