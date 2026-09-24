@@ -2,6 +2,7 @@ package com.fuyun.billing.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -15,6 +16,7 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.api.RefundApprovedPayload;
@@ -37,6 +39,7 @@ import com.fuyun.billing.mapper.RefundFeeLinkMapper;
 import com.fuyun.billing.mapper.RefundRequestMapper;
 import com.fuyun.billing.mapper.SettlementMapper;
 import com.fuyun.billing.properties.BillingRefundProperties;
+import com.fuyun.billing.record.FeeRefundedFenRow;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -46,6 +49,7 @@ import com.fuyun.patient.api.CardTxnType;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -56,6 +60,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -68,6 +74,13 @@ import org.springframework.test.util.ReflectionTestUtils;
  *
  * <p>「票据已开具 → 二级」维度声明：依赖 FU-M13-06 开票记录（明确不在 PR-3 范围），分级判定处为
  * 显式 TODO 占位，本类用例均以金额/医保维度驱动升级——该维度缺省不触发。
+ *
+ * <p>PERF-01 聚合下推后形态：可退余额聚合打桩点从「refund_request/refund_fee_link 两次全量
+ * selectList」改为两支 SQL 聚合（{@code sumDecidedRefundedFenByFeeIds}/
+ * {@code sumInFlightRefundedFenByFeeIds}，谓词口径由 RefundRequestMapper.xml 承载，
+ * SQL 文本守卫见 RefundAggregateSqlGuardTest）；link 落表断言点从逐行 insert 改 Db.saveBatch
+ * 批插（A.4.3-16）；金额边界对照用例断言批量取值与旧逐行 refundedFen/decidedRefundedFen
+ * 两步内存求和结果一致。
  */
 @ExtendWith(MockitoExtension.class)
 class RefundServiceImplTest {
@@ -185,13 +198,14 @@ class RefundServiceImplTest {
         return row;
     }
 
-    /** 打桩：insert 回填雪花 id=100（模拟 MP ASSIGN_ID）+ 历史无 APPROVED/EXECUTED 退费单。 */
+    /** 打桩：insert 回填雪花 id=100（模拟 MP ASSIGN_ID）+ 历史无已退/在途占用（两支 SQL 聚合空集）。 */
     private void stubInsertWithId100AndNoHistory() {
         when(refundRequestMapper.insert(any(RefundRequest.class))).thenAnswer(inv -> {
             inv.getArgument(0, RefundRequest.class).setId(100L);
             return 1;
         });
-        when(refundRequestMapper.selectList(any())).thenReturn(List.of());
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(any())).thenReturn(List.of());
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(any(), any())).thenReturn(List.of());
     }
 
     /** 打桩：行锁读回目标费用行（并发收口后 apply 守卫唯一取数源，不再逐行 selectById）。 */
@@ -207,9 +221,21 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        long id = service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "当日多收费更正"));
+        // A.4.3-16：link 负向台账一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐行 insert 通道已下线
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            long id =
+                    service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "当日多收费更正"));
 
-        assertThat(id).isEqualTo(100L);
+            assertThat(id).isEqualTo(100L);
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<RefundFeeLink>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue()).hasSize(1);
+            RefundFeeLink saved = rowsCaptor.getValue().get(0);
+            assertThat(saved.getRefundId()).isEqualTo(100L);
+            assertThat(saved.getFeeId()).isEqualTo(1L);
+            assertThat(saved.getRefundAmount()).isEqualTo(3000L);
+        }
         // 数据库写操作断言：申请单落库（免审直退=落库即 APPROVED，审计免审标识置位）
         ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(captor.capture());
@@ -223,12 +249,6 @@ class RefundServiceImplTest {
         assertThat(row.getSettlementId()).isEqualTo(900L);
         assertThat(row.getPatientId()).isEqualTo(7L);
         assertThat(row.getVisitId()).isEqualTo(VISIT);
-        // link 负向台账落表（退费负向表达唯一载体，禁 fee_record 负向行）
-        ArgumentCaptor<RefundFeeLink> linkCaptor = ArgumentCaptor.forClass(RefundFeeLink.class);
-        verify(refundFeeLinkMapper).insert(linkCaptor.capture());
-        assertThat(linkCaptor.getValue().getRefundId()).isEqualTo(100L);
-        assertThat(linkCaptor.getValue().getFeeId()).isEqualTo(1L);
-        assertThat(linkCaptor.getValue().getRefundAmount()).isEqualTo(3000L);
         // 免审直退同事件承载（CF-4）：autoApproved=true 为审计抽查检索键
         ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
         verify(events).publishEvent(evt.capture());
@@ -242,22 +262,12 @@ class RefundServiceImplTest {
         assertThat(payload.amount()).isEqualTo(3000L);
         assertThat(payload.refundType()).isEqualTo("DAY_CORRECTION");
         assertThat(payload.autoApproved()).isTrue();
-        // 可退聚合 SQL 守卫钉死（W-17 双查询）：第 1 次已决集状态谓词落在 status 列且携带
-        //   APPROVED/EXECUTED 两态（防漏历史已退）、第 2 次在途集携带 PENDING_APPROVAL/PENDING_SECOND_APPROVAL
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
-        LambdaQueryWrapper<RefundRequest> statusWrapper =
-                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(0);
-        assertThat(statusWrapper.getSqlSegment()).contains("status");
-        assertThat(statusWrapper.getParamNameValuePairs().values())
-                .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
-        LambdaQueryWrapper<RefundRequest> inFlightWrapper =
-                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
-        // 先取 sqlSegment 触发 IN 参数懒物化（MP formatParam 惰性求值，mock 不渲染 SQL 不会自动回填）
-        assertThat(inFlightWrapper.getSqlSegment()).contains("status");
-        assertThat(inFlightWrapper.getParamNameValuePairs().values())
-                .contains(RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL);
+        // 可退聚合下推守卫钉死（PERF-01 后 W-17 双查询改 SQL 聚合）：已决/在途各一次、按同批 feeId
+        //   聚合（状态谓词与在途口径由 RefundRequestMapper.xml 承载，SQL 文本守卫见
+        //   RefundAggregateSqlGuardTest）；apply 全程零退费单全表实体拉取（selectList 零调用）
+        verify(refundRequestMapper).sumDecidedRefundedFenByFeeIds(List.of(1L));
+        verify(refundRequestMapper).sumInFlightRefundedFenByFeeIds(List.of(1L), null);
+        verify(refundRequestMapper, never()).selectList(any());
     }
 
     @Test
@@ -268,7 +278,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日退费"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日退费"));
+        }
 
         ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(captor.capture());
@@ -289,7 +301,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退费"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退费"));
+        }
 
         ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(captor.capture());
@@ -306,13 +320,15 @@ class RefundServiceImplTest {
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
         stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.DISPENSED));
 
-        assertThatThrownBy(() -> service.apply(
-                        new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "已发药误退")))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(BillingErrorCode.REFUND_BLOCKED_BY_EXEC_OCCUPY));
-        // 占用即拒：禁「只退钱不退业务」，申请单/link/事件零触碰
+        // 占用即拒：禁「只退钱不退业务」，申请单/link 批插/事件零触碰（link 落表通道=Db.saveBatch）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> service.apply(
+                            new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "已发药误退")))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(BillingErrorCode.REFUND_BLOCKED_BY_EXEC_OCCUPY));
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+        }
         verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
-        verify(refundFeeLinkMapper, never()).insert(any(RefundFeeLink.class));
         verifyNoInteractions(events);
     }
 
@@ -322,24 +338,24 @@ class RefundServiceImplTest {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
         stubLockByIdsReturning(fee(1L, 1000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
-        // 历史已退：APPROVED 态退费单 101 已退 2000 分
-        RefundRequest history = refund(101L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 2000L);
-        when(refundRequestMapper.selectList(any())).thenReturn(List.of(history));
-        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(101L, 1L, 2000L)));
+        // 历史已退打桩=模拟 SQL 聚合结果：APPROVED 态退费单 101 对本费用行已退 2000 分（SQL 侧
+        //   status IN (APPROVED,EXECUTED) 过滤 + SUM 下推）；在途聚合空集（无 PENDING_* 兄弟单）
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 2000L)));
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L), null)).thenReturn(List.of());
 
-        assertThatThrownBy(() -> service.apply(
-                        new RefundApplyRequest(900L, List.of(new RefundLine(1L, new BigDecimal("2"))), "超可退")))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(BillingErrorCode.REFUND_AMOUNT_EXCEEDED));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> service.apply(
+                            new RefundApplyRequest(900L, List.of(new RefundLine(1L, new BigDecimal("2"))), "超可退")))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(BillingErrorCode.REFUND_AMOUNT_EXCEEDED));
+            mockedDb.verify(() -> Db.saveBatch(any()), never()); // 守卫拒即零批插
+        }
         verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
-        verify(refundFeeLinkMapper, never()).insert(any(RefundFeeLink.class));
-        // 已退聚合 SQL 守卫钉死（W-17 后已决/在途各求和一次）：link 查询谓词落在 fee_id 列且携带本费用行 id（防跨行串账）
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundFeeLinkMapper, times(2)).selectList(linkCaptor.capture());
-        LambdaQueryWrapper<RefundFeeLink> linkWrapper = (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getValue();
-        assertThat(linkWrapper.getSqlSegment()).contains("fee_id");
-        assertThat(linkWrapper.getParamNameValuePairs().values()).contains(1L, 101L);
+        // 已退聚合下推守卫钉死（PERF-01 后 W-17 双查询改 SQL 聚合）：已决/在途各一次、按本费用行
+        //   聚合（防跨行串账——分组键=fee_id，谓词口径由 RefundRequestMapper.xml 承载）
+        verify(refundRequestMapper).sumDecidedRefundedFenByFeeIds(List.of(1L));
+        verify(refundRequestMapper).sumInFlightRefundedFenByFeeIds(List.of(1L), null);
     }
 
     @Test
@@ -498,7 +514,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 50000L, 50000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "恰好等于免审阈值"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "恰好等于免审阈值"));
+        }
 
         // 边界钉死：恰等于 autoExemptFen（50000 分）归免审（「≤ 阈值」口径），落库即 APPROVED
         ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
@@ -515,7 +533,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 60000L, 60000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日自费超免审"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "跨日自费超免审"));
+        }
         ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(applyCaptor.capture());
         RefundRequest row = applyCaptor.getValue();
@@ -545,7 +565,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 200000L, 200000L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "恰等于一级上限"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "恰等于一级上限"));
+        }
         ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(applyCaptor.capture());
         RefundRequest row = applyCaptor.getValue();
@@ -569,7 +591,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 200001L, 200001L, LocalDate.now().minusDays(1), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "超一级上限大额"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "超一级上限大额"));
+        }
         ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(applyCaptor.capture());
         RefundRequest row = applyCaptor.getValue();
@@ -600,7 +624,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退款"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "医保结算退款"));
+        }
         ArgumentCaptor<RefundRequest> applyCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(applyCaptor.capture());
         RefundRequest row = applyCaptor.getValue();
@@ -697,10 +723,14 @@ class RefundServiceImplTest {
         //   由 executeAggregatesSameCardRowsIntoSingleCredit 承载）
         st.setPaymentDetails("[{\"method\":\"CARD_BALANCE\",\"amount\":3000,\"channelRef\":\"5\"}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
-        // 同一 mapper 多处查询（本单 link 清单 / 仅已决口径判态 / 结算维度聚合）打桩同值：本单已退=3000 分
+        // 本单 link 清单与结算维度聚合共用打桩（同值）：本单已退=3000 分；判态已决聚合下推=SQL 聚合
+        //   打桩（本单已 CAS 至 EXECUTED 必入已决集）；费用行批量预载=selectBatchIds 打桩
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
         when(cardAccountLedger.record(any())).thenReturn(777L);
 
         service.execute(100L);
@@ -720,30 +750,29 @@ class RefundServiceImplTest {
         ArgumentCaptor<Settlement> stCaptor = ArgumentCaptor.forClass(Settlement.class);
         verify(settlementMapper).updateById(stCaptor.capture());
         assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.REFUNDED);
-        // link 聚合 SQL 守卫钉死：本单 link 清单谓词落在 refund_id 列且携带本单 id
-        //  （口径复位后共 3 次：清单 1 + 仅已决集内求和 1 + 结算维度求和 1）
+        // link 清单查询守卫钉死：谓词落在 refund_id 列且携带本单 id
+        //  （PERF-01 后共 1 次：清单 1；判态求和与结算维度求和中前者已下推 SQL 聚合、后者仍 link 集求和）
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundFeeLinkMapper, times(3)).selectList(linkCaptor.capture());
+        verify(refundFeeLinkMapper, times(2)).selectList(linkCaptor.capture());
         LambdaQueryWrapper<RefundFeeLink> loopWrapper =
                 (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getAllValues().get(0);
         assertThat(loopWrapper.getSqlSegment()).contains("refund_id");
         assertThat(loopWrapper.getParamNameValuePairs().values()).contains(100L);
-        // 已退聚合状态谓词守卫：第 1 次已决集 APPROVED/EXECUTED 两态（本单判定时点已 CAS 至 EXECUTED
-        //  必须计入，剔除即永判不满）；在途两态绝不出现在 execute 判态谓词中
+        // 判态聚合下推守卫：已决聚合按本单 link 费用行集一次装载、在途聚合零调用（W-17 判态口径——
+        //   本单已 CAS 至 EXECUTED 必入已决集，在途两态绝不混入）；费用行批量预载恰一次
+        verify(refundRequestMapper).sumDecidedRefundedFenByFeeIds(List.of(1L));
+        verify(refundRequestMapper, never()).sumInFlightRefundedFenByFeeIds(any(), any());
+        verify(feeRecordMapper).selectBatchIds(List.of(1L));
+        // 结算单聚合谓词守卫：判态聚合之后 selectList 恰 1 次（totalRefundedFen 结算维度），
+        //   settlement_id 等值（防跨结算单串账）且谓词只携已决两态
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
-        LambdaQueryWrapper<RefundRequest> statusWrapper =
-                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(0);
-        assertThat(statusWrapper.getSqlSegment()).contains("status");
-        assertThat(statusWrapper.getParamNameValuePairs().values())
-                .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED);
-        // 结算单聚合谓词守卫：第 2 次（仅已决判态之后）settlement_id 等值（防跨结算单串账）
-        LambdaQueryWrapper<RefundRequest> settleWrapper =
-                (LambdaQueryWrapper<RefundRequest>) statusCaptor.getAllValues().get(1);
+        verify(refundRequestMapper, times(1)).selectList(statusCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> settleWrapper = (LambdaQueryWrapper<RefundRequest>) statusCaptor.getValue();
         assertThat(settleWrapper.getSqlSegment()).contains("settlement_id");
-        assertThat(settleWrapper.getParamNameValuePairs().values()).contains(900L);
+        assertThat(settleWrapper.getParamNameValuePairs().values())
+                .contains(900L, RefundStatus.APPROVED, RefundStatus.EXECUTED);
     }
 
     @Test
@@ -761,7 +790,10 @@ class RefundServiceImplTest {
         when(settlementMapper.selectById(900L)).thenReturn(st);
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 5000L)));
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 5000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE)));
         when(cardAccountLedger.record(any())).thenReturn(777L);
 
         service.execute(100L);
@@ -782,7 +814,9 @@ class RefundServiceImplTest {
         stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
-        service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正"));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "更正"));
+        }
 
         // 锁先于守卫与落库：并发双申请同费用行时后到者在 lockByIds 阻塞至先到者提交，
         //   锁内重读的已退聚合含先到申请 → 超可退守卫即拒（TOCTOU 根除锚点，顺序不可倒置）
@@ -801,10 +835,13 @@ class RefundServiceImplTest {
         Settlement st = settlement(900L, 8000L);
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
-        // 本单仅退费用行 1（3000 分）
+        // 本单仅退费用行 1（3000 分）；判态已决聚合下推打桩（fee1 已退 3000 ≥ 行额 3000 → FULL）
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
         service.execute(100L);
 
@@ -833,9 +870,12 @@ class RefundServiceImplTest {
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
-        // 第 1 次查询（execute 仅已决口径判费用行终态）命中本单；第 2 次（totalRefundedFen 结算维度）空集 → 聚合 0 分
-        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved), List.of());
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        // 判态已决聚合下推命中本单（fee1 已退 3000）；结算维度聚合（totalRefundedFen）空集 → 聚合 0 分
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of());
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
         service.execute(100L);
 
@@ -1013,28 +1053,23 @@ class RefundServiceImplTest {
     // ===== W-17：在途额度口径 =====
 
     @Test
-    @DisplayName("W-17 在途聚合：已决全量 + 在途除自身（excludeInFlightRefundId 语义锁定）")
+    @DisplayName("W-17 在途聚合：已决全量 + 在途除自身（excludeInFlightRefundId 语义经 SQL 下推锁定）")
     void refundedFenCountsDecidedFullyAndInFlightExcludingSelf() {
-        // 打桩=模拟 SQL 结果：第一次聚合查已决（APPROVED/EXECUTED）→ 仅 [11]；
-        // 第二次查在途（PENDING_* 且 .ne(12) 排除自身在 SQL 侧生效）→ 仅 [13]，单 12 不得出现于返回集
-        when(refundRequestMapper.selectList(any()))
-                .thenReturn(
-                        List.of(refund(11L, RefundStatus.APPROVED, "cashier-0", RefundType.DAY_CORRECTION, 300L)),
-                        List.of(refund(
-                                13L,
-                                RefundStatus.PENDING_SECOND_APPROVAL,
-                                "cashier-0",
-                                RefundType.DAY_CORRECTION,
-                                100L)));
-        // link 求和随两次集内查询依序打桩：已决集 [11]→300 分；在途集 [13]→100 分
-        when(refundFeeLinkMapper.selectList(any()))
-                .thenReturn(List.of(link(11L, 9L, 300L)), List.of(link(13L, 9L, 100L)));
+        // 打桩=模拟 SQL 聚合结果：已决支（status IN (APPROVED,EXECUTED) 过滤+SUM 下推）→ fee 9 已退 300 分
+        //  （由 APPROVED 单 11 贡献）；在途支（status IN (PENDING_*) 过滤+SUM 下推，且 r.id != 12 排除自身
+        //  在 SQL 侧生效）→ fee 9 占位 100 分（由 PENDING_SECOND_APPROVAL 单 13 贡献），自身单 12 不入集
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(9L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(9L, 300L)));
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(9L), 12L))
+                .thenReturn(List.of(new FeeRefundedFenRow(9L, 100L)));
 
-        long occupied = service.refundedFen(9L, 12L); // 包级双参直调，无别名方法
+        Map<Long, Long> occupied = service.refundedFenByFeeIds(List.of(9L), 12L); // 包级批量直调，无别名方法
 
-        assertThat(occupied).isEqualTo(400L); // 300（已决）+100（他单在途）；自身单 12 被 .ne(12) 排除不入集
-        verify(refundRequestMapper, times(2)).selectList(any()); // 已决/在途各聚合恰一次
-        verify(refundFeeLinkMapper, times(2)).selectList(any());
+        // 对照断言：300（已决）+100（他单在途）与旧 refundedFen 逐行两步求和结果一致
+        assertThat(occupied).containsEntry(9L, 400L);
+        // 排斥语义经参数下推：excludeRefundId=12 原样传入在途聚合 SQL（谓词子句钉死见 RefundAggregateSqlGuardTest）
+        verify(refundRequestMapper).sumDecidedRefundedFenByFeeIds(List.of(9L));
+        verify(refundRequestMapper).sumInFlightRefundedFenByFeeIds(List.of(9L), 12L);
     }
 
     // ===== W-17 口径复位回归（code-review 修复）：execute 判费用行终态恢复仅已决，apply 在途守卫不变 =====
@@ -1049,10 +1084,13 @@ class RefundServiceImplTest {
         st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":5000,\"channelRef\":null}]");
         when(settlementMapper.selectById(900L)).thenReturn(st);
         when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
-        // 打桩=模拟 SQL 结果：第 1 次（execute 仅已决判态）与第 2 次（结算维度）均只含已决本单——
-        //  兄弟单 PENDING 在途被状态谓词过滤不入集（同费用行在途兄弟单 link 2000 分场景）
-        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved), List.of(approved));
-        when(feeRecordMapper.selectById(1L)).thenReturn(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        // 打桩=模拟 SQL 聚合结果：判态已决聚合（execute 仅已决口径）只含本单 3000 分——兄弟单 PENDING
+        //  在途被 SQL 状态谓词过滤不入聚合（同费用行在途兄弟单 link 2000 分场景）；结算维度亦只含已决本单
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
         service.execute(100L);
 
@@ -1061,19 +1099,20 @@ class RefundServiceImplTest {
         ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
         verify(feeRecordMapper).updateById(feeCaptor.capture());
         assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.PART_REFUND);
-        // 口径钉死：execute 全程不再发起在途集查询（refundRequestMapper.selectList 恰 2 次=仅已决判态
-        //  + 结算维度），且两次谓词均只携已决两态、绝无在途两态
+        // 口径钉死：execute 全程零在途聚合（sumInFlightRefundedFenByFeeIds 零调用），已决聚合恰一次
+        //  （在途两态绝不出现在 execute 判态口径中——谓词由 RefundRequestMapper.xml 承载并钉死）；
+        //  selectList 恰 1 次=结算维度聚合，谓词只携已决两态
+        verify(refundRequestMapper).sumDecidedRefundedFenByFeeIds(List.of(1L));
+        verify(refundRequestMapper, never()).sumInFlightRefundedFenByFeeIds(any(), any());
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Wrapper<RefundRequest>> statusCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(refundRequestMapper, times(2)).selectList(statusCaptor.capture());
-        for (Wrapper<RefundRequest> captured : statusCaptor.getAllValues()) {
-            LambdaQueryWrapper<RefundRequest> wrapper = (LambdaQueryWrapper<RefundRequest>) captured;
-            // 先取 sqlSegment 触发 IN 参数懒物化（MP formatParam 惰性求值，mock 不渲染 SQL 不会自动回填）
-            assertThat(wrapper.getSqlSegment()).contains("status");
-            assertThat(wrapper.getParamNameValuePairs().values())
-                    .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED)
-                    .doesNotContain(RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL);
-        }
+        verify(refundRequestMapper, times(1)).selectList(statusCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> wrapper = (LambdaQueryWrapper<RefundRequest>) statusCaptor.getValue();
+        // 先取 sqlSegment 触发 IN 参数懒物化（MP formatParam 惰性求值，mock 不渲染 SQL 不会自动回填）
+        assertThat(wrapper.getSqlSegment()).contains("settlement_id");
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(RefundStatus.APPROVED, RefundStatus.EXECUTED)
+                .doesNotContain(RefundStatus.PENDING_APPROVAL, RefundStatus.PENDING_SECOND_APPROVAL);
     }
 
     @Test
@@ -1086,23 +1125,30 @@ class RefundServiceImplTest {
         FeeRecord partRefunded = fee(1L, 2000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE);
         partRefunded.setStatus(FeeStatus.PART_REFUND);
         stubLockByIdsReturning(partRefunded);
-        RefundRequest executedOwn = refund(101L, RefundStatus.EXECUTED, "cashier-0", RefundType.DAY_CORRECTION, 3000L);
-        // 打桩=模拟 SQL 结果：第 1 次（apply 已决集）→ [101]；第 2 次（在途集）→ 空集（REJECTED 被谓词排除）
-        when(refundRequestMapper.selectList(any())).thenReturn(List.of(executedOwn), List.of());
-        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(101L, 1L, 3000L)));
+        // 打桩=模拟 SQL 聚合结果：已决支（EXECUTED 单 101）→ fee1 已退 3000 分；在途支空集
+        //  （REJECTED 被 SQL 状态谓词排除）
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L), null)).thenReturn(List.of());
         when(refundRequestMapper.insert(any(RefundRequest.class))).thenAnswer(inv -> {
             inv.getArgument(0, RefundRequest.class).setId(103L);
             return 1;
         });
 
-        long id = service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "驳回后剩余额再退"));
+        long id;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            id = service.apply(
+                    new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "驳回后剩余额再退"));
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<RefundFeeLink>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue()).hasSize(1);
+            assertThat(rowsCaptor.getValue().get(0).getRefundAmount()).isEqualTo(2000L);
+        }
 
         assertThat(id).isEqualTo(103L);
         // 剩余额守卫通过：仅已决 3000 + 本次 2000 = 行额 5000（修复前 execute 混在途误标 FULL_REFUND，
         //  本申请会先命中 BILL-1011 行状态守卫 400 拒，剩余额永锁）
-        ArgumentCaptor<RefundFeeLink> linkCaptor = ArgumentCaptor.forClass(RefundFeeLink.class);
-        verify(refundFeeLinkMapper).insert(linkCaptor.capture());
-        assertThat(linkCaptor.getValue().getRefundAmount()).isEqualTo(2000L);
         ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).insert(refundCaptor.capture());
         assertThat(refundCaptor.getValue().getAmount()).isEqualTo(2000L);
@@ -1153,5 +1199,119 @@ class RefundServiceImplTest {
                         new RefundApplyRequest(5L, List.of(new RefundLine(9L, BigDecimal.ONE)), "当日多收费更正")))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.FEE_STATE_NOT_ALLOWED));
+    }
+
+    // ===== PERF-01：聚合下推批量守卫金额边界对照（结果与旧逐行 refundedFen/decidedRefundedFen 一致） =====
+
+    @Test
+    @DisplayName("对照·多费用行已决+在途混合：逐行守卫取值与旧 refundedFen 两步求和一致，聚合同批各恰一次")
+    void applyGuardsMultipleFeeLinesAgainstBatchedDecidedAndInFlightAggregates() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 6000L));
+        // 同批两费用行：fee1 行额 3000、fee2 行额 2000（今日计费 → 当日更正分级）
+        stubLockByIdsReturning(
+                fee(1L, 500L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE),
+                fee(2L, 600L, 2000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        // 对照基准（旧 refundedFen 逐行两步求和的手工等值）：fee1 已决=APPROVED 单 1200+EXECUTED 单 800
+        //  =2000、在途=PENDING_APPROVAL 单 300+PENDING_SECOND_APPROVAL 单 200=500 → 占用 2500，本次退
+        //  500 → 恰等行额 3000 守卫通过（边界=等于不拒）；fee2 已决=EXECUTED 单 1000、在途 0 → 占用
+        //  1000，本次退 600 → 1600 ≤ 2000 通过（REJECTED 单 900 不入任何聚合集）
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L, 2L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 2000L), new FeeRefundedFenRow(2L, 1000L)));
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L, 2L), null))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 500L)));
+        when(refundRequestMapper.insert(any(RefundRequest.class))).thenAnswer(inv -> {
+            inv.getArgument(0, RefundRequest.class).setId(100L);
+            return 1;
+        });
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            long id = service.apply(new RefundApplyRequest(
+                    900L,
+                    List.of(new RefundLine(1L, BigDecimal.ONE), new RefundLine(2L, BigDecimal.ONE)),
+                    "多费用行混合口径退费"));
+            assertThat(id).isEqualTo(100L);
+            // 批插行集对照：逐行金额=单价快照×数量（500/600），行序=明细行序（与逐行 insert 时代同构）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<RefundFeeLink>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue())
+                    .extracting(RefundFeeLink::getFeeId, RefundFeeLink::getRefundAmount)
+                    .containsExactly(tuple(1L, 500L), tuple(2L, 600L));
+        }
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).insert(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getAmount()).isEqualTo(1100L); // 500+600 服务端按明细聚合
+        // 批量化钉死：同批 feeId 已决/在途各恰一次聚合（替代旧逐行 2×2 次全表实体拉取）
+        verify(refundRequestMapper, times(1)).sumDecidedRefundedFenByFeeIds(List.of(1L, 2L));
+        verify(refundRequestMapper, times(1)).sumInFlightRefundedFenByFeeIds(List.of(1L, 2L), null);
+    }
+
+    @Test
+    @DisplayName("对照·多费用行第二行超可退：BILL-1021 整单拒且聚合仍一次（守卫拒后零落库零批插）")
+    void applyBlocksWhenSecondFeeLineExceedsRemainderInBatchedGuard() {
+        OperatorContextHolder.set(APPLICANT);
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 5000L));
+        // fee1 守卫通过（占用 0+本次 1000 ≤ 行额 3000）；fee2 已决 1500+本次 600=2100 > 行额 2000 → 整单拒
+        stubLockByIdsReturning(
+                fee(1L, 1000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE),
+                fee(2L, 600L, 2000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L, 2L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(2L, 1500L)));
+        when(refundRequestMapper.sumInFlightRefundedFenByFeeIds(List.of(1L, 2L), null))
+                .thenReturn(List.of());
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> service.apply(new RefundApplyRequest(
+                            900L,
+                            List.of(new RefundLine(1L, BigDecimal.ONE), new RefundLine(2L, BigDecimal.ONE)),
+                            "第二行超可退")))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(BillingErrorCode.REFUND_AMOUNT_EXCEEDED));
+            mockedDb.verify(() -> Db.saveBatch(any()), never()); // 守卫拒即零批插
+        }
+        verify(refundRequestMapper, never()).insert(any(RefundRequest.class));
+        // 批量聚合恰一次（同批一次装载、循环内查表复用——旧逐行 refundedFen 的重复全表拉取已下线）
+        verify(refundRequestMapper, times(1)).sumDecidedRefundedFenByFeeIds(List.of(1L, 2L));
+        verify(refundRequestMapper, times(1)).sumInFlightRefundedFenByFeeIds(List.of(1L, 2L), null);
+    }
+
+    @Test
+    @DisplayName("对照·跨单部分退累计：多费用行已决聚合跨退费单累计判态 FULL/PART 各行独立正确")
+    void executeJudgesEachFeeByCrossRefundDecidedAccumulation() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 9000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":9000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 本单两 link：fee1 退 2000、fee2 退 1000（本单已 CAS 至 EXECUTED，其 link 已入已决聚合）
+        when(refundFeeLinkMapper.selectList(any()))
+                .thenReturn(List.of(link(100L, 1L, 2000L), link(100L, 2L, 1000L)));
+        // 对照基准（旧 decidedRefundedFen 逐行两步求和的手工等值）：fee1 = 历史 EXECUTED 单 101 退 2000
+        //  + 历史 APPROVED 单 102 退 1000 + 本单 2000 = 5000 ≥ 行额 5000 → FULL；fee2 = 本单 1000
+        //  < 行额 4000 → PART（跨退费单累计在 SQL SUM 内一次完成）
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L, 2L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 5000L), new FeeRefundedFenRow(2L, 1000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L, 2L)))
+                .thenReturn(List.of(
+                        fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE),
+                        fee(2L, 4000L, 4000L, LocalDate.now(), ExecOccupyStatus.NONE)));
+        // 结算维度聚合（totalRefundedFen 维持 id 集两步查询）：已决本单 → link 合计 3000 < 9000 留 SETTLED
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+
+        service.execute(100L);
+
+        // 逐行判态对照断言：fee1 恰好退满 → FULL_REFUND；fee2 未满 → PART_REFUND（批量预载取值与旧逐行一致）
+        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
+        verify(feeRecordMapper, times(2)).updateById(feeCaptor.capture());
+        assertThat(feeCaptor.getAllValues())
+                .extracting(FeeRecord::getId, FeeRecord::getStatus)
+                .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.PART_REFUND));
+        // 批量预载钉死：费用行集一次 selectBatchIds、已决聚合一次（循环内零再查询）
+        verify(feeRecordMapper, times(1)).selectBatchIds(List.of(1L, 2L));
+        verify(refundRequestMapper, times(1)).sumDecidedRefundedFenByFeeIds(List.of(1L, 2L));
+        // 部分退：已退 3000 < 结算总额 9000 → 结算单留 SETTLED
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
     }
 }
