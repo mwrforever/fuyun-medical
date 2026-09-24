@@ -2,6 +2,30 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-24 · N4 修复环 PERF-03：V900 patient.patient 姓名检索 trigram GIN 索引（性能）
+
+- **根因（PERF-03，性能与算法优化清单定稿，置信 82）**：`PatientServiceImpl.search` 对姓名
+  关键词生成 `name LIKE '%kw%'`（MP like 前后通配），V100 idx_patient_name 普通 B-tree 无法
+  服务前导通配谓词，挂号/建档台最高频检索入口对百万级主档全表扫描 + 全表 COUNT（分页
+  total），随档案量增长线性劣化。
+- **修复（行为保持）**：新增增量迁移 V900 幂等启用 pg_trgm 扩展并建
+  `idx_patient_name_trgm gin (name gin_trgm_ops)`——'%kw%' 谓词由顺序扫描 → trigram 索引
+  扫描，时间复杂度 O(全表) → O(索引候选集)；查询语句、结果集与排序零变化，查询代码与既有
+  迁移 V100 均未触碰（A.4.1-3 红线）。扩展归属边界说明：A.4.1-5 的 initdb 独占口径约束
+  TimescaleDB 扩展（须容器级预载共享库），pg_trgm 为 trusted 扩展经幂等 CREATE EXTENSION
+  IF NOT EXISTS 随迁移启用——迁移是唯一能对全环境（compose / IT 容器 / 生产托管库）一致
+  保证扩展在位的载体。普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，P1 数据量
+  锁表窗口可接受，V808 同款取舍）。
+- **测试与验证**：search 行为保持由既有 PatientServiceImplTest `searchDispatchesKeywordForms`
+  （姓名形态 name LIKE '%张%' 分派与分页语义）与 `blankKeywordShortCircuitsToEmptyPageWithoutDb`
+  （空串/空白/null 边界）承载，零改动随门禁回归；EmpiGovernanceIT 补 step8 迁移断言
+  （V900 success 落库、pg_trgm 扩展在位且 CREATE EXTENSION IF NOT EXISTS 幂等重放、GIN
+  索引 gin_trgm_ops 落位、真栈单字关键词检索返回集与 patientId 降序一致）。门禁：worktree
+  根 `mvn -B test -pl fuyun-patient -am` 全绿 + EmpiGovernanceIT 真栈单类重放全绿。
+- **号段登记**：docs/migrations/flyway-version-registry.md 同 PR 登记 V900（patient 后续
+  迁移走 V500+ 通用段；V800–V899 为 nursing 专属段不得占用，故取全局最大 V808 之后的首个
+  合法号 V900；全局最大随登记更新为 V900）。
+
 ## 2026-09-24 · N4 修复环 PERF-02：V808 vital_sign_record 患者维度前导索引（性能）
 
 - **根因（PERF-02，性能与算法优化清单定稿，置信 80）**：`VitalSignServiceImpl.listByPatient`

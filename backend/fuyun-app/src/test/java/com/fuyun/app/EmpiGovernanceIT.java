@@ -10,8 +10,11 @@ import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.integration.service.IEventRegistryService;
 import com.fuyun.patient.constants.PatientMessagingConstants;
 import com.fuyun.patient.service.IPossibleDuplicateService;
+import java.net.URI;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -510,6 +513,60 @@ class EmpiGovernanceIT extends FuyunStackITBase {
                 pairLow,
                 pairHigh);
         assertThat(pairRows).as("同对患者仅允许一条 PENDING 待审行").isEqualTo(1);
+    }
+
+    @Test
+    @Order(8)
+    @DisplayName("PERF-03 迁移断言：V900 success、pg_trgm 幂等在位、姓名 GIN trigram 索引落位，真栈姓名检索返回集与降序一致")
+    void patientNameTrgmIndexInPlaceAndSearchResultUnchanged() throws Exception {
+        // 迁移红线：V900（pg_trgm 扩展 + 姓名索引）随上下文启动的 Flyway 全量重放成功应用
+        Integer migrated = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM public.flyway_schema_history WHERE version = '900' AND success = TRUE",
+                Integer.class);
+        assertThat(migrated).as("V900 应 success=t（pg_trgm 扩展 + GIN 索引迁移）").isEqualTo(1);
+
+        // 扩展幂等实证：迁移内 CREATE EXTENSION IF NOT EXISTS 的重放语义——扩展已存在时再执行静默通过
+        jdbcTemplate.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm");
+        String extVersion = jdbcTemplate.queryForObject(
+                "SELECT extversion FROM pg_extension WHERE extname = 'pg_trgm'", String.class);
+        assertThat(extVersion).as("pg_trgm 扩展必须已在库内启用").isNotBlank();
+
+        // 索引交付物断言（PERF-02 NursingVitalSignFlowIT step9 同款形态）：GIN + gin_trgm_ops 落位，
+        // 前导通配检索 '%kw%' 的索引扫描载体，防迁移静默缺失或 opclass 误建导致修复意图落空
+        String indexDef = jdbcTemplate.queryForObject(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'patient' AND indexname = 'idx_patient_name_trgm'",
+                String.class);
+        assertThat(indexDef)
+                .as("PERF-03：姓名 trigram GIN 索引必须存在且 opclass 为 gin_trgm_ops")
+                .contains("USING gin")
+                .contains("gin_trgm_ops");
+
+        // 行为保持对照（真栈 + 索引在位）：关键词取姓名中段单字（非前缀，实证前导通配语义与单字边界），
+        // 返回集与排序必须与既有契约一致——同关键词命中 step2 建立的同对档案且按 patientId 降序；
+        // 检索结果经脱敏出口，断言锚定 patientId（禁依赖掩码姓名文本）；中文关键词经 UTF-8 显式
+        // 百分号编码并以 URI 对象发起（绕开模板处理器二次编码的不确定性）
+        long patientA = PATIENT_A.get();
+        long patientB = PATIENT_B.get();
+        URI searchUri = URI.create(restTemplate.getRootUri()
+                + "/api/v1/patient/patients/search?keyword="
+                + URLEncoder.encode(DUPLICATE_NAME.substring(1, 2), StandardCharsets.UTF_8));
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(ADMIN_TOKEN.get());
+        ResponseEntity<String> resp =
+                restTemplate.exchange(searchUri, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        assertThat(resp.getStatusCode().is2xxSuccessful())
+                .as("姓名检索应 2xx，实况：%s", resp.getBody())
+                .isTrue();
+        JsonNode page = objectMapper.readTree(resp.getBody());
+        List<Long> hitIds = new ArrayList<>();
+        for (JsonNode row : page.path("content")) {
+            hitIds.add(row.path("patientId").asLong());
+        }
+        List<Long> expected = patientA < patientB ? List.of(patientB, patientA) : List.of(patientA, patientB);
+        assertThat(hitIds)
+                .as("同关键词返回集与排序一致（LIKE 命中同对档案 + orderByDesc(patientId)，单字边界）")
+                .isEqualTo(expected);
+        assertThat(page.path("total").asLong()).as("同关键词命中总数一致").isEqualTo(2);
     }
 
     /**
