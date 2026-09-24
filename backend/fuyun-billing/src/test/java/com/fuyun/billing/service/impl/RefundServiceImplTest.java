@@ -888,6 +888,40 @@ class RefundServiceImplTest {
     }
 
     @Test
+    @DisplayName("零 link 防御分支：link 台账空集（uk_refund_fee 正常恒非空）→ 零费用迁移、退费单照常 EXECUTED、结算单留 SETTLED")
+    void executeSkipsFeeMigrationWhenLinkLedgerEmpty() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        // 纯现金支付夹具：无 CARD_BALANCE 行 → 台账零触碰（本用例聚焦 link 空集防御形态，卡侧链路
+        //   覆盖由 executeRefundsCardBalanceAndMarksSettlementRefunded 承载）
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 防御分支注入：本单 link 清单空集——uk_refund_fee 约束下正常申请单至少一行 link，空集仅数据
+        //   异常防御形态；PERF-01 批量预载两支三元（feeById/decidedFenByFeeId）的空支 Map.of() 仅此
+        //   可达，本用例即为其覆盖锚（零 link 零查询语义：不对费用行/已决聚合发 SQL）
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of());
+        // 结算维度聚合（totalRefundedFen）已决集空 → 聚合 0 分 < 总额 8000（结算单留 SETTLED 断言源）
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of());
+
+        service.execute(100L);
+
+        // 零费用迁移：link 空集 → 判态循环零迭代，费用行零 update、批量预载与已决聚合零查询
+        verify(feeRecordMapper, never()).updateById(any(FeeRecord.class));
+        verify(feeRecordMapper, never()).selectBatchIds(any());
+        verify(refundRequestMapper, never()).sumDecidedRefundedFenByFeeIds(any());
+        // 退费单照常终态：CAS 锚已抢 → EXECUTED（防御分支不阻断资金主链）
+        ArgumentCaptor<RefundRequest> captor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+        // 已退聚合 0 < 结算总额 8000 → 结算单留 SETTLED（部分退不改结算终态）
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
+        verifyNoInteractions(cardAccountLedger);
+    }
+
+    @Test
     @DisplayName("执行读回卡引用守卫：channelRef JSON null/空文本/非数字/缺键均 BILL-1012 拒（400，禁裸 parseLong 出 500）")
     void executeRejectsMissingOrIllegalChannelRefAsBill1012() {
         // W-16 后 execute 首步即 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍 APPROVED→拒 BILL-1019
