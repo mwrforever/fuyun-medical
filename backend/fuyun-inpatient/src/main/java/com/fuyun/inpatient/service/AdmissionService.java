@@ -7,7 +7,9 @@ import com.fuyun.inpatient.dto.VisitRegisterRequest;
 import com.fuyun.inpatient.dto.WardAdmitRequest;
 import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.vo.AdmissionVO;
+import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
+import java.util.List;
 
 /**
  * 入院登记域服务（FU-M04-01）：住院证全生命周期（登记入队/预约/作废/登记确认）与住院就诊
@@ -16,7 +18,8 @@ import com.fuyun.inpatient.vo.InpatientVisitVO;
  * 床位联动三处（Task 4 随 V903 bed 落地补齐）：schedule 预约目标床位置 RESERVED、cancel
  * 宽容联动释放（回读床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
  * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——均同事务联动（BedService 同源 CAS 权威，
- * 联动失败整体回滚）。
+ * 联动失败整体回滚）。Task 10 追加住院计费入口欠费面：押金变动回执驱动的 arrears_flag 本地
+ * 标识刷新与病区欠费清单聚合（FU-M04-08——欠费标识为 visit 行本地属性，归本域承载）。
  */
 public interface AdmissionService {
 
@@ -104,4 +107,29 @@ public interface AdmissionService {
      *         IP-1004（404 床位不存在）/ IP-1005（409 床位消毒/维修中）/ IP-1006（409 床位已被占用）
      */
     InpatientVisitVO admitWard(String visitId, WardAdmitRequest req);
+
+    /**
+     * 押金变动回执消费体（FU-M04-08 住院计费入口，billing.deposit.changed 载荷
+     * visitId/balance，BillingEventListener 委托）：余额与押金下限阈值
+     * （InpatientProperties.depositFloorFen——M04 本地阈值全局一份）本地裁决后 CAS 刷新
+     * inpatient_visit.arrears_flag（跌破置 true+warn 日志——护士站欠费标识数据源；回升复位
+     * false）。幂等两层：信封 eventId 三段式（IdempotentConsumerSupport）+ 业务级 CAS 目标值
+     * 异值限定（重复投递零行 info 直返）。余额仅为事件载荷消费（GC18 零金额输入红线）。
+     *
+     * @param visitId    CF-3 住院就诊号（I 型 14 位，载荷原值），非空；来源：billing 事件载荷
+     * @param balanceFen 变动后押金余额（分，事件载荷原值），非空约束由监听器守卫
+     */
+    void onDepositChanged(String visitId, long balanceFen);
+
+    /**
+     * 病区欠费清单（GET /visits/arrears?wardId=）：arrears_flag=true 的在院就诊聚合
+     * （在院三态限定——已出院/已作废不进护士站清单），出参行=就诊号+患者脱敏展示名
+     * （PatientNameQuery——姓名原文不出 patient 模块，GC22）+床位号+标识时点
+     * （updated_at 近似承载）；按标识时点倒序（最新欠费在前）。五大降级清单②承载面：
+     * 欠费提醒=工作站列表可见（M01 通知中心缺位）。
+     *
+     * @param wardId 病区编码，非空；来源：查询参数（护士站一览）
+     * @return 欠费清单行（病区无欠费在院患者返回空清单），非空
+     */
+    List<ArrearsAlarmVO> arrearsList(String wardId);
 }

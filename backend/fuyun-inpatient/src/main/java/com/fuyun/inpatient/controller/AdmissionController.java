@@ -8,6 +8,7 @@ import com.fuyun.inpatient.dto.WardAdmitRequest;
 import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.service.AdmissionService;
 import com.fuyun.inpatient.vo.AdmissionVO;
+import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -16,6 +17,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -28,7 +31,8 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 入院登记端点（/api/v1/inpatient/admissions + /api/v1/inpatient/visits）——FU-M04-01 六端点
  * （04-inpatient Spec §6）：住院证登记/候床队列/预约入院/作废/登记确认（同事务签发 I 型
- * visit_id 红线方法）/入科确认。
+ * visit_id 红线方法）/入科确认；Task 10 追加病区欠费清单查询（FU-M04-08 住院计费入口——
+ * arrears_flag 本地标识聚合，患者摘要脱敏出网）。
  * controller 禁业务逻辑与事务（A.1-8）：守卫链/状态机/事件发布全归服务层；写端点挂 WRITE
  * 审计（@AuditLog 注解 + AuditLogAspect 上下文内拦截落 system.audit_log）。
  * 类级 @RequestMapping 不承载（方法级全路径自文档，WardController 同款）。
@@ -137,5 +141,19 @@ public class AdmissionController {
     public InpatientVisitVO admitWard(
             @PathVariable("visitId") String visitId, @Valid @RequestBody WardAdmitRequest req) {
         return admissionService.admitWard(visitId, req);
+    }
+
+    /**
+     * 病区欠费清单（FU-M04-08 住院计费入口，五大降级清单②「欠费提醒=工作站列表可见」）：
+     * arrears_flag=true 的在院就诊聚合，患者摘要脱敏展示名出网（GC22 禁全名/身份证）。
+     * 读端点不挂审计（queue/bedMap 查询面同款先例——@AuditLog 仅写操作）。
+     *
+     * @param wardId 病区编码，必填；来源：查询参数（护士站一览）
+     * @return 欠费清单行（标识时点倒序；病区无欠费在院患者返回空清单）
+     */
+    @Operation(summary = "病区欠费清单（欠费标识在院聚合，患者摘要脱敏）", operationId = "listArrearsVisits")
+    @GetMapping("/api/v1/inpatient/visits/arrears")
+    public List<ArrearsAlarmVO> arrears(@RequestParam("wardId") @NotBlank(message = "wardId 不能为空") String wardId) {
+        return admissionService.arrearsList(wardId);
     }
 }

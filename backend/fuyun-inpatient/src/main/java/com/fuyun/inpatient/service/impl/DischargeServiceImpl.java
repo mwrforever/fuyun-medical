@@ -37,6 +37,7 @@ import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderAuditMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.service.DischargeService;
 import com.fuyun.inpatient.service.MedicalOrderService;
@@ -86,9 +87,6 @@ public class DischargeServiceImpl implements DischargeService {
     /** 审核结论：通过（V905 order_audit.conclusion 词表，与列注释逐字同源） */
     private static final String CONCLUSION_PASSED = "PASSED";
 
-    /** 随访时距缺省（天——出院医嘱三要素之随访必生成，参数缺省 7 日） */
-    private static final int DEFAULT_FOLLOW_UP_DAYS = 7;
-
     /** 随访方式缺省（PHONE 电话） */
     private static final String DEFAULT_FOLLOW_UP_WAY = "PHONE";
 
@@ -132,6 +130,8 @@ public class DischargeServiceImpl implements DischargeService {
 
     private final BillingAccountQueryPort billingAccountQueryPort;
 
+    private final InpatientProperties properties;
+
     private final ApplicationEventPublisher events;
 
     private final ObjectMapper objectMapper;
@@ -150,6 +150,7 @@ public class DischargeServiceImpl implements DischargeService {
      * @param bedService              床位管理服务（终末消毒流转权威），非空
      * @param stateMachine            医嘱状态机服务（带药放行迁移唯一执行面），非空
      * @param billingAccountQueryPort 收费域预审只读端口（billing api），非空；实现归 Task 13
+     * @param properties              住院域参数（随访缺省时距——Task 10 回接参数化，默认 14 日），非空
      * @param events                  进程内事件发布器（AFTER_COMMIT 出 MQ），非空
      * @param objectMapper            JSON 序列化器（清理结果快照 JSONB 文本），非空
      */
@@ -165,6 +166,7 @@ public class DischargeServiceImpl implements DischargeService {
             BedService bedService,
             OrderStateMachineService stateMachine,
             BillingAccountQueryPort billingAccountQueryPort,
+            InpatientProperties properties,
             ApplicationEventPublisher events,
             ObjectMapper objectMapper) {
         this.visitMapper = visitMapper;
@@ -178,6 +180,7 @@ public class DischargeServiceImpl implements DischargeService {
         this.bedService = bedService;
         this.stateMachine = stateMachine;
         this.billingAccountQueryPort = billingAccountQueryPort;
+        this.properties = properties;
         this.events = events;
         this.objectMapper = objectMapper;
     }
@@ -604,9 +607,9 @@ public class DischargeServiceImpl implements DischargeService {
     }
 
     /**
-     * 随访计划生成（离院确认同事务——出院必随随访）：plan_date=出院日后 N 日（请求参数缺省
-     * 7 日），方式/摘要缺省电话/「出院随访」；方式词表外拒 IP-1022（模块内直调场景防御，
-     * Web 层 @Pattern 兜底）。
+     * 随访计划生成（离院确认同事务——出院必随随访）：plan_date=出院日后 N 日（请求参数缺省取
+     * InpatientProperties.followUpIntervalDays，默认 14 日），方式/摘要缺省电话/「出院随访」；
+     * 方式词表外拒 IP-1022（模块内直调场景防御，Web 层 @Pattern 兜底）。
      *
      * @param row        出院申请行，非空
      * @param discharged 出院后就诊行（dischargedAt 库端回读），非空
@@ -724,9 +727,10 @@ public class DischargeServiceImpl implements DischargeService {
         return Math.max(0L, unsettled - deposit);
     }
 
-    /** 随访时距取值（缺省 7 日）。 */
-    private static int followUpDays(DischargeConfirmRequest req) {
-        return req.followUpDays() == null ? DEFAULT_FOLLOW_UP_DAYS : req.followUpDays();
+    /** 随访时距取值（缺省取 InpatientProperties.followUpIntervalDays——Task 10 回接参数化，
+     * 默认 14 日；原 Task 9 常量缺省 7 日的行为变更随 Task 10 报告留痕）。 */
+    private int followUpDays(DischargeConfirmRequest req) {
+        return req.followUpDays() == null ? properties.followUpIntervalDays() : req.followUpDays();
     }
 
     /** 清理结果快照序列化（clearance_result JSONB 文本）。 */

@@ -10,7 +10,8 @@ import org.apache.ibatis.annotations.Update;
  * 住院就诊 mapper：单表链式能力 + 状态条件更新注解 SQL 全集（GC26：条件更新一律 @Update +
  * 影响行数判定，显式补 deleted=0；状态字面量与 V902 列值域、VisitStatus code 逐字同源）。
  * 床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账的权威归 BedService（V903，Task 4
- * 已补齐联动）；本层承载 visit 自身状态面与转科/转床的 current_* 原子更新。
+ * 已补齐联动）；本层承载 visit 自身状态面与转科/转床的 current_* 原子更新；欠费标识刷新
+ * （Task 10 billing.deposit.changed 消费面）为就诊行本地属性 CAS，与五态状态机无涉。
  */
 @Mapper
 public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
@@ -109,4 +110,21 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
             @Param("visitId") String visitId,
             @Param("dischargeWay") String dischargeWay,
             @Param("updatedBy") String updatedBy);
+
+    /**
+     * 欠费标识 CAS（billing.deposit.changed 消费面，AdmissionService.onDepositChanged）：
+     * 目标值异于现值才更新（arrears_flag &lt;&gt; 目标值限定），updated_at 由 V902 触发器刷新
+     * （近似承载标识时点——无专用置位列，零新迁移红线）。不限定状态面：欠费标识为就诊行本地
+     * 属性，与五态状态机无涉（护士站清单聚合侧再限在院态）。
+     *
+     * @param visitId   住院就诊号（I 型 14 位），非空
+     * @param flag      目标欠费标识（true=余额跌破押金下限置位 / false=回升复位）
+     * @param updatedBy 操作者（消费线程回退 system，审计留痕），非空
+     * @return 影响行数（0=标识已处目标态（重复投递幂等）或就诊行不存在（无住院就诊的押金
+     *         账户）——调用方 info 留痕直返）
+     */
+    @Update("UPDATE inpatient.inpatient_visit SET arrears_flag = #{flag}, updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND arrears_flag <> #{flag} AND deleted = 0")
+    int casUpdateArrearsFlag(
+            @Param("visitId") String visitId, @Param("flag") boolean flag, @Param("updatedBy") String updatedBy);
 }

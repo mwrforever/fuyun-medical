@@ -76,7 +76,8 @@ public interface DischargeService {
      * 发布 inpatient.visit.discharged（V800 id 51 载荷）。任一步失败异常传播整体回滚。
      *
      * @param requestNo 出院申请单号，非空；来源：路径参数
-     * @param req       确认入参（随访三参数，全部可选缺省 7 日/电话/「出院随访」），非空
+     * @param req       确认入参（随访三参数，全部可选缺省 14 日[Task 10 参数化，原 7 日]/
+     *                   电话/「出院随访」），非空
      * @return 确认后出参（status=COMPLETED），非空
      * @throws com.fuyun.common.exception.BizException IP-1018（404 申请不存在）/IP-1017（409
      *                 放行条件未满足——三重校验任一不过/非 READY 态/未结算）/IP-1022（400

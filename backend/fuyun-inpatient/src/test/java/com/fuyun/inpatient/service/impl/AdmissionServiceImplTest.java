@@ -1,6 +1,7 @@
 package com.fuyun.inpatient.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,20 +29,27 @@ import com.fuyun.inpatient.dto.AdmissionScheduleRequest;
 import com.fuyun.inpatient.dto.VisitRegisterRequest;
 import com.fuyun.inpatient.dto.WardAdmitRequest;
 import com.fuyun.inpatient.entity.Admission;
+import com.fuyun.inpatient.entity.Bed;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
+import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
+import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
 import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
+import com.fuyun.patient.api.PatientDisplayName;
+import com.fuyun.patient.api.PatientNameQuery;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -64,6 +72,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  * 入院登记域服务单测（Task 3 七用例冻结集）：住院证登记入队与队列排序权重、登记确认同事务签发
  * I 型 visit_id（红线路径）、FROZEN 患者拦截（IP-1003）、visit_id 结构自检失败回滚、
  * 住院证作废两态 CAS、预约入院 CAS、入科确认 CAS 与 VisitAdmittedPayload 发布。
+ * Task 10 追加欠费面四用例：余额跌破押金下限置欠费标识、回升复位、病区欠费清单聚合
+ * （脱敏名/床位号/标识时点）、重复消费 CAS 幂等直返。
  * MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册表信息；条件更新断言直读
  * @Update 注解 SQL（GC26 可执行锚）。
  */
@@ -92,16 +102,25 @@ class AdmissionServiceImplTest {
     private InpatientVisitMapper visitMapper;
 
     @Mock
+    private BedMapper bedMapper;
+
+    @Mock
     private InpatientSeqGate seqGate;
 
     @Mock
     private PatientContextResolver patientContextResolver;
 
     @Mock
+    private PatientNameQuery patientNameQuery;
+
+    @Mock
     private BedService bedService;
 
     @Mock
     private ApplicationEventPublisher events;
+
+    /** 住院域参数（默认值实例——欠费阈值 0/随访 14 日/准备窗口 60 分钟，与应用缺省同源） */
+    private final InpatientProperties properties = new InpatientProperties(0L, 14, 60);
 
     @Captor
     private ArgumentCaptor<Admission> rowCaptor;
@@ -115,19 +134,31 @@ class AdmissionServiceImplTest {
     @Captor
     private ArgumentCaptor<Wrapper<Admission>> queryCaptor;
 
+    @Captor
+    private ArgumentCaptor<Wrapper<InpatientVisit>> visitQueryCaptor;
+
     private AdmissionServiceImpl service;
 
     @BeforeAll
     static void initTableInfo() {
-        // MP 3.5.17 单测范式：lambdaQuery 触达的实体须手工注册表信息（admission 三读面 + visit 定位/回读面）
+        // MP 3.5.17 单测范式：lambdaQuery 触达的实体须手工注册表信息（admission 三读面 + visit 定位/回读/欠费清单面 + bed 床位号映射面）
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Admission.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), InpatientVisit.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Bed.class);
     }
 
     @BeforeEach
     void setUp() {
         service = new AdmissionServiceImpl(
-                admissionMapper, visitMapper, seqGate, patientContextResolver, bedService, events);
+                admissionMapper,
+                visitMapper,
+                bedMapper,
+                seqGate,
+                patientContextResolver,
+                patientNameQuery,
+                properties,
+                bedService,
+                events);
         ReflectionTestUtils.setField(service, "baseMapper", admissionMapper);
         OperatorContextHolder.set("adm-01");
     }
@@ -584,6 +615,94 @@ class AdmissionServiceImplTest {
         assertThat(rowCaptor.getValue().getUpdatedBy()).isEqualTo("system");
     }
 
+    @Test
+    @DisplayName("用例①余额跌破押金下限：欠费标识 CAS 置 true（默认阈值 0——负余额即欠费）+ GC26 注解 SQL 锚")
+    void depositChangeBelowFloorMarksArrearsFlag() {
+        when(visitMapper.casUpdateArrearsFlag(VISIT_ID, true, "adm-01")).thenReturn(1);
+
+        assertThatCode(() -> service.onDepositChanged(VISIT_ID, -30000L)).doesNotThrowAnyException();
+
+        verify(visitMapper).casUpdateArrearsFlag(VISIT_ID, true, "adm-01");
+        // GC26 锚：欠费标识条件更新必须为 @Update 注解 SQL——目标值异值限定（幂等承载）+显式 deleted=0
+        assertThat(recordSql(
+                        InpatientVisitMapper.class, "casUpdateArrearsFlag", String.class, boolean.class, String.class))
+                .contains("arrears_flag = #{flag}")
+                .contains("arrears_flag <> #{flag}")
+                .contains("deleted = 0");
+    }
+
+    @Test
+    @DisplayName("用例②余额回升复位：余额等于阈值（回升≥阈值口径）不算欠费——CAS 置 false")
+    void depositChangeRecoveringClearsArrearsFlag() {
+        when(visitMapper.casUpdateArrearsFlag(VISIT_ID, false, "adm-01")).thenReturn(1);
+
+        service.onDepositChanged(VISIT_ID, 0L);
+
+        verify(visitMapper).casUpdateArrearsFlag(VISIT_ID, false, "adm-01");
+    }
+
+    @Test
+    @DisplayName("用例④deposit.changed 重复消费幂等：标识已处目标态 CAS 零行 info 直返（不抛出）")
+    void depositChangeIdempotentWhenFlagAlreadyAtTarget() {
+        when(visitMapper.casUpdateArrearsFlag(VISIT_ID, true, "adm-01")).thenReturn(0);
+
+        assertThatCode(() -> service.onDepositChanged(VISIT_ID, -1L)).doesNotThrowAnyException();
+
+        verify(visitMapper).casUpdateArrearsFlag(VISIT_ID, true, "adm-01");
+    }
+
+    @Test
+    @DisplayName("用例③病区欠费清单聚合：脱敏展示名/床位号/标识时点出参；病区过滤键；空病区零二次取数")
+    void arrearsListAggregatesMaskedPatientsWithBedsByWard() {
+        OffsetDateTime flaggedFirst = OffsetDateTime.of(2026, 9, 25, 10, 0, 0, 0, ZoneOffset.UTC);
+        OffsetDateTime flaggedSecond = OffsetDateTime.of(2026, 9, 25, 9, 0, 0, 0, ZoneOffset.UTC);
+        when(visitMapper.selectList(any()))
+                .thenReturn(List.of(
+                        arrearsVisitRow(7001L, VISIT_ID, PATIENT_ID, 555L, flaggedFirst),
+                        arrearsVisitRow(7002L, "I2026092500002", 1002L, 556L, flaggedSecond)));
+        when(bedMapper.selectList(any())).thenReturn(List.of(bedRow(555L, "01"), bedRow(556L, "02")));
+        when(patientNameQuery.displayNamesOf(any()))
+                .thenReturn(List.of(new PatientDisplayName(PATIENT_ID, "张*"), new PatientDisplayName(1002L, "李**")));
+
+        List<ArrearsAlarmVO> result = service.arrearsList("W01");
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).visitId()).isEqualTo(VISIT_ID);
+        // 患者摘要=脱敏展示名透传出网（GC22 禁全名——姓名原文不出 patient 模块）
+        assertThat(result.get(0).patientName()).isEqualTo("张*");
+        assertThat(result.get(0).bedNo()).isEqualTo("01");
+        // 标识时点=updated_at 近似承载（V902 无专用置位列，零新迁移红线）
+        assertThat(result.get(0).flaggedAt()).isEqualTo(flaggedFirst);
+        assertThat(result.get(1).visitId()).isEqualTo("I2026092500002");
+        assertThat(result.get(1).bedNo()).isEqualTo("02");
+
+        // 病区过滤键：清单查询以病区编码+欠费标识+在院三态定位（护士站清单的过滤面）
+        verify(visitMapper).selectList(visitQueryCaptor.capture());
+        LambdaQueryWrapper<InpatientVisit> wrapper = renderedVisit(visitQueryCaptor.getValue());
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("W01", Boolean.TRUE);
+
+        // 空病区直过：零床位/零展示名二次取数（免 N+1 面零触达）
+        clearInvocations(bedMapper, patientNameQuery);
+        when(visitMapper.selectList(any())).thenReturn(List.of());
+        assertThat(service.arrearsList("W02")).isEmpty();
+        verify(bedMapper, never()).selectList(any());
+        verify(patientNameQuery, never()).displayNamesOf(any());
+
+        // 床位缺失兜底：行均无当前床位（转科窗口等数据滞后）——bedIds 空集走 Map.of() 短路面，
+        // 零床位映射查询；出参床位列 null 兜底（患者摘要照常脱敏出网）
+        when(visitMapper.selectList(any()))
+                .thenReturn(List.of(arrearsVisitRow(7003L, "I2026092500003", 1003L, null, flaggedSecond)));
+        when(patientNameQuery.displayNamesOf(any())).thenReturn(List.of(new PatientDisplayName(1003L, "王*")));
+
+        List<ArrearsAlarmVO> nullBedRows = service.arrearsList("W03");
+
+        assertThat(nullBedRows).hasSize(1);
+        assertThat(nullBedRows.get(0).visitId()).isEqualTo("I2026092500003");
+        assertThat(nullBedRows.get(0).patientName()).isEqualTo("王*");
+        assertThat(nullBedRows.get(0).bedNo()).isNull();
+        verify(bedMapper, never()).selectList(any());
+    }
+
     /** 构造住院证行（状态可变，登记确认/作废/预约用例载体）。 */
     private Admission admissionRow(AdmissionStatus status) {
         Admission row = new Admission();
@@ -615,6 +734,37 @@ class AdmissionServiceImplTest {
         LambdaQueryWrapper<Admission> wrapper = (LambdaQueryWrapper<Admission>) captured;
         wrapper.getSqlSegment();
         return wrapper;
+    }
+
+    /** 取捕获的就诊查询 wrapper 并渲染 SQL 片段（欠费清单病区过滤面断言载体，rendered 同款）。 */
+    @SuppressWarnings("unchecked")
+    private LambdaQueryWrapper<InpatientVisit> renderedVisit(Wrapper<InpatientVisit> captured) {
+        LambdaQueryWrapper<InpatientVisit> wrapper = (LambdaQueryWrapper<InpatientVisit>) captured;
+        wrapper.getSqlSegment();
+        return wrapper;
+    }
+
+    /**
+     * 构造欠费在院就诊行（欠费清单聚合用例载体）：id/visit_id/患者/当前床位/标识时点五元组，
+     * 行主键各异防集合去重吞行。
+     */
+    private InpatientVisit arrearsVisitRow(
+            long id, String visitId, long patientId, Long bedId, OffsetDateTime flaggedAt) {
+        InpatientVisit row = new InpatientVisit();
+        row.setId(id);
+        row.setVisitId(visitId);
+        row.setPatientId(patientId);
+        row.setCurrentBedId(bedId);
+        row.setUpdatedAt(flaggedAt);
+        return row;
+    }
+
+    /** 构造床位行（欠费清单床位号映射用例载体）。 */
+    private Bed bedRow(long id, String bedNo) {
+        Bed row = new Bed();
+        row.setId(id);
+        row.setBedNo(bedNo);
+        return row;
     }
 
     /**

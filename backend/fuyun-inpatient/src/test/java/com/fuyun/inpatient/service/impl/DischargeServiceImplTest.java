@@ -47,6 +47,7 @@ import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderAuditMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.service.MedicalOrderService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
@@ -141,6 +142,9 @@ class DischargeServiceImplTest {
     @Mock
     private BillingAccountQueryPort billingAccountQueryPort;
 
+    /** 住院域参数（默认值实例——随访缺省时距 14 日/欠费阈值 0/准备窗口 60 分钟，与应用缺省同源） */
+    private final InpatientProperties properties = new InpatientProperties(0L, 14, 60);
+
     @Mock
     private ApplicationEventPublisher events;
 
@@ -175,6 +179,7 @@ class DischargeServiceImplTest {
                 bedService,
                 stateMachine,
                 billingAccountQueryPort,
+                properties,
                 events,
                 objectMapper);
         OperatorContextHolder.set(String.valueOf(OPERATOR));
@@ -304,6 +309,7 @@ class DischargeServiceImplTest {
                 bedService,
                 stateMachine,
                 billingAccountQueryPort,
+                properties,
                 events,
                 failing);
         when(visitMapper.selectOne(any())).thenReturn(visitRow(VisitStatus.ADMITTED), requestedVisitRow());
@@ -565,7 +571,7 @@ class DischargeServiceImplTest {
     }
 
     @Test
-    @DisplayName("随访缺省参数：三参全空→7 日后/电话/「出院随访」（出院必随随访）")
+    @DisplayName("随访缺省参数：三参全空→域参数缺省 14 日后/电话/「出院随访」（出院必随随访；Task 10 回接——原 Task 9 常量缺省 7 日，行为变更随 2026-09-25 报告留痕）")
     void confirmUsesDefaultFollowUpWhenParamsAbsent() {
         when(requestMapper.selectOne(any())).thenReturn(requestRow(DischargeRequestStatus.READY, REQUESTED_AT, null));
         when(orderMapper.selectCount(any())).thenReturn(0L);
@@ -580,7 +586,8 @@ class DischargeServiceImplTest {
 
         ArgumentCaptor<FollowUpPlan> planCaptor = ArgumentCaptor.forClass(FollowUpPlan.class);
         verify(followUpMapper).insert(planCaptor.capture());
-        assertThat(planCaptor.getValue().getPlanDate()).isEqualTo(LocalDate.of(2026, 10, 2));
+        // 缺省时距取 InpatientProperties.followUpIntervalDays（默认 14——出院日 2026-09-25 + 14 = 2026-10-09）
+        assertThat(planCaptor.getValue().getPlanDate()).isEqualTo(LocalDate.of(2026, 10, 9));
         assertThat(planCaptor.getValue().getWay()).isEqualTo("PHONE");
         assertThat(planCaptor.getValue().getSummary()).isEqualTo("出院随访");
         // 无带药医嘱（空集直过）——仅 discharged 单事件

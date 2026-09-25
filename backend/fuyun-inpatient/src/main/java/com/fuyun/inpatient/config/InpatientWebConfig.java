@@ -8,6 +8,7 @@ import com.fuyun.inpatient.controller.OrderController;
 import com.fuyun.inpatient.controller.OrderPlanController;
 import com.fuyun.inpatient.controller.TransferController;
 import com.fuyun.inpatient.controller.VisitTransferController;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.impl.AdmissionServiceImpl;
 import com.fuyun.inpatient.service.impl.BedServiceImpl;
 import com.fuyun.inpatient.service.impl.DischargeServiceImpl;
@@ -18,6 +19,7 @@ import com.fuyun.inpatient.service.impl.OrderPlanServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderStateMachineServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderTransferServiceImpl;
 import com.fuyun.inpatient.service.impl.TransferServiceImpl;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
@@ -43,8 +45,13 @@ import org.springframework.context.annotation.Import;
  * Task 9 追加：出院管理域（V907 两表业务面）——出院管理服务（在途清理编排/费用预审/双条件
  * 离院确认/带药放行/随访生成；BillingAccountQueryPort 实现归 billing 侧 Task 13 落地后
  * fuyun-app 上下文闭合）与出院四端点控制器。
+ * Task 10 追加：住院域参数（{@link InpatientProperties}——押金下限阈值/随访缺省时距/默认
+ * 准备窗口，NursingWebConfig @EnableConfigurationProperties 先例形态，env 注入见
+ * application.yml fuyun.inpatient 段）——AdmissionServiceImpl 欠费面、DischargeServiceImpl
+ * 随访缺省与 OrderTransferServiceImpl 准备窗口三处回接取值。
  */
 @Configuration
+@EnableConfigurationProperties(InpatientProperties.class)
 @Import({
     InpatientSeqGate.class,
     AdmissionServiceImpl.class,

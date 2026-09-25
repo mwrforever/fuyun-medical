@@ -28,12 +28,12 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.OrderPlanService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
 import com.fuyun.inpatient.service.OrderTransferService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -86,9 +86,6 @@ public class OrderTransferServiceImpl implements OrderTransferService {
     /** 白班窗口终点=小夜班起点（16:00，左闭右开） */
     private static final LocalTime DAY_END = LocalTime.of(16, 0);
 
-    /** 临时单次/嘱托触发计划的默认准备窗口：计划时点=生成时点+15 分钟（即刻执行的备药准备缓冲，常量承载——P3 可提配置面） */
-    private static final Duration DEFAULT_PREPARE_WINDOW = Duration.ofMinutes(15);
-
     /** 转抄迁移留痕原因（状态机 reason 面） */
     private static final String REASON_TRANSFER_CHECK = "护士转抄核对";
 
@@ -108,6 +105,8 @@ public class OrderTransferServiceImpl implements OrderTransferService {
 
     private final OrderPlanService orderPlanService;
 
+    private final InpatientProperties properties;
+
     private final ApplicationEventPublisher events;
 
     /**
@@ -121,6 +120,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
      * @param seqGate            住院业务号发号器（PL 计划号），非空
      * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
      * @param orderPlanService   医嘱执行计划服务（长期医嘱当日增量补偿——Task 8 衔接面），非空
+     * @param properties         住院域参数（默认准备窗口——单次计划 plan_time 取值面），非空
      * @param events             进程内事件发布器（AFTER_COMMIT 出 MQ），非空
      */
     public OrderTransferServiceImpl(
@@ -132,6 +132,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
             InpatientSeqGate seqGate,
             OrderStateMachineService stateMachine,
             OrderPlanService orderPlanService,
+            InpatientProperties properties,
             ApplicationEventPublisher events) {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
@@ -141,6 +142,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
         this.orderPlanService = orderPlanService;
+        this.properties = properties;
         this.events = events;
     }
 
@@ -399,7 +401,9 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         // 数据库读操作：医嘱明细行全集（计划按明细行粒度开立）
         List<MedicalOrderItem> items = itemMapper.selectList(
                 Wrappers.<MedicalOrderItem>lambdaQuery().eq(MedicalOrderItem::getOrderId, order.getId()));
-        OffsetDateTime planTime = baseTime.plus(DEFAULT_PREPARE_WINDOW);
+        // 单次计划时点=生成基准时点+默认准备窗口（Task 10 回接参数化：窗口取
+        // InpatientProperties.defaultExecuteWindowMinutes，默认 60 分钟——15 分钟常量行为变更留痕）
+        OffsetDateTime planTime = baseTime.plusMinutes(properties.defaultExecuteWindowMinutes());
         String shift = currentShift(baseTime);
         String operatorText = String.valueOf(operator);
         List<OrderExecutePlan> created = new ArrayList<>(items.size());

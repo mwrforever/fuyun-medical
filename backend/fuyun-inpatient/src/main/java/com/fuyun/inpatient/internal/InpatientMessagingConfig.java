@@ -26,6 +26,8 @@ import org.springframework.context.annotation.Import;
  * Task 9 追加 M13 计费联动消费监听器 @Import（BillingEventListener——settlement.completed/
  * arrears.approved 两回执的出院放行业务体 + deposit.changed 队列承载面[消费逻辑归 Task 10]；
  * 三队列声明复用 Task 2 既有 SUBSCRIBED_EVENT_TYPES 声明，绑定零新增）。
+ * Task 10 补全 deposit.changed 消费业务体（押金变动→欠费标识刷新，委托 AdmissionService——
+ * 构造追加 AdmissionService 依赖，队列声明面仍零新增）。
  */
 @Configuration
 @Import({

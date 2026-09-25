@@ -16,6 +16,7 @@ import com.fuyun.inpatient.dto.AdmissionScheduleRequest;
 import com.fuyun.inpatient.dto.VisitRegisterRequest;
 import com.fuyun.inpatient.dto.WardAdmitRequest;
 import com.fuyun.inpatient.entity.Admission;
+import com.fuyun.inpatient.entity.Bed;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.enums.AdmissionType;
@@ -24,16 +25,25 @@ import com.fuyun.inpatient.enums.SourceType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
+import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.AdmissionService;
 import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
+import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
 import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
+import com.fuyun.patient.api.PatientDisplayName;
+import com.fuyun.patient.api.PatientNameQuery;
 import com.fuyun.patient.api.VisitIdValidator;
 import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
@@ -51,6 +61,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 权威 target_bed_id 与床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
  * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（BedService 同源
  * CAS 权威）。
+ * Task 10 追加住院计费入口欠费面（FU-M04-08）：押金变动回执驱动的欠费标识本地裁决与 CAS
+ * 刷新（InpatientProperties.depositFloorFen 阈值全局一份）+ 病区欠费清单聚合（患者摘要经
+ * PatientNameQuery 脱敏出网——GC22；金额零出网——GC18）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
@@ -66,11 +79,23 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     /** 护理级别词表（V902 nursing_level 值域；权威在本域，M05 为视图镜像） */
     private static final Set<String> NURSING_LEVELS = Set.of("SPECIAL", "CRITICAL", "NORMAL");
 
+    /** 在院状态全集（欠费清单聚合限定——已出院/已作废不进护士站清单；与 OngoingVisitQuery 在院语义同源） */
+    private static final List<String> IN_WARD_STATUSES = List.of(
+            VisitStatus.REGISTERED.getCode(),
+            VisitStatus.ADMITTED.getCode(),
+            VisitStatus.DISCHARGE_REQUESTED.getCode());
+
     private final InpatientVisitMapper visitMapper;
+
+    private final BedMapper bedMapper;
 
     private final InpatientSeqGate seqGate;
 
     private final PatientContextResolver patientContextResolver;
+
+    private final PatientNameQuery patientNameQuery;
+
+    private final InpatientProperties properties;
 
     private final BedService bedService;
 
@@ -79,23 +104,33 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
-     * @param admissionMapper       住院证 mapper，非空；ServiceImpl 基座 mapper
-     * @param visitMapper           住院就诊 mapper，非空；登记确认落库与入科确认
-     * @param seqGate               住院业务号发号器（AD 号 / I 型 visit_id），非空
+     * @param admissionMapper        住院证 mapper，非空；ServiceImpl 基座 mapper
+     * @param visitMapper            住院就诊 mapper，非空；登记确认落库、入科确认与欠费标识 CAS
+     * @param bedMapper              床位 mapper，非空；欠费清单床位号批量映射
+     * @param seqGate                住院业务号发号器（AD 号 / I 型 visit_id），非空
      * @param patientContextResolver 患者上下文解析（patient api），非空；归一/拦截
-     * @param bedService            床位管理服务（床位联动三处：预占/释放/占床），非空
-     * @param events                进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
+     * @param patientNameQuery       患者脱敏展示名查询（patient api），非空；欠费清单患者摘要
+     *                               出网面（姓名原文不出 patient 模块，GC22）
+     * @param properties             住院域参数（押金下限阈值——欠费标识判定基准），非空
+     * @param bedService             床位管理服务（床位联动三处：预占/释放/占床），非空
+     * @param events                 进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
      */
     public AdmissionServiceImpl(
             AdmissionMapper admissionMapper,
             InpatientVisitMapper visitMapper,
+            BedMapper bedMapper,
             InpatientSeqGate seqGate,
             PatientContextResolver patientContextResolver,
+            PatientNameQuery patientNameQuery,
+            InpatientProperties properties,
             BedService bedService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
+        this.bedMapper = bedMapper;
         this.seqGate = seqGate;
         this.patientContextResolver = patientContextResolver;
+        this.patientNameQuery = patientNameQuery;
+        this.properties = properties;
         this.bedService = bedService;
         this.events = events;
     }
@@ -424,6 +459,88 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
                 req.nursingLevel(),
                 operator);
         return InpatientVisitVO.from(admitted);
+    }
+
+    /**
+     * 押金变动回执消费体（FU-M04-08 住院计费入口）：余额与押金下限阈值本地裁决（M04 阈值
+     * 全局一份，担保白名单免提醒归 P3）→ 欠费标识 CAS 刷新（目标值异值限定幂等）。跌破置位
+     * 走 warn（护士站欠费标识数据源——五大降级清单②：M01 通知中心缺位，欠费提醒=工作站列表
+     * 可见）；回升复位走 info。零行（标识已处目标态的重复投递/就诊行不存在）info 留痕直返。
+     *
+     * @param visitId    CF-3 住院就诊号（I 型 14 位，载荷原值），非空；来源：billing 事件载荷
+     * @param balanceFen 变动后押金余额（分，事件载荷原值；GC18 零金额输入——仅事件消费面）
+     */
+    @Override
+    @Transactional
+    public void onDepositChanged(String visitId, long balanceFen) {
+        // 阈值判定本地裁决：余额跌破押金下限即欠费（回升至阈值及以上复位——含等值不算欠费）
+        boolean arrears = balanceFen < properties.depositFloorFen();
+        // 数据库写操作：欠费标识 CAS（目标值异值限定——重复消费/并发投递零行幂等直返；
+        // 消费线程无登录上下文，操作者回退 system 与审计列默认同源）
+        int rows = visitMapper.casUpdateArrearsFlag(visitId, arrears, operator());
+        if (rows == 0) {
+            log.info("押金变动回执欠费标识无需变更（幂等直返）：visitId={}，balance={}，目标标识={}", visitId, balanceFen, arrears);
+            return;
+        }
+        if (arrears) {
+            // warn：余额跌破下限是护士站需即时可见的异常业务状态（欠费清单数据源）
+            log.warn(
+                    "住院欠费标识置位（余额跌破押金下限）：visitId={}，balance={}，阈值={}",
+                    visitId,
+                    balanceFen,
+                    properties.depositFloorFen());
+            return;
+        }
+        log.info("押金回升欠费标识复位：visitId={}，balance={}，阈值={}", visitId, balanceFen, properties.depositFloorFen());
+    }
+
+    /**
+     * 病区欠费清单：arrears_flag=true 的在院就诊聚合（在院三态限定），出参=就诊号+患者脱敏
+     * 展示名+床位号+标识时点（updated_at 近似承载）；床位号与脱敏展示名两跳批量取数免行级
+     * N+1；按标识时点倒序（最新欠费在前）。患者摘要脱敏红线（GC22）：PatientNameQuery 只出
+     * 脱敏展示名，姓名原文不出 patient 模块；金额零出网（GC18——欠费明细归 M13 前端直调面）。
+     *
+     * @param wardId 病区编码，非空；来源：查询参数（护士站一览）
+     * @return 欠费清单行（标识时点倒序；病区无欠费在院患者返回空清单），非空
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public List<ArrearsAlarmVO> arrearsList(String wardId) {
+        // 数据库读操作：病区欠费在院行聚合（current_ward_id 定位 + 本地欠费标识 + 在院三态限定；
+        // REGISTERED 未入科无病区归属，天然不进清单——语义兜底而非过滤依赖）
+        List<InpatientVisit> visits = visitMapper.selectList(Wrappers.<InpatientVisit>lambdaQuery()
+                .eq(InpatientVisit::getCurrentWardId, wardId)
+                .eq(InpatientVisit::getArrearsFlag, true)
+                .in(InpatientVisit::getStatus, IN_WARD_STATUSES)
+                .orderByDesc(InpatientVisit::getUpdatedAt));
+        if (visits.isEmpty()) {
+            // 空集直过（病区无欠费在院患者）——零二次取数
+            return List.of();
+        }
+        // 床位号批量映射（current_bed_id 一次取数；床位行缺失兜底 null——转科窗口等数据滞后容错）
+        Set<Long> bedIds = visits.stream()
+                .map(InpatientVisit::getCurrentBedId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, String> bedNoById = bedIds.isEmpty()
+                ? Map.of()
+                : bedMapper.selectList(Wrappers.<Bed>lambdaQuery().in(Bed::getId, bedIds)).stream()
+                        .collect(Collectors.toMap(Bed::getId, Bed::getBedNo));
+        // 患者脱敏展示名批量（in 精确投影——PatientNameQuery 契约禁 N+1；未命中 id 不在结果中）
+        Map<Long, String> nameByPatientId =
+                patientNameQuery
+                        .displayNamesOf(visits.stream()
+                                .map(InpatientVisit::getPatientId)
+                                .collect(Collectors.toSet()))
+                        .stream()
+                        .collect(Collectors.toMap(PatientDisplayName::patientId, PatientDisplayName::displayName));
+        return visits.stream()
+                .map(visit -> new ArrearsAlarmVO(
+                        visit.getVisitId(),
+                        nameByPatientId.get(visit.getPatientId()),
+                        visit.getCurrentBedId() == null ? null : bedNoById.get(visit.getCurrentBedId()),
+                        visit.getUpdatedAt()))
+                .toList();
     }
 
     /** 按住院证号定位行（未命中定性 IP-1001；逻辑删由 @TableLogic 自动过滤）。 */

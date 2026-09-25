@@ -35,6 +35,7 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
+import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.OrderPlanService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
@@ -113,6 +114,9 @@ class OrderTransferServiceImplTest {
     @Mock
     private OrderPlanService orderPlanService;
 
+    /** 住院域参数（默认值实例——准备窗口 60 分钟/欠费阈值 0/随访 14 日，与应用缺省同源） */
+    private final InpatientProperties properties = new InpatientProperties(0L, 14, 60);
+
     @Mock
     private ApplicationEventPublisher events;
 
@@ -149,6 +153,7 @@ class OrderTransferServiceImplTest {
                 seqGate,
                 stateMachine,
                 orderPlanService,
+                properties,
                 events);
         OperatorContextHolder.set(String.valueOf(OPERATOR));
     }
@@ -217,8 +222,10 @@ class OrderTransferServiceImplTest {
             assertThat(plan.getWardId()).isEqualTo(WARD);
             assertThat(plan.getStatus()).isEqualTo("PENDING");
             assertThat(plan.getShift()).isIn("DAY", "EVENING", "NIGHT");
-            // 默认准备窗口：计划时点在转抄时点之后（15 分钟缓冲——留容差断言）
-            assertThat(plan.getPlanTime()).isAfter(before.plusMinutes(14));
+            // 默认准备窗口：计划时点在转抄时点之后（60 分钟缓冲——Task 10 回接 InpatientProperties
+            // .defaultExecuteWindowMinutes 缺省，原 Task 7 常量 15 分钟，行为变更随 2026-09-25 报告留痕；
+            // 留 1 分钟容差断言）
+            assertThat(plan.getPlanTime()).isAfter(before.plusMinutes(59));
         });
     }
 
