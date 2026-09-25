@@ -3,12 +3,14 @@ package com.fuyun.inpatient.config;
 import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.controller.AdmissionController;
 import com.fuyun.inpatient.controller.BedController;
+import com.fuyun.inpatient.controller.DischargeController;
 import com.fuyun.inpatient.controller.OrderController;
 import com.fuyun.inpatient.controller.OrderPlanController;
 import com.fuyun.inpatient.controller.TransferController;
 import com.fuyun.inpatient.controller.VisitTransferController;
 import com.fuyun.inpatient.service.impl.AdmissionServiceImpl;
 import com.fuyun.inpatient.service.impl.BedServiceImpl;
+import com.fuyun.inpatient.service.impl.DischargeServiceImpl;
 import com.fuyun.inpatient.service.impl.InpatientOngoingVisitQuery;
 import com.fuyun.inpatient.service.impl.MedicalOrderServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderAuditServiceImpl;
@@ -38,6 +40,9 @@ import org.springframework.context.annotation.Import;
  * 三端点控制器。订阅监听器与发送模板归 InpatientMessagingConfig（消息装配集中点）。
  * Task 8 追加：执行计划域（日切分解/当日补偿/CF-6 执行回签/闭环追溯——OrderPlanServiceImpl
  * 注入 OrderTransferServiceImpl 补偿衔接面自此闭合）。
+ * Task 9 追加：出院管理域（V907 两表业务面）——出院管理服务（在途清理编排/费用预审/双条件
+ * 离院确认/带药放行/随访生成；BillingAccountQueryPort 实现归 billing 侧 Task 13 落地后
+ * fuyun-app 上下文闭合）与出院四端点控制器。
  */
 @Configuration
 @Import({
@@ -54,8 +59,10 @@ import org.springframework.context.annotation.Import;
     OrderAuditServiceImpl.class,
     OrderTransferServiceImpl.class,
     OrderPlanServiceImpl.class,
+    DischargeServiceImpl.class,
     OrderController.class,
     TransferController.class,
-    OrderPlanController.class
+    OrderPlanController.class,
+    DischargeController.class
 })
 public class InpatientWebConfig {}

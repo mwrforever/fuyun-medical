@@ -23,9 +23,17 @@ import org.springframework.context.annotation.Import;
  * 的首个消费者——队列声明零新增，绑定复用既有声明）；Task 8 追加日切分解定时任务 @Import
  * （PatientDuplicateScanJob 经 PatientMessagingConfig 注册先例——调度总开关归 fuyun-app
  * SchedulingConfig，本处零新配置面）；发布面经 InpatientEventPublisher 于业务事务提交后出 MQ。
+ * Task 9 追加 M13 计费联动消费监听器 @Import（BillingEventListener——settlement.completed/
+ * arrears.approved 两回执的出院放行业务体 + deposit.changed 队列承载面[消费逻辑归 Task 10]；
+ * 三队列声明复用 Task 2 既有 SUBSCRIBED_EVENT_TYPES 声明，绑定零新增）。
  */
 @Configuration
-@Import({InpatientEventPublisher.class, PharmacyAuditReplyListener.class, OrderPlanDecomposeJob.class})
+@Import({
+    InpatientEventPublisher.class,
+    PharmacyAuditReplyListener.class,
+    OrderPlanDecomposeJob.class,
+    BillingEventListener.class
+})
 public class InpatientMessagingConfig {
 
     /**

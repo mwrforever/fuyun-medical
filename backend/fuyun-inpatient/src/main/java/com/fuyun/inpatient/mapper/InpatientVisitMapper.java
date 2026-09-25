@@ -65,4 +65,48 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
             @Param("toWardId") String toWardId,
             @Param("toBedId") Long toBedId,
             @Param("updatedBy") String updatedBy);
+
+    /**
+     * 出院申请 CAS（ADMITTED→DISCHARGE_REQUESTED，DischargeService.createRequest 面）：
+     * 申请时点取库端 now()（禁应用时钟）；限定在院态（并发重复申请/已出院/已作废一律 0 行，
+     * 与 discharge_request 的 uk_visit_active 双防线）。
+     *
+     * @param visitId   住院就诊号（I 型 14 位），非空
+     * @param updatedBy 操作者（审计留痕），非空
+     * @return 影响行数（0=非 ADMITTED 态，调用方定性 IP-1008/IP-1023）
+     */
+    @Update("UPDATE inpatient.inpatient_visit SET status = 'DISCHARGE_REQUESTED', "
+            + "discharge_requested_at = now(), updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND status = 'ADMITTED' AND deleted = 0")
+    int casRequestDischarge(@Param("visitId") String visitId, @Param("updatedBy") String updatedBy);
+
+    /**
+     * 取消出院 CAS（DISCHARGE_REQUESTED→ADMITTED，DischargeService.cancel 面）：取消申请回
+     * 在院（Spec §5 状态机冻结边）；申请时点保留（历史留痕不清抹）。
+     *
+     * @param visitId   住院就诊号（I 型 14 位），非空
+     * @param updatedBy 操作者（审计留痕），非空
+     * @return 影响行数（0=非 DISCHARGE_REQUESTED 态——并发离院确认/作废，调用方定性 IP-1023）
+     */
+    @Update("UPDATE inpatient.inpatient_visit SET status = 'ADMITTED', updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND status = 'DISCHARGE_REQUESTED' AND deleted = 0")
+    int casCancelDischarge(@Param("visitId") String visitId, @Param("updatedBy") String updatedBy);
+
+    /**
+     * 离院确认 CAS（DISCHARGE_REQUESTED→DISCHARGED 终态，DischargeService.confirm 面）：
+     * 出院完成时点取库端 now()（禁应用时钟）并落离院方式（病案首页代码誊写面）；离院确认
+     * 双条件（申请 READY+结算标记）已由服务层 GC19 校验裁决，本 CAS 兜底并发窗口。
+     *
+     * @param visitId     住院就诊号（I 型 14 位），非空
+     * @param dischargeWay 离院方式（DischargeWay 病案首页代码），非空
+     * @param updatedBy   操作者（审计留痕），非空
+     * @return 影响行数（0=非 DISCHARGE_REQUESTED 态——调用方定性 IP-1023）
+     */
+    @Update("UPDATE inpatient.inpatient_visit SET status = 'DISCHARGED', discharged_at = now(), "
+            + "discharge_way = #{dischargeWay}, updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND status = 'DISCHARGE_REQUESTED' AND deleted = 0")
+    int casDischarge(
+            @Param("visitId") String visitId,
+            @Param("dischargeWay") String dischargeWay,
+            @Param("updatedBy") String updatedBy);
 }

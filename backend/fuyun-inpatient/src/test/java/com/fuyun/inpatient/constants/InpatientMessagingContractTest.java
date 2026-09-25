@@ -14,6 +14,8 @@ import com.fuyun.inpatient.api.payload.OrderPlanGeneratedPayload;
 import com.fuyun.inpatient.api.payload.OrderRevokedPayload;
 import com.fuyun.inpatient.api.payload.OrderTransferredPayload;
 import com.fuyun.inpatient.api.payload.VisitAdmittedPayload;
+import com.fuyun.inpatient.api.payload.VisitDischargeRequestedPayload;
+import com.fuyun.inpatient.api.payload.VisitDischargedPayload;
 import com.fuyun.inpatient.api.payload.VisitRegisteredPayload;
 import com.fuyun.inpatient.api.payload.VisitTransferredPayload;
 import java.io.IOException;
@@ -242,7 +244,8 @@ class InpatientMessagingContractTest {
         // id 48：Task 3 审查 Minor-1 义务补锚；id 49/52：Task 4 转科/床位事件新载荷；
         // id 41/45/46：Task 6 审核通过/作废/撤回三事件新载荷（审核与控制域发布面）；
         // id 42：Task 7 转抄事件新载荷（转抄与执行计划域发布面）；
-        // id 43/47：Task 8 计划拆分/执行回签两事件新载荷（日切分解与执行回签域发布面）
+        // id 43/47：Task 8 计划拆分/执行回签两事件新载荷（日切分解与执行回签域发布面）；
+        // id 50/51：Task 9 出院申请/出院终态两事件新载荷（出院管理域发布面）
         assertComponentsInDesc(V800_SQL, 41, OrderAuditedPayload.class);
         assertComponentsInDesc(V800_SQL, 42, OrderTransferredPayload.class);
         assertComponentsInDesc(V800_SQL, 43, OrderPlanGeneratedPayload.class);
@@ -251,6 +254,8 @@ class InpatientMessagingContractTest {
         assertComponentsInDesc(V800_SQL, 47, OrderExecutedPayload.class);
         assertComponentsInDesc(V800_SQL, 48, VisitAdmittedPayload.class);
         assertComponentsInDesc(V800_SQL, 49, VisitTransferredPayload.class);
+        assertComponentsInDesc(V800_SQL, 50, VisitDischargeRequestedPayload.class);
+        assertComponentsInDesc(V800_SQL, 51, VisitDischargedPayload.class);
         assertComponentsInDesc(V800_SQL, 52, BedChangedPayload.class);
     }
 
