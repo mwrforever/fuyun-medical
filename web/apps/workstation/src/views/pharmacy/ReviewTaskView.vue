@@ -219,7 +219,7 @@ onMounted(() => {
         v-model="rejectOpinion"
         class="review-textarea"
         rows="3"
-        maxlength="255"
+        maxlength="512"
         placeholder="填写驳回意见"
         aria-label="驳回意见"
       ></textarea>

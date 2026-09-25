@@ -7,7 +7,7 @@
 // 开立前显式格式校验（IP-1011 类：明细必填/数量正数/长期频次）零出网拦截；执业授权（IP-1012）
 // 与过敏冲突（IP-1013）由后端 403/409 业务拒绝，detail 中文原文经 surfaceBizError 兜底透出。
 // 全部写操作自带在途守卫（入口早退先于一切 await）；失败弹错归响应拦截器（AxiosError 防双弹）。
-// 患者摘要按脱敏口径仅展示就诊号/床号（后端 VO 契约即不含姓名）。
+// 患者摘要按脱敏口径仅展示就诊号/床号（WardPatientDetailVO 含可选 patientName，本页展示仅取号面属合规裁剪而非契约缺位）。
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）

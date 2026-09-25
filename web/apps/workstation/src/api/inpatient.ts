@@ -304,7 +304,7 @@ export interface OrderCreatePayload {
   items: OrderItemPayload[];
 }
 
-/** 医嘱开立明细行入参（后端 OrderItemRequest record 同构；行序号由服务层按列表序生成） */
+/** 医嘱开立明细行入参（后端 OrderItemRequest record 必需字段对齐+可选字段按 UI 面裁剪；行序号由服务层按列表序生成） */
 export interface OrderItemPayload {
   /** 行项目类型（与头 orderType 同词表，服务层校验一致性） */
   itemType: string;
