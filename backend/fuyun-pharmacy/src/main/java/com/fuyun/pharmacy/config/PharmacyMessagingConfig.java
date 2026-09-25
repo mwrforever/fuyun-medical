@@ -7,6 +7,7 @@ import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
+import com.fuyun.pharmacy.internal.MedicationOrderReviewListener;
 import com.fuyun.pharmacy.internal.PharmacyBillingSyncListener;
 import com.fuyun.pharmacy.internal.PharmacyChargedOrderListener;
 import com.fuyun.pharmacy.internal.PharmacyEventPublisher;
@@ -14,7 +15,10 @@ import com.fuyun.pharmacy.internal.PharmacyMasterDataListener;
 import com.fuyun.pharmacy.internal.PharmacyOrderCancelledListener;
 import com.fuyun.pharmacy.internal.PharmacyRefundApprovedListener;
 import java.util.Arrays;
+import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.Declarables;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -24,7 +28,8 @@ import org.springframework.context.annotation.Import;
  * M06 消息装配：发布/消费模板 Bean、订阅队列治理声明、发布器/监听器注册集中点
  * （BillingMessagingConfig 同款形态；本类由 fuyun-app PharmacyConfig @Import 生效，
  * 交换机全集归 integration 禁私建 A.5-4）。SUBSCRIBED_EVENT_TYPES 随消费任务逐批追加，
- * 监听器类同步追加进 @Import（先登记后订阅红线）。
+ * 监听器类同步追加进 @Import（先登记后订阅红线）。P2 PR-1 Task 12 追加：drug 子键消费面
+ * （绑定键自声明——governance 订阅登记按登记名精确匹配无法承载子键）与审方回执发布面。
  */
 @Configuration
 @Import({
@@ -33,7 +38,8 @@ import org.springframework.context.annotation.Import;
     PharmacyBillingSyncListener.class,
     PharmacyRefundApprovedListener.class,
     PharmacyOrderCancelledListener.class,
-    PharmacyMasterDataListener.class
+    PharmacyMasterDataListener.class,
+    MedicationOrderReviewListener.class
 })
 public class PharmacyMessagingConfig {
 
@@ -76,5 +82,33 @@ public class PharmacyMessagingConfig {
                         new ConsumerQueueSpec(PharmacyMessagingConstants.MODULE, eventType)))
                 .flatMap(ds -> ds.getDeclarables().stream())
                 .toList());
+    }
+
+    /**
+     * drug 子键消费队列自声明（q.pharmacy.inpatient.order.created.drug 精确绑定 fy.topic）：
+     * 登记名 inpatient.order.created 不带子键（R3-06 口径），governance.declareConsumerQueue
+     * 按登记名精确匹配做订阅登记（ConsumerQueueSpec.eventType 即绑定键），携子键调用会因
+     * 「事件未登记」阻断启动——故本队列按治理同款形态自声明（durable quorum + 死信指向
+     * fy.dlx + 绑定主交换机；非私建交换机，队列/绑定交 RabbitAdmin 幂等声明）。
+     *
+     * @return 声明集合（队列 + 绑定）；RabbitAdmin 幂等声明
+     */
+    @Bean
+    public Declarables pharmacyInpatientOrderCreatedDrugQueue() {
+        String queueName = PharmacyMessagingConstants.CONSUMER_QUEUE_PREFIX
+                + PharmacyMessagingConstants.MODULE
+                + "."
+                + PharmacyMessagingConstants.BINDING_KEY_INPATIENT_ORDER_CREATED_DRUG;
+        Queue queue = QueueBuilder.durable(queueName)
+                .quorum()
+                .deadLetterExchange(PharmacyMessagingConstants.DLX_EXCHANGE)
+                .build();
+        Binding binding = new Binding(
+                queueName,
+                Binding.DestinationType.QUEUE,
+                PharmacyMessagingConstants.TOPIC_EXCHANGE,
+                PharmacyMessagingConstants.BINDING_KEY_INPATIENT_ORDER_CREATED_DRUG,
+                null);
+        return new Declarables(queue, binding);
     }
 }
