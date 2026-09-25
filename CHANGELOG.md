@@ -2,6 +2,14 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-26 · P2 PR-1 收口：M04 住院域五条验收锚点 IT + 文档收口（Task 16）
+
+- ① **五条验收锚点 IT 落码跑绿**（`fuyun-app` 真栈 Testcontainers，三容器类级独占 GC9）：`InpatientAdmissionFlowIT`（入院链+W-34 三事件真投递+EMPI 在院合并拦截 PAT-1006，6 用例）/ `InpatientOrderFlowIT`（CF-6 医嘱闭环全链：created.drug→pharmacy 审→回执→AUDITED→转抄→execute-confirm 四字段契约→停嘱；lab 自动过审+audited.lab 子键路由+M13 通配消费，7 用例）/ `InpatientTransferDischargeIT`（转科五步+出院全链[挂账→真实结算→双条件确认 IP-1017 拒绝]+带药放行+随访，8 用例）/ `InpatientDailyDecomposeIT`（bid/qd 分解+幂等+补偿+停嘱联动+generated 投递，5 用例）/ `BillingInpatientLinkageIT`（六事件计价终态+重复投递幂等+precheck 聚合，8 用例）。
+- ② **生产缺陷修复（IT 实测暴露）**：`BillingInpatientEventListener.handleOrderEvent` 派发前对 created/audited 投递面 eventType 剥离 order_type 子键归一回登记名——未归一时子键帧全部落入 default 分支静默直返、住院离散计价失效；修复随单测两例（子键帧归一派发/非子键族不受影响）。R3-06「登记名不带子键、routing 携子键」的消费侧适配自此闭合。
+- ③ **文档收口**：`docs/specs/modules/04-inpatient.md` 追加「§13 P2 PR-1 落地注记」18 条（GC21 五项降级+高危药 BLOOD 单面+出院带药放行即确认+会诊时限未参数化+模板/WS/计费入口直调/口头医嘱催办顺延+CF-6 id 55 定稿含 Task 8 R1 end_at 守卫增补+事件 id 65–73+V1000+ 通用段+日切异常清单简化+计价承载面 created 裁决+子键归一修正+随访 14 日/准备窗口 60 分钟行为变更+前端 OrderCreatePayload 偏差+api.d.ts 键序噪声+W-34 触发就位）；TASK.md W-33 销项删除（V901 UPDATE 已履行+IT 断言）、W-34 更新（触发已就位+退役五项归 PR-3）、W-42~W-47 六行照 P2 计划 §2 裁决 2 原文登记、D-25 新登记（住院 OrderCreateRequest Springdoc schema 同名覆盖待决策）。
+- ④ **行为变更注记（Task 10 回接）**：随访缺省时距 7→14 日、临时单次计划默认准备窗口 15→60 分钟（`fuyun.inpatient.*` 参数化，审查确认非回归红线情形，断言适配严格度不降）。
+- ⑤ 门禁证据：五 IT 单跑逐条绿 + 后端全量 `mvn verify`（含 IT/JaCoCo 双阈值）+ 前端六连全绿（lint/format/type-check/test 177/build/audit 官方源）+ 真栈探针四项与浏览器六页走查（详见 task-16-report）。
+
 ## 2026-09-25 · P2 PR-1 前置：inpatient 号段登记（V900 段）+ V1000+ 通用段四位数先例 + 事件 id 65–73 排定 + JaCoCo 扩名单
 
 - ① inpatient 固定百位段 **V900–V999** 登记（`scripts/check-migration-governance.py` `_SEGMENTS` 增行
