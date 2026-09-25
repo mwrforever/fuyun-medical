@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -33,6 +34,7 @@ import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
+import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
 import com.fuyun.patient.api.PatientContextResolver;
@@ -95,6 +97,9 @@ class AdmissionServiceImplTest {
     private PatientContextResolver patientContextResolver;
 
     @Mock
+    private BedService bedService;
+
+    @Mock
     private ApplicationEventPublisher events;
 
     @Captor
@@ -120,7 +125,8 @@ class AdmissionServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdmissionServiceImpl(admissionMapper, visitMapper, seqGate, patientContextResolver, events);
+        service = new AdmissionServiceImpl(
+                admissionMapper, visitMapper, seqGate, patientContextResolver, bedService, events);
         ReflectionTestUtils.setField(service, "baseMapper", admissionMapper);
         OperatorContextHolder.set("adm-01");
     }
@@ -253,15 +259,19 @@ class AdmissionServiceImplTest {
     }
 
     @Test
-    @DisplayName("住院证作废：WAITING/SCHEDULED→CANCELLED CAS（床位释放联动归 Task 4）；终态再作废 IP-1002")
+    @DisplayName("住院证作废：SCHEDULED 作废联动释放预占床位（Task 4 联动②），WAITING 作废不触达；终态再作废 IP-1002")
     void cancelMovesQueueStatesToCancelled() {
-        when(admissionMapper.selectOne(any())).thenReturn(admissionRow(AdmissionStatus.SCHEDULED));
+        Admission scheduled = admissionRow(AdmissionStatus.SCHEDULED);
+        scheduled.setTargetBedId(BED_ID);
+        when(admissionMapper.selectOne(any())).thenReturn(scheduled);
         when(admissionMapper.casCancel(ADMISSION_NO, "adm-01")).thenReturn(1);
 
         AdmissionVO vo = service.cancel(ADMISSION_NO);
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.CANCELLED.getCode());
         assertThat(vo.admissionNo()).isEqualTo(ADMISSION_NO);
+        // 床位联动②锚：预约态作废同事务释放预占床位（BedService.releaseForAdmission）
+        verify(bedService).releaseForAdmission(BED_ID);
         // GC26 锚：作废 CAS 限定候床/预约两态 + 显式 deleted=0
         String sql = recordSql(AdmissionMapper.class, "casCancel", String.class, String.class);
         assertThat(sql)
@@ -270,7 +280,16 @@ class AdmissionServiceImplTest {
                 .contains("status IN ('WAITING', 'SCHEDULED')")
                 .contains("deleted = 0");
 
+        // 候床态作废（无预占床位）：零释放联动触达（清零前次调用后断言无新触达）
+        Admission waiting = admissionRow(AdmissionStatus.WAITING);
+        waiting.setTargetBedId(null);
+        when(admissionMapper.selectOne(any())).thenReturn(waiting);
+        clearInvocations(bedService);
+        service.cancel(ADMISSION_NO);
+        verifyNoInteractions(bedService);
+
         // 终态再作废：CAS 0 行定性 IP-1002（状态机违例）
+        when(admissionMapper.selectOne(any())).thenReturn(scheduled);
         when(admissionMapper.casCancel(ADMISSION_NO, "adm-01")).thenReturn(0);
         assertThatThrownBy(() -> service.cancel(ADMISSION_NO))
                 .isInstanceOf(BizException.class)
@@ -279,7 +298,7 @@ class AdmissionServiceImplTest {
     }
 
     @Test
-    @DisplayName("预约入院：WAITING→SCHEDULED CAS 记录目标床位与预约日期（床位预占联动归 Task 4）；非候床态 IP-1002")
+    @DisplayName("预约入院：WAITING→SCHEDULED CAS 记录目标床位并联动预占（Task 4 联动①，无床预住院不联动）；非候床态 IP-1002")
     void scheduleMovesWaitingToScheduled() {
         when(admissionMapper.selectOne(any())).thenReturn(admissionRow(AdmissionStatus.WAITING));
         LocalDate expectDate = LocalDate.of(2026, 9, 26);
@@ -290,6 +309,8 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.SCHEDULED.getCode());
         assertThat(vo.targetBedId()).isEqualTo(BED_ID);
+        // 床位联动①锚：携目标床位即同事务联动预占（BedService.reserveForAdmission 置 RESERVED）
+        verify(bedService).reserveForAdmission(BED_ID);
         // GC26 锚：预约 CAS 限定 WAITING 态 + 显式 deleted=0
         String sql = recordSql(
                 AdmissionMapper.class,
@@ -306,6 +327,12 @@ class AdmissionServiceImplTest {
                 .contains("status = 'WAITING'")
                 .contains("deleted = 0");
 
+        // 预住院模式（无床虚拟登记）：目标床位缺席零预占联动
+        when(admissionMapper.casSchedule(ADMISSION_NO, "W01", null, expectDate, "adm-01"))
+                .thenReturn(1);
+        service.schedule(ADMISSION_NO, new AdmissionScheduleRequest("W01", null, expectDate));
+        verify(bedService, never()).reserveForAdmission(null);
+
         // 已预约再预约：CAS 0 行定性 IP-1002
         when(admissionMapper.casSchedule(ADMISSION_NO, "W01", BED_ID, expectDate, "adm-01"))
                 .thenReturn(0);
@@ -317,7 +344,7 @@ class AdmissionServiceImplTest {
     }
 
     @Test
-    @DisplayName("入科确认：visit REGISTERED→ADMITTED CAS + 回读库端入科时点 + 发布 VisitAdmittedPayload（床位流转归 Task 4）")
+    @DisplayName("入科确认：visit REGISTERED→ADMITTED CAS + 床位占床联动（Task 4 联动③）+ 发布 VisitAdmittedPayload")
     void admitWardMarksVisitAdmittedAndPublishesEvent() {
         InpatientVisit admitted = visitRow(VisitStatus.ADMITTED);
         admitted.setCurrentWardId("W01");
@@ -333,6 +360,8 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(VisitStatus.ADMITTED.getCode());
         assertThat(vo.currentBedId()).isEqualTo(BED_ID);
+        // 床位联动③锚：床位 RESERVED→OCCUPIED + bed_assign 开 ADMISSION 流水（BedService 同源 CAS）
+        verify(bedService).occupyForAdmission(BED_ID, VISIT_ID, PATIENT_ID);
         verify(events).publishEvent(eventCaptor.capture());
         InpatientDomainEvent event = eventCaptor.getValue();
         assertThat(event.eventType()).isEqualTo(InpatientMessagingConstants.EVENT_VISIT_ADMITTED);

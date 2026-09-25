@@ -42,7 +42,7 @@ public class Admission {
     /** 目标病区编码（schedule 预约写入） */
     private String targetWardId;
 
-    /** 目标床位 id（schedule 预约写入；bed 表归 V903/Task 4，本列先承载引用值） */
+    /** 目标床位 id（schedule 预约写入；bed 表见 V903） */
     private Long targetBedId;
 
     /** 入院类型 code（AdmissionType：NORMAL/EMERGENCY/PRE_HOSPITAL；EMERGENCY 为队列排序第一优先键） */

@@ -13,7 +13,9 @@ import com.fuyun.inpatient.vo.InpatientVisitVO;
  * 入院登记域服务（FU-M04-01）：住院证全生命周期（登记入队/预约/作废/登记确认）与住院就诊
  * 起算两态（登记确认签发 I 型 visit_id / 入科确认）。登记确认为本域红线方法——visit_id 签发、
  * 结构自检与就诊落库同事务成败与共（M02 Spec 红线 1：I 型唯一签发主体 = 本模块）。
- * 床位预占/释放/占床联动（BedService）归 Task 4 随 V903 bed 落地后补齐。
+ * 床位联动三处（Task 4 随 V903 bed 落地补齐）：schedule 预约目标床位置 RESERVED、cancel
+ * （SCHEDULED 态）释放预占床位、admitWard 入科床位 RESERVED→OCCUPIED + bed_assign 开流水
+ * ——均同事务联动（BedService 同源 CAS 权威，联动失败整体回滚）。
  */
 public interface AdmissionService {
 
@@ -41,26 +43,27 @@ public interface AdmissionService {
     PageResult<AdmissionVO> queue(AdmissionStatus status, int page, int size);
 
     /**
-     * 预约入院/预住院（WAITING→SCHEDULED）：记录目标病区/床位与预约日期。目标床位 RESERVED
-     * 预占联动调 BedService.reserveForAdmission 归 Task 4 随 V903 bed 落地后补齐——本方法先
-     * 承载 admission 自身状态面。
+     * 预约入院/预住院（WAITING→SCHEDULED）：记录目标病区/床位与预约日期；携目标床位时同事务
+     * 联动床位预占（BedService.reserveForAdmission 置 RESERVED——预占失败整体预约事务回滚；
+     * 预住院模式无床不联动）。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
      * @param req         预约入参，非空；来源：登记台签床调度
      * @return 预约后出参（status=SCHEDULED），非空
      * @throws com.fuyun.common.exception.BizException IP-1001（404 住院证不存在）/
-     *         IP-1002（409 非 WAITING 态禁止预约——已预约/终态）
+     *         IP-1002（409 非 WAITING 态禁止预约——已预约/终态）/ IP-1004（404 目标床位不存在）/
+     *         IP-1005（409 目标床位消毒/维修中）/ IP-1006（409 目标床位已被占用）
      */
     AdmissionVO schedule(String admissionNo, AdmissionScheduleRequest req);
 
     /**
-     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）。SCHEDULED 作废时预占床位释放联动
-     * 归 Task 4 随 BedService 落地后补齐——本方法先承载 admission 自身状态面。
+     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）。SCHEDULED 作废时同事务联动释放预占
+     * 床位（BedService.releaseForAdmission 置 FREE）；WAITING 作废无预占不联动。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
      * @return 作废后出参（status=CANCELLED），非空
      * @throws com.fuyun.common.exception.BizException IP-1001（404 住院证不存在）/
-     *         IP-1002（409 终态（COMPLETED/CANCELLED）禁止作废）
+     *         IP-1002（409 终态（COMPLETED/CANCELLED）禁止作废）/ IP-1004/IP-1005（预占释放面）
      */
     AdmissionVO cancel(String admissionNo);
 
@@ -84,16 +87,17 @@ public interface AdmissionService {
 
     /**
      * 入科确认（visit REGISTERED→ADMITTED）：登记当前科室/病区/床位、主治医生与护理级别
-     * （入科时点库端 now()）→ 事务内发布 inpatient.visit.admitted（M05 病区患者视图维护、
-     * M14 设备待绑定提醒）。床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账归 Task 4
-     * 随 V903 bed 落地后补齐——本方法先承载 visit 自身状态面。
+     * （入科时点库端 now()）→ 床位联动（BedService.occupyForAdmission：床位 RESERVED→OCCUPIED
+     * CAS + bed_assign 开 ADMISSION 流水，占床失败整体入科事务回滚）→ 事务内发布
+     * inpatient.visit.admitted（M05 病区患者视图维护、M14 设备待绑定提醒）。
      *
      * @param visitId 住院就诊号（I 型 14 位），非空；来源：路径参数
      * @param req     入科入参，非空；来源：病区护士站入科单
      * @return 入科后就诊出参（status=ADMITTED），非空
      * @throws com.fuyun.common.exception.BizException IP-1007（404 就诊不存在）/
      *         IP-1008（409 非 REGISTERED 态禁止入科——已入科/已出院/已作废）/
-     *         IP-1022（400 护理级别词表外）/ IP-1023（409 CAS 命中后行被并发逻辑删，回读缺失）
+     *         IP-1022（400 护理级别词表外）/ IP-1023（409 CAS 命中后行被并发逻辑删，回读缺失）/
+     *         IP-1004（404 床位不存在）/ IP-1005（409 床位消毒/维修中）/ IP-1006（409 床位已被占用）
      */
     InpatientVisitVO admitWard(String visitId, WardAdmitRequest req);
 }

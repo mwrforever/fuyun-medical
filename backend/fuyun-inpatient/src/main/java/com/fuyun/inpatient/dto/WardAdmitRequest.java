@@ -6,8 +6,8 @@ import jakarta.validation.constraints.Pattern;
 
 /**
  * 入科确认入参（POST /api/v1/inpatient/visits/{visitId}/admit-ward）：visit REGISTERED→ADMITTED，
- * 登记床位/病区/护理级别。床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账归 Task 4
- * 随 V903 bed 落地后补齐——本请求先承载 visit 自身状态面。
+ * 登记床位/病区/护理级别；服务层同事务联动床位
+ * RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账（BedService.occupyForAdmission——占床失败整体入科事务回滚）。
  *
  * @param deptId            入科科室编码（M01 组织机构 code，病区归属科室缺席时容许），可空；来源：护士站入科单
  * @param wardId            入科病区编码，必填；来源：护士站入科单

@@ -10,8 +10,8 @@ import org.apache.ibatis.annotations.Update;
 /**
  * 住院证 mapper：单表链式能力 + 状态条件更新注解 SQL 全集（GC26：条件更新一律 @Update +
  * 影响行数判定，显式补 deleted=0；状态字面量与 V902 列值域、AdmissionStatus code 逐字同源）。
- * 目标床位预占/释放联动（BedService.reserveForAdmission/releaseReservation）归 Task 4 随
- * V903 bed 落地后补齐——本层先承载 admission 自身状态面。
+ * 目标床位预占/释放联动（BedService.reserveForAdmission/releaseForAdmission）已随 V903 bed
+ * 落地（Task 4 服务层同事务联动）；本层承载 admission 自身状态面。
  */
 @Mapper
 public interface AdmissionMapper extends BaseMapper<Admission> {
@@ -38,7 +38,7 @@ public interface AdmissionMapper extends BaseMapper<Admission> {
 
     /**
      * 住院证作废 CAS（WAITING/SCHEDULED→CANCELLED，终态）。SCHEDULED 作废时目标床位预占释放
-     * 联动归 Task 4（BedService）补齐。
+     * 由服务层同事务联动（BedService.releaseForAdmission）。
      *
      * @param admissionNo 住院证号，非空
      * @param updatedBy   操作者（审计留痕），非空

@@ -12,7 +12,7 @@ import java.time.OffsetDateTime;
  * @param patientId           患者主索引（签发时点归一主档）
  * @param currentDeptId       当前科室编码（入科确认写入）
  * @param currentWardId       当前病区编码（入科确认写入）
- * @param currentBedId        当前床位 id（入科确认写入；bed 表归 V903/Task 4）
+ * @param currentBedId        当前床位 id（入科确认写入；转科/转床变更；bed 表见 V903）
  * @param attendingDoctorId   主治医生（入科确认写入）
  * @param nursingLevel        护理级别（SPECIAL/CRITICAL/NORMAL；权威在本域，M05 为视图镜像）
  * @param insuranceType       医保类型（M01 字典 code；register 登记并随事件外发）

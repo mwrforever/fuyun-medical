@@ -39,7 +39,7 @@ public class InpatientVisit {
     /** 当前病区编码（入科确认写入；转科/转床变更） */
     private String currentWardId;
 
-    /** 当前床位 id（入科确认写入；bed 表归 V903/Task 4） */
+    /** 当前床位 id（入科确认写入；转科/转床变更；bed 表见 V903） */
     private Long currentBedId;
 
     /** 主治医生（入科确认写入） */

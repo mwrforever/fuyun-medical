@@ -2,11 +2,14 @@ package com.fuyun.inpatient.constants;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fuyun.inpatient.api.payload.BedChangedPayload;
 import com.fuyun.inpatient.api.payload.ConsultationPayload;
 import com.fuyun.inpatient.api.payload.OrderAuditRejectedPayload;
 import com.fuyun.inpatient.api.payload.OrderCreatedItem;
 import com.fuyun.inpatient.api.payload.OrderCreatedPayload;
+import com.fuyun.inpatient.api.payload.VisitAdmittedPayload;
 import com.fuyun.inpatient.api.payload.VisitRegisteredPayload;
+import com.fuyun.inpatient.api.payload.VisitTransferredPayload;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.RecordComponent;
@@ -211,6 +214,15 @@ class InpatientMessagingContractTest {
     }
 
     @Test
+    @DisplayName("V800 段载荷锚：id 48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
+    void v800PayloadRecordComponentsMatchDesc() {
+        // id 48：Task 3 审查 Minor-1 义务补锚；id 49/52：Task 4 转科/床位事件新载荷
+        assertComponentsInDesc(V800_SQL, 48, VisitAdmittedPayload.class);
+        assertComponentsInDesc(V800_SQL, 49, VisitTransferredPayload.class);
+        assertComponentsInDesc(V800_SQL, 52, BedChangedPayload.class);
+    }
+
+    @Test
     @DisplayName("V901 为幂等 INSERT...SELECT...WHERE NOT EXISTS 形态且恰一条 UPDATE，无裸 VALUES 直插")
     void v901UsesIdempotentInsertForm() {
         List<Integer> insertStarts = indexOfAll(V901_SQL, "INSERT INTO integration.event_registry");
@@ -313,8 +325,20 @@ class InpatientMessagingContractTest {
      * @param payloadType 载荷 record 类型，非空
      */
     private static void assertComponentsInDesc(int id, Class<?> payloadType) {
+        assertComponentsInDesc(V901_SQL, id, payloadType);
+    }
+
+    /**
+     * 断言载荷 record 的组件名斜杠拼接串在指定种子 SQL 的登记行 desc 中逐字出现
+     * （V800 段锚与 V901 段锚同款写法——段基座由调用方注入）。
+     *
+     * @param sql         种子 SQL 原文（V800/V901），非空
+     * @param id          登记行 id，非空
+     * @param payloadType 载荷 record 类型，非空
+     */
+    private static void assertComponentsInDesc(String sql, int id, Class<?> payloadType) {
         String joined = componentJoin(payloadType);
-        assertThat(segmentOf(V901_SQL, id))
+        assertThat(segmentOf(sql, id))
                 .as("id %d desc 缺组件串 %s（record 组件名与 desc 漂移）", id, joined)
                 .contains(joined);
     }

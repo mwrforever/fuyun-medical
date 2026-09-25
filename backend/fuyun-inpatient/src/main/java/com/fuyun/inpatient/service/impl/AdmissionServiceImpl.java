@@ -25,6 +25,7 @@ import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.service.AdmissionService;
+import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
 import com.fuyun.patient.api.PatientContextResolver;
@@ -44,8 +45,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 落库（uk_admission_no 兜底转 IP-1023）。登记确认红线方法单事务全链：二次解析 → admission
  * CAS 置 COMPLETED → nextVisitId 签发 → 结构自检（失败 IllegalStateException 回滚）→ visit
  * 落库 REGISTERED → 事务内发布 VisitRegisteredPayload（AFTER_COMMIT 出 MQ）。
- * 状态迁移一律 @Update CAS + 影响行数判定（GC26，显式 deleted=0）；床位预占/释放/占床联动
- * （BedService）归 Task 4 随 V903 bed 落地后补齐。
+ * 状态迁移一律 @Update CAS + 影响行数判定（GC26，显式 deleted=0）；床位联动三处（Task 4
+ * 补齐）：schedule 预约目标床位置 RESERVED、cancel（SCHEDULED 态）释放预占床位、admitWard
+ * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（BedService 同源
+ * CAS 权威）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
@@ -67,6 +70,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     private final PatientContextResolver patientContextResolver;
 
+    private final BedService bedService;
+
     private final ApplicationEventPublisher events;
 
     /**
@@ -76,6 +81,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
      * @param visitMapper           住院就诊 mapper，非空；登记确认落库与入科确认
      * @param seqGate               住院业务号发号器（AD 号 / I 型 visit_id），非空
      * @param patientContextResolver 患者上下文解析（patient api），非空；归一/拦截
+     * @param bedService            床位管理服务（床位联动三处：预占/释放/占床），非空
      * @param events                进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
      */
     public AdmissionServiceImpl(
@@ -83,10 +89,12 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             InpatientVisitMapper visitMapper,
             InpatientSeqGate seqGate,
             PatientContextResolver patientContextResolver,
+            BedService bedService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
         this.seqGate = seqGate;
         this.patientContextResolver = patientContextResolver;
+        this.bedService = bedService;
         this.events = events;
     }
 
@@ -185,13 +193,14 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     }
 
     /**
-     * 预约入院/预住院（WAITING→SCHEDULED）：目标床位/预约日期 CAS 同语句落值；床位 RESERVED
-     * 预占联动归 Task 4（BedService.reserveForAdmission 随 V903 落地补齐）。
+     * 预约入院/预住院（WAITING→SCHEDULED）：目标床位/预约日期 CAS 同语句落值；携目标床位时
+     * 同事务联动床位预占（Task 4 联动①——BedService.reserveForAdmission 置 RESERVED，预占
+     * 失败整体预约事务回滚：预约到不可用床必须整体失败；预住院模式无床不联动）。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
      * @param req         预约入参，非空；来源：登记台签床调度
      * @return 预约后出参（status=SCHEDULED），非空
-     * @throws BizException IP-1001/IP-1002（接口注全清单）
+     * @throws BizException IP-1001/IP-1002/IP-1004/IP-1005/IP-1006（接口注全清单）
      */
     @Override
     @Transactional
@@ -204,7 +213,11 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         if (rows == 0) {
             throw stateRejected(admissionNo, admission.getStatus(), "schedule");
         }
-        // 回显载体：以入参目标面 + 迁移后状态构造出参（零回读；床位预占联动归 Task 4）
+        // 床位联动①：目标床位置 RESERVED（同事务——预占失败整体回滚；无床预住院不联动）
+        if (req.targetBedId() != null) {
+            bedService.reserveForAdmission(req.targetBedId());
+        }
+        // 回显载体：以入参目标面 + 迁移后状态构造出参（零回读）
         admission.setStatus(AdmissionStatus.SCHEDULED.getCode());
         admission.setTargetWardId(req.targetWardId());
         admission.setTargetBedId(req.targetBedId());
@@ -220,23 +233,27 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     }
 
     /**
-     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）；SCHEDULED 作废时预占床位释放联动归
-     * Task 4（BedService 随 V903 落地补齐）。
+     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）；SCHEDULED 作废时同事务联动释放预占
+     * 床位（Task 4 联动②——BedService.releaseForAdmission 置 FREE；WAITING 作废无预占不联动）。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
      * @return 作废后出参（status=CANCELLED），非空
-     * @throws BizException IP-1001/IP-1002（接口注全清单）
+     * @throws BizException IP-1001/IP-1002/IP-1004/IP-1005（接口注全清单）
      */
     @Override
     @Transactional
     public AdmissionVO cancel(String admissionNo) {
         Admission admission = requireByNo(admissionNo);
         String operator = operator();
-        // 数据库写操作：作废 CAS（候床/预约两态可作废；0 行定性终态违例；床位释放联动归 Task 4）
+        // 数据库写操作：作废 CAS（候床/预约两态可作废；0 行定性终态违例）
         if (baseMapper.casCancel(admissionNo, operator) == 0) {
             throw stateRejected(admissionNo, admission.getStatus(), "cancel");
         }
         String priorStatus = admission.getStatus();
+        // 床位联动②：预约态作废释放预占床位（同事务；候床态无预占不联动）
+        if (AdmissionStatus.SCHEDULED.getCode().equals(priorStatus) && admission.getTargetBedId() != null) {
+            bedService.releaseForAdmission(admission.getTargetBedId());
+        }
         admission.setStatus(AdmissionStatus.CANCELLED.getCode());
         log.info("住院证作废：admissionNo={}，前置状态={}，operator={}", admissionNo, priorStatus, operator);
         return AdmissionVO.from(admission);
@@ -324,13 +341,14 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     /**
      * 入科确认（visit REGISTERED→ADMITTED）：科室/病区/床位/护理级别 CAS 同语句落值（入科时点
-     * 库端 now()）→ 回读行取入科时点 → 事务内发布入科事件；床位 RESERVED→OCCUPIED 流转与
-     * bed_assign 开账归 Task 4（BedService 随 V903 落地补齐）。
+     * 库端 now()）→ 回读行取入科时点 → 床位联动③（Task 4 补齐——BedService.occupyForAdmission
+     * 床位 RESERVED→OCCUPIED CAS + bed_assign 开 ADMISSION 流水，占床失败整体入科事务回滚）→
+     * 事务内发布入科事件。
      *
      * @param visitId 住院就诊号，非空；来源：路径参数
      * @param req     入科入参，非空；来源：病区护士站入科单
      * @return 入科后就诊出参（status=ADMITTED），非空
-     * @throws BizException IP-1007/IP-1008/IP-1022/IP-1023（接口注全清单）
+     * @throws BizException IP-1007/IP-1008/IP-1022/IP-1023/IP-1004/IP-1005/IP-1006（接口注全清单）
      */
     @Override
     @Transactional
@@ -366,8 +384,11 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             throw new BizException(
                     InpatientErrorCode.CONFLICT, HttpStatus.CONFLICT, "入科确认后就诊行回读缺失（并发逻辑删）：visitId=" + visitId);
         }
+        // 床位联动③：床位 RESERVED→OCCUPIED + bed_assign 开 ADMISSION 流水（同事务——占床失败
+        // 整体入科回滚；患者主索引取回读行权威值免二次解析）
+        bedService.occupyForAdmission(req.bedId(), visitId, admitted.getPatientId());
         // 入科事件（事务内发布，AFTER_COMMIT 出 fy.topic——M05 病区患者视图维护、M14 待绑定提醒；
-        // 载荷仅定位键与护理级别，禁患者姓名/诊断文本；床位流转权威归 bed 域 Task 4）
+        // 载荷仅定位键与护理级别，禁患者姓名/诊断文本；床位流转权威归 bed 域，bed.changed 由联动面发布）
         events.publishEvent(new InpatientDomainEvent(
                 InpatientMessagingConstants.EVENT_VISIT_ADMITTED,
                 new VisitAdmittedPayload(

@@ -13,7 +13,7 @@ import java.time.OffsetDateTime;
  * @param sourceVisitId    门诊 visit_id 引用（O 型 14 位；非转诊来源为 null）
  * @param targetDeptId     目标科室编码
  * @param targetWardId     目标病区编码（schedule 预约写入）
- * @param targetBedId      目标床位 id（schedule 预约写入；bed 表归 V903/Task 4）
+ * @param targetBedId      目标床位 id（schedule 预约写入；bed 表见 V903）
  * @param admissionType    入院类型 code（AdmissionType；EMERGENCY 为队列第一优先键）
  * @param expectDate       预约入院日期（队列排序第二键）
  * @param diagnosisSummary 入院诊断摘要（敏感文本，仅回显不外发事件）

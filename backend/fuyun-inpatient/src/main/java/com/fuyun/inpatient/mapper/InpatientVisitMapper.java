@@ -7,10 +7,10 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
 /**
- * 住院就诊 mapper：单表链式能力 + 入科确认状态条件更新注解 SQL（GC26：条件更新一律 @Update +
+ * 住院就诊 mapper：单表链式能力 + 状态条件更新注解 SQL 全集（GC26：条件更新一律 @Update +
  * 影响行数判定，显式补 deleted=0；状态字面量与 V902 列值域、VisitStatus code 逐字同源）。
- * 床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账归 Task 4（BedService）随 V903 落地
- * 后补齐——本层先承载 visit 自身状态面。
+ * 床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账的权威归 BedService（V903，Task 4
+ * 已补齐联动）；本层承载 visit 自身状态面与转科/转床的 current_* 原子更新。
  */
 @Mapper
 public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
@@ -40,5 +40,29 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
             @Param("bedId") Long bedId,
             @Param("attendingDoctorId") String attendingDoctorId,
             @Param("nursingLevel") String nursingLevel,
+            @Param("updatedBy") String updatedBy);
+
+    /**
+     * 转科/转床定位 CAS（ADMITTED 内属性变更，不改状态）：当前病区/床位原子更新，转科时
+     * 目标科室随语句落值（缺席时保留原值——&lt;if&gt; 动态拼装）。限定在院态（转科/转床为
+     * ADMITTED 内属性变更，独立于状态机——已出院/已作废一律 0 行）。
+     *
+     * @param visitId   住院就诊号（I 型 14 位），非空
+     * @param toDeptId  目标科室编码，可空（缺席保留原值；转床轻量路径不传）
+     * @param toWardId  目标病区编码，非空
+     * @param toBedId   目标床位 id，非空
+     * @param updatedBy 操作者（审计留痕），非空
+     * @return 影响行数（0=非 ADMITTED 态（并发出院/作废），调用方定性 IP-1023）
+     */
+    @Update("<script>UPDATE inpatient.inpatient_visit SET current_ward_id = #{toWardId}, "
+            + "current_bed_id = #{toBedId}"
+            + "<if test='toDeptId != null'>, current_dept_id = #{toDeptId}</if>"
+            + ", updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND status = 'ADMITTED' AND deleted = 0</script>")
+    int casTransferLocation(
+            @Param("visitId") String visitId,
+            @Param("toDeptId") String toDeptId,
+            @Param("toWardId") String toWardId,
+            @Param("toBedId") Long toBedId,
             @Param("updatedBy") String updatedBy);
 }

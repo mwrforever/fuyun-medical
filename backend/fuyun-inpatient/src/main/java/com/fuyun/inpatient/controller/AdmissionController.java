@@ -32,8 +32,8 @@ import org.springframework.web.bind.annotation.RestController;
  * controller 禁业务逻辑与事务（A.1-8）：守卫链/状态机/事件发布全归服务层；写端点挂 WRITE
  * 审计（@AuditLog 注解 + AuditLogAspect 上下文内拦截落 system.audit_log）。
  * 类级 @RequestMapping 不承载（方法级全路径自文档，WardController 同款）。
- * 床位预占/释放/占床联动（schedule/cancel/admit-ward 的 BedService 面）归 Task 4 随 V903
- * bed 落地后补齐——本版端点先承载 admission/visit 自身状态面。
+ * 床位联动三处已随 Task 4 V903 bed 落地（schedule 预占/cancel 释放/admit-ward 占床——服务层
+ * BedService 同事务联动）；床位域端点归 BedController。
  */
 @Tag(name = "M04 入院登记", description = "住院证登记/候床队列/预约/作废/登记确认/入科确认")
 @RestController
@@ -76,7 +76,7 @@ public class AdmissionController {
     }
 
     /**
-     * 预约入院/预住院（WAITING→SCHEDULED；目标床位 RESERVED 预占联动归 Task 4）。
+     * 预约入院/预住院（WAITING→SCHEDULED；携目标床位时同事务联动床位预占）。
      *
      * @param no  住院证号（路径参数）
      * @param req 预约入参（目标病区/床位、预约日期），非空；来源：登记台签床调度
@@ -92,7 +92,7 @@ public class AdmissionController {
     }
 
     /**
-     * 住院证作废（WAITING/SCHEDULED→CANCELLED 终态；SCHEDULED 预占床位释放联动归 Task 4）。
+     * 住院证作废（WAITING/SCHEDULED→CANCELLED 终态；SCHEDULED 作废同事务联动释放预占床位）。
      *
      * @param no 住院证号（路径参数）
      * @return 作废后出参（status=CANCELLED）
@@ -123,7 +123,7 @@ public class AdmissionController {
     }
 
     /**
-     * 入科确认（visit REGISTERED→ADMITTED；床位 RESERVED→OCCUPIED 与 bed_assign 开账归 Task 4）。
+     * 入科确认（visit REGISTERED→ADMITTED；同事务联动床位 RESERVED→OCCUPIED 与 bed_assign 开账）。
      *
      * @param visitId 住院就诊号（I 型 14 位，路径参数）
      * @param req     入科入参（病区/床位/护理级别），非空；来源：病区护士站入科单
