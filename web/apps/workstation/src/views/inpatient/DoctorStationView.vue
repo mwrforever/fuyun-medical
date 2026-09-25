@@ -405,7 +405,8 @@ onMounted(() => {
               class="fuy-dense"
               size="small"
               :row-class-name="
-                ({ row }) => (selectedOrder?.orderNo === row.orderNo ? 'is-current-row' : '')
+                ({ row }: { row: MedicalOrderVO }) =>
+                  selectedOrder?.orderNo === row.orderNo ? 'is-current-row' : ''
               "
             >
               <el-table-column label="医嘱号" min-width="130">
