@@ -9,6 +9,8 @@ import com.fuyun.inpatient.api.payload.OrderAuditedPayload;
 import com.fuyun.inpatient.api.payload.OrderCancelledPayload;
 import com.fuyun.inpatient.api.payload.OrderCreatedItem;
 import com.fuyun.inpatient.api.payload.OrderCreatedPayload;
+import com.fuyun.inpatient.api.payload.OrderExecutedPayload;
+import com.fuyun.inpatient.api.payload.OrderPlanGeneratedPayload;
 import com.fuyun.inpatient.api.payload.OrderRevokedPayload;
 import com.fuyun.inpatient.api.payload.OrderTransferredPayload;
 import com.fuyun.inpatient.api.payload.VisitAdmittedPayload;
@@ -16,7 +18,6 @@ import com.fuyun.inpatient.api.payload.VisitRegisteredPayload;
 import com.fuyun.inpatient.api.payload.VisitTransferredPayload;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.RecordComponent;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -232,15 +233,18 @@ class InpatientMessagingContractTest {
     }
 
     @Test
-    @DisplayName("V800 段载荷锚：id 41/42/45/46/48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
+    @DisplayName("V800 段载荷锚：id 41/42/43/45/46/47/48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
     void v800PayloadRecordComponentsMatchDesc() {
         // id 48：Task 3 审查 Minor-1 义务补锚；id 49/52：Task 4 转科/床位事件新载荷；
         // id 41/45/46：Task 6 审核通过/作废/撤回三事件新载荷（审核与控制域发布面）；
-        // id 42：Task 7 转抄事件新载荷（转抄与执行计划域发布面）
+        // id 42：Task 7 转抄事件新载荷（转抄与执行计划域发布面）；
+        // id 43/47：Task 8 计划拆分/执行回签两事件新载荷（日切分解与执行回签域发布面）
         assertComponentsInDesc(V800_SQL, 41, OrderAuditedPayload.class);
         assertComponentsInDesc(V800_SQL, 42, OrderTransferredPayload.class);
+        assertComponentsInDesc(V800_SQL, 43, OrderPlanGeneratedPayload.class);
         assertComponentsInDesc(V800_SQL, 45, OrderCancelledPayload.class);
         assertComponentsInDesc(V800_SQL, 46, OrderRevokedPayload.class);
+        assertComponentsInDesc(V800_SQL, 47, OrderExecutedPayload.class);
         assertComponentsInDesc(V800_SQL, 48, VisitAdmittedPayload.class);
         assertComponentsInDesc(V800_SQL, 49, VisitTransferredPayload.class);
         assertComponentsInDesc(V800_SQL, 52, BedChangedPayload.class);
@@ -368,16 +372,19 @@ class InpatientMessagingContractTest {
     }
 
     /**
-     * 求取 record 组件名的斜杠拼接串（反射取组件名，与 desc 字段清单逐字比对）。
+     * 求取 record 组件名的斜杠拼接串（反射取组件名，与 desc 字段清单逐字比对）；List 型
+     * 组件追加 "[]"（desc 集合组件书写形态——如 id 43 planNos[]/planTimes[]、id 66 items[]，
+     * 标量组件零后缀保持原样）。
      *
      * @param payloadType 载荷 record 类型，非空
-     * @return 组件名斜杠拼接串
+     * @return 组件名斜杠拼接串（List 型带 [] 后缀）
      */
     private static String componentJoin(Class<?> payloadType) {
         return String.join(
                 "/",
                 Arrays.stream(payloadType.getRecordComponents())
-                        .map(RecordComponent::getName)
+                        .map(component ->
+                                component.getName() + (List.class.isAssignableFrom(component.getType()) ? "[]" : ""))
                         .toList());
     }
 

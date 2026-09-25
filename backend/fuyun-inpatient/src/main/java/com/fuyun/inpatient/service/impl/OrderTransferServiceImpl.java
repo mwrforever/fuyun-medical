@@ -28,6 +28,7 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
+import com.fuyun.inpatient.service.OrderPlanService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
 import com.fuyun.inpatient.service.OrderTransferService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
@@ -57,7 +58,8 @@ import org.springframework.transaction.annotation.Transactional;
  * order_transfer_log 双人核对留痕）→ 事务内发布 inpatient.order.transferred（V800 id 42
  * 载荷，transferType=医嘱类型子键小写形态——transferred 登记名不带子键故类型入载荷）→
  * 临时医嘱同步按明细行生成单次执行计划（plan_time=转抄时点+默认准备窗口，多项明细
- * plan_no 各异）。嘱托触发（standbyTrigger）：长期备用嘱按需生成当次计划实例，医嘱头
+ * plan_no 各异）；长期医嘱即时补生成当日剩余时点计划（OrderPlanService.compensateToday
+ * ——Task 8 衔接面，转抄事务内加入）。嘱托触发（standbyTrigger）：长期备用嘱按需生成当次计划实例，医嘱头
  * 不迁移（回签面推进归 Task 8 W-33）。计划查询（listPlans）：日期窗口+病区分页，关联号
  * 映射批量承载免行级 N+1。转科三分钩子（redirectPlansOnWardTransfer）：临时 PENDING 计划
  * 病区重定向、长期 PENDING 计划作废（TransferServiceImpl 阶段②回接面）。
@@ -104,6 +106,8 @@ public class OrderTransferServiceImpl implements OrderTransferService {
 
     private final OrderStateMachineService stateMachine;
 
+    private final OrderPlanService orderPlanService;
+
     private final ApplicationEventPublisher events;
 
     /**
@@ -116,6 +120,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
      * @param visitMapper        住院就诊 mapper，非空；病区聚合与号映射
      * @param seqGate            住院业务号发号器（PL 计划号），非空
      * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
+     * @param orderPlanService   医嘱执行计划服务（长期医嘱当日增量补偿——Task 8 衔接面），非空
      * @param events             进程内事件发布器（AFTER_COMMIT 出 MQ），非空
      */
     public OrderTransferServiceImpl(
@@ -126,6 +131,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
             InpatientVisitMapper visitMapper,
             InpatientSeqGate seqGate,
             OrderStateMachineService stateMachine,
+            OrderPlanService orderPlanService,
             ApplicationEventPublisher events) {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
@@ -134,6 +140,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         this.visitMapper = visitMapper;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
+        this.orderPlanService = orderPlanService;
         this.events = events;
     }
 
@@ -247,9 +254,12 @@ public class OrderTransferServiceImpl implements OrderTransferService {
                             order.getPatientId(),
                             orderType.subKey(),
                             transferredAt.toInstant())));
-            // 临时医嘱同步生成单次执行计划（长期医嘱计划归日切分解面，转抄不生成）
+            // 临时医嘱同步生成单次执行计划；长期医嘱即时补生成当日剩余时点计划（Task 8 补偿
+            // 面衔接——转抄事务内加入，频次字典缺失等异常仅 warn 不阻断转抄主链，勿双头生成）
             if (OrderClass.STAT.getCode().equals(order.getOrderClass())) {
                 createSinglePlans(order, visit, transferredAt, operator);
+            } else {
+                orderPlanService.compensateToday(orderNo);
             }
             transferredCount++;
         }

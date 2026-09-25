@@ -37,8 +37,9 @@ public interface OrderTransferService {
      * IP-1016/结论 REJECTED 拦截 IP-1016）→ 状态机迁移 AUDITED→TRANSFERRED（自动留痕）→
      * 转抄台账落行（转抄护士/时点/结论/第二核对人）→ 事务内发布 inpatient.order.transferred
      * （V800 id 42 载荷）→ 临时医嘱（STAT）同步按明细行生成单次执行计划（plan_time=转抄
-     * 时点+默认准备窗口，plan_no=PL 流水）。已 TRANSFERRED 医嘱幂等跳过（零副作用）；
-     * 任一条守卫不过整批回滚。
+     * 时点+默认准备窗口，plan_no=PL 流水）；长期医嘱（LONG）即时补生成当日剩余时点计划
+     * （OrderPlanService.compensateToday 衔接面——Task 8，转抄事务内加入）。已 TRANSFERRED
+     * 医嘱幂等跳过（零副作用）；任一条守卫不过整批回滚。
      *
      * @param req 批量转抄核对入参，非空；来源：POST /api/v1/inpatient/orders/transfer-check
      * @throws com.fuyun.common.exception.BizException IP-1009/IP-1010/IP-1016/IP-1022/IP-1023

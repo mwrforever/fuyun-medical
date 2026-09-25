@@ -20,11 +20,12 @@ import org.springframework.context.annotation.Import;
  * @Import 启用）。交换机全集归 integration 禁私建（A.5-4）；订阅队列五条声明已随 Task 2
  * 落位（SUBSCRIBED_EVENT_TYPES：M06 审方回执两条 + M13 计费联动三条，均 fy.topic 精确键
  * 绑定，fy.delay 声明不涉及）；Task 6 追加审方回执消费监听器 @Import（V800 id 53/54 两队列
- * 的首个消费者——队列声明零新增，绑定复用既有声明）；发布面经 InpatientEventPublisher 于
- * 业务事务提交后出 MQ。
+ * 的首个消费者——队列声明零新增，绑定复用既有声明）；Task 8 追加日切分解定时任务 @Import
+ * （PatientDuplicateScanJob 经 PatientMessagingConfig 注册先例——调度总开关归 fuyun-app
+ * SchedulingConfig，本处零新配置面）；发布面经 InpatientEventPublisher 于业务事务提交后出 MQ。
  */
 @Configuration
-@Import({InpatientEventPublisher.class, PharmacyAuditReplyListener.class})
+@Import({InpatientEventPublisher.class, PharmacyAuditReplyListener.class, OrderPlanDecomposeJob.class})
 public class InpatientMessagingConfig {
 
     /**

@@ -74,6 +74,11 @@
       <groupId>com.baomidou</groupId>
       <artifactId>mybatis-plus-jsqlparser</artifactId>
     </dependency>
+    <!-- 日切分解定时任务守护（A.5-14 多实例 @Scheduled 强制，父 POM 锁版本——patient 段同款） -->
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-spring</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>

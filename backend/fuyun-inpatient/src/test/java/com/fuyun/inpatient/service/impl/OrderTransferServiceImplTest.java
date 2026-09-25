@@ -35,6 +35,7 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
+import com.fuyun.inpatient.service.OrderPlanService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
@@ -65,7 +66,8 @@ import org.springframework.http.HttpStatus;
  * ③嘱托两次触发两计划 plan_no 各异④重复转抄幂等跳过⑤worklist 病区过滤（班次窗口/守卫/
  * 空集补面）；守卫面（结论 REJECTED/护士缺失/操作者非数字/医嘱缺失/状态/词表脏数据/就诊
  * 关联缺失）、计划查询批量号映射与关联缺失面、嘱托守卫面与并发重复生成、转科三分钩子
- * （长期作废+临时重定向+空集直过）、currentShift 三窗口边界直测、GC26 条件更新注解 SQL 锚。
+ * （长期作废+临时重定向+空集直过）、长期医嘱转抄补偿衔接（Task 8：compensateToday 调用面）、
+ * currentShift 三窗口边界直测、GC26 条件更新注解 SQL 锚。
  * MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册表信息；状态机按冻结接口
  * mock（状态面语义由 OrderStateMachineServiceImplTest 承载）。
  */
@@ -109,6 +111,9 @@ class OrderTransferServiceImplTest {
     private OrderStateMachineService stateMachine;
 
     @Mock
+    private OrderPlanService orderPlanService;
+
+    @Mock
     private ApplicationEventPublisher events;
 
     @Captor
@@ -136,7 +141,15 @@ class OrderTransferServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderTransferServiceImpl(
-                orderMapper, itemMapper, transferLogMapper, planMapper, visitMapper, seqGate, stateMachine, events);
+                orderMapper,
+                itemMapper,
+                transferLogMapper,
+                planMapper,
+                visitMapper,
+                seqGate,
+                stateMachine,
+                orderPlanService,
+                events);
         OperatorContextHolder.set(String.valueOf(OPERATOR));
     }
 
@@ -368,6 +381,14 @@ class OrderTransferServiceImplTest {
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
+
+        // 操作者上下文缺失（脱敏空标识分支——机器调用未注入操作者场景）：IP-1022
+        OperatorContextHolder.clear();
+        assertThatThrownBy(() -> service.transferCheck(
+                        new TransferCheckRequest(List.of("MO1"), "3001", CheckConclusion.PASSED, null)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
         OperatorContextHolder.set(String.valueOf(OPERATOR));
 
         // 医嘱不存在：IP-1009
@@ -407,7 +428,8 @@ class OrderTransferServiceImplTest {
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.VISIT_NOT_FOUND));
         verifyNoInteractions(stateMachine, transferLogMapper, events);
 
-        // 长期医嘱转抄：迁移+台账+事件正常，但不生成单次计划（长期计划归日切分解面）
+        // 长期医嘱转抄：迁移+台账+事件正常，不生成单次计划——计划面走当日补偿衔接（Task 8：
+        // compensateToday 承载剩余时点补生成，与临时单次计划生成点互斥勿双头生成）
         when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
         when(orderMapper.selectOne(any()))
                 .thenReturn(orderRow("MO2", 9002L, OrderStatus.AUDITED, "LONG", "DRUG", false));
@@ -415,6 +437,7 @@ class OrderTransferServiceImplTest {
         verify(stateMachine).transition(any(MedicalOrder.class), eq(OrderStatus.TRANSFERRED), any(), eq(OPERATOR));
         verify(transferLogMapper).insert(any(OrderTransferLog.class));
         verify(events).publishEvent(any(InpatientDomainEvent.class));
+        verify(orderPlanService).compensateToday("MO2");
         verify(itemMapper, never()).selectList(any());
         verify(planMapper, never()).insert(any(OrderExecutePlan.class));
     }

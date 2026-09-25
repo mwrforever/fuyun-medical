@@ -12,6 +12,7 @@ import com.fuyun.inpatient.service.impl.BedServiceImpl;
 import com.fuyun.inpatient.service.impl.InpatientOngoingVisitQuery;
 import com.fuyun.inpatient.service.impl.MedicalOrderServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderAuditServiceImpl;
+import com.fuyun.inpatient.service.impl.OrderPlanServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderStateMachineServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderTransferServiceImpl;
 import com.fuyun.inpatient.service.impl.TransferServiceImpl;
@@ -35,7 +36,8 @@ import org.springframework.context.annotation.Import;
  * 执行计划服务（工作台/批量转抄核对/计划查询/嘱托触发/转科三分钩子；TransferServiceImpl
  * 阶段②钩子自此闭合，MedicalOrderServiceImpl 停嘱联动未来计划作废回接落库）与转抄/计划
  * 三端点控制器。订阅监听器与发送模板归 InpatientMessagingConfig（消息装配集中点）。
- * Task 8+ 追加：执行回签等域服务与控制器。
+ * Task 8 追加：执行计划域（日切分解/当日补偿/CF-6 执行回签/闭环追溯——OrderPlanServiceImpl
+ * 注入 OrderTransferServiceImpl 补偿衔接面自此闭合）。
  */
 @Configuration
 @Import({
@@ -51,6 +53,7 @@ import org.springframework.context.annotation.Import;
     MedicalOrderServiceImpl.class,
     OrderAuditServiceImpl.class,
     OrderTransferServiceImpl.class,
+    OrderPlanServiceImpl.class,
     OrderController.class,
     TransferController.class,
     OrderPlanController.class
