@@ -4,6 +4,8 @@ import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.controller.AdmissionController;
 import com.fuyun.inpatient.controller.BedController;
 import com.fuyun.inpatient.controller.OrderController;
+import com.fuyun.inpatient.controller.OrderPlanController;
+import com.fuyun.inpatient.controller.TransferController;
 import com.fuyun.inpatient.controller.VisitTransferController;
 import com.fuyun.inpatient.service.impl.AdmissionServiceImpl;
 import com.fuyun.inpatient.service.impl.BedServiceImpl;
@@ -11,6 +13,7 @@ import com.fuyun.inpatient.service.impl.InpatientOngoingVisitQuery;
 import com.fuyun.inpatient.service.impl.MedicalOrderServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderAuditServiceImpl;
 import com.fuyun.inpatient.service.impl.OrderStateMachineServiceImpl;
+import com.fuyun.inpatient.service.impl.OrderTransferServiceImpl;
 import com.fuyun.inpatient.service.impl.TransferServiceImpl;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -28,8 +31,11 @@ import org.springframework.context.annotation.Import;
  * TransferServiceImpl 预注入装配链自此闭合）及开立三端点控制器。Task 6 追加：医嘱审核与
  * 控制域（V905 两表业务面）——审核与控制服务（系统自动审核/药师回执驱动/作废撤回重整/
  * 口头确认；MedicalOrderServiceImpl 审核链收口自此闭合）与状态机留痕回接
- * （appendStatusLog 落库）。订阅监听器与发送模板归 InpatientMessagingConfig（消息装配
- * 集中点）。Task 7+ 追加：转抄执行等域服务与控制器。
+ * （appendStatusLog 落库）。Task 7 追加：转抄与执行计划域（V906 两表业务面）——转抄与
+ * 执行计划服务（工作台/批量转抄核对/计划查询/嘱托触发/转科三分钩子；TransferServiceImpl
+ * 阶段②钩子自此闭合，MedicalOrderServiceImpl 停嘱联动未来计划作废回接落库）与转抄/计划
+ * 三端点控制器。订阅监听器与发送模板归 InpatientMessagingConfig（消息装配集中点）。
+ * Task 8+ 追加：执行回签等域服务与控制器。
  */
 @Configuration
 @Import({
@@ -44,6 +50,9 @@ import org.springframework.context.annotation.Import;
     OrderStateMachineServiceImpl.class,
     MedicalOrderServiceImpl.class,
     OrderAuditServiceImpl.class,
-    OrderController.class
+    OrderTransferServiceImpl.class,
+    OrderController.class,
+    TransferController.class,
+    OrderPlanController.class
 })
 public class InpatientWebConfig {}

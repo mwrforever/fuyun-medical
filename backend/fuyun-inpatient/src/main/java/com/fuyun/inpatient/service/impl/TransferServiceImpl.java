@@ -17,6 +17,7 @@ import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.service.MedicalOrderService;
+import com.fuyun.inpatient.service.OrderTransferService;
 import com.fuyun.inpatient.service.TransferService;
 import com.fuyun.inpatient.vo.TransferResultVO;
 import java.time.OffsetDateTime;
@@ -29,13 +30,14 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * 护理单元变更编排实现（转科四阶段/转床轻量路径，04-inpatient Spec §3.5 时序冻结）：
  * 单 @Transactional 编排事务 = ①MedicalOrderService.stopAllForTransfer 转出病区长期医嘱
- * 自动停嘱（Task 5 impl，接口先行冻结）→②在途三分（医嘱停嘱由①承载；<b>计划三分数据面
- * 操作——临时[order_class=stat]PENDING 计划保留随患者、长期 PENDING 计划作废——归 Task 7/8
- * 计划服务落地时在计划服务内补挂转科钩子，本编排钩子面已留；费用不改写归 M13 日切切分）→
- * ③床位流转（BedService.transferOut 转出床→DISINFECTING 闭合流水 / occupyForTransfer
- * 目标床 CAS 占床开新流水 / visit current_ward/current_bed 原子 CAS 更新）→④事务内发布
- * VisitTransferredPayload（V800 id 49 六字段）。任一阶段失败异常传播整体回滚（转出床状态
- * 复原由回滚语义保证）。转科/转床均为 ADMITTED 内属性变更，不改就诊状态。
+ * 自动停嘱（Task 5 impl，停嘱联动未来计划作废随 Task 7 V906 回接落库）→②在途三分
+ * （医嘱停嘱由①承载；<b>计划三分数据面操作——临时[order_class=stat]PENDING 计划保留随患者
+ * 病区重定向、长期 PENDING 计划作废——已由 Task 7 OrderTransferService.redirectPlansOnWardTransfer
+ * 回接本编排钩子点；费用不改写归 M13 日切切分）→③床位流转（BedService.transferOut 转出床
+ * →DISINFECTING 闭合流水 / occupyForTransfer 目标床 CAS 占床开新流水 / visit current_ward/
+ * current_bed 原子 CAS 更新）→④事务内发布 VisitTransferredPayload（V800 id 49 六字段）。
+ * 任一阶段失败异常传播整体回滚（转出床状态复原由回滚语义保证）。转科/转床均为 ADMITTED
+ * 内属性变更，不改就诊状态。
  * 线程安全：无状态 singleton；两编排入口各自 @Transactional 收口。
  */
 @Slf4j
@@ -55,16 +57,20 @@ public class TransferServiceImpl implements TransferService {
 
     private final MedicalOrderService medicalOrderService;
 
+    private final OrderTransferService orderTransferService;
+
     private final ApplicationEventPublisher events;
 
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import；MedicalOrderService 实现归 Task 5——
-     * MedicalOrderServiceImpl 落地后装配链闭合）。
+     * MedicalOrderServiceImpl 落地后装配链闭合；Task 7 追加 OrderTransferService——阶段②
+     * 计划三分钩子回接面）。
      *
      * @param visitMapper          住院就诊 mapper，非空；在院态定位与 current_* 原子更新
      * @param bedMapper            床位 mapper，非空；目标床位归属校验（只读）
      * @param bedService           床位管理服务（CAS 流转与流水开账权威），非空
      * @param medicalOrderService  住院医嘱服务（转科自动停嘱，Task 5 impl），非空
+     * @param orderTransferService 医嘱转抄与执行计划服务（阶段②计划三分钩子，Task 7 回接），非空
      * @param events               进程内事件发布器（AFTER_COMMIT 出 MQ），非空
      */
     public TransferServiceImpl(
@@ -72,17 +78,20 @@ public class TransferServiceImpl implements TransferService {
             BedMapper bedMapper,
             BedService bedService,
             MedicalOrderService medicalOrderService,
+            OrderTransferService orderTransferService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
         this.bedMapper = bedMapper;
         this.bedService = bedService;
         this.medicalOrderService = medicalOrderService;
+        this.orderTransferService = orderTransferService;
         this.events = events;
     }
 
     /**
      * 转科四阶段编排（单事务，时序冻结见类注）：守卫链（在院态/目标病区异病区/在院有床/目标床
-     * 异床且归属相符）→①停嘱→②三分钩子面→③床位流转+定位 CAS→④transferred 事件。
+     * 异床且归属相符）→①停嘱→②计划三分（临时 PENDING 重定向/长期 PENDING 作废）→③床位流转+
+     * 定位 CAS→④transferred 事件。
      *
      * @param visitId 住院就诊号（I 型 14 位），非空；来源：路径参数
      * @param req     转科入参（目标科室/病区/床位），非空
@@ -99,10 +108,12 @@ public class TransferServiceImpl implements TransferService {
         requireCurrentBed(visit);
         rejectSameBed(visit, req.toBedId());
         requireTargetBed(req.toBedId(), req.toWardId());
-        // 阶段①：转出病区全部长期医嘱自动停嘱（stop_reason=转科，停嘱时间=服务器时间；Task 5 impl）
+        // 阶段①：转出病区全部长期医嘱自动停嘱（stop_reason=转科，停嘱时间=服务器时间；停嘱联动
+        // 未来计划作废随 Task 7 V906 回接真实落库）
         medicalOrderService.stopAllForTransfer(visit.getId(), TRANSFER_STOP_REASON);
-        // 阶段②：在途三分——医嘱停嘱由①承载；计划三分数据面操作归 Task 7/8 计划服务补挂转科钩子
-        // （临时 stat PENDING 计划保留随患者重定向、长期 PENDING 计划作废）；费用不改写归 M13 日切。
+        // 阶段②：在途三分——医嘱停嘱由①承载；计划三分数据面（临时 stat PENDING 计划保留随患者
+        // 病区重定向、长期 PENDING 计划作废——①的未来时点作废外补齐全量）；费用不改写归 M13 日切
+        orderTransferService.redirectPlansOnWardTransfer(visit.getId(), req.toWardId(), operator());
         // 阶段③④：床位三段流转 + 定位 CAS + 事件
         OffsetDateTime transferredAt =
                 changeLocation(visit, req.toDeptId(), req.toWardId(), req.toBedId(), TransferType.WARD_TRANSFER);

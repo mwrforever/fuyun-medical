@@ -28,6 +28,7 @@ import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.service.BedService;
 import com.fuyun.inpatient.service.MedicalOrderService;
+import com.fuyun.inpatient.service.OrderTransferService;
 import com.fuyun.inpatient.vo.TransferResultVO;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -46,10 +47,11 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 
 /**
- * 转科四阶段编排与转床轻量路径单测（Task 4 冻结集）：四阶段全链（mock 医嘱停嘱、断言床位
- * 三段流转与 transferred 六字段载荷）、目标床位被占编排失败回滚（@Transactional 回滚语义下
- * 以 mock 验证调用序 + 异常传播）、同病区转床轻量路径（无停嘱调用）与守卫错误面。
- * MedicalOrderService 为 Task 5 冻结接口（本套 mock 消费）。MP 3.5.17 单测范式：lambdaQuery
+ * 转科四阶段编排与转床轻量路径单测（Task 4 冻结集 + Task 7 阶段②计划三分钩子回接面）：
+ * 四阶段全链（mock 医嘱停嘱与计划三分、断言床位三段流转与 transferred 六字段载荷）、
+ * 目标床位被占编排失败回滚（@Transactional 回滚语义下以 mock 验证调用序 + 异常传播）、
+ * 同病区转床轻量路径（无停嘱与计划三分调用）与守卫错误面。MedicalOrderService/
+ * OrderTransferService 为冻结接口（本套 mock 消费）。MP 3.5.17 单测范式：lambdaQuery
  * 触达实体 @BeforeAll 手工注册表信息；条件更新断言直读 @Update 注解 SQL（GC26 可执行锚）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -90,6 +92,9 @@ class TransferServiceImplTest {
     private MedicalOrderService medicalOrderService;
 
     @Mock
+    private OrderTransferService orderTransferService;
+
+    @Mock
     private ApplicationEventPublisher events;
 
     @Captor
@@ -105,7 +110,8 @@ class TransferServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new TransferServiceImpl(visitMapper, bedMapper, bedService, medicalOrderService, events);
+        service = new TransferServiceImpl(
+                visitMapper, bedMapper, bedService, medicalOrderService, orderTransferService, events);
         OperatorContextHolder.set("doc-01");
     }
 
@@ -132,9 +138,11 @@ class TransferServiceImplTest {
         assertThat(result.toBedId()).isEqualTo(TO_BED);
         assertThat(result.transferredAt()).isNotNull();
 
-        // 四阶段时序冻结锚：①停嘱（转出病区长期医嘱）→ ③转出床流转→目标床占床→visit 定位 CAS
-        InOrder order = inOrder(medicalOrderService, bedService, visitMapper);
+        // 四阶段时序冻结锚：①停嘱（转出病区长期医嘱）→ ②计划三分（Task 7 钩子回接——临时
+        // PENDING 重定向/长期 PENDING 作废）→ ③转出床流转→目标床占床→visit 定位 CAS
+        InOrder order = inOrder(medicalOrderService, orderTransferService, bedService, visitMapper);
         order.verify(medicalOrderService).stopAllForTransfer(VISIT_PK, "转科");
+        order.verify(orderTransferService).redirectPlansOnWardTransfer(VISIT_PK, TO_WARD, "doc-01");
         order.verify(bedService).transferOut(FROM_BED, VISIT_ID);
         order.verify(bedService).occupyForTransfer(TO_BED, VISIT_ID, PATIENT_ID, TransferType.WARD_TRANSFER);
         order.verify(visitMapper).casTransferLocation(VISIT_ID, "D02", TO_WARD, TO_BED, "doc-01");
@@ -219,8 +227,9 @@ class TransferServiceImplTest {
 
         TransferResultVO result = service.changeBed(VISIT_ID, new ChangeBedRequest(SAME_WARD_TO_BED));
 
-        // 轻量路径锚：无医嘱停嘱步骤（仅床位切换与事件）
+        // 轻量路径锚：无医嘱停嘱与计划三分步骤（仅床位切换与事件——同病区无病区重定向面）
         verify(medicalOrderService, never()).stopAllForTransfer(any(), any());
+        verifyNoInteractions(orderTransferService);
         verify(bedService).transferOut(FROM_BED, VISIT_ID);
         verify(bedService).occupyForTransfer(SAME_WARD_TO_BED, VISIT_ID, PATIENT_ID, TransferType.BED_CHANGE);
         assertThat(result.fromWardId()).isEqualTo(FROM_WARD);
@@ -307,8 +316,8 @@ class TransferServiceImplTest {
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.CONFLICT));
 
-        // 全部守卫拒绝路径：停嘱/床位流转/事件零触达
-        verifyNoInteractions(medicalOrderService, bedService, events);
+        // 全部守卫拒绝路径：停嘱/计划三分/床位流转/事件零触达
+        verifyNoInteractions(medicalOrderService, orderTransferService, bedService, events);
     }
 
     /** 构造在院就诊行（ADMITTED，W01/501 定位面——编排起始载体）。 */

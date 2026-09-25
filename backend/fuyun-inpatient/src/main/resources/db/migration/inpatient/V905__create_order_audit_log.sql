@@ -38,7 +38,7 @@ CREATE TABLE inpatient.order_status_log (
     to_status    VARCHAR(20)  NOT NULL,                             -- 迁移后状态（OrderStatus 八态；重整留痕行 from=to）
     reason       VARCHAR(255) NOT NULL,                             -- 迁移/留痕原因（审核通过/驳回/停嘱理由/作废理由/撤回/重整等）
     operator     VARCHAR(64)  NOT NULL,                             -- 操作者员工 ID（触发迁移/留痕的主体）
-    occurred_at  TIMESTAMPTZ  NOT NULL,                             -- 发生时点（服务器时间；M06 回执驱动的迁移取回执时点）
+    occurred_at  TIMESTAMPTZ  NOT NULL,                             -- 发生时点（服务器时间——状态机留痕统一落应用服务器时钟，不取回执时点）
     created_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ  NOT NULL DEFAULT now(),
     created_by   VARCHAR(64)  NOT NULL DEFAULT 'system',

@@ -35,6 +35,7 @@ import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
+import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.service.OrderAuditService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
@@ -69,11 +70,12 @@ import org.springframework.http.HttpStatus;
 /**
  * 医嘱开立域服务单测（Task 5 冻结八用例 + Task 6 审核链/重提面 + 覆盖率补面）：四层校验
  * 顺序与错误面（授权/过敏/明细频次/嘱托）、开立落库与 order.created 子键路由载荷、成组
- * 三要素、转科批量停嘱链（状态机迁移+停嘱值面+stopped 事件）、查询面与守卫补充面（操作者
- * 非数字/非在院/词表外/号冲突）、停嘱三态合法（Task 6 冻结用例⑥）、驳回重提面（Task 6：
- * 内容重写+状态回 CREATED+重发开立事件+审核链重入）。MP 3.5.17 单测范式：lambdaQuery
- * 触达实体 @BeforeAll 手工注册表信息。OrderStateMachineService/OrderAuditService 按冻结
- * 接口 mock（状态面/审核面语义由各自独立测试承载）。
+ * 三要素、转科批量停嘱链（状态机迁移+停嘱值面+stopped 事件+Task 7 未来计划作废回接+
+ * 就诊行单次取数 N+1 消解）、查询面与守卫补充面（操作者非数字/非在院/词表外/号冲突）、
+ * 停嘱三态合法（Task 6 冻结用例⑥）、驳回重提面（Task 6：内容重写+状态回 CREATED+重发
+ * 开立事件+审核链重入）。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册
+ * 表信息。OrderStateMachineService/OrderAuditService 按冻结接口 mock（状态面/审核面语义
+ * 由各自独立测试承载）。
  */
 @ExtendWith(MockitoExtension.class)
 class MedicalOrderServiceImplTest {
@@ -101,6 +103,9 @@ class MedicalOrderServiceImplTest {
 
     @Mock
     private OrderFrequencyMapper frequencyMapper;
+
+    @Mock
+    private OrderExecutePlanMapper planMapper;
 
     @Mock
     private InpatientVisitMapper visitMapper;
@@ -150,6 +155,7 @@ class MedicalOrderServiceImplTest {
                 orderMapper,
                 itemMapper,
                 frequencyMapper,
+                planMapper,
                 visitMapper,
                 seqGate,
                 practiceCheckPort,
@@ -416,6 +422,14 @@ class MedicalOrderServiceImplTest {
             assertThat(payload.stoppedAt()).isNotNull();
         });
 
+        // Task 7 回接（cancelFuturePlans 落库断言）：每医嘱一条未来计划批量作废条件更新
+        // （orderId+停嘱时点基准+操作者——停嘱时点后的 PENDING 置 CANCELLED）
+        verify(planMapper, times(2))
+                .cancelFuturePending(eq(9001L), any(OffsetDateTime.class), eq(String.valueOf(OPERATOR)));
+        // N+1 消解断言（Task 5 minor 回接）：两条医嘱批量停嘱共享同一就诊行单次取数
+        // （visitNoOf 不再逐条重查——就诊行 selectById 恰一次）
+        verify(visitMapper, times(1)).selectById(VISIT_PK);
+
         // 空集直过：无可停长期医嘱零迁移零事件（转科编排不受空集阻断）
         Mockito.reset(stateMachine, events);
         when(orderMapper.selectList(any())).thenReturn(List.of());
@@ -618,7 +632,7 @@ class MedicalOrderServiceImplTest {
     }
 
     @Test
-    @DisplayName("转科停嘱防御面：就诊主键无行 IP-1007、停嘱值面零行 IP-1023、事件号映射行缺失 IP-1007")
+    @DisplayName("转科停嘱防御面：就诊主键无行 IP-1007、停嘱值面零行 IP-1023、事件号映射行缺失 IP-1007（单条路径取数面）")
     void stopAllForTransferCoversDefensiveBranches() {
         // 就诊主键无行（编排调用前已校验，此处防御分支）：IP-1007
         when(visitMapper.selectById(VISIT_PK)).thenReturn(null);
@@ -638,13 +652,12 @@ class MedicalOrderServiceImplTest {
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.CONFLICT));
         verifyNoInteractions(events);
 
-        // 事件号映射行缺失（数据不一致）：状态已迁移但事务整体回滚（@Transactional 语义），IP-1007
+        // 事件号映射行缺失（数据不一致——单条停嘱路径就诊号取数面；批量路径已单次取数无重查面）：
+        // 状态已迁移但事务整体回滚（@Transactional 语义），IP-1007（停嘱值面未及触达）
         Mockito.reset(orderMapper);
-        when(orderMapper.selectList(any())).thenReturn(List.of(orderRow("MO2", OrderStatus.EXECUTING)));
-        when(orderMapper.updateStopValues(eq("MO2"), any(), eq("转科"), eq(String.valueOf(OPERATOR))))
-                .thenReturn(1);
-        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow(), null);
-        assertThatThrownBy(() -> service.stopAllForTransfer(VISIT_PK, "转科"))
+        when(orderMapper.selectOne(any())).thenReturn(orderRow("MO2", OrderStatus.EXECUTING));
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(null);
+        assertThatThrownBy(() -> service.stop("MO2", "转科"))
                 .isInstanceOf(BizException.class)
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.VISIT_NOT_FOUND));

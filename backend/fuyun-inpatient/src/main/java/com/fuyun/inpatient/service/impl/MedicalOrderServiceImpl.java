@@ -25,6 +25,7 @@ import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
+import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.service.MedicalOrderService;
 import com.fuyun.inpatient.service.OrderAuditService;
@@ -59,7 +60,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 回 CREATED + 重发 order.created（M06 重开审方任务）+ 审核链重入；仅限 AUDIT_REJECTED 态。
  * 停嘱面（stop/stopAllForTransfer 共用 stopInternal）：状态机迁移 STOPPED（唯一执行面
  * OrderStateMachineService，合法态 AUDITED/TRANSFERRED/EXECUTING）+ 停嘱时点/原因落值 +
- * 未来计划批量作废（数据面归 Task 7 V906 回接）+ stopped 事件（V800 id 44 载荷）。
+ * 未来计划批量作废（V906 order_execute_plan 落库——Task 7 回接：停嘱时点后的 PENDING 计划
+ * 批量置 CANCELLED）+ stopped 事件（V800 id 44 载荷）。
  * 转科停嘱失败异常传播整体回滚编排事务（接口契约）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
@@ -82,6 +84,8 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     private final OrderFrequencyMapper frequencyMapper;
 
+    private final OrderExecutePlanMapper planMapper;
+
     private final InpatientVisitMapper visitMapper;
 
     private final InpatientSeqGate seqGate;
@@ -98,11 +102,13 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import——Task 5 落地后闭合 Task 4 预注入的
-     * TransferServiceImpl 医嘱停嘱装配链；Task 6 追加审核链服务——开立/重提的审核收口）。
+     * TransferServiceImpl 医嘱停嘱装配链；Task 6 追加审核链服务——开立/重提的审核收口；
+     * Task 7 追加执行计划 mapper——停嘱联动未来计划作废回接）。
      *
      * @param orderMapper       医嘱主表 mapper，非空
      * @param itemMapper        医嘱明细 mapper，非空
      * @param frequencyMapper   频次字典 mapper，非空；频次有效性校验（IP-1021）
+     * @param planMapper        执行计划 mapper，非空；停嘱联动未来计划批量作废（Task 7 回接面）
      * @param visitMapper       住院就诊 mapper，非空；在院校验与 visitId 号映射
      * @param seqGate           住院业务号发号器（MO 医嘱号），非空
      * @param practiceCheckPort 执业授权校验端口（system api），非空；L1 承载
@@ -115,6 +121,7 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             MedicalOrderMapper orderMapper,
             MedicalOrderItemMapper itemMapper,
             OrderFrequencyMapper frequencyMapper,
+            OrderExecutePlanMapper planMapper,
             InpatientVisitMapper visitMapper,
             InpatientSeqGate seqGate,
             PracticeCheckPort practiceCheckPort,
@@ -125,6 +132,7 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
         this.frequencyMapper = frequencyMapper;
+        this.planMapper = planMapper;
         this.visitMapper = visitMapper;
         this.seqGate = seqGate;
         this.practiceCheckPort = practiceCheckPort;
@@ -284,7 +292,8 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     @Transactional
     public void stop(String orderNo, String reason) {
         MedicalOrder order = requireOrder(orderNo);
-        stopInternal(order, reason);
+        // 单条路径就诊号一次取数（visitNo 入参化——批量路径复用编排已载就诊行免逐条重查）
+        stopInternal(order, reason, visitNoOf(order.getVisitId()));
     }
 
     /**
@@ -317,7 +326,9 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             return;
         }
         for (MedicalOrder order : ongoing) {
-            stopInternal(order, reason);
+            // N+1 消解（Task 5 minor 回接）：就诊号由编排已载就诊行单次取数传入，批量停嘱
+            // 不再逐条 visitNoOf 重查同一 visit 行——停嘱行为与其余值面零变化
+            stopInternal(order, reason, visit.getVisitId());
         }
         log.info(
                 "转科批量停嘱完成：visitId(pk)={}，visitNo={}，停嘱 {} 条，reason={}，operator={}",
@@ -398,13 +409,15 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     /**
      * 停嘱共用实现（stop/stopAllForTransfer）：状态机迁移 STOPPED → 停嘱值面落值 → 未来计划
-     * 作废留痕（数据面归 Task 7 回接）→ 事务内发布 stopped 事件。
+     * 作废（V906 落库——停嘱时点后的 PENDING 计划批量置 CANCELLED）→ 事务内发布 stopped 事件。
+     * 就诊号入参化承载（单条路径一查、批量路径复用编排就诊行——N+1 消解）。
      *
-     * @param order  停嘱医嘱行（status 为停嘱前实态），非空
-     * @param reason 停嘱原因，非空
+     * @param order   停嘱医嘱行（status 为停嘱前实态），非空
+     * @param reason  停嘱原因，非空
+     * @param visitNo 住院就诊号（I 型 14 位，事件载荷取数面——调用方已取数），非空
      * @throws BizException IP-1010 停嘱状态机违例/IP-1022 操作者标识非数字
      */
-    private void stopInternal(MedicalOrder order, String reason) {
+    private void stopInternal(MedicalOrder order, String reason, String visitNo) {
         long operator = parseOperatorAsEmployeeId();
         // 状态机迁移 STOPPED（合法态裁决 + CAS 唯一执行面；CREATED/AUDIT_REJECTED/终态拒 IP-1010）
         stateMachine.transition(order, OrderStatus.STOPPED, reason, operator);
@@ -416,11 +429,10 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
                     HttpStatus.CONFLICT,
                     "停嘱值面落写零行（并发逻辑删窗口）：orderNo=" + order.getOrderNo());
         }
-        // 未来执行计划批量作废（数据面归 Task 7 V906 建表后回接——调用点留痕）
+        // 未来执行计划批量作废（V906 回接真实落库——调用点与签名 Task 5 冻结零改动）
         cancelFuturePlans(order, stoppedAt);
         // 事务内发布停嘱事件（AFTER_COMMIT 出 fy.topic；M05 撮此撤销未执行执行单、M13 按停嘱时点
         // 截断持续性费用）；载荷仅定位键/时间线/原因，禁患者姓名/诊断文本
-        String visitNo = visitNoOf(order.getVisitId());
         events.publishEvent(new InpatientDomainEvent(
                 InpatientMessagingConstants.EVENT_ORDER_STOPPED,
                 new OrderStoppedPayload(
@@ -440,16 +452,26 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     }
 
     /**
-     * 未来执行计划批量作废（PENDING 计划置 CANCELLED）：order_execute_plan 表归 Task 7 V906
-     * 建表落盘，本版本以日志留痕承载调用点——建表后在本方法内补批量作废 SQL（调用点与签名
-     * 冻结零改动）。protected 形态供 Task 7 回接时覆写扩展。
+     * 未来执行计划批量作废（PENDING 计划置 CANCELLED）：停嘱时点后的未执行计划批量作废
+     * （条件 UPDATE + 影响行数——Task 5 冻结调用点，Task 7 V906 建表后回接真实落库；
+     * 0 行=无未来计划为正常场景仅记日志）。protected 形态保留供后续执行域扩展观察面。
      *
      * @param order     停嘱医嘱行（状态已 STOPPED），非空
      * @param stoppedAt 停嘱时点（计划作废时间线基准——仅作废该时点后的未执行计划），非空
      */
-    // TODO(order-execute-plan): 未来计划批量作废 SQL，计划于 Task 7 V906 建表后回接
     protected void cancelFuturePlans(MedicalOrder order, OffsetDateTime stoppedAt) {
-        log.info("停嘱联动计划作废（数据面归 Task 7 V906 回接，当前留痕）：orderNo={}，stoppedAt={}", order.getOrderNo(), stoppedAt);
+        // 停嘱链操作者上下文已在 stopInternal 校验非空；防御回退 system 与审计列默认同源
+        String operator = OperatorContextHolder.get();
+        String operatorText = operator == null || operator.isBlank() ? "system" : operator;
+        // 数据库写操作：未来 PENDING 计划批量置 CANCELLED（转科瞬间长期在途全量 PENDING 的
+        // 补齐作废归转科三分钩子 redirectPlansOnWardTransfer）
+        int cancelled = planMapper.cancelFuturePending(order.getId(), stoppedAt, operatorText);
+        log.info(
+                "停嘱联动未来计划作废：orderNo={}，stoppedAt={}，作废 {} 条，operator={}",
+                order.getOrderNo(),
+                stoppedAt,
+                cancelled,
+                operatorText);
     }
 
     /**

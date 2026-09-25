@@ -10,6 +10,7 @@ import com.fuyun.inpatient.api.payload.OrderCancelledPayload;
 import com.fuyun.inpatient.api.payload.OrderCreatedItem;
 import com.fuyun.inpatient.api.payload.OrderCreatedPayload;
 import com.fuyun.inpatient.api.payload.OrderRevokedPayload;
+import com.fuyun.inpatient.api.payload.OrderTransferredPayload;
 import com.fuyun.inpatient.api.payload.VisitAdmittedPayload;
 import com.fuyun.inpatient.api.payload.VisitRegisteredPayload;
 import com.fuyun.inpatient.api.payload.VisitTransferredPayload;
@@ -43,6 +44,10 @@ class InpatientMessagingContractTest {
     /** V800 种子 SQL 原文（fuyun-nursing 模块资源不在本模块 classpath，走仓库同级模块源文件） */
     private static final String V800_SQL = loadSiblingSql(
             "fuyun-nursing/src/main/resources/db/migration/nursing/V800__seed_nursing_event_registry.sql");
+
+    /** V605 种子 SQL 原文（fuyun-billing 模块资源——billing 段订阅事件两条的登记侧原文锚） */
+    private static final String V605_SQL = loadSiblingSql(
+            "fuyun-billing/src/main/resources/db/migration/billing/V605__seed_billing_event_registry.sql");
 
     /** 种子行提取正则：SELECT &lt;id&gt;, '&lt;event_type&gt;'（INSERT...SELECT 形态统一先例） */
     private static final Pattern SEED_ROW_PATTERN = Pattern.compile("SELECT (\\d+), '([^']+)'");
@@ -188,6 +193,16 @@ class InpatientMessagingContractTest {
                         "billing.deposit.changed",
                         "billing.settlement.completed",
                         "billing.arrears.approved");
+        // 订阅登记原文锚（Task 2 minor 回接）：billing 两条（id 19/21）逐字在 V605 种子原文、
+        // pharmacy 两条（id 53/54）逐字在 V800 种子原文——消费声明面与登记面单侧漂移即红灯；
+        // billing.arrears.approved 的登记文件 V1002 归 billing 侧任务（Task 13）落地后补锚，
+        // 当前以字面量冻结面承载
+        assertThat(seedRows(V605_SQL).stream().map(SeedRow::eventType))
+                .as("V605 登记行须含 billing 段两条订阅事件原文")
+                .contains("billing.settlement.completed", "billing.deposit.changed");
+        assertThat(V800_SQL)
+                .as("V800 登记文件须含 pharmacy 段两条回执订阅事件原文")
+                .contains("'pharmacy.medication-order.audit-completed'", "'pharmacy.medication-order.audit-rejected'");
     }
 
     @Test
@@ -217,11 +232,13 @@ class InpatientMessagingContractTest {
     }
 
     @Test
-    @DisplayName("V800 段载荷锚：id 41/45/46/48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
+    @DisplayName("V800 段载荷锚：id 41/42/45/46/48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
     void v800PayloadRecordComponentsMatchDesc() {
         // id 48：Task 3 审查 Minor-1 义务补锚；id 49/52：Task 4 转科/床位事件新载荷；
-        // id 41/45/46：Task 6 审核通过/作废/撤回三事件新载荷（审核与控制域发布面）
+        // id 41/45/46：Task 6 审核通过/作废/撤回三事件新载荷（审核与控制域发布面）；
+        // id 42：Task 7 转抄事件新载荷（转抄与执行计划域发布面）
         assertComponentsInDesc(V800_SQL, 41, OrderAuditedPayload.class);
+        assertComponentsInDesc(V800_SQL, 42, OrderTransferredPayload.class);
         assertComponentsInDesc(V800_SQL, 45, OrderCancelledPayload.class);
         assertComponentsInDesc(V800_SQL, 46, OrderRevokedPayload.class);
         assertComponentsInDesc(V800_SQL, 48, VisitAdmittedPayload.class);
