@@ -14,7 +14,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
 /**
  * 住院域事件消费侧（M13 住院计费联动，P2 PR-1 Task 13）：inpatient.visit.# 与
  * inpatient.order.# 两通配队列（自声明绑定，governance 订阅登记精确匹配无法承载通配段——
- * Task 12 drug 子键队列自声明同款先例），按信封 eventType 派发六事件业务体。
+ * Task 12 drug 子键队列自声明同款先例），按信封 eventType 子键族归一后派发六事件业务体
+ * （R3-06：created/audited 投递面 eventType 携 order_type 子键，Task 16 IT 实测修正——
+ * 未归一时子键帧全部落入 default 分支静默直返，住院离散计价失效）。
  *
  * <p>冻结面适配留痕（brief「audited 通配离散计价」×V800 id 41 冻结载荷的字面差异）：audited
  * 载荷六字段（m04OrderNo/visitId/patientId/auditType/auditOperator/auditedAt）不携 items，
@@ -119,7 +121,9 @@ public class BillingInpatientEventListener {
     /**
      * 医嘱域业务体派发（包级直驱可测）：created 计价/executed 确认/stopped+三终态（cancelled/
      * revoked/audit-rejected）截断；audited 到店 info 留痕直返（冻结载荷不携 items，计价数据面
-     * 在 created——类注释适配留痕）。
+     * 在 created——类注释适配留痕）。派发前先做子键族归一（R3-06：created/audited 两事件的
+     * routing key 与投递面 eventType 携 order_type 子键、登记名不带子键——通配队列收信的
+     * eventType 携子键，须归一回登记名方可与登记字面量精确比对）。
      *
      * @param envelope 已解析信封，非空
      * @throws IllegalStateException 载荷缺定位键或 items 非数组（不合规帧死信留痕）时触发
@@ -127,7 +131,7 @@ public class BillingInpatientEventListener {
     void handleOrderEvent(EventEnvelope envelope) {
         JsonNode payload = envelope.payload();
         String eventType = envelope.eventType();
-        switch (eventType) {
+        switch (stripOrderTypeSubKey(eventType)) {
             case BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_CREATED -> {
                 String m04OrderNo = requireText(envelope, payload, "m04OrderNo");
                 JsonNode items = payload.path("items");
@@ -156,6 +160,25 @@ public class BillingInpatientEventListener {
                 log.info("医嘱审核通过事件到店（无业务动作——计价数据面在 created 载荷）：eventType={}", eventType);
             default -> log.info("住院医嘱域事件未纳管（通配队列直返）：eventType={}", eventType);
         }
+    }
+
+    /**
+     * 子键族归一（R3-06 登记名不带子键）：created/audited 两事件的投递面 eventType 携 order_type
+     * 子键（如 inpatient.order.created.drug），通配队列按 inpatient.order.# 收信——须剥离子键
+     * 归一回登记名，方可与 V800/V901 登记字面量精确比对；无子键帧原样返回（其余六派发分支
+     * 均为无子键登记名，行为不变）。
+     *
+     * @param eventType 信封投递面 eventType，非空
+     * @return 登记名（created/audited 携子键帧剥离为登记名；其余原样）
+     */
+    private static String stripOrderTypeSubKey(String eventType) {
+        if (eventType.startsWith(BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_CREATED + ".")) {
+            return BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_CREATED;
+        }
+        if (eventType.startsWith(BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_AUDITED + ".")) {
+            return BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_AUDITED;
+        }
+        return eventType;
     }
 
     /**

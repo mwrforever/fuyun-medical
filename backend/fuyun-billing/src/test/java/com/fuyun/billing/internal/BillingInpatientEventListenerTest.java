@@ -3,8 +3,10 @@ package com.fuyun.billing.internal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -175,6 +177,40 @@ class BillingInpatientEventListenerTest {
                 false);
 
         verifyNoInteractions(inpatientChargeService);
+    }
+
+    @Test
+    @DisplayName("created 子键帧归一派发：eventType=inpatient.order.created.drug 剥离子键进离散计价业务体（Task 16 IT 实测修正）")
+    void orderCreatedWithDrugSubKeyDispatchesPricing() throws Exception {
+        driveHandler(
+                envelope(
+                        "inpatient.order.created.drug",
+                        "{\"m04OrderNo\":\"MO2026092500001\",\"visitId\":\"I20260925000001\",\"patientId\":7,"
+                                + "\"orderType\":\"drug\",\"orderClass\":\"STAT\",\"items\":[{\"itemCode\":\"DRUG-001\","
+                                + "\"quantity\":\"1\"}]}"),
+                false);
+
+        verify(inpatientChargeService)
+                .onOrderCreated(
+                        ArgumentMatchers.eq("MO2026092500001"),
+                        ArgumentMatchers.eq("I20260925000001"),
+                        ArgumentMatchers.eq(7L),
+                        any(JsonNode.class));
+    }
+
+    @Test
+    @DisplayName("stopped 子键族外帧不受归一影响：无子键 stopped 照常截断；order-plan.generated 未纳管直返")
+    void nonSubKeyFamiliesUnaffectedByNormalization() throws Exception {
+        driveHandler(
+                envelope(
+                        "inpatient.order.stopped",
+                        "{\"m04OrderNo\":\"MO2026092500001\",\"visitId\":\"I20260925000001\",\"patientId\":7,"
+                                + "\"stoppedAt\":\"2026-09-25T05:00:00Z\",\"stopOperator\":\"EMP-1\",\"stopReason\":\"转科\"}"),
+                false);
+        driveHandler(envelope("inpatient.order-plan.generated", "{\"m04OrderNo\":\"MO2026092500001\"}"), false);
+
+        verify(inpatientChargeService).onOrderStopped("MO2026092500001", "I20260925000001");
+        verify(inpatientChargeService, never()).onOrderCreated(any(), any(), anyLong(), any());
     }
 
     @Test
