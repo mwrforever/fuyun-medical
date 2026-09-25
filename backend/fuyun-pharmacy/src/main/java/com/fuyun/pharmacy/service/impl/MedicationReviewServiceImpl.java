@@ -77,7 +77,7 @@ public class MedicationReviewServiceImpl implements IMedicationReviewService {
         OrderMedication existing = medicationMapper.selectOne(
                 Wrappers.<OrderMedication>lambdaQuery().eq(OrderMedication::getM04OrderNo, m04OrderNo));
         if (existing != null) {
-            handleRepublish(existing, itemsJson);
+            handleRepublish(existing, freqCode, itemsJson);
             return;
         }
         // 数据库写操作：快照 + 待审任务同事务落库（「重复消费仅一任务」由同事务原子性 + uk 双兜底）
@@ -98,13 +98,15 @@ public class MedicationReviewServiceImpl implements IMedicationReviewService {
 
     /**
      * 重发收敛（同一 m04_order_no 的事件再投）：任务缺失或在审/已过审一律跳过（eventId 构件
-     * 幂等之外的业务级「仅一任务」）；REJECTED 即 M04 重提闭环——刷新明细快照（重提可改方）
-     * + 同任务 CAS 复位 PENDING（uk 一快照一任务，重开非新建）。
+     * 幂等之外的业务级「仅一任务」）；REJECTED 即 M04 重提闭环——同语句刷新头值面（重提可改
+     * 频次，freq_code 透传可空）与明细快照（重提可改方）+ 同任务 CAS 复位 PENDING（uk 一快照
+     * 一任务，重开非新建）。
      *
      * @param medication 既有快照行，非空
+     * @param freqCode   本次事件的频次编码（长期非空/临时 null），可空
      * @param itemsJson  本次事件的明细快照 JSON，非空
      */
-    private void handleRepublish(OrderMedication medication, String itemsJson) {
+    private void handleRepublish(OrderMedication medication, String freqCode, String itemsJson) {
         ReviewTask task = taskMapper.selectOne(
                 Wrappers.<ReviewTask>lambdaQuery().eq(ReviewTask::getOrderMedicationId, medication.getId()));
         if (task == null || !STATUS_REJECTED.equals(task.getStatus())) {
@@ -116,9 +118,9 @@ public class MedicationReviewServiceImpl implements IMedicationReviewService {
                     task == null ? "任务行缺失（同事务原子性兜底，理论不可达）" : task.getStatus());
             return;
         }
-        // 数据库写操作：重提明细快照刷新 + 任务复位重开（CAS 0 行=并发决策抢先，按现状收敛不上抛）
-        medication.setItems(itemsJson);
-        medicationMapper.updateById(medication);
+        // 数据库写操作：重提头值面+明细快照同语句刷新（freq_code 透传可空，快照以载荷为唯一权威）
+        // + 任务复位重开（CAS 0 行=并发决策抢先，按现状收敛不上抛）
+        medicationMapper.refreshResubmitted(medication.getId(), freqCode, itemsJson);
         if (taskMapper.casReopen(task.getId()) != 1) {
             log.warn("审方任务重开并发被抢（他方已先复位/决策），按现状收敛：taskId={}", task.getId());
         }

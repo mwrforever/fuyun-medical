@@ -149,24 +149,23 @@ class MedicationReviewServiceImplTest {
         verify(medicationMapper, never()).insert(any(OrderMedication.class));
         verify(taskMapper, never()).insert(any(ReviewTask.class));
         verify(taskMapper, never()).casReopen(anyLong());
-        verify(medicationMapper, never()).updateById(any(OrderMedication.class));
+        verify(medicationMapper, never()).refreshResubmitted(anyLong(), any(), any());
         verifyNoInteractions(events);
     }
 
     @Test
-    @DisplayName("⑤补 重提闭环：REJECTED 任务重发事件刷新明细快照 + 同任务复位 PENDING（重开非新建）")
+    @DisplayName("⑤补 重提闭环：REJECTED 任务重发事件同步头值频次+明细快照刷新 + 同任务复位 PENDING（重开非新建）")
     void rejectedRepublishReopensSameTaskWithFreshSnapshot() {
         OrderMedication existing = medication(9001L, "M20260925001");
         when(medicationMapper.selectOne(any())).thenReturn(existing);
         when(taskMapper.selectOne(any())).thenReturn(task(9002L, 9001L, "REJECTED"));
         when(taskMapper.casReopen(9002L)).thenReturn(1);
 
-        service.onOrderCreated("M20260925001", "I2026092500001", 700101L, "qd", ITEMS_JSON_V2);
+        // M04 resubmit 头值面可改频次：快照原频次 qd，重提事件携新频次 bid
+        service.onOrderCreated("M20260925001", "I2026092500001", 700101L, "bid", ITEMS_JSON_V2);
 
-        // 重提可改方：明细快照刷新为新事件面；任务行复位（decided_at/opinion/pharmacist_id 由 CAS 语句清空）
-        ArgumentCaptor<OrderMedication> medCaptor = ArgumentCaptor.forClass(OrderMedication.class);
-        verify(medicationMapper).updateById(medCaptor.capture());
-        assertThat(medCaptor.getValue().getItems()).isEqualTo(ITEMS_JSON_V2);
+        // 重提可改方：头值频次与明细快照同语句刷新为新事件面；任务行复位（decided_at/opinion/pharmacist_id 由 CAS 语句清空）
+        verify(medicationMapper).refreshResubmitted(9001L, "bid", ITEMS_JSON_V2);
         verify(taskMapper).casReopen(9002L);
         verify(medicationMapper, never()).insert(any(OrderMedication.class));
         verify(taskMapper, never()).insert(any(ReviewTask.class));
@@ -206,7 +205,7 @@ class MedicationReviewServiceImplTest {
 
         service.onOrderCreated("M20260925001", "I2026092500001", 700101L, "qd", ITEMS_JSON_V2);
 
-        verify(medicationMapper).updateById(any(OrderMedication.class));
+        verify(medicationMapper).refreshResubmitted(9001L, "qd", ITEMS_JSON_V2);
         verify(taskMapper).casReopen(9002L);
         verify(medicationMapper, never()).insert(any(OrderMedication.class));
         verifyNoInteractions(events);
