@@ -8,17 +8,23 @@ import com.fuyun.inpatient.api.payload.OrderAuditRejectedPayload;
 import com.fuyun.inpatient.api.payload.OrderAuditedPayload;
 import com.fuyun.inpatient.api.payload.OrderCancelledPayload;
 import com.fuyun.inpatient.api.payload.OrderRevokedPayload;
+import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
 import com.fuyun.inpatient.dto.OrderReorganizeRequest;
+import com.fuyun.inpatient.entity.Consultation;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.entity.MedicalOrder;
 import com.fuyun.inpatient.entity.MedicalOrderItem;
 import com.fuyun.inpatient.entity.OrderAudit;
 import com.fuyun.inpatient.entity.OrderStatusLog;
 import com.fuyun.inpatient.enums.AuditStage;
+import com.fuyun.inpatient.enums.ConsultationLevel;
+import com.fuyun.inpatient.enums.ConsultationStatus;
+import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
@@ -42,7 +48,12 @@ import org.springframework.transaction.annotation.Transactional;
  * （仅未产生执行，cancelled 事件驱动 M05 撤执行单）/撤回重审（仅转抄前，revoked 事件）/
  * 重整（只留痕不迁移状态）/口头医嘱补录确认（oral_confirmed_at 落值）。一切状态迁移唯一经
  * OrderStateMachineService（GC17——迁移留痕由状态机回接后的 order_status_log 自动落库，
- * 本类仅重整留痕直写日志表——from=to 无迁移动作）。事件载荷禁患者姓名/诊断文本（GC22）。
+ * 本类仅重整留痕直写日志表——from=to 无迁移动作）。<b>CONSULT 类内部分发钩子</b>（FU-M04-09）：
+ * 过审副作用收口链检测会诊类——audited.consult 子键事件照常发布（M13 计价需要）后自动创建
+ * 会诊单草稿（order_ref 关联医嘱号，status=REQUESTED；业务流转归会诊流程，受邀科经
+ * ConsultationService 接单面响应）；建单幂等锚=order_ref 存在性（审核重试/撤回重审再过审
+ * 零重复建单），建单失败降级 warn 不阻断审核主链（可经 POST /consultations 人工补建）。
+ * 事件载荷禁患者姓名/诊断文本（GC22）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口，回执消费路径事务由监听器线程
  * 经本类事务边界承载（AFTER_COMMIT 出 MQ 不落在事务内）。
  */
@@ -58,6 +69,9 @@ public class OrderAuditServiceImpl implements OrderAuditService {
     /** 重整留痕固定原因（04 Spec §4：重整只重排视图并留痕） */
     private static final String REASON_REORGANIZE = "医嘱重整";
 
+    /** 会诊业务号类型（InpatientSeqGate CS 段——GC15 业务号五类白名单；钩子建单取号） */
+    private static final String SEQ_TYPE_CONSULT = "CS";
+
     private final MedicalOrderMapper orderMapper;
 
     private final MedicalOrderItemMapper itemMapper;
@@ -68,6 +82,10 @@ public class OrderAuditServiceImpl implements OrderAuditService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final ConsultationMapper consultationMapper;
+
+    private final InpatientSeqGate seqGate;
+
     private final OrderStateMachineService stateMachine;
 
     private final ApplicationEventPublisher events;
@@ -75,13 +93,15 @@ public class OrderAuditServiceImpl implements OrderAuditService {
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
-     * @param orderMapper     医嘱主表 mapper，非空；审核生效时点/撤回复位/补录确认值面更新
-     * @param itemMapper      医嘱明细 mapper，非空；口头医嘱行存在性校验（oral_flag）
-     * @param auditMapper     审核流水 mapper，非空；SYSTEM/PHARMACIST 两阶段结论落行
-     * @param statusLogMapper 状态迁移日志 mapper，非空；重整留痕（from=to）直写面
-     * @param visitMapper     住院就诊 mapper，非空；事件载荷 visitId 号映射
-     * @param stateMachine    医嘱状态机服务（状态迁移唯一执行面），非空
-     * @param events          进程内事件发布器（AFTER_COMMIT 出 MQ），非空
+     * @param orderMapper        医嘱主表 mapper，非空；审核生效时点/撤回复位/补录确认值面更新
+     * @param itemMapper         医嘱明细 mapper，非空；口头医嘱行存在性校验（oral_flag）
+     * @param auditMapper        审核流水 mapper，非空；SYSTEM/PHARMACIST 两阶段结论落行
+     * @param statusLogMapper    状态迁移日志 mapper，非空；重整留痕（from=to）直写面
+     * @param visitMapper        住院就诊 mapper，非空；事件载荷 visitId 号映射与钩子草稿申请科室取数
+     * @param consultationMapper 会诊单 mapper，非空；CONSULT 类钩子自动建草稿落库（V908）
+     * @param seqGate            住院业务号发号器（CS 会诊号段），非空；钩子建单取号
+     * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
+     * @param events             进程内事件发布器（AFTER_COMMIT 出 MQ），非空
      */
     public OrderAuditServiceImpl(
             MedicalOrderMapper orderMapper,
@@ -89,6 +109,8 @@ public class OrderAuditServiceImpl implements OrderAuditService {
             OrderAuditMapper auditMapper,
             OrderStatusLogMapper statusLogMapper,
             InpatientVisitMapper visitMapper,
+            ConsultationMapper consultationMapper,
+            InpatientSeqGate seqGate,
             OrderStateMachineService stateMachine,
             ApplicationEventPublisher events) {
         this.orderMapper = orderMapper;
@@ -96,6 +118,8 @@ public class OrderAuditServiceImpl implements OrderAuditService {
         this.auditMapper = auditMapper;
         this.statusLogMapper = statusLogMapper;
         this.visitMapper = visitMapper;
+        this.consultationMapper = consultationMapper;
+        this.seqGate = seqGate;
         this.stateMachine = stateMachine;
         this.events = events;
     }
@@ -340,6 +364,67 @@ public class OrderAuditServiceImpl implements OrderAuditService {
         }
         insertAuditRow(order, stage, CONCLUSION_PASSED, reviewTaskNo, reason, String.valueOf(operator), auditedAt);
         publishAudited(order, orderType, stage, String.valueOf(operator), auditedAt.toInstant());
+        // CONSULT 类内部分发钩子（FU-M04-09）：audited.consult 事件已发布（M13 计价不受影响），
+        // 业务流转归会诊流程——自动创建会诊草稿（status=REQUESTED、order_ref=order_no）
+        if (orderType == OrderType.CONSULT) {
+            createConsultationDraft(order, String.valueOf(operator));
+        }
+    }
+
+    /**
+     * CONSULT 类医嘱审核自动建会诊单草稿（业务流转归会诊流程——Spec FU-M04-09「经会诊医嘱
+     * type=consult 转内部流程」承载）：status=REQUESTED、order_ref=order_no、申请医生=医嘱
+     * 开立医生、申请科室=就诊当前科室、紧急程度缺省普通（24h 时限——医嘱面无紧急度承载，
+     * 工作站列表可见后续人工升级路径随 P3 完整化）；<b>不发布 consultation.requested</b>——
+     * 受邀科室未定（钩子草稿待受邀科接单面明确），会诊工作列表可见即建单触达（降级清单②
+     * 工作站列表可见口径）。幂等锚=order_ref 存在性（审核重试/撤回重审再过审窗口零重复建单）；
+     * 建单失败降级 warn 不阻断审核主链（Task 8 补偿面先例——audited.consult 事件已出，
+     * 草稿可经 POST /consultations 人工补建）。
+     *
+     * @param order    过审会诊医嘱行（status 已迁移 AUDITED），非空
+     * @param operator 审核操作者员工 ID string（审计列留痕），非空
+     */
+    private void createConsultationDraft(MedicalOrder order, String operator) {
+        // 幂等守卫：order_ref 已有会诊单即审核重试窗口，零重复建单（双草稿防线）
+        Long existing = consultationMapper.selectCount(
+                Wrappers.<Consultation>lambdaQuery().eq(Consultation::getOrderRef, order.getOrderNo()));
+        if (existing != null && existing > 0) {
+            log.info("CONSULT 医嘱会诊草稿已存在（审核重试幂等跳过）：orderNo={}", order.getOrderNo());
+            return;
+        }
+        try {
+            // 申请科室取就诊当前科室（未入科为 null——草稿面宽容，接单前工作站完善）；就诊行缺失
+            // 已在上游 publishAudited 的 visitNoOf 处 fail-closed，此处不可达
+            InpatientVisit visit = visitMapper.selectById(order.getVisitId());
+            OffsetDateTime requestedAt = OffsetDateTime.now();
+            Consultation draft = new Consultation();
+            draft.setConsultNo(seqGate.nextNo(SEQ_TYPE_CONSULT));
+            draft.setVisitId(order.getVisitId());
+            draft.setPatientId(order.getPatientId());
+            draft.setOrderRef(order.getOrderNo());
+            draft.setFromDeptId(visit == null ? null : visit.getCurrentDeptId());
+            draft.setRequesterId(order.getDoctorId());
+            draft.setLevel(ConsultationLevel.DEPT.getCode());
+            draft.setUrgency(ConsultationUrgency.NORMAL.getCode());
+            draft.setRequestedAt(requestedAt);
+            draft.setResponseDeadline(requestedAt.plus(ConsultationUrgency.NORMAL.responseWindow()));
+            draft.setOverdueFlag(false);
+            draft.setStatus(ConsultationStatus.REQUESTED.getCode());
+            draft.setCreatedBy(operator);
+            draft.setUpdatedBy(operator);
+            // 数据库写操作：会诊草稿落库（uk_consult_no 兜底发号唯一；失败降级不回滚审核链）
+            consultationMapper.insert(draft);
+            log.info(
+                    "CONSULT 医嘱审核自动建会诊草稿：consultNo={}，orderNo={}，visitId(pk)={}，响应截止={}",
+                    draft.getConsultNo(),
+                    order.getOrderNo(),
+                    order.getVisitId(),
+                    draft.getResponseDeadline());
+        } catch (Exception e) {
+            // 降级留痕：草稿建单失败不阻断审核主链（审核迁移/审计行/audited.consult 事件已收口，
+            // 整体回滚将连坐 M13 计价链——可经 POST /consultations 人工补建）
+            log.warn("CONSULT 医嘱会诊草稿自动建单失败（降级不阻断审核主链，可人工补建）：orderNo={}", order.getOrderNo(), e);
+        }
     }
 
     /**

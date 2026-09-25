@@ -3,6 +3,7 @@ package com.fuyun.inpatient.config;
 import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.controller.AdmissionController;
 import com.fuyun.inpatient.controller.BedController;
+import com.fuyun.inpatient.controller.ConsultationController;
 import com.fuyun.inpatient.controller.DischargeController;
 import com.fuyun.inpatient.controller.OrderController;
 import com.fuyun.inpatient.controller.OrderPlanController;
@@ -11,6 +12,7 @@ import com.fuyun.inpatient.controller.VisitTransferController;
 import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.impl.AdmissionServiceImpl;
 import com.fuyun.inpatient.service.impl.BedServiceImpl;
+import com.fuyun.inpatient.service.impl.ConsultationServiceImpl;
 import com.fuyun.inpatient.service.impl.DischargeServiceImpl;
 import com.fuyun.inpatient.service.impl.InpatientOngoingVisitQuery;
 import com.fuyun.inpatient.service.impl.MedicalOrderServiceImpl;
@@ -49,6 +51,9 @@ import org.springframework.context.annotation.Import;
  * 准备窗口，NursingWebConfig @EnableConfigurationProperties 先例形态，env 注入见
  * application.yml fuyun.inpatient 段）——AdmissionServiceImpl 欠费面、DischargeServiceImpl
  * 随访缺省与 OrderTransferServiceImpl 准备窗口三处回接取值。
+ * Task 11 追加：会诊管理域（V908 单表业务面）——会诊服务（五端点：申请/接单/意见/取消/
+ * 分页列表；CAS 小状态机 + 读时惰性逾期升级承载面）与会诊五端点控制器；OrderAuditServiceImpl
+ * 构造追加 CONSULT 钩子两依赖（ConsultationMapper/InpatientSeqGate——审核自动建会诊草稿）。
  */
 @Configuration
 @EnableConfigurationProperties(InpatientProperties.class)
@@ -67,9 +72,11 @@ import org.springframework.context.annotation.Import;
     OrderTransferServiceImpl.class,
     OrderPlanServiceImpl.class,
     DischargeServiceImpl.class,
+    ConsultationServiceImpl.class,
     OrderController.class,
     TransferController.class,
     OrderPlanController.class,
-    DischargeController.class
+    DischargeController.class,
+    ConsultationController.class
 })
 public class InpatientWebConfig {}

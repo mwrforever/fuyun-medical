@@ -1,6 +1,7 @@
 package com.fuyun.inpatient.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -22,23 +23,29 @@ import com.fuyun.inpatient.api.payload.OrderAuditRejectedPayload;
 import com.fuyun.inpatient.api.payload.OrderAuditedPayload;
 import com.fuyun.inpatient.api.payload.OrderCancelledPayload;
 import com.fuyun.inpatient.api.payload.OrderRevokedPayload;
+import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
 import com.fuyun.inpatient.dto.OrderReorganizeRequest;
+import com.fuyun.inpatient.entity.Consultation;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.entity.MedicalOrder;
 import com.fuyun.inpatient.entity.MedicalOrderItem;
 import com.fuyun.inpatient.entity.OrderAudit;
 import com.fuyun.inpatient.entity.OrderStatusLog;
 import com.fuyun.inpatient.enums.AuditStage;
+import com.fuyun.inpatient.enums.ConsultationStatus;
+import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderAuditMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.service.OrderStateMachineService;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -105,6 +112,12 @@ class OrderAuditServiceImplTest {
     private InpatientVisitMapper visitMapper;
 
     @Mock
+    private ConsultationMapper consultationMapper;
+
+    @Mock
+    private InpatientSeqGate seqGate;
+
+    @Mock
     private OrderStateMachineService stateMachine;
 
     @Mock
@@ -123,17 +136,26 @@ class OrderAuditServiceImplTest {
 
     @BeforeAll
     static void initTableInfo() {
-        // MP 3.5.17 单测范式：lambdaQuery 触达的实体须手工注册表信息（三实体查询面）
+        // MP 3.5.17 单测范式：lambdaQuery 触达的实体须手工注册表信息（四实体查询面）
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), MedicalOrder.class);
         TableInfoHelper.initTableInfo(
                 new MapperBuilderAssistant(new MybatisConfiguration(), ""), MedicalOrderItem.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), InpatientVisit.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Consultation.class);
     }
 
     @BeforeEach
     void setUp() {
         service = new OrderAuditServiceImpl(
-                orderMapper, itemMapper, auditMapper, statusLogMapper, visitMapper, stateMachine, events);
+                orderMapper,
+                itemMapper,
+                auditMapper,
+                statusLogMapper,
+                visitMapper,
+                consultationMapper,
+                seqGate,
+                stateMachine,
+                events);
         OperatorContextHolder.set(String.valueOf(OPERATOR));
     }
 
@@ -587,6 +609,90 @@ class OrderAuditServiceImplTest {
         assertThat(String.join("", oral.value()))
                 .contains("oral_confirmed_at IS NULL")
                 .contains("deleted = 0");
+    }
+
+    @Test
+    @DisplayName("用例⑥consult 医嘱审核自动建会诊单：audited.consult 事件照常发布+草稿 REQUESTED 关联 order_ref")
+    void consultOrderAuditCreatesConsultationDraft() {
+        MedicalOrder order = orderRow("CONSULT", OrderStatus.CREATED);
+        when(orderMapper.selectOne(any())).thenReturn(order);
+        when(orderMapper.updateAuditBegin(eq(ORDER_NO), any(), eq(String.valueOf(OPERATOR))))
+                .thenReturn(1);
+        when(consultationMapper.selectCount(any())).thenReturn(0L);
+        when(seqGate.nextNo("CS")).thenReturn("CS2026092500001");
+        // 钩子草稿申请科室取就诊 current_dept_id（visitNoOf 与钩子两处消费同一就诊行）
+        InpatientVisit visit = visitRow();
+        visit.setCurrentDeptId("DEPT-INTERNAL-01");
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visit);
+
+        OrderStatus result = service.audit(ORDER_NO);
+
+        // audited.consult 子键事件照常发布（M13 计价需要——业务流转归会诊流程不裁剪事件面）
+        assertThat(result).isEqualTo(OrderStatus.AUDITED);
+        verify(events).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().eventType())
+                .isEqualTo(InpatientMessagingConstants.withTypeKey(
+                        InpatientMessagingConstants.EVENT_ORDER_AUDITED, "consult"));
+        // 草稿断言：REQUESTED 草稿关联 order_ref，申请面=医嘱开立医生+就诊当前科室，普通时限 24h
+        ArgumentCaptor<Consultation> draftCaptor = ArgumentCaptor.forClass(Consultation.class);
+        verify(consultationMapper).insert(draftCaptor.capture());
+        Consultation draft = draftCaptor.getValue();
+        assertThat(draft.getConsultNo()).isEqualTo("CS2026092500001");
+        assertThat(draft.getOrderRef()).isEqualTo(ORDER_NO);
+        assertThat(draft.getVisitId()).isEqualTo(VISIT_PK);
+        assertThat(draft.getPatientId()).isEqualTo(PATIENT_ID);
+        assertThat(draft.getFromDeptId()).isEqualTo("DEPT-INTERNAL-01");
+        assertThat(draft.getRequesterId()).isEqualTo(String.valueOf(OPERATOR));
+        assertThat(draft.getToDeptId()).isNull();
+        assertThat(draft.getStatus()).isEqualTo(ConsultationStatus.REQUESTED.getCode());
+        assertThat(draft.getUrgency()).isEqualTo(ConsultationUrgency.NORMAL.getCode());
+        assertThat(draft.getOverdueFlag()).isFalse();
+        // 普通会诊响应时限 24h（同一时钟源取样——时距精确等值断言）
+        assertThat(Duration.between(draft.getRequestedAt(), draft.getResponseDeadline()))
+                .isEqualTo(ConsultationUrgency.NORMAL.responseWindow());
+    }
+
+    @Test
+    @DisplayName("用例⑥补面·钩子幂等：order_ref 已有会诊单（审核重试窗口）零重复建单，audited 事件不裁剪")
+    void consultOrderAuditRetrySkipsDuplicateDraft() {
+        MedicalOrder order = orderRow("CONSULT", OrderStatus.CREATED);
+        when(orderMapper.selectOne(any())).thenReturn(order);
+        when(orderMapper.updateAuditBegin(eq(ORDER_NO), any(), eq(String.valueOf(OPERATOR))))
+                .thenReturn(1);
+        when(consultationMapper.selectCount(any())).thenReturn(1L);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+
+        service.audit(ORDER_NO);
+
+        // 幂等锚：order_ref 存在性守卫命中——不取号不落库；audited.consult 事件面保持发布
+        verify(consultationMapper, never()).insert(any(Consultation.class));
+        verifyNoInteractions(seqGate);
+        verify(events).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().eventType())
+                .isEqualTo(InpatientMessagingConstants.withTypeKey(
+                        InpatientMessagingConstants.EVENT_ORDER_AUDITED, "consult"));
+    }
+
+    @Test
+    @DisplayName("用例⑥补面·钩子降级：草稿落库失败 warn 不阻断审核主链（审核迁移与事件面保持收口）")
+    void consultOrderDraftFailureDegradesWithoutBlockingAudit() {
+        MedicalOrder order = orderRow("CONSULT", OrderStatus.CREATED);
+        when(orderMapper.selectOne(any())).thenReturn(order);
+        when(orderMapper.updateAuditBegin(eq(ORDER_NO), any(), eq(String.valueOf(OPERATOR))))
+                .thenReturn(1);
+        when(consultationMapper.selectCount(any())).thenReturn(0L);
+        when(seqGate.nextNo("CS")).thenReturn("CS2026092500001");
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        doThrow(new RuntimeException("库写冲突")).when(consultationMapper).insert(any(Consultation.class));
+
+        // 草稿建单失败不向审核链传播（整体回滚将连坐 audited.consult 计价链）
+        assertThatCode(() -> service.audit(ORDER_NO)).doesNotThrowAnyException();
+
+        verify(events).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().eventType())
+                .isEqualTo(InpatientMessagingConstants.withTypeKey(
+                        InpatientMessagingConstants.EVENT_ORDER_AUDITED, "consult"));
+        verify(auditMapper).insert(any(OrderAudit.class));
     }
 
     /** 构造在院就诊行（事件载荷 visitId 号映射载体）。 */
