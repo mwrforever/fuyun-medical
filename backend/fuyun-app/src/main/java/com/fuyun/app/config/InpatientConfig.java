@@ -1,15 +1,18 @@
 package com.fuyun.app.config;
 
+import com.fuyun.inpatient.config.InpatientWebConfig;
+import com.fuyun.inpatient.internal.InpatientMessagingConfig;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 /**
  * M04 住院模块装配：fuyun-inpatient 配置类引入 Boot 上下文的集中入口（NursingConfig 同模式，
  * 不放宽组件扫描；装配根豁免 Modulith 边界——IotConfig 引 iot/internal 先例）。
  *
- * <p>占位空壳：{@code InpatientWebConfig}（Web/服务面）与 {@code InpatientMessagingConfig}
- * （消息面——模板 Bean/发布器/订阅队列与监听器）分别由 P2 PR-1 Task 2/3 落地，届时补
- * {@code @Import({InpatientWebConfig.class, InpatientMessagingConfig.class})} 启用——先引未落地的
- * 配置类会令中间态不可编译，故 Task 1 仅保留装配锚点。
+ * <p>Task 3 起启用双面 @Import：{@code InpatientWebConfig}（Web/服务面——发号器/入院登记域
+ * 服务/OngoingVisitQuery SPI/六端点控制器）与 {@code InpatientMessagingConfig}（消息面——
+ * 发送模板 Bean/发布器/五条订阅队列治理声明）。
  */
 @Configuration
+@Import({InpatientWebConfig.class, InpatientMessagingConfig.class})
 public class InpatientConfig {}
