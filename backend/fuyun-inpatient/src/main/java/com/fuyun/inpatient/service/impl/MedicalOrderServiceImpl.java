@@ -27,6 +27,7 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.service.MedicalOrderService;
+import com.fuyun.inpatient.service.OrderAuditService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
@@ -50,9 +51,12 @@ import org.springframework.transaction.annotation.Transactional;
  * （PracticeCheckPort，开单类=PRESCRIPTION——pharmacy 开方链同口径；未过 IP-1012 403，
  * 文案工号脱敏）→ L2 过敏强阳性（AllergyChecker 有效过敏项，仅药品行 item_code 命中
  * 过敏物 code 拦截 IP-1013 409）→ L3 明细/频次有效性（药品行剂量+单位+途径必填、长期
- * 必携频次 IP-1011；频次字典无命中 IP-1021）→ L4 嘱托限定（standby 仅 LONG，违者
- * IP-1012 前置的 IP-1022）。主子表同事务落库（CREATED）后事务内发布 order.created
- * （routing key 携带类型子键——drug 子键驱动 M06 审方任务生成）。
+ * 必携频次 IP-1011；频次字典无命中 IP-1021）→ L4 嘱托限定（standby 仅 LONG，违者拒
+ * IP-1022——与 L1 的 IP-1012 为各自独立拒绝面）。主子表同事务落库（CREATED）后事务内发布
+ * order.created（routing key 携带类型子键——drug 子键驱动 M06 审方任务生成）并接审核链
+ * 收口（FU-M04-05 全员必经：非用药类系统自动过审 AUDITED、用药类停留 CREATED 待药师审）。
+ * 驳回重提面（resubmit，Task 6）：作废重开路径的轻量变体——头值面与明细行直接更新 + 状态机
+ * 回 CREATED + 重发 order.created（M06 重开审方任务）+ 审核链重入；仅限 AUDIT_REJECTED 态。
  * 停嘱面（stop/stopAllForTransfer 共用 stopInternal）：状态机迁移 STOPPED（唯一执行面
  * OrderStateMachineService，合法态 AUDITED/TRANSFERRED/EXECUTING）+ 停嘱时点/原因落值 +
  * 未来计划批量作废（数据面归 Task 7 V906 回接）+ stopped 事件（V800 id 44 载荷）。
@@ -90,9 +94,11 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     private final ApplicationEventPublisher events;
 
+    private final OrderAuditService orderAuditService;
+
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import——Task 5 落地后闭合 Task 4 预注入的
-     * TransferServiceImpl 医嘱停嘱装配链）。
+     * TransferServiceImpl 医嘱停嘱装配链；Task 6 追加审核链服务——开立/重提的审核收口）。
      *
      * @param orderMapper       医嘱主表 mapper，非空
      * @param itemMapper        医嘱明细 mapper，非空
@@ -103,6 +109,7 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
      * @param allergyChecker    过敏项校验端口（patient api），非空；L2 承载
      * @param stateMachine      医嘱状态机服务（状态迁移唯一执行面），非空
      * @param events            进程内事件发布器（AFTER_COMMIT 出 MQ），非空
+     * @param orderAuditService 医嘱审核与控制服务（开立/重提审核链收口），非空
      */
     public MedicalOrderServiceImpl(
             MedicalOrderMapper orderMapper,
@@ -113,7 +120,8 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             PracticeCheckPort practiceCheckPort,
             AllergyChecker allergyChecker,
             OrderStateMachineService stateMachine,
-            ApplicationEventPublisher events) {
+            ApplicationEventPublisher events,
+            OrderAuditService orderAuditService) {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
         this.frequencyMapper = frequencyMapper;
@@ -123,14 +131,16 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
         this.allergyChecker = allergyChecker;
         this.stateMachine = stateMachine;
         this.events = events;
+        this.orderAuditService = orderAuditService;
     }
 
     /**
-     * 医嘱开立：守卫链（在院 → 四层校验）→ 发号落库（CREATED）→ 事务内发布 order.created。
+     * 医嘱开立：守卫链（在院 → 四层校验）→ 发号落库（CREATED）→ 事务内发布 order.created →
+     * 审核链收口（非用药类自动过审 AUDITED、用药类停留 CREATED 待药师审）。
      *
      * @param visitId 住院就诊号（I 型 14 位），非空
      * @param req     开立入参，非空
-     * @return 开立后医嘱出参（status=CREATED），非空
+     * @return 开立后医嘱出参（status=审核链收口后实态），非空
      * @throws BizException IP-1007/IP-1008/IP-1012/IP-1013/IP-1011/IP-1021/IP-1022/IP-1023（接口注全清单）
      */
     @Override
@@ -183,34 +193,8 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
         }
         // 子表逐行落库：item_seq 按列表序 1 起递增（服务层单一写入口保证组内唯一），布尔缺省回填
         List<MedicalOrderItem> savedItems = saveItems(order, req.items(), operator);
-        // 事务内发布开立事件（AFTER_COMMIT 出 fy.topic；routing key=inpatient.order.created.<子键>，
-        // drug 子键驱动 M06 审方任务生成——DomainEventSender 的 eventType 双作信封类型与路由键）；
-        // 载荷携 items 名称快照（药品通用名计价需要），禁患者姓名/诊断文本
-        events.publishEvent(new InpatientDomainEvent(
-                InpatientMessagingConstants.withTypeKey(
-                        InpatientMessagingConstants.EVENT_ORDER_CREATED, orderType.subKey()),
-                new OrderCreatedPayload(
-                        orderNo,
-                        visitId,
-                        visit.getPatientId(),
-                        orderType.subKey(),
-                        orderClass.getCode(),
-                        Boolean.TRUE.equals(req.standbyFlag()),
-                        order.getGroupNo(),
-                        req.freqCode(),
-                        savedItems.stream()
-                                .map(item -> new OrderCreatedItem(
-                                        item.getItemSeq(),
-                                        item.getItemCode(),
-                                        item.getNameSnapshot(),
-                                        joinDosage(item),
-                                        item.getDosageUnit(),
-                                        item.getRoute(),
-                                        item.getQuantity().toPlainString(),
-                                        // 行项目类型与头 orderType 同口径（routing 子键小写形态——
-                                        // L3 已过词表校验，fromCode 非空安全）
-                                        OrderType.fromCode(item.getItemType()).subKey()))
-                                .toList())));
+        // 事务内发布开立事件（与驳回重提面共用发布链——publishOrderCreated 收口）
+        publishOrderCreated(order, visitId, orderType, orderClass, req, savedItems);
         log.info(
                 "医嘱开立完成：orderNo={}，visitId={}，patientId={}，orderType={}，orderClass={}，freqCode={}，明细 {} 行，operator={}",
                 orderNo,
@@ -221,6 +205,11 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
                 req.freqCode(),
                 savedItems.size(),
                 operator);
+        // 审核链收口（FU-M04-05 全员必经）：非用药类系统自动过审（CREATED→AUDITED + audited
+        // 子键事件），用药类停留 CREATED 待药师审（M06 回执驱动迁移）——与开立同事务成败与共
+        OrderStatus finalStatus = orderAuditService.audit(orderNo);
+        // 内存状态面同步审核链收口实态（出参反映最终态，调用方免回读）
+        order.setStatus(finalStatus.getCode());
         return MedicalOrderVO.from(order, visitId);
     }
 
@@ -337,6 +326,74 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
                 ongoing.size(),
                 reason,
                 OperatorContextHolder.get());
+    }
+
+    /**
+     * 医嘱驳回后修改重提（Task 6 端点消费）：作废重开路径的轻量变体——直接更新项内容 + 状态
+     * 回 CREATED + 留痕 + 重发开立事件（M06 重开审方任务）+ 审核链重入。
+     *
+     * @param orderNo 医嘱号，非空
+     * @param req     修改后医嘱体（与开立同构），非空
+     * @return 重提后医嘱出参（status=审核链收口后实态），非空
+     * @throws BizException IP-1009/IP-1010/IP-1012/IP-1013/IP-1011/IP-1021/IP-1022/IP-1023（接口注全清单）
+     */
+    @Override
+    @Transactional
+    public MedicalOrderVO resubmit(String orderNo, OrderCreateRequest req) {
+        MedicalOrder order = requireOrder(orderNo);
+        // 医嘱类型/分类词表校验（与开立同面——修改后医嘱体过同一校验链）
+        OrderType orderType = OrderType.fromCode(req.orderType());
+        if (orderType == null) {
+            throw paramInvalid("orderType", req.orderType());
+        }
+        OrderClass orderClass = OrderClass.fromCode(req.orderClass());
+        if (orderClass == null) {
+            throw paramInvalid("orderClass", req.orderClass());
+        }
+        // 四层校验 L1→L4 与开立同链（修改后内容对过敏/频次/嘱托面重新裁决——修改不可绕过校验）
+        long employeeId = checkPracticeGrant();
+        checkAllergyConflicts(order.getPatientId(), req.items());
+        checkItemsAndFrequency(req, orderClass);
+        checkStandbyOnlyForLong(req, orderClass);
+        String operator = OperatorContextHolder.get();
+        // 头值面重写（order_type/order_class/standby_flag/freq_code——轻量变体直接更新禁另开新单；
+        // group_no 组结构保持不变：重提不改成组关系）
+        if (orderMapper.updateResubmitValues(
+                        orderNo,
+                        orderType.getCode(),
+                        orderClass.getCode(),
+                        Boolean.TRUE.equals(req.standbyFlag()),
+                        req.freqCode(),
+                        operator)
+                == 0) {
+            throw new BizException(InpatientErrorCode.CONFLICT, HttpStatus.CONFLICT, "重提头值面落写零行（并发逻辑删窗口）：" + orderNo);
+        }
+        // 明细行重写：旧行逻辑删（@TableLogic）+ 新行按序落库（item_seq 服务层重新生成）
+        itemMapper.delete(Wrappers.<MedicalOrderItem>lambdaQuery().eq(MedicalOrderItem::getOrderId, order.getId()));
+        List<MedicalOrderItem> savedItems = saveItems(order, req.items(), operator);
+        // 状态回 CREATED（状态机唯一裁决面：仅 AUDIT_REJECTED 可达——他态拒 IP-1010；
+        // 「医嘱内容不可直接改」红线不破：重提是驳回态专属修改路径）
+        stateMachine.transition(order, OrderStatus.CREATED, "驳回后修改重提", employeeId);
+        // 内存头值面同步（出参与事件载荷取数）
+        order.setOrderType(orderType.getCode());
+        order.setOrderClass(orderClass.getCode());
+        order.setStandbyFlag(Boolean.TRUE.equals(req.standbyFlag()));
+        order.setFreqCode(req.freqCode());
+        String visitNo = visitNoOf(order.getVisitId());
+        // 重发开立事件（drug 子键驱动 M06 重新生成审方任务——驳回重提闭环；载荷为修改后内容）
+        publishOrderCreated(order, visitNo, orderType, orderClass, req, savedItems);
+        // 审核链重入（全员必经：非用药类系统自动过审；用药类停留待审）
+        OrderStatus finalStatus = orderAuditService.audit(orderNo);
+        order.setStatus(finalStatus.getCode());
+        log.info(
+                "医嘱驳回重提完成：orderNo={}，visitNo={}，orderType={}，orderClass={}，明细 {} 行，operator={}",
+                orderNo,
+                visitNo,
+                orderType.getCode(),
+                orderClass.getCode(),
+                savedItems.size(),
+                operator);
+        return MedicalOrderVO.from(order, visitNo);
     }
 
     /**
@@ -553,6 +610,53 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             saved.add(row);
         }
         return saved;
+    }
+
+    /**
+     * 开立事件发布收口（create/resubmit 共用——驳回重提重发同构载荷驱动 M06 重开审方任务）：
+     * 事务内发布（AFTER_COMMIT 出 fy.topic；routing key=inpatient.order.created.<子键>，
+     * drug 子键驱动 M06 审方任务生成——DomainEventSender 的 eventType 双作信封类型与路由键）；
+     * 载荷携 items 名称快照（药品通用名计价需要），禁患者姓名/诊断文本。
+     *
+     * @param order      医嘱行（orderNo/groupNo 取数面），非空
+     * @param visitNo    住院就诊号（I 型 14 位出参口径），非空
+     * @param orderType  医嘱类型（词表内已裁决），非空
+     * @param orderClass 医嘱分类（词表内已裁决），非空
+     * @param req        开立/重提入参（standbyFlag/freqCode 取数面），非空
+     * @param savedItems 已落库明细行全集（载荷构造复用），非空
+     */
+    private void publishOrderCreated(
+            MedicalOrder order,
+            String visitNo,
+            OrderType orderType,
+            OrderClass orderClass,
+            OrderCreateRequest req,
+            List<MedicalOrderItem> savedItems) {
+        events.publishEvent(new InpatientDomainEvent(
+                InpatientMessagingConstants.withTypeKey(
+                        InpatientMessagingConstants.EVENT_ORDER_CREATED, orderType.subKey()),
+                new OrderCreatedPayload(
+                        order.getOrderNo(),
+                        visitNo,
+                        order.getPatientId(),
+                        orderType.subKey(),
+                        orderClass.getCode(),
+                        Boolean.TRUE.equals(req.standbyFlag()),
+                        order.getGroupNo(),
+                        req.freqCode(),
+                        savedItems.stream()
+                                .map(item -> new OrderCreatedItem(
+                                        item.getItemSeq(),
+                                        item.getItemCode(),
+                                        item.getNameSnapshot(),
+                                        joinDosage(item),
+                                        item.getDosageUnit(),
+                                        item.getRoute(),
+                                        item.getQuantity().toPlainString(),
+                                        // 行项目类型与头 orderType 同口径（routing 子键小写形态——
+                                        // L3 已过词表校验，fromCode 非空安全）
+                                        OrderType.fromCode(item.getItemType()).subKey()))
+                                .toList())));
     }
 
     /** 剂量拼串（载荷 dosage「数值+单位拼串形态，如 0.5g」）：剂量与单位拼接，缺侧原样返回。 */

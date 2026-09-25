@@ -52,4 +52,69 @@ public interface MedicalOrderMapper extends BaseMapper<MedicalOrder> {
             @Param("endAt") OffsetDateTime endAt,
             @Param("stopReason") String stopReason,
             @Param("operator") String operator);
+
+    /**
+     * 审核生效时点落值（审核通过面——V904 begin_at 契约：系统自动过审与药师通过回执两路径
+     * 共用；非状态面更新）。
+     *
+     * @param orderNo   医嘱号，非空
+     * @param beginAt   生效时点（系统路径=服务器时间；回执路径=M06 回执时点），非空
+     * @param operator  操作者（审计留痕），非空
+     * @return 影响行数（0=行不存在或并发逻辑删，调用方定性数据冲突）
+     */
+    @Update("UPDATE inpatient.medical_order SET begin_at = #{beginAt}, updated_by = #{operator} "
+            + "WHERE order_no = #{orderNo} AND deleted = 0")
+    int updateAuditBegin(
+            @Param("orderNo") String orderNo,
+            @Param("beginAt") OffsetDateTime beginAt,
+            @Param("operator") String operator);
+
+    /**
+     * 撤回重审生效时点复位（AUDITED→CREATED 撤回路径——begin_at 语义归零，再审核链重新落值）。
+     *
+     * @param orderNo  医嘱号，非空
+     * @param operator 操作者（审计留痕），非空
+     * @return 影响行数（0=行不存在或并发逻辑删，调用方定性数据冲突）
+     */
+    @Update("UPDATE inpatient.medical_order SET begin_at = NULL, updated_by = #{operator} "
+            + "WHERE order_no = #{orderNo} AND deleted = 0")
+    int updateRevokeAudit(@Param("orderNo") String orderNo, @Param("operator") String operator);
+
+    /**
+     * 驳回重提头值面重写（FU-M04-05 resubmit 轻量变体——直接更新项内容不另开新单；
+     * freq_code 透传可空：临时医嘱重提为 NULL）。
+     *
+     * @param orderNo     医嘱号，非空
+     * @param orderType   修改后医嘱类型 code（OrderType 九值），非空
+     * @param orderClass  修改后医嘱分类 code（LONG/STAT），非空
+     * @param standbyFlag 修改后备用嘱标记，非空
+     * @param freqCode    修改后频次编码（长期非空/临时 null），可空
+     * @param operator    操作者（审计留痕），非空
+     * @return 影响行数（0=行不存在或并发逻辑删，调用方定性数据冲突）
+     */
+    @Update("UPDATE inpatient.medical_order SET order_type = #{orderType}, order_class = #{orderClass}, "
+            + "standby_flag = #{standbyFlag}, freq_code = #{freqCode}, updated_by = #{operator} "
+            + "WHERE order_no = #{orderNo} AND deleted = 0")
+    int updateResubmitValues(
+            @Param("orderNo") String orderNo,
+            @Param("orderType") String orderType,
+            @Param("orderClass") String orderClass,
+            @Param("standbyFlag") boolean standbyFlag,
+            @Param("freqCode") String freqCode,
+            @Param("operator") String operator);
+
+    /**
+     * 口头医嘱补录确认时点落值（V905 增列 oral_confirmed_at；IS NULL 限定兜底并发双确认窗口）。
+     *
+     * @param orderNo     医嘱号，非空
+     * @param confirmedAt 补录确认时点（服务器时间），非空
+     * @param operator    操作者（审计留痕），非空
+     * @return 影响行数（0=行不存在/已确认/并发逻辑删——调用方定性冲突）
+     */
+    @Update("UPDATE inpatient.medical_order SET oral_confirmed_at = #{confirmedAt}, updated_by = #{operator} "
+            + "WHERE order_no = #{orderNo} AND oral_confirmed_at IS NULL AND deleted = 0")
+    int updateOralConfirmedAt(
+            @Param("orderNo") String orderNo,
+            @Param("confirmedAt") OffsetDateTime confirmedAt,
+            @Param("operator") String operator);
 }

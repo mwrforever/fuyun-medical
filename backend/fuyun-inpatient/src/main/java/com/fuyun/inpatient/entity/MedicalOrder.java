@@ -63,6 +63,9 @@ public class MedicalOrder {
     /** 停嘱原因（转科固定文案「转科」/医生停嘱理由） */
     private String stopReason;
 
+    /** 抢救口头医嘱补录确认时点（V905 增列；oral_flag 明细行标记的确认收口，未确认为 null） */
+    private OffsetDateTime oralConfirmedAt;
+
     /** 状态 code（OrderStatus 八态：CREATED/AUDITED/AUDIT_REJECTED/TRANSFERRED/EXECUTING/COMPLETED/CANCELLED/STOPPED） */
     private String status;
 

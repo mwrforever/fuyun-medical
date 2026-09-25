@@ -5,8 +5,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fuyun.inpatient.api.payload.BedChangedPayload;
 import com.fuyun.inpatient.api.payload.ConsultationPayload;
 import com.fuyun.inpatient.api.payload.OrderAuditRejectedPayload;
+import com.fuyun.inpatient.api.payload.OrderAuditedPayload;
+import com.fuyun.inpatient.api.payload.OrderCancelledPayload;
 import com.fuyun.inpatient.api.payload.OrderCreatedItem;
 import com.fuyun.inpatient.api.payload.OrderCreatedPayload;
+import com.fuyun.inpatient.api.payload.OrderRevokedPayload;
 import com.fuyun.inpatient.api.payload.VisitAdmittedPayload;
 import com.fuyun.inpatient.api.payload.VisitRegisteredPayload;
 import com.fuyun.inpatient.api.payload.VisitTransferredPayload;
@@ -214,9 +217,13 @@ class InpatientMessagingContractTest {
     }
 
     @Test
-    @DisplayName("V800 段载荷锚：id 48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
+    @DisplayName("V800 段载荷锚：id 41/45/46/48/49/52 desc 与载荷 record 组件名逐字同源（V901 段锚同款写法）")
     void v800PayloadRecordComponentsMatchDesc() {
-        // id 48：Task 3 审查 Minor-1 义务补锚；id 49/52：Task 4 转科/床位事件新载荷
+        // id 48：Task 3 审查 Minor-1 义务补锚；id 49/52：Task 4 转科/床位事件新载荷；
+        // id 41/45/46：Task 6 审核通过/作废/撤回三事件新载荷（审核与控制域发布面）
+        assertComponentsInDesc(V800_SQL, 41, OrderAuditedPayload.class);
+        assertComponentsInDesc(V800_SQL, 45, OrderCancelledPayload.class);
+        assertComponentsInDesc(V800_SQL, 46, OrderRevokedPayload.class);
         assertComponentsInDesc(V800_SQL, 48, VisitAdmittedPayload.class);
         assertComponentsInDesc(V800_SQL, 49, VisitTransferredPayload.class);
         assertComponentsInDesc(V800_SQL, 52, BedChangedPayload.class);

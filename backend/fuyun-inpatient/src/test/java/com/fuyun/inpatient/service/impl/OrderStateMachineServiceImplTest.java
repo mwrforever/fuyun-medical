@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,8 +12,10 @@ import static org.mockito.Mockito.when;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.inpatient.api.InpatientErrorCode;
 import com.fuyun.inpatient.entity.MedicalOrder;
+import com.fuyun.inpatient.entity.OrderStatusLog;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
+import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import java.util.List;
 import java.util.Map;
 import org.apache.ibatis.annotations.Update;
@@ -22,16 +25,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 
 /**
- * 医嘱状态机单测（Task 5 冻结集）：04 Spec §3.3 合法迁移表全集 13 条边逐一放行（brief 冻结
- * 「合法八条全过」——本套以 13 边参数化全覆盖超集承载）+ 非法迁移两条拒（COMPLETED→EXECUTING、
- * CREATED→TRANSFERRED，IP-1010）+ CAS 零行并发窗口拒 + GC26 可执行锚（状态 CAS 注解 SQL
- * 限定 from 态与 deleted=0）。迁移留痕数据面（order_status_log）归 Task 6 V905 回接，本套
- * 以 CAS 调用锚承载状态面。
+ * 医嘱状态机单测（Task 5 冻结集 + Task 6 留痕回接面）：04 Spec §3.3 合法迁移表全集 13 条边
+ * 逐一放行（brief 冻结「合法八条全过」——本套以 13 边参数化全覆盖超集承载）+ 非法迁移两条拒
+ * （COMPLETED→EXECUTING、CREATED→TRANSFERRED，IP-1010）+ CAS 零行并发窗口拒 + GC26 可执行锚
+ * （状态 CAS 注解 SQL 限定 from 态与 deleted=0）。Task 6 回接后追加留痕断言：每次迁移
+ * order_status_log 只增落一行（from/to/reason/operator 载荷与迁移实况一致）。
  */
 @ExtendWith(MockitoExtension.class)
 class OrderStateMachineServiceImplTest {
@@ -42,11 +47,17 @@ class OrderStateMachineServiceImplTest {
     @Mock
     private MedicalOrderMapper orderMapper;
 
+    @Mock
+    private OrderStatusLogMapper statusLogMapper;
+
+    @Captor
+    private ArgumentCaptor<OrderStatusLog> statusLogCaptor;
+
     private OrderStateMachineServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new OrderStateMachineServiceImpl(orderMapper);
+        service = new OrderStateMachineServiceImpl(orderMapper, statusLogMapper);
     }
 
     /** 合法迁移边全集（04 Spec §3.3：主链+侧支+终态收口，13 条）。 */
@@ -69,7 +80,7 @@ class OrderStateMachineServiceImplTest {
 
     @ParameterizedTest(name = "合法迁移第 {index} 边：{0}→{1}")
     @MethodSource("legalEdges")
-    @DisplayName("合法迁移表全集 13 边逐一放行：CAS from 态限定 + 内存行同步目标态")
+    @DisplayName("合法迁移表全集 13 边逐一放行：CAS from 态限定 + 内存行同步目标态 + order_status_log 留痕落库")
     void legalTransitionRunsCasAndSyncsMemoryRow(Map.Entry<OrderStatus, OrderStatus> edge) {
         MedicalOrder order = orderRow(edge.getKey());
         when(orderMapper.casTransferStatus(
@@ -84,6 +95,15 @@ class OrderStateMachineServiceImplTest {
                         "MO1", edge.getKey().getCode(), edge.getValue().getCode(), "1001");
         // 内存行同步目标态（调用方值面补写/事件发布免回读）
         assertThat(order.getStatus()).isEqualTo(edge.getValue().getCode());
+        // 迁移留痕（Task 6 回接面）：order_status_log 只增落一行，from/to/reason/operator 全息
+        verify(statusLogMapper).insert(statusLogCaptor.capture());
+        OrderStatusLog logRow = statusLogCaptor.getValue();
+        assertThat(logRow.getOrderId()).isEqualTo(order.getId());
+        assertThat(logRow.getFromStatus()).isEqualTo(edge.getKey().getCode());
+        assertThat(logRow.getToStatus()).isEqualTo(edge.getValue().getCode());
+        assertThat(logRow.getReason()).isEqualTo("审核通过");
+        assertThat(logRow.getOperator()).isEqualTo("1001");
+        assertThat(logRow.getOccurredAt()).isNotNull();
     }
 
     @Test
@@ -137,6 +157,8 @@ class OrderStateMachineServiceImplTest {
                         .isEqualTo(InpatientErrorCode.ORDER_STATE_NOT_ALLOWED));
         // 内存行保持迁移前实态（快照失效——调用方须回读后重试）
         assertThat(order.getStatus()).isEqualTo(OrderStatus.AUDITED.getCode());
+        // CAS 零行未迁移：留痕零落库（迁移失败不写 order_status_log）
+        verify(statusLogMapper, never()).insert(any(OrderStatusLog.class));
     }
 
     @Test
@@ -157,6 +179,7 @@ class OrderStateMachineServiceImplTest {
     /** 构造指定状态医嘱行（迁移裁决载体）。 */
     private MedicalOrder orderRow(OrderStatus status) {
         MedicalOrder row = new MedicalOrder();
+        row.setId(9001L);
         row.setOrderNo("MO1");
         row.setVisitId(7001L);
         row.setPatientId(1001L);

@@ -3,18 +3,21 @@ package com.fuyun.inpatient.service.impl;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.inpatient.api.InpatientErrorCode;
 import com.fuyun.inpatient.entity.MedicalOrder;
+import com.fuyun.inpatient.entity.OrderStatusLog;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
+import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.service.OrderStateMachineService;
+import java.time.OffsetDateTime;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 
 /**
  * 医嘱状态机服务实现（迁移表驱动，04-inpatient Spec §3.3 红线 2 执行面）：合法迁移表
  * （OrderStatus.canTransitionTo，13 条边硬编码于枚举）裁决 → CAS 条件更新（from 态限定，
- * 0 行定性并发迁移/终态违例）→ 迁移留痕。order_status_log 只增表归 Task 6 V905 落盘，
- * 本版本迁移留痕以结构化日志承载（appendStatusLog 调用点已就位，建表后同点回接落库，
- * 届时仅需覆写本方法注入 OrderStatusLogMapper——调用面零改动）。
+ * 0 行定性并发迁移/终态违例）→ 迁移留痕。V905 order_status_log 建表后本版已回接真实落库
+ * （Task 5 冻结的 appendStatusLog 调用点零改动，注入 OrderStatusLogMapper 只增插入——
+ * 一切状态迁移的留痕随状态机单一执行面自动收口，调用方不另写）。
  * 不发事件（接口契约冻结）：事件归调用方在同事务附带，避免状态机与业务面双写。
  * 线程安全：无状态 singleton；CAS 保并发迁移互斥。
  */
@@ -23,17 +26,21 @@ public class OrderStateMachineServiceImpl implements OrderStateMachineService {
 
     private final MedicalOrderMapper orderMapper;
 
+    private final OrderStatusLogMapper statusLogMapper;
+
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
-     * @param orderMapper 医嘱主表 mapper，非空；状态 CAS 唯一执行通道
+     * @param orderMapper     医嘱主表 mapper，非空；状态 CAS 唯一执行通道
+     * @param statusLogMapper 状态迁移日志 mapper，非空；迁移留痕只增落库（V905 回接面）
      */
-    public OrderStateMachineServiceImpl(MedicalOrderMapper orderMapper) {
+    public OrderStateMachineServiceImpl(MedicalOrderMapper orderMapper, OrderStatusLogMapper statusLogMapper) {
         this.orderMapper = orderMapper;
+        this.statusLogMapper = statusLogMapper;
     }
 
     /**
-     * 医嘱状态迁移：迁移表裁决 → CAS → 留痕；迁移成功后内存行同步目标态（调用方零回读）。
+     * 医嘱状态迁移：迁移表裁决 → CAS → 留痕落库；迁移成功后内存行同步目标态（调用方零回读）。
      *
      * @param order    迁移目标医嘱行，非空
      * @param to       目标态，非空
@@ -73,14 +80,14 @@ public class OrderStateMachineServiceImpl implements OrderStateMachineService {
         }
         // 内存行同步目标态（调用方后续值面补写/事件发布免回读）
         order.setStatus(to.getCode());
-        // 迁移留痕（order_status_log 数据面归 Task 6 V905 建表后回接落库）
+        // 迁移留痕（order_status_log 只增落库——V905 建表后回接，调用面与签名零改动）
         appendStatusLog(order, from, to, reason, operator);
     }
 
     /**
-     * 医嘱状态迁移留痕（order_status_log 只增写调用点）：order_status_log 表归 Task 6 V905
-     * 建表落盘，本版本以结构化日志承载留痕面——建表后在本方法内补 OrderStatusLogMapper
-     * 只增插入（调用点与签名冻结零改动）。protected 形态供 Task 6 回接时覆写扩展。
+     * 医嘱状态迁移留痕（order_status_log 只增写唯一落点）：每次迁移落一行
+     * from/to/reason/operator/occurred_at；数据库写操作与本状态机同事务成败与共。
+     * protected 形态保留供审核域扩展观察面（如迁移钩子），调用面冻结。
      *
      * @param order    迁移后医嘱行（status 已为目标态），非空
      * @param from     迁移前状态，非空
@@ -88,8 +95,19 @@ public class OrderStateMachineServiceImpl implements OrderStateMachineService {
      * @param reason   迁移原因，非空
      * @param operator 操作者员工 ID，非空
      */
-    // TODO(order-status-log): 迁移留痕落库，计划于 Task 6 V905 order_status_log 建表后回接
     protected void appendStatusLog(MedicalOrder order, OrderStatus from, OrderStatus to, String reason, Long operator) {
+        String operatorText = String.valueOf(operator);
+        OrderStatusLog row = new OrderStatusLog();
+        row.setOrderId(order.getId());
+        row.setFromStatus(from.getCode());
+        row.setToStatus(to.getCode());
+        row.setReason(reason);
+        row.setOperator(operatorText);
+        row.setOccurredAt(OffsetDateTime.now());
+        row.setCreatedBy(operatorText);
+        row.setUpdatedBy(operatorText);
+        // 数据库写操作：迁移留痕只增落库（V905 order_status_log）
+        statusLogMapper.insert(row);
         log.info(
                 "医嘱状态迁移：orderNo={}，{}→{}，reason={}，operator={}",
                 order.getOrderNo(),

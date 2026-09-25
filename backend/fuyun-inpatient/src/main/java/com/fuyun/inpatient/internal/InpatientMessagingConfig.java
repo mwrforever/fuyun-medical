@@ -15,15 +15,16 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 
 /**
- * M04 消息装配：发布/消费模板 Bean、订阅队列治理声明、发布器注册集中点
+ * M04 消息装配：发布/消费模板 Bean、订阅队列治理声明、发布器与消费监听器注册集中点
  * （NursingMessagingConfig 同款形态；本类归 internal/，经 fuyun-app InpatientConfig
- * @Import 启用——启用动作归 Task 3，与 InpatientWebConfig 一并挂接）。交换机全集归 integration
- * 禁私建（A.5-4）；订阅队列声明随消费任务逐批追加（先登记后订阅红线，本批五订阅：
- * M06 审方回执两条 + M13 计费联动三条，均 fy.topic 精确键绑定，fy.delay 声明不涉及）；
- * 发布面经 InpatientEventPublisher 于业务事务提交后出 MQ。
+ * @Import 启用）。交换机全集归 integration 禁私建（A.5-4）；订阅队列五条声明已随 Task 2
+ * 落位（SUBSCRIBED_EVENT_TYPES：M06 审方回执两条 + M13 计费联动三条，均 fy.topic 精确键
+ * 绑定，fy.delay 声明不涉及）；Task 6 追加审方回执消费监听器 @Import（V800 id 53/54 两队列
+ * 的首个消费者——队列声明零新增，绑定复用既有声明）；发布面经 InpatientEventPublisher 于
+ * 业务事务提交后出 MQ。
  */
 @Configuration
-@Import(InpatientEventPublisher.class)
+@Import({InpatientEventPublisher.class, PharmacyAuditReplyListener.class})
 public class InpatientMessagingConfig {
 
     /**

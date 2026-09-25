@@ -36,6 +36,7 @@ import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
+import com.fuyun.inpatient.service.OrderAuditService;
 import com.fuyun.inpatient.service.OrderStateMachineService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
@@ -53,6 +54,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InOrder;
@@ -64,12 +67,13 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 
 /**
- * 医嘱开立域服务单测（Task 5 冻结八用例 + 覆盖率补面）：四层校验顺序与错误面（授权/过敏/
- * 明细频次/嘱托）、开立落库与 order.created 子键路由载荷、成组三要素、转科批量停嘱链
- * （状态机迁移+停嘱值面+stopped 事件）、查询面与守卫补充面（操作者非数字/非在院/词表外/
- * 号冲突）。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册表信息。
- * OrderStateMachineService 按冻结接口 mock（状态面语义由 OrderStateMachineServiceImplTest
- * 独立承载）。
+ * 医嘱开立域服务单测（Task 5 冻结八用例 + Task 6 审核链/重提面 + 覆盖率补面）：四层校验
+ * 顺序与错误面（授权/过敏/明细频次/嘱托）、开立落库与 order.created 子键路由载荷、成组
+ * 三要素、转科批量停嘱链（状态机迁移+停嘱值面+stopped 事件）、查询面与守卫补充面（操作者
+ * 非数字/非在院/词表外/号冲突）、停嘱三态合法（Task 6 冻结用例⑥）、驳回重提面（Task 6：
+ * 内容重写+状态回 CREATED+重发开立事件+审核链重入）。MP 3.5.17 单测范式：lambdaQuery
+ * 触达实体 @BeforeAll 手工注册表信息。OrderStateMachineService/OrderAuditService 按冻结
+ * 接口 mock（状态面/审核面语义由各自独立测试承载）。
  */
 @ExtendWith(MockitoExtension.class)
 class MedicalOrderServiceImplTest {
@@ -116,6 +120,9 @@ class MedicalOrderServiceImplTest {
     @Mock
     private ApplicationEventPublisher events;
 
+    @Mock
+    private OrderAuditService orderAuditService;
+
     @Captor
     private ArgumentCaptor<MedicalOrder> orderCaptor;
 
@@ -148,7 +155,8 @@ class MedicalOrderServiceImplTest {
                 practiceCheckPort,
                 allergyChecker,
                 stateMachine,
-                events);
+                events,
+                orderAuditService);
         OperatorContextHolder.set(String.valueOf(OPERATOR));
     }
 
@@ -158,13 +166,15 @@ class MedicalOrderServiceImplTest {
     }
 
     @Test
-    @DisplayName("用例①开立成功（长期用药医嘱）：四层全过→CREATED 落库→order.created 载荷含 items 明细→drug 子键路由")
+    @DisplayName("用例①开立成功（长期用药医嘱）：四层全过→CREATED 落库→order.created 载荷含 items 明细→drug 子键路由→审核链收口")
     void createRunsFourLayersAndPublishesDrugRoutedEvent() {
         when(visitMapper.selectOne(any())).thenReturn(visitRow());
         when(practiceCheckPort.check(OPERATOR, "PRESCRIPTION")).thenReturn(new PracticeCheckResult(true, null));
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
         when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("qd"));
         when(seqGate.nextNo("MO")).thenReturn(ORDER_NO);
+        // 审核链收口（全员必经）：用药类停留 CREATED 待药师审（mock 承载审核面语义）
+        when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
 
         MedicalOrderVO result = service.create(VISIT_ID, longDrugOrder());
 
@@ -219,6 +229,8 @@ class MedicalOrderServiceImplTest {
         assertThat(line.route()).isEqualTo("IV");
         assertThat(line.quantity()).isEqualTo("2");
         assertThat(line.itemType()).isEqualTo("drug");
+        // 审核链收口在开立事务内被调用（FU-M04-05 全员必经锚）
+        verify(orderAuditService).audit(ORDER_NO);
     }
 
     @Test
@@ -321,6 +333,7 @@ class MedicalOrderServiceImplTest {
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
         when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("bid"));
         when(seqGate.nextNo("MO")).thenReturn(ORDER_NO);
+        when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
 
         // 成组两行：药品行（延续）+检验行（非延续、无剂量——载荷剂量空分支同覆盖）
         service.create(
@@ -571,6 +584,7 @@ class MedicalOrderServiceImplTest {
                 .thenReturn(List.of(new AllergyItem(9L, null, "芒果", "MILD")));
         when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("qd"));
         when(seqGate.nextNo("MO")).thenReturn(ORDER_NO);
+        when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
         MedicalOrderVO result = service.create(
                 VISIT_ID,
                 new OrderCreateRequest(
@@ -654,6 +668,128 @@ class MedicalOrderServiceImplTest {
                 .isInstanceOf(BizException.class)
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.VISIT_NOT_FOUND));
+    }
+
+    /** 停嘱三态合法集（Task 6 冻结用例⑥载体：04 Spec §3.3 可停态）。 */
+    static List<OrderStatus> stoppableStates() {
+        return List.of(OrderStatus.AUDITED, OrderStatus.TRANSFERRED, OrderStatus.EXECUTING);
+    }
+
+    @ParameterizedTest(name = "用例⑥停嘱三态合法第 {index} 态：{0}→STOPPED")
+    @MethodSource("stoppableStates")
+    @DisplayName("停嘱三态合法：AUDITED/TRANSFERRED/EXECUTING→STOPPED 各一经状态机+停嘱值面+stopped 事件")
+    void stopAcceptsThreeLegalStates(OrderStatus from) {
+        MedicalOrder order = orderRow(ORDER_NO, from);
+        when(orderMapper.selectOne(any())).thenReturn(order);
+        when(orderMapper.updateStopValues(eq(ORDER_NO), any(), eq("病情好转"), eq(String.valueOf(OPERATOR))))
+                .thenReturn(1);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+
+        service.stop(ORDER_NO, "病情好转");
+
+        // 三态均经状态机唯一裁决面迁移 STOPPED（留痕随状态机自动落 order_status_log）
+        verify(stateMachine).transition(order, OrderStatus.STOPPED, "病情好转", OPERATOR);
+        verify(orderMapper)
+                .updateStopValues(eq(ORDER_NO), any(OffsetDateTime.class), eq("病情好转"), eq(String.valueOf(OPERATOR)));
+        verify(events).publishEvent(eventCaptor.capture());
+        assertThat(((OrderStoppedPayload) eventCaptor.getValue().payload()).stopReason())
+                .isEqualTo("病情好转");
+    }
+
+    @Test
+    @DisplayName("驳回重提成功：头值面+明细行内容重写+状态回 CREATED+重发 order.created（drug 子键）+审核链重入")
+    void resubmitRewritesContentAndReentersAuditChain() {
+        MedicalOrder rejected = orderRow(ORDER_NO, OrderStatus.AUDIT_REJECTED);
+        when(orderMapper.selectOne(any())).thenReturn(rejected);
+        when(practiceCheckPort.check(OPERATOR, "PRESCRIPTION")).thenReturn(new PracticeCheckResult(true, null));
+        when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
+        when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("bid"));
+        when(orderMapper.updateResubmitValues(ORDER_NO, "DRUG", "LONG", false, "bid", String.valueOf(OPERATOR)))
+                .thenReturn(1);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        // 审核链重入（全员必经）：用药类停留 CREATED 待药师审（mock 承载审核面语义）
+        when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
+
+        MedicalOrderVO result = service.resubmit(
+                ORDER_NO,
+                new OrderCreateRequest(
+                        "DRUG",
+                        "LONG",
+                        null,
+                        null,
+                        "bid",
+                        List.of(
+                                drugItem(true),
+                                new OrderItemRequest(
+                                        "LAB",
+                                        "L0001",
+                                        "血常规",
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                        new BigDecimal("1"),
+                                        null,
+                                        null,
+                                        null,
+                                        false))));
+
+        // 出参：状态=审核链收口后实态（用药类停留 CREATED）、医嘱号不变（轻量变体禁另开新单）
+        assertThat(result.status()).isEqualTo(OrderStatus.CREATED.getCode());
+        assertThat(result.orderNo()).isEqualTo(ORDER_NO);
+        assertThat(result.freqCode()).isEqualTo("bid");
+        // 头值面重写：order_type/order_class/standby_flag/freq_code 四列
+        verify(orderMapper).updateResubmitValues(ORDER_NO, "DRUG", "LONG", false, "bid", String.valueOf(OPERATOR));
+        // 明细重写：旧行逻辑删（@TableLogic）+ 新行按列表序 1 起重新落库
+        verify(itemMapper).delete(any());
+        verify(itemMapper, times(2)).insert(itemCaptor.capture());
+        assertThat(itemCaptor.getAllValues())
+                .extracting(MedicalOrderItem::getItemSeq)
+                .containsExactly(1, 2);
+        // 状态回 CREATED（状态机唯一裁决面——仅 AUDIT_REJECTED 可达；留痕随状态机落库）
+        verify(stateMachine).transition(rejected, OrderStatus.CREATED, "驳回后修改重提", OPERATOR);
+        // 重发开立事件（drug 子键驱动 M06 重开审方任务——驳回重提闭环）
+        verify(events).publishEvent(eventCaptor.capture());
+        InpatientDomainEvent event = eventCaptor.getValue();
+        assertThat(event.eventType())
+                .isEqualTo(InpatientMessagingConstants.withTypeKey(
+                        InpatientMessagingConstants.EVENT_ORDER_CREATED, "drug"));
+        OrderCreatedPayload payload = (OrderCreatedPayload) event.payload();
+        assertThat(payload.freqCode()).isEqualTo("bid");
+        assertThat(payload.items()).hasSize(2);
+        // 审核链重入锚
+        verify(orderAuditService).audit(ORDER_NO);
+    }
+
+    @Test
+    @DisplayName("驳回重提守卫面：orderType/orderClass 词表外 IP-1022/头值面落写零行 IP-1023（四层与状态机零触达）")
+    void resubmitCoversGuardFaces() {
+        // 医嘱类型词表外（服务面——Web 层 @Pattern 兜底）：IP-1022，四层校验零触达
+        when(orderMapper.selectOne(any())).thenReturn(orderRow(ORDER_NO, OrderStatus.AUDIT_REJECTED));
+        assertThatThrownBy(() -> service.resubmit(
+                        ORDER_NO, new OrderCreateRequest("PHYSIO", "LONG", null, null, "qd", List.of(drugItem(false)))))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
+
+        // 医嘱分类词表外（类型裁决之后的同一守卫面）：IP-1022
+        assertThatThrownBy(() -> service.resubmit(
+                        ORDER_NO, new OrderCreateRequest("DRUG", "urgent", null, null, "qd", List.of(drugItem(false)))))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
+        verifyNoInteractions(practiceCheckPort);
+
+        // 头值面落写零行（并发逻辑删窗口）：IP-1023，明细/状态机/事件/审核链零触达
+        when(practiceCheckPort.check(OPERATOR, "PRESCRIPTION")).thenReturn(new PracticeCheckResult(true, null));
+        when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
+        when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("qd"));
+        when(orderMapper.updateResubmitValues(ORDER_NO, "DRUG", "LONG", false, "qd", String.valueOf(OPERATOR)))
+                .thenReturn(0);
+        assertThatThrownBy(() -> service.resubmit(ORDER_NO, longDrugOrder()))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.CONFLICT));
+        verifyNoInteractions(itemMapper, stateMachine, events, orderAuditService);
     }
 
     /** 构造在院就诊行（ADMITTED——开立守卫链⓪载体）。 */
