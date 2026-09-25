@@ -71,6 +71,12 @@
       <groupId>org.mapstruct</groupId>
       <artifactId>mapstruct</artifactId>
     </dependency>
+    <!-- 床位费日切任务守护（A.5-14 多实例 @Scheduled 强制，父 POM 锁版本；Task 13 住院计费联动——
+         程序性偏差：brief Files 未列 pom，但 02:30 日切任务为 brief 冻结交付物，ShedLock 为宪法硬约束） -->
+    <dependency>
+      <groupId>net.javacrumbs.shedlock</groupId>
+      <artifactId>shedlock-spring</artifactId>
+    </dependency>
     <!-- 实体 @Getter/@Setter 编译期依赖（A.1-12 允许清单），provided 不打进运行产物 -->
     <dependency>
       <groupId>org.projectlombok</groupId>

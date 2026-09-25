@@ -75,7 +75,11 @@ public enum BillingErrorCode implements ErrorCode {
     /** 退费结算单状态不允许（409；W-18——仅 SETTLED 单值可退（SETTLED 唯一可退基点），封堵 DRAFT/预结算绕过主链） */
     REFUND_SETTLEMENT_STATE_NOT_ALLOWED("BILL-1030"),
     /** 退费费用行归属不符（409；W-18——行 settlementId 与申请结算单不一致） */
-    REFUND_FEE_NOT_IN_SETTLEMENT("BILL-1031");
+    REFUND_FEE_NOT_IN_SETTLEMENT("BILL-1031"),
+    /** 挂账审批单不存在（404；approval_no 无命中，M13 住院联动 P2 PR-1 Task 13） */
+    ARREARS_APPROVAL_NOT_FOUND("BILL-1032"),
+    /** 挂账审批状态不允许该操作（409；非 PENDING_APPROVAL 态决出/并发被抢，P2 PR-1 Task 13） */
+    ARREARS_APPROVAL_STATE_NOT_ALLOWED("BILL-1033");
 
     /** 码值（如 BILL-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

@@ -10,21 +10,23 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * 22 枚举全量契约测试（A.2-7 code↔enum 双向映射统一模板验证）：每个枚举常量
- * code 与枚举名一致（V600–V604 列注释直读口径）、fromCode/getCode 双向闭环、
+ * 24 枚举全量契约测试（A.2-7 code↔enum 双向映射统一模板验证）：每个枚举常量
+ * code 与枚举名一致（V600–V604/V1001–V1002 列注释直读口径）、fromCode/getCode 双向闭环、
  * values/valueOf 生成方法同源可用、值域外 code 显式拒绝（脏数据禁静默）。
  * 值集全序锚定（状态机敏感的 FeeStatus/SettlementStatus/TriggerType）归
  * {@link BillingEnumsContractTest}，本测试不重复钉序只验映射模板。
  */
 class BillingEnumsFullContractTest {
 
-    /** 22 枚举全集：新增枚举必须登记入列（漏登即本测试不再覆盖其映射契约，CI 兜底） */
+    /** 24 枚举全集：新增枚举必须登记入列（漏登即本测试不再覆盖其映射契约，CI 兜底） */
     private static final List<Class<? extends Enum<?>>> BILLING_ENUMS = List.of(
+            ArrearsApprovalStatus.class,
             ChargeSource.class,
             DepositStatus.class,
             DepositTxnStatus.class,
             DepositTxnType.class,
             ExecOccupyStatus.class,
+            FeeSplitType.class,
             FeeStatus.class,
             InsuranceCallStatus.class,
             InsurancePayType.class,
@@ -44,9 +46,9 @@ class BillingEnumsFullContractTest {
             VisitType.class);
 
     @Test
-    @DisplayName("22 枚举契约：code=常量名 + fromCode 双向闭环 + valueOf 同源 + 值域外拒绝")
+    @DisplayName("24 枚举契约：code=常量名 + fromCode 双向闭环 + valueOf 同源 + 值域外拒绝")
     void allBillingEnumsFollowCodeRoundTripContract() throws Exception {
-        assertThat(BILLING_ENUMS).hasSize(22);
+        assertThat(BILLING_ENUMS).hasSize(24);
 
         for (Class<? extends Enum<?>> type : BILLING_ENUMS) {
             Method getCode = type.getMethod("getCode");
