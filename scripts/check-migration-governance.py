@@ -39,6 +39,10 @@ _SEGMENTS = {
     # nursing 专属固定百位段 V800–V899（非通用段，仅供 nursing 模块，其他模块不得占用）
     # PR-6 首批 V800–V807，CHANGELOG 2026-09-22 条目先记再改
     "nursing": ((800, 899), (500, None)),
+    # inpatient 专属固定百位段 V900–V999（非通用段，仅供 inpatient 模块，其他模块不得占用）；
+    # V900 已被 patient 通用段借用（trigram 索引），版本唯一校验兜底 inpatient 禁用 V900
+    # P2 PR-1 首批 V901–V908，CHANGELOG 2026-09-25 条目先记再改
+    "inpatient": ((900, 999), (500, None)),
 }
 
 # 未登记号段模块的唯一合法区间（V500+ 通用段）

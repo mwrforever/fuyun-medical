@@ -2,6 +2,26 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-25 · P2 PR-1 前置：inpatient 号段登记（V900 段）+ V1000+ 通用段四位数先例 + 事件 id 65–73 排定 + JaCoCo 扩名单
+
+- ① inpatient 固定百位段 **V900–V999** 登记（`scripts/check-migration-governance.py` `_SEGMENTS` 增行
+  + `docs/migrations/flyway-version-registry.md` 台账同步）：首批 V901–V908（事件登记升级种子/入院两表/
+  床位两表/医嘱三表/审核两表/转抄计划两表/出院随访两表/会诊一表，随 PR-1 Task 2–11 逐任务落盘）；
+  **V900 已被 patient 通用段借用**（V900__add_patient_name_trgm_gin_index，已应用不可改）——版本唯一
+  校验兜底 inpatient 禁用 V900，inpatient 首批 V901 > 基线全局最大 V900，乱序守卫天然通过（零豁免）。
+- ② **V500+ 通用段四位数号先例开创**：pharmacy V1000（order_medication/review_task 审方薄切片）与
+  billing V1001–V1003（fee_ownership_split / arrears_approval+event_registry id 73 种子 / 住院计价项目
+  种子）——pharmacy/billing 固定段内号 ≤V799/V699 小于基线全局最大 V900 必被乱序守卫拦截，故取
+  V1000+，同时避开 inpatient 固定段 V900–V999 防未来撞车。
+- ③ **事件 id 65–73 排定**（全局递增，先例 V800 id 41–64）：65–72 inpatient 八事件
+  （visit.registered / order.created / order.audit-rejected / consultation 五态）落 inpatient V901；
+  73 billing.arrears.approved（producer=billing）落 billing V1002；**W-33 义务声明**——V901 迁移内
+  UPDATE integration.event_registry id 55 payload_desc 补齐执行回签字段级契约（UPDATE 已有行非改
+  DDL，V702 UPDATE V605 先例，合法例外）。
+- ④ **JaCoCo 规则二纳入 `com.fuyun.inpatient.service.impl`**（父 POM PACKAGE LINE=1.00）：visit_id
+  签发与医嘱状态机属「核心业务状态机」、计费停费联动属「资金关联路径」（2026-09-25 主控裁决）；包
+  不存在时规则零包平凡通过，首个 impl 落码即生效，既有八包 LINE=1.00 不回退。
+
 ## 2026-09-25 · P1 PR-7 收口
 
 - 交付面：扫描成果回流 dev（PR #51 纯 merge，CI 六 job 绿，新基线 dev@97fc7af）+ 演示预检 W-28 销项

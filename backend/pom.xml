@@ -280,6 +280,10 @@
                   <include>com.fuyun.outpatient.service.impl</include>
                   <!-- nursing 护理文书/体征状态机/评估判级（PR-6，CHANGELOG 2026-09-22 条目先记再改） -->
                   <include>com.fuyun.nursing.service.impl</include>
+                  <!-- inpatient 住院域核心包（P2 PR-1 起随首个 impl 实装生效；visit_id 签发与医嘱
+                       状态机属核心业务状态机、计费停费联动属资金关联路径，2026-09-25 主控裁决；
+                       CHANGELOG 2026-09-25 条目先记再改） -->
+                  <include>com.fuyun.inpatient.service.impl</include>
                 </includes>
                 <limits>
                   <limit>

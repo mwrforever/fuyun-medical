@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -65,6 +65,18 @@
 | V807 | V807__create_shift_handover.sql | nursing / fuyun-nursing | 交接班 |
 | V808 | V808__add_vital_sign_patient_time_index.sql | nursing / fuyun-nursing | 体征表患者维度前导索引（PERF-02：(patient_id, measured_at)，患者维度查询顺序扫描→索引范围扫描；nursing 段续号——全局最大 V807 的下一号，满足乱序守卫） |
 | V900 | V900__add_patient_name_trgm_gin_index.sql | patient / fuyun-patient | 患者姓名 trigram GIN 索引（PERF-03：pg_trgm 扩展幂等启用 + gin (name gin_trgm_ops)，姓名 LIKE '%kw%' 前导通配顺序扫描→trigram 索引扫描；V500+ 通用段——V800–V899 为 nursing 专属段不得占用，故取全局最大 V808 之后的首个合法号） |
+| V901 | V901__upgrade_and_seed_inpatient_event_registry.sql | inpatient / fuyun-inpatient | 事件登记：UPDATE id 55 payload_desc 补齐执行回签字段级契约（W-33 闭合）+ inpatient 事件族补登 id 65–72（P2 PR-1 Task 2 落盘；inpatient 段——V900 已被 patient 借用，故自 V901 起） |
+| V902 | V902__create_admission_visit.sql | inpatient / fuyun-inpatient | admission / inpatient_visit 两表（入院登记域，P2 PR-1 Task 3 落盘） |
+| V903 | V903__create_bed_assign.sql | inpatient / fuyun-inpatient | bed / bed_assign 两表（床位管理域，P2 PR-1 Task 4 落盘） |
+| V904 | V904__create_medical_order.sql | inpatient / fuyun-inpatient | medical_order / medical_order_item / order_frequency 三表含频次种子（医嘱开立域，P2 PR-1 Task 5 落盘） |
+| V905 | V905__create_order_audit_log.sql | inpatient / fuyun-inpatient | order_audit / order_status_log 两表（医嘱审核与控制域，P2 PR-1 Task 6 落盘） |
+| V906 | V906__create_transfer_plan.sql | inpatient / fuyun-inpatient | order_transfer_log / order_execute_plan 两表（转抄与执行计划域，P2 PR-1 Task 7/8 落盘） |
+| V907 | V907__create_discharge_followup.sql | inpatient / fuyun-inpatient | discharge_request / follow_up_plan 两表（出院管理域，P2 PR-1 Task 9 落盘） |
+| V908 | V908__create_consultation.sql | inpatient / fuyun-inpatient | consultation 表（会诊管理域，P2 PR-1 Task 11 落盘） |
+| V1000 | V1000__create_medication_review.sql | pharmacy / fuyun-pharmacy | 住院用药 order_medication / review_task 审方薄切片（M06，P2 PR-1 Task 12 落盘；V500+ 通用段四位数首例——固定段 ≤V799 小于基线全局最大 V900 被乱序守卫拦截，取 V1000+ 并避开 inpatient 段） |
+| V1001 | V1001__create_fee_ownership_split.sql | billing / fuyun-billing | fee_ownership_split 费用归属切分表（M13 住院计费联动，P2 PR-1 Task 13 落盘；通用段四位数，理由同 V1000） |
+| V1002 | V1002__create_arrears_approval_seed_event.sql | billing / fuyun-billing | arrears_approval 挂账审批表 + event_registry id 73（billing.arrears.approved）种子（P2 PR-1 Task 13 落盘） |
+| V1003 | V1003__seed_inpatient_charge_item.sql | billing / fuyun-billing | 床位费等住院计价项目种子（P2 PR-1 Task 13 条件落盘：先实测已有种子则免） |
 
 ## 冻结段速查（禁落新文件）
 
