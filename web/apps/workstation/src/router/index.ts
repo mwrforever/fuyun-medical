@@ -117,6 +117,42 @@ export const router = createRouter({
           component: () => import('@/views/nursing/WardBoardView.vue'),
           meta: { permission: 'nursing:ward:view' },
         },
+        {
+          path: 'inpatient/admission',
+          name: 'inpatient-admission',
+          component: () => import('@/views/inpatient/AdmissionView.vue'),
+          meta: { permission: 'inpatient:admission:manage' },
+        },
+        {
+          path: 'inpatient/beds',
+          name: 'inpatient-beds',
+          component: () => import('@/views/inpatient/BedMapView.vue'),
+          meta: { permission: 'inpatient:bed:view' },
+        },
+        {
+          path: 'inpatient/station',
+          name: 'inpatient-station',
+          component: () => import('@/views/inpatient/DoctorStationView.vue'),
+          meta: { permission: 'inpatient:station:view' },
+        },
+        {
+          path: 'inpatient/transfer',
+          name: 'inpatient-transfer',
+          component: () => import('@/views/inpatient/TransferWorklistView.vue'),
+          meta: { permission: 'inpatient:transfer:check' },
+        },
+        {
+          path: 'inpatient/discharge',
+          name: 'inpatient-discharge',
+          component: () => import('@/views/inpatient/DischargeManageView.vue'),
+          meta: { permission: 'inpatient:discharge:manage' },
+        },
+        {
+          path: 'pharmacy/review',
+          name: 'pharmacy-review',
+          component: () => import('@/views/pharmacy/ReviewTaskView.vue'),
+          meta: { permission: 'pharmacy:review:audit' },
+        },
       ],
     },
     {

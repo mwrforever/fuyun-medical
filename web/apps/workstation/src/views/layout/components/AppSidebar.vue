@@ -30,6 +30,12 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/pharmacy/dispense-return', label: '退药受理', abbr: '收', group: '药房管理' },
   { index: '/nursing/ward', label: '护士站', abbr: '护', group: '护理管理' },
   { index: '/pda', label: 'PDA 扫码', abbr: '扫', group: '护理管理' },
+  { index: '/inpatient/admission', label: '入院登记台', abbr: '登', group: '住院管理' },
+  { index: '/inpatient/beds', label: '病区床位图', abbr: '床', group: '住院管理' },
+  { index: '/inpatient/station', label: '住院医生站', abbr: '住', group: '住院管理' },
+  { index: '/inpatient/transfer', label: '转抄工作台', abbr: '抄', group: '住院管理' },
+  { index: '/inpatient/discharge', label: '出院管理', abbr: '出', group: '住院管理' },
+  { index: '/pharmacy/review', label: '住院审方台', abbr: '审', group: '药房管理' },
 ];
 
 /** 顶层菜单项（group 空串），渲染在各分组之前 */
