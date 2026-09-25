@@ -21,3 +21,7 @@ auto-imports.d.ts
 components.d.ts
 # openapi 类型契约生成中间物（PR-2 Task 16 定稿：容器内导出不入库；入库生成物为 packages/shared/src/api.d.ts）
 web/api-docs.json
+# superpowers 过程面不入库（SDD 台账/审查包/PR body/测试截图 gui-test-screenshots 等，属本地过程产物）
+.superpowers/
+# 浏览器调试过程面不入库（playwright-cli 会话与截图目录）
+.playwright-cli/
