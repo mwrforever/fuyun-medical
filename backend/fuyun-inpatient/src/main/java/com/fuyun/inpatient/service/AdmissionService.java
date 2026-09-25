@@ -14,8 +14,9 @@ import com.fuyun.inpatient.vo.InpatientVisitVO;
  * 起算两态（登记确认签发 I 型 visit_id / 入科确认）。登记确认为本域红线方法——visit_id 签发、
  * 结构自检与就诊落库同事务成败与共（M02 Spec 红线 1：I 型唯一签发主体 = 本模块）。
  * 床位联动三处（Task 4 随 V903 bed 落地补齐）：schedule 预约目标床位置 RESERVED、cancel
- * （SCHEDULED 态）释放预占床位、admitWard 入科床位 RESERVED→OCCUPIED + bed_assign 开流水
- * ——均同事务联动（BedService 同源 CAS 权威，联动失败整体回滚）。
+ * 宽容联动释放（回读床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
+ * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——均同事务联动（BedService 同源 CAS 权威，
+ * 联动失败整体回滚）。
  */
 public interface AdmissionService {
 
@@ -57,13 +58,16 @@ public interface AdmissionService {
     AdmissionVO schedule(String admissionNo, AdmissionScheduleRequest req);
 
     /**
-     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）。SCHEDULED 作废时同事务联动释放预占
-     * 床位（BedService.releaseForAdmission 置 FREE）；WAITING 作废无预占不联动。
+     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）。床位联动②取宽容语义：作废 CAS 命中后
+     * 回读住院证行权威 target_bed_id 与床行实态，仅 RESERVED 才同事务联动释放预占床位
+     * （BedService.releaseForAdmission 置 FREE）；非预占态（预占床已被登记台手工释放/流转
+     * 其他态/床位缺失）warn 留痕后放行作废——预占缺失不得阻断住院证终态落定。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
      * @return 作废后出参（status=CANCELLED），非空
      * @throws com.fuyun.common.exception.BizException IP-1001（404 住院证不存在）/
-     *         IP-1002（409 终态（COMPLETED/CANCELLED）禁止作废）/ IP-1004/IP-1005（预占释放面）
+     *         IP-1002（409 终态（COMPLETED/CANCELLED）禁止作废）/ IP-1005（409 释放瞬间床位
+     *         被并发流转的窗口场景，重试作废即自愈）
      */
     AdmissionVO cancel(String admissionNo);
 

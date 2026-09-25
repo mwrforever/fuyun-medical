@@ -255,7 +255,7 @@ class BedServiceImplTest {
     }
 
     @Test
-    @DisplayName("预占与释放：FREE→RESERVED/RESERVED→FREE 全 CAS + bed.changed 广播；非预占态释放 IP-1005")
+    @DisplayName("预占与释放：FREE→RESERVED/RESERVED→FREE 全 CAS + bed.changed 广播；非预占态释放 IP-1005；床位实态回读")
     void reserveAndReleaseMoveBetweenFreeAndReserved() {
         when(bedMapper.selectById(BED_ID)).thenReturn(bedRow(BedStatus.FREE));
         when(bedMapper.casReserve(BED_ID)).thenReturn(1);
@@ -306,6 +306,13 @@ class BedServiceImplTest {
                 .isInstanceOf(BizException.class)
                 .satisfies(
                         e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.BED_OCCUPIED));
+
+        // 床位实态回读（cancel 联动宽容释放判定面）：预占态原样返回状态码；床位缺失（含逻辑
+        // 删/脏引用）返回 null 交调用方宽容放行——零校验零迁移
+        when(bedMapper.selectById(BED_ID)).thenReturn(bedRow(BedStatus.RESERVED));
+        assertThat(service.bedStatus(BED_ID)).isEqualTo(BedStatus.RESERVED.getCode());
+        when(bedMapper.selectById(BED_ID)).thenReturn(null);
+        assertThat(service.bedStatus(BED_ID)).isNull();
     }
 
     @Test

@@ -99,10 +99,23 @@ public interface BedService {
     void reserveForAdmission(Long bedId);
 
     /**
-     * 预约作废床位释放联动（AdmissionService.cancel 面，Task 3 联动②）：住院证作废
-     * （SCHEDULED 态）同事务内释放预占床位（RESERVED→FREE）；WAITING 态作废无预占不触达。
+     * 床位实态查询（cancel 联动宽容释放判定面）：按床位 id 回读当前状态码，不做存在性校验、
+     * 不触发状态迁移——仅服务住院证作废流程回读床实态（仅 RESERVED 才联动释放，非预占态
+     * 由调用方 warn 留痕后放行作废，预占缺失不得阻断住院证终态落定）。
      *
-     * @param bedId 预占床位 id，非空；来源：住院证行 target_bed_id
+     * @param bedId 床位 id，非空；来源：作废回读住院证行 target_bed_id（权威值）
+     * @return 床位当前状态码（BedStatus 五态词表）；床位不存在（含逻辑删）返回 null——
+     *         脏引用场景交调用方按宽容语义放行业务主流程
+     */
+    String bedStatus(Long bedId);
+
+    /**
+     * 预约作废床位释放联动（AdmissionService.cancel 面，Task 3 联动②）：住院证作废流程
+     * 回读床实态为 RESERVED 时同事务内释放预占床位（RESERVED→FREE）。宽容判定（读实态/
+     * 非预占放行/warn 留痕）归调用方 cancel 流程；本方法保留严格 CAS 语义——释放瞬间床位
+     * 被并发流转（CAS 0 行）仍抛 IP-1005，交调用方重试自愈。
+     *
+     * @param bedId 预占床位 id，非空；来源：作废回读住院证行 target_bed_id
      * @throws com.fuyun.common.exception.BizException IP-1004/IP-1005（同 release 全清单）
      */
     void releaseForAdmission(Long bedId);

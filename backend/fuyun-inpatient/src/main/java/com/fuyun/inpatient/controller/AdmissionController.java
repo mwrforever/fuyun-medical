@@ -92,7 +92,8 @@ public class AdmissionController {
     }
 
     /**
-     * 住院证作废（WAITING/SCHEDULED→CANCELLED 终态；SCHEDULED 作废同事务联动释放预占床位）。
+     * 住院证作废（WAITING/SCHEDULED→CANCELLED 终态；宽容联动释放——回读床行实态仅 RESERVED
+     * 才释放，非预占态 warn 留痕放行作废）。
      *
      * @param no 住院证号（路径参数）
      * @return 作废后出参（status=CANCELLED）

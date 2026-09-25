@@ -30,6 +30,7 @@ import com.fuyun.inpatient.dto.WardAdmitRequest;
 import com.fuyun.inpatient.entity.Admission;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.AdmissionStatus;
+import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
@@ -259,18 +260,20 @@ class AdmissionServiceImplTest {
     }
 
     @Test
-    @DisplayName("住院证作废：SCHEDULED 作废联动释放预占床位（Task 4 联动②），WAITING 作废不触达；终态再作废 IP-1002")
+    @DisplayName("住院证作废：床实态 RESERVED 时联动释放预占床位（联动②宽容判定），WAITING 作废不触达；终态再作废 IP-1002")
     void cancelMovesQueueStatesToCancelled() {
         Admission scheduled = admissionRow(AdmissionStatus.SCHEDULED);
         scheduled.setTargetBedId(BED_ID);
         when(admissionMapper.selectOne(any())).thenReturn(scheduled);
         when(admissionMapper.casCancel(ADMISSION_NO, "adm-01")).thenReturn(1);
+        // 场景②：床实态 RESERVED（作废回读床行实态判定，仅预占态才 CAS 释放）
+        when(bedService.bedStatus(BED_ID)).thenReturn(BedStatus.RESERVED.getCode());
 
         AdmissionVO vo = service.cancel(ADMISSION_NO);
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.CANCELLED.getCode());
         assertThat(vo.admissionNo()).isEqualTo(ADMISSION_NO);
-        // 床位联动②锚：预约态作废同事务释放预占床位（BedService.releaseForAdmission）
+        // 床位联动②锚：床实态预占时作废同事务联动释放（BedService.releaseForAdmission）
         verify(bedService).releaseForAdmission(BED_ID);
         // GC26 锚：作废 CAS 限定候床/预约两态 + 显式 deleted=0
         String sql = recordSql(AdmissionMapper.class, "casCancel", String.class, String.class);
@@ -295,6 +298,39 @@ class AdmissionServiceImplTest {
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(InpatientErrorCode.ADMISSION_STATE_NOT_ALLOWED));
+    }
+
+    @Test
+    @DisplayName("作废联动宽容语义：预占床已手工释放（FREE）warn 留痕放行作废；并发预约窗口以回读实态联动释放")
+    void cancelToleratesReleasedBedAndConcurrentScheduleWindow() {
+        // 场景①：SCHEDULED 证预占床已被登记台经手工释放入口置 FREE——作废回读床实态非预占，
+        // 零释放触达放行作废（预占缺失不得阻断住院证终态落定）
+        Admission scheduled = admissionRow(AdmissionStatus.SCHEDULED);
+        scheduled.setTargetBedId(BED_ID);
+        when(admissionMapper.selectOne(any())).thenReturn(scheduled);
+        when(admissionMapper.casCancel(ADMISSION_NO, "adm-01")).thenReturn(1);
+        when(bedService.bedStatus(BED_ID)).thenReturn(BedStatus.FREE.getCode());
+
+        AdmissionVO vo = service.cancel(ADMISSION_NO);
+
+        assertThat(vo.status()).isEqualTo(AdmissionStatus.CANCELLED.getCode());
+        verify(bedService).bedStatus(BED_ID);
+        verify(bedService, never()).releaseForAdmission(any());
+
+        // 场景③（并发预约窗口）：CAS 前快照 WAITING（无床）、并发 schedule 已落 SCHEDULED+RESERVED——
+        // 释放决策不依赖快照，作废 CAS 命中后回读住院证行权威 target_bed_id 仍联动释放
+        Admission waitingSnapshot = admissionRow(AdmissionStatus.WAITING);
+        Admission rescheduled = admissionRow(AdmissionStatus.SCHEDULED);
+        rescheduled.setTargetBedId(BED_ID);
+        when(admissionMapper.selectOne(any())).thenReturn(waitingSnapshot, rescheduled);
+        when(bedService.bedStatus(BED_ID)).thenReturn(BedStatus.RESERVED.getCode());
+
+        AdmissionVO concurrentVo = service.cancel(ADMISSION_NO);
+
+        assertThat(concurrentVo.status()).isEqualTo(AdmissionStatus.CANCELLED.getCode());
+        // 回读权威值构造出参：并发预约落定的目标床位在作废结果可见
+        assertThat(concurrentVo.targetBedId()).isEqualTo(BED_ID);
+        verify(bedService).releaseForAdmission(BED_ID);
     }
 
     @Test
@@ -327,11 +363,12 @@ class AdmissionServiceImplTest {
                 .contains("status = 'WAITING'")
                 .contains("deleted = 0");
 
-        // 预住院模式（无床虚拟登记）：目标床位缺席零预占联动
+        // 预住院模式（无床虚拟登记）：目标床位缺席零预占联动（强范式：清零后断言零触达）
         when(admissionMapper.casSchedule(ADMISSION_NO, "W01", null, expectDate, "adm-01"))
                 .thenReturn(1);
+        clearInvocations(bedService);
         service.schedule(ADMISSION_NO, new AdmissionScheduleRequest("W01", null, expectDate));
-        verify(bedService, never()).reserveForAdmission(null);
+        verifyNoInteractions(bedService);
 
         // 已预约再预约：CAS 0 行定性 IP-1002
         when(admissionMapper.casSchedule(ADMISSION_NO, "W01", BED_ID, expectDate, "adm-01"))

@@ -248,9 +248,23 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
     }
 
     /**
-     * 预约作废床位释放联动（cancel 面）：同源 release 路径。
+     * 床位实态查询（cancel 联动宽容释放判定面）：单行回读零迁移——未命中（含逻辑删/脏引用）
+     * 返回 null，交调用方按宽容语义放行业务主流程（预占缺失不得阻断住院证作废终态落定）。
      *
-     * @param bedId 预占床位 id，非空；来源：住院证行 target_bed_id
+     * @param bedId 床位 id，非空；来源：作废回读住院证行 target_bed_id
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public String bedStatus(Long bedId) {
+        // 数据库读操作：床位实态回读（判定权在调用方，本方法零校验零迁移）
+        Bed bed = baseMapper.selectById(bedId);
+        return bed == null ? null : bed.getStatus();
+    }
+
+    /**
+     * 预约作废床位释放联动（cancel 面）：同源 release 路径（宽容判定归调用方）。
+     *
+     * @param bedId 预占床位 id，非空；来源：作废回读住院证行 target_bed_id
      */
     @Override
     @Transactional

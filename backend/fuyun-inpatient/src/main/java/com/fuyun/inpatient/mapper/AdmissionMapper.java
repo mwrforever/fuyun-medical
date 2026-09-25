@@ -37,8 +37,8 @@ public interface AdmissionMapper extends BaseMapper<Admission> {
             @Param("updatedBy") String updatedBy);
 
     /**
-     * 住院证作废 CAS（WAITING/SCHEDULED→CANCELLED，终态）。SCHEDULED 作废时目标床位预占释放
-     * 由服务层同事务联动（BedService.releaseForAdmission）。
+     * 住院证作废 CAS（WAITING/SCHEDULED→CANCELLED，终态）。目标床位预占释放由服务层同事务
+     * 宽容联动（回读权威 target_bed_id 与床行实态，仅 RESERVED 才 BedService.releaseForAdmission）。
      *
      * @param admissionNo 住院证号，非空
      * @param updatedBy   操作者（审计留痕），非空

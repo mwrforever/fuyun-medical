@@ -19,6 +19,7 @@ import com.fuyun.inpatient.entity.Admission;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.enums.AdmissionType;
+import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.SourceType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
@@ -46,7 +47,8 @@ import org.springframework.transaction.annotation.Transactional;
  * CAS 置 COMPLETED → nextVisitId 签发 → 结构自检（失败 IllegalStateException 回滚）→ visit
  * 落库 REGISTERED → 事务内发布 VisitRegisteredPayload（AFTER_COMMIT 出 MQ）。
  * 状态迁移一律 @Update CAS + 影响行数判定（GC26，显式 deleted=0）；床位联动三处（Task 4
- * 补齐）：schedule 预约目标床位置 RESERVED、cancel（SCHEDULED 态）释放预占床位、admitWard
+ * 补齐）：schedule 预约目标床位置 RESERVED、cancel 宽容联动释放（作废 CAS 命中后回读
+ * 权威 target_bed_id 与床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
  * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（BedService 同源
  * CAS 权威）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
@@ -233,12 +235,16 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     }
 
     /**
-     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）；SCHEDULED 作废时同事务联动释放预占
-     * 床位（Task 4 联动②——BedService.releaseForAdmission 置 FREE；WAITING 作废无预占不联动）。
+     * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）；床位联动②取<b>宽容语义</b>——作废
+     * CAS 命中后回读住院证行权威 target_bed_id（并发预约窗口下 CAS 前快照可滞后），再回读
+     * 床行实态：仅 RESERVED 才同事务联动释放（Task 4 联动②——BedService.releaseForAdmission
+     * 置 FREE）；非预占态（预占床已被登记台手工释放为 FREE/流转其他态/床位缺失）warn 留痕
+     * 后放行作废——预占缺失不得阻断住院证终态落定。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
      * @return 作废后出参（status=CANCELLED），非空
-     * @throws BizException IP-1001/IP-1002/IP-1004/IP-1005（接口注全清单）
+     * @throws BizException IP-1001/IP-1002/IP-1005（接口注全清单；IP-1005 仅释放瞬间床位被
+     *                       并发流转的窗口场景，重试作废即自愈）
      */
     @Override
     @Transactional
@@ -250,13 +256,24 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             throw stateRejected(admissionNo, admission.getStatus(), "cancel");
         }
         String priorStatus = admission.getStatus();
-        // 床位联动②：预约态作废释放预占床位（同事务；候床态无预占不联动）
-        if (AdmissionStatus.SCHEDULED.getCode().equals(priorStatus) && admission.getTargetBedId() != null) {
-            bedService.releaseForAdmission(admission.getTargetBedId());
+        // 回读作废行取权威 target_bed_id（释放决策不依赖 CAS 前快照：WAITING 快照读取后并发
+        // schedule 已落 SCHEDULED+预占床位的窗口，快照 target_bed_id 仍为空——以回读实态为准）
+        Admission cancelled = requireByNo(admissionNo);
+        // 床位联动②（宽容语义）：仅床实态 RESERVED 才 CAS 释放；非预占（登记台已手工释放/
+        // 流转其他态/床位缺失）warn 留痕放行作废——预占缺失不得阻断住院证终态落定
+        Long targetBedId = cancelled.getTargetBedId();
+        if (targetBedId != null) {
+            String bedStatus = bedService.bedStatus(targetBedId);
+            if (BedStatus.RESERVED.getCode().equals(bedStatus)) {
+                bedService.releaseForAdmission(targetBedId);
+            } else {
+                log.warn(
+                        "住院证作废联动释放跳过（床位非预占态，放行作废）：admissionNo={}，bedId={}，床实态={}", admissionNo, targetBedId, bedStatus);
+            }
         }
-        admission.setStatus(AdmissionStatus.CANCELLED.getCode());
+        cancelled.setStatus(AdmissionStatus.CANCELLED.getCode());
         log.info("住院证作废：admissionNo={}，前置状态={}，operator={}", admissionNo, priorStatus, operator);
-        return AdmissionVO.from(admission);
+        return AdmissionVO.from(cancelled);
     }
 
     /**
