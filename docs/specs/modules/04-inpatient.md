@@ -270,3 +270,26 @@
 - **M-4**：§3.3 补注住院药费口径——`inpatient.order.audited` 即时计价为唯一计价触发，发药/摆药事件仅为执行占用标记（与 M13 v1.1 口径一致）。
 - **M-25 说明**：本模块未订阅 `patient.merged`（患者合并阻断经 M02"在途就诊查询"SPI 实现，无缓存视图需刷新），不在 90 号文档 M-25 成对登记清单内，无 `patient.split` 补订义务。
 - **B-1（Round 2 补登）**：注册 M01"组织停用前置校验"SPI（床位占用查询实现，接口由 M01 定义）——文档头上游依赖 M01 括注、§8 集成点 M01 条目、§11 自审"依赖方向正确"条目三处补镜像声明。
+
+## 13. P2 PR-1 落地注记（2026-09-26，feat/p2-pr1-m04-inpatient）
+
+> 本节为 P2 PR-1（M04 住院/医嘱闭环 + M06 审方薄切片 + M13 住院计费联动）交付面相对本 Spec 的界定、降级与裁决声明，执行依据 `docs/superpowers/plans/2026-09-25-p2-pr1-m04-inpatient.md`（Global Constraints 32 收口硬门槛）；P2 PR-1 口径以本节为准，Spec 正文不回改。
+
+1. **五大降级清单（Spec 声明而本 PR 缺位者，登记降级 + 注记 P3/P4，禁静默删改 Spec 语义）**：① `/ws/inpatient/ward/{wardId}` WS 主题不落（消费方护士站实时提醒归 P2 PR-3 M05 完整化，本 PR 不建 WS 端点）；② 通知中心（M01 缺位）——欠费提醒/会诊超时升级通知/随访触达降级为工作站列表可见（欠费标识列 `GET /visits/arrears` 病区欠费清单/会诊 overdue 查询/随访计划表）；③ 打印模板（腕带/执行单/催缴单，M01 打印缺位）；④ 会诊超时与执行计划超时的 `fy.delay` 档位不扩展——降级为**读时惰性逾期判定**（查询时 `now > deadline` 置视图 overdue 标记并广播 `inpatient.consultation.overdue` 动作事件一次，DB flag 防重发；fy.delay 档位扩展随 W-27 tick 方案 P2 PR-4 一并设计）；⑤ SCHEDULED 逾期自动回队列定时任务不落（本 PR 手工 cancel 重排）+「全院一张床」跨病区签床调度规则不参数化（本 PR 仅本位区队列排序），均注记 P3。
+2. **降级清单第六项（高危药双人核对，Task 7）**：Spec「高危强制项第二核对人」降级为 **BLOOD（输血类）单面**——转抄核对仅对输血类医嘱强制 `secondCheckerId`（IP-1016），药品级高危分级标记 V904 无 item 级高危列且 M01 药品高危分级契约面缺位（GC11 禁跨模块读表），三处代码 P3 注记在位，随 M01 契约面交付后补齐。
+3. **降级清单第七项（出院带药，Task 9）**：Spec「取药完成方可确认离院」降级为**放行即确认**——离院确认时 DISCHARGE_MED∩CREATED 医嘱经状态机放行至 AUDITED（`audited.discharge-med` 子键事件驱动 M06 摆药），取药完成回执归 P2 PR-3 M06 住院摆药衔接。
+4. **会诊时限枚举常量未参数化（Task 11，与降级④一并登记）**：急会诊 30 分钟/普通会诊 24 小时时限以枚举常量承载（`ConsultationServiceImpl`），未做配置面参数化，P3 配置化。
+5. **医嘱模板与套顺延（FU-M04-04 加速录入项，P3）**：本 PR 交付手写开立全量校验链，模板/套编辑与引用不落。
+6. **FU-M04-03 临床周边面 P4 顺延（显式排除）**：病程记录嵌入 M09 编辑能力/诊断维护引用 M01 ICD 字典/检查检验结果查看调 M07/M08——三依赖模块均未交付；本 PR 住院医生站=在院列表+医嘱开立+闭环追溯三区（前端六页已交付）。
+7. **住院计费入口前端直调形态偏差（Spec §7 偏差登记）**：Spec §7「inpatient 前缀计费转调端点」不落地——住院计费入口（押金缴存/一日清单）经前端直调 M13 既有 REST（门诊同款先例）；后端仅保留欠费标识事件驱动面（`billing.deposit.changed` 消费 → `inpatient_visit.arrears_flag`）与 `GET /visits/arrears` 病区欠费清单。
+8. **抢救口头医嘱限时催办 P3**：本 PR 落 `oral_flag` 标记 + `POST /orders/{no}/oral-confirm` 补录确认端点，「事后限时确认」催办流转 P3（fy.delay 档位归降级④）。
+9. **CF-6/W-33 定稿落点**：执行回签字段级契约以 **V901 UPDATE `integration.event_registry` id 55 payload_desc** 定稿（W-33 闭合，迁移头留痕替代占位语义；响应四字段 planNo/m04OrderNo/orderStatus/planStatus 契约由 `InpatientOrderFlowIT` 响应面断言）；**Task 8 审查修复环 R1 契约增补**：LONG 医嘱 EXECUTING→COMPLETED 加 end_at 已到守卫（end_at 为空保持 EXECUTING 由停嘱终结；日切候选同步过滤次日>end_at），V901 id 55 desc 含该限定句——临床安全默认项，消费端不存在故以迁移头注释声明替代双向评审。
+10. **事件 id 65–73 排定**：65 `inpatient.visit.registered`、66 `inpatient.order.created`（routing 携类型子键，登记名不带子键）、67 `inpatient.order.audit-rejected`、68–72 会诊五态、73 `billing.arrears.approved`（producer=billing，落 billing V1002）；V800 既有 id 41–52/53/54 payload_desc 冻结不动。
+11. **迁移号段形态**：inpatient 固定百位段 V900–V999 首批 V901–V908；**pharmacy V1000 与 billing V1001–V1003 开创 V500+ 通用段四位数先例**（固定段内号必被乱序守卫拦截，取 V1000+ 并避开 inpatient 段）。
+12. **日切分解异常清单简化决策（偏差登记）**：Spec §10「分解失败进异常清单可重跑」简化为 **warn 日志留痕（order_no+缺失原因）+ 该医嘱不生成**，不建异常清单表；重跑由查前置+`uk_plan_order_item_time` 唯一约束双幂等兜底，夜内缓冲人工对账。
+13. **住院计价承载面裁决（Task 13）**：Spec §7/M-4「`inpatient.order.audited` 即时计价」的承载面落定为 **`inpatient.order.created`**——V800 id 41 audited 冻结载荷六字段不携 items（计价数据面不可得），id 66 created 载荷携 items[]，门诊侧先例同款（开单事件驱动计价）；audited 帧到店 info 留痕直返，PENDING 行经 executed 确认、经 stopped/作废/撤回/审方驳回四终态截断。本 PR 验收锚点 IT（`BillingInpatientLinkageIT`）按 created 承载面断言终态。
+14. **M13 通配消费子键归一修正（Task 16 IT 实测发现的生产缺陷修复）**：`BillingInpatientEventListener` 派发前对 created/audited 两事件投递面 eventType 剥离 order_type 子键归一回登记名——未归一时子键帧全部落入 default 分支静默直返，住院离散计价失效；随五条验收锚点 IT（`InpatientOrderFlowIT`）实测暴露并修复（含单测两例）。
+15. **随访与准备窗口行为变更（Task 10 回接参数化，审查确认非回归红线情形）**：随访缺省时距 7→**14 日**（`fuyun.inpatient.follow-up-interval-days`，可显式传参覆盖）、临时单次计划默认准备窗口 15→**60 分钟**（`fuyun.inpatient.default-execute-window-minutes`）；断言适配严格度不降。
+16. **前端 OrderCreatePayload 本地类型偏差（Task 15，GC30 登记）**：住院开单请求 DTO 与门诊 `OrderCreateRequest` Springdoc schema 同名覆盖，住院契约在生成物失真——前端以本地 `OrderCreatePayload`（必需字段对齐出网）承载；根治（后端 DTO 改名或 springdoc 命名策略）已登记 TASK.md D-25 待决策，修复后删本地别名回归生成物。
+17. **api.d.ts 键序重排噪声（Task 14，PR 描述登记义务）**：openapi-typescript 重生成引入 745 旧 schema 零丢失 + 202 新增面的同时伴随既有键序重排噪声，本地 `git diff` 人工核对承载，CI 生成物新鲜度校验缺口见 TASK.md W-30。
+18. **W-34 触发就位（退役执行仍留 PR-3）**：`inpatient.visit.registered/admitted` + `inpatient.bed.changed` 事件链上线并经 `InpatientAdmissionFlowIT` 真栈验收通过，P1 过渡通道（`POST /api/v1/nursing/ward-patients` + `nursing_ward_patient`）退役触发条件达成；退役五项执行（端点/DTO、状态值与视图表、审计留痕、VO 字段面回归、一览 IT 重跑）归 P2 PR-3 M05 完整化。

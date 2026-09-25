@@ -74,6 +74,49 @@ public interface FeeRecordMapper extends BaseMapper<FeeRecord> {
     int casReleaseDispense(@Param("rxNo") String rxNo);
 
     /**
+     * 出院费用预审未结清合计（BillingAccountQueryPort.precheck 聚合权威）：PENDING+CONFIRMED
+     * 且未结算（settlement_id IS NULL）费用行金额求和——作废/已结算/退费终态行不构成未结清。
+     * status 字面量与 FeeStatus.code 同源；deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param visitId CF-3 住院就诊号，非空；来源：M04 出院申请就诊行
+     * @return 未结清费用合计（分）；无费用行返回 0
+     */
+    @Select("SELECT COALESCE(SUM(amount), 0) FROM billing.fee_record "
+            + "WHERE visit_id = #{visitId} AND status IN ('PENDING', 'CONFIRMED') "
+            + "AND settlement_id IS NULL AND deleted = 0")
+    long sumUnsettledAmount(@Param("visitId") String visitId);
+
+    /**
+     * 医嘱执行确认（M13 住院联动：inpatient.order.executed 消费）：该医嘱全部 PENDING 行
+     * PENDING→CONFIRMED——执行回签是住院费用入账权威时点；消费侧直改状态不发事件
+     * （billing.fee.confirmed 常量无调用点保持，Task 13 brief 冻结语义）。status 字面量与
+     * FeeStatus.code 同源；deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param m04OrderNo 医嘱号（=fee_record.source_ref，ORDER_CONFIRMED 通道）；来源：事件载荷
+     * @param visitId    住院就诊号（同就诊限定，防跨就诊同号误伤）；来源：事件载荷
+     * @return 影响行数（0=无 PENDING 行/重复投递已确认——幂等达成）
+     */
+    @Update("UPDATE billing.fee_record SET status = 'CONFIRMED' "
+            + "WHERE source_ref = #{m04OrderNo} AND visit_id = #{visitId} "
+            + "AND status = 'PENDING' AND settlement_id IS NULL AND deleted = 0")
+    int casConfirmByOrder(@Param("m04OrderNo") String m04OrderNo, @Param("visitId") String visitId);
+
+    /**
+     * 停嘱费用截断（M13 住院联动：inpatient.order.stopped 消费）：该医嘱未确认 PENDING 行
+     * PENDING→CANCELLED（已确认/已结算行不回冲——停嘱只截断在途费用）；部分唯一索引对
+     * CANCELLED 行不占键，同医嘱同项目当日可重开重计。status 字面量与 FeeStatus.code 同源；
+     * deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param m04OrderNo 医嘱号（=fee_record.source_ref）；来源：事件载荷
+     * @param visitId    住院就诊号（同就诊限定）；来源：事件载荷
+     * @return 影响行数（0=无在途 PENDING 行/重复投递已作废——幂等达成）
+     */
+    @Update("UPDATE billing.fee_record SET status = 'CANCELLED' "
+            + "WHERE source_ref = #{m04OrderNo} AND visit_id = #{visitId} "
+            + "AND status = 'PENDING' AND settlement_id IS NULL AND deleted = 0")
+    int casCancelPendingByOrder(@Param("m04OrderNo") String m04OrderNo, @Param("visitId") String visitId);
+
+    /**
      * 按主键集加行锁读回（SELECT ... FOR UPDATE，退费申请并发收口）：退费 apply 在校验前先锁
      * 目标费用行至事务提交——并发双申请同费用行时后到者在本语句阻塞，持锁者提交（负向 link 已落）
      * 后读到最新行与最新已退聚合，超可退守卫即拒，根除「双读 refundedFen 聚合互不可见」的

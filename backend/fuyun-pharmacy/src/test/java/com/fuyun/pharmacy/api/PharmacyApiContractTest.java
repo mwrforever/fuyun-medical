@@ -2,6 +2,7 @@ package com.fuyun.pharmacy.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
@@ -15,12 +16,12 @@ import org.junit.jupiter.api.Test;
 class PharmacyApiContractTest {
 
     @Test
-    @DisplayName("PH 码值唯一且形态合规（18 码位——PH-1018 凭证不符随 PR-5 Task 11 顺延增补）")
+    @DisplayName("PH 码值唯一且形态合规（21 码位——PH-1019/1020/1021 审方薄切片随 P2 PR-1 Task 12 顺延增补）")
     void errorCodesAreUniqueAndWellFormed() {
         assertThat(Arrays.stream(PharmacyErrorCode.values()).map(PharmacyErrorCode::getCode))
                 .allMatch(code -> code.matches("^PH-1\\d{3}$"))
                 .doesNotHaveDuplicates()
-                .hasSize(18);
+                .hasSize(21);
     }
 
     @Test
@@ -40,5 +41,34 @@ class PharmacyApiContractTest {
                 .map(java.lang.reflect.RecordComponent::getName)
                 .toList();
         assertThat(DrugChangedPayload.COMPONENT_NAMES).containsExactlyElementsOf(declared);
+    }
+
+    @Test
+    @DisplayName("住院审方回执载荷契约：audit-completed/rejected 组件与 V800 id 53/54 desc 冻结读面逐字同源")
+    void medicationAuditReplyPayloadsMatchFrozenRegistryComponents() {
+        // V800（nursing 侧冻结迁移，pharmacy 类路径不可达）id 53/54 desc 组件串=M04 消费读面
+        // （inpatient PharmacyAuditReplyListener 逐字读取），publish 侧 record 组件序必须逐字同源
+        List<String> completed = Arrays.stream(MedicationAuditCompletedPayload.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .toList();
+        assertThat(MedicationAuditCompletedPayload.COMPONENT_NAMES)
+                .containsExactly("target", "auditNo", "auditOperator", "auditedAt")
+                .containsExactlyElementsOf(completed);
+
+        List<String> rejected = Arrays.stream(MedicationAuditRejectedPayload.class.getRecordComponents())
+                .map(java.lang.reflect.RecordComponent::getName)
+                .toList();
+        assertThat(MedicationAuditRejectedPayload.COMPONENT_NAMES)
+                .containsExactly("target", "auditNo", "rejectReason", "auditOperator", "auditedAt")
+                .containsExactlyElementsOf(rejected);
+    }
+
+    @Test
+    @DisplayName("住院审方回执事件字面量：与 V800 id 53/54 登记名逐字一致（发布 eventType=路由键）")
+    void medicationAuditReplyEventLiteralsMatchRegistry() {
+        assertThat(PharmacyMessagingConstants.EVENT_MEDICATION_ORDER_AUDIT_COMPLETED)
+                .isEqualTo("pharmacy.medication-order.audit-completed");
+        assertThat(PharmacyMessagingConstants.EVENT_MEDICATION_ORDER_AUDIT_REJECTED)
+                .isEqualTo("pharmacy.medication-order.audit-rejected");
     }
 }

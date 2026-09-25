@@ -136,3 +136,14 @@
   --fuy-pda-font-base: 16px; /* PDA 字号基线（正文） */
   --fuy-pda-page-width: 480px; /* PDA 自持布局最大宽度（居中） */
 }
+
+/* ===== M04 住院模块增量（床位图五态色标，2026-09-25）=====
+   三层纪律沿 M05 先例：全部为 semantic 层语义别名、零新色值（一律指向既有 token/palette）；
+   五态映射：空床绿/预占橙/占床蓝/消毒灰/维修红，实底白字徽标场景对比度沿源 token 达标值。 */
+:root {
+  --fuy-color-bed-free: var(--fuy-color-success-text); /* 空床（可分配）绿 */
+  --fuy-color-bed-reserved: var(--fuy-palette-orange-700); /* 预占（已签床）橙 */
+  --fuy-color-bed-occupied: var(--fuy-color-brand); /* 占床（在院占用）蓝 */
+  --fuy-color-bed-disinfecting: var(--fuy-color-info-text); /* 消毒中（终末消毒）灰 */
+  --fuy-color-bed-maintenance: var(--fuy-color-danger-text); /* 维修中（禁分配）红 */
+}

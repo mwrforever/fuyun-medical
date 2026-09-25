@@ -1,6 +1,7 @@
 package com.fuyun.billing.config;
 
 import com.fuyun.billing.api.PrescriptionFeePort;
+import com.fuyun.billing.controller.ArrearsApprovalController;
 import com.fuyun.billing.controller.ChargeItemController;
 import com.fuyun.billing.controller.DailyListController;
 import com.fuyun.billing.controller.DepositController;
@@ -19,10 +20,13 @@ import com.fuyun.billing.properties.BillingRefundProperties;
 import com.fuyun.billing.service.IChargeItemService;
 import com.fuyun.billing.service.IInsuranceMappingService;
 import com.fuyun.billing.service.IPricingEngineService;
+import com.fuyun.billing.service.impl.ArrearsApprovalServiceImpl;
+import com.fuyun.billing.service.impl.BillingAccountQueryPortImpl;
 import com.fuyun.billing.service.impl.ChargeItemServiceImpl;
 import com.fuyun.billing.service.impl.ChargePriceServiceImpl;
 import com.fuyun.billing.service.impl.DailyListServiceImpl;
 import com.fuyun.billing.service.impl.DepositServiceImpl;
+import com.fuyun.billing.service.impl.InpatientChargeServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceCallLogServiceImpl;
 import com.fuyun.billing.service.impl.InsuranceMappingServiceImpl;
 import com.fuyun.billing.service.impl.OutpatientBillingPortImpl;
@@ -41,8 +45,11 @@ import org.springframework.context.annotation.Import;
 
 /**
  * M13 收费域 Web/服务装配集中点（backend 宪法 B.1 装配归 app：本类由 fuyun-app BillingConfig
- * @Import 生效；九 impl + 十 controller 经 @Import 显式注册，取价服务因需注入取价时钟
+ * @Import 生效；impl + controller 经 @Import 显式注册，取价服务因需注入取价时钟
  * {@link ChargePriceServiceImpl} 改由本类 @Bean 显式构造，禁组件扫描放宽）。
+ * P2 PR-1 Task 13 追加：BillingAccountQueryPortImpl（出院预审端口承载）/
+ * InpatientChargeServiceImpl（住院六事件业务体）/ ArrearsApprovalServiceImpl（挂账审批）
+ * 与 ArrearsApprovalController。
  *
  * <p>医保网关形态红线（已裁决 3）：本 PR 仅注册模拟适应器为唯一 {@link InsuranceGateway} 实现
  * （Task 15 注记「@Primary/dev 装配」收敛为单实现直接注册，无第二实现即无 @Primary 需求）；
@@ -62,6 +69,9 @@ import org.springframework.context.annotation.Import;
     InsuranceCallLogServiceImpl.class,
     OutpatientBillingPortImpl.class,
     SettlementQueryPortImpl.class,
+    BillingAccountQueryPortImpl.class,
+    InpatientChargeServiceImpl.class,
+    ArrearsApprovalServiceImpl.class,
     ChargeItemController.class,
     InsuranceMappingController.class,
     PricingRuleController.class,
@@ -71,6 +81,7 @@ import org.springframework.context.annotation.Import;
     RefundController.class,
     DepositController.class,
     DailyListController.class,
+    ArrearsApprovalController.class,
     InsuranceController.class
 })
 public class BillingWebConfig {

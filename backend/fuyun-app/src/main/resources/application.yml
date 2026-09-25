@@ -132,6 +132,11 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       auto-exempt-fen: ${FUYUN_BILLING_REFUND_AUTO_EXEMPT_FEN:50000}      # 当日更正免审阈值（分）
       single-approval-fen: ${FUYUN_BILLING_REFUND_SINGLE_APPROVAL_FEN:200000}  # 一级审批上限（分）
     deposit-warning-threshold-fen: ${FUYUN_BILLING_DEPOSIT_WARNING_THRESHOLD_FEN:500000}  # 预交金开户默认欠费阈值（分）
+  inpatient:                     # M04 住院域（Task 10 起参数化，env 注入形态照 fuyun.billing 先例；
+                                 #   语义与单位详见 InpatientProperties javadoc）
+    deposit-floor-fen: ${FUYUN_INPATIENT_DEPOSIT_FLOOR_FEN:0}             # 押金下限阈值（分）——deposit.changed 欠费判定基准
+    follow-up-interval-days: ${FUYUN_INPATIENT_FOLLOW_UP_INTERVAL_DAYS:14} # 出院随访缺省时距（天）
+    default-execute-window-minutes: ${FUYUN_INPATIENT_DEFAULT_EXECUTE_WINDOW_MINUTES:60} # 单次执行计划默认准备窗口（分钟）
   iot:                            # M14 IoT 接入（BRIEF-PR4-01 §3 properties 行；enabled=false 安全默认，
     amqp:                         #   IOTDA_* 缺失不阻塞应用启动——宪法 B.4-4；enabled=true 时连接四要素
                                   #   任一缺失启动即 fail-fast（IotAmqpConfig 装配前校验）

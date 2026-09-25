@@ -249,6 +249,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pharmacy/review-tasks/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 审方驳回 */
+        post: operations["reject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/review-tasks/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 审方通过 */
+        post: operations["approve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pharmacy/prescriptions": {
         parameters: {
             query?: never;
@@ -571,7 +605,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["approve"];
+        post: operations["approve_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1142,7 +1176,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 体征复核驳回 */
-        post: operations["reject"];
+        post: operations["reject_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1452,6 +1486,518 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["close_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/visits/{visitId}/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 转科四阶段编排（停嘱+三分+床位流转+事件） */
+        post: operations["transferVisit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/visits/{visitId}/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医嘱开立（四层校验→CREATED→审核链收口→order.created 子键路由） */
+        post: operations["createMedicalOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/visits/{visitId}/discharge-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 出院申请（在途清理+费用预审单事务编排） */
+        post: operations["createDischargeRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/visits/{visitId}/change-bed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 同病区转床轻量路径（无停嘱） */
+        post: operations["changeBed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/visits/{visitId}/admit-ward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 入科确认（REGISTERED→ADMITTED） */
+        post: operations["admitWard"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医嘱停嘱（三态合法→STOPPED+stopped 事件） */
+        post: operations["stopMedicalOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}/revoke-audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 撤回审核（仅转抄前 AUDITED→CREATED+revoked 事件） */
+        post: operations["revokeMedicalOrderAudit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}/resubmit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医嘱驳回重提（AUDIT_REJECTED→CREATED+重发开立事件+审核链重入） */
+        post: operations["resubmitMedicalOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}/oral-confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 抢救口头医嘱补录确认（oral_confirmed_at 落值） */
+        post: operations["confirmOralMedicalOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医嘱作废（仅未产生执行→CANCELLED+cancelled 事件） */
+        post: operations["cancelMedicalOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/transfer-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量转抄核对（双人核对→TRANSFERRED+transferred 事件+临时单次计划） */
+        post: operations["transferCheckOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/reorganize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 医嘱重整（只重排视图序+留痕，不改状态） */
+        post: operations["reorganizeMedicalOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/order-plans/{no}/execute-confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 执行回签（CF-6：计划 PENDING→EXECUTED+医嘱头三态推进+executed 事件） */
+        post: operations["executeConfirmOrderPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/order-plans/standby-trigger": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 嘱托按需触发单次计划（多次触发多次台账） */
+        post: operations["triggerStandbyOrderPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/discharge-requests/{no}/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 离院确认（双条件放行+床位消毒+带药放行+随访生成） */
+        post: operations["confirmDischarge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/discharge-requests/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消出院申请（回在院，医嘱不复活） */
+        post: operations["cancelDischargeRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/consultations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 会诊单分页（读时惰性逾期升级） */
+        get: operations["listConsultations"];
+        put?: never;
+        /** 会诊申请（急会诊 30min/普通 24h 响应时限） */
+        post: operations["createConsultation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/consultations/{no}/opinion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 会诊意见提交（完成闭环归档） */
+        post: operations["submitConsultationOpinion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/consultations/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消会诊 */
+        post: operations["cancelConsultation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/consultations/{no}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 受邀科接单（逾期单仍可接单） */
+        post: operations["acceptConsultation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/{id}/reserve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 床位预占（FREE→RESERVED） */
+        post: operations["reserveBed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/{id}/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 释放床位预占（RESERVED→FREE） */
+        post: operations["releaseBed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/{id}/maintain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 床位转维修（FREE→MAINTENANCE） */
+        post: operations["maintainBed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/{id}/maintain-done": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 维修恢复（MAINTENANCE→FREE） */
+        post: operations["maintainDone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/{id}/disinfect-done": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 消毒完成确认（DISINFECTING→FREE） */
+        post: operations["disinfectDone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/{id}/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 床位占床（FREE/RESERVED→OCCUPIED 开流水） */
+        post: operations["assignBed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/admissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 候床队列分页（急诊优先>预约时段>候床时长） */
+        get: operations["listAdmissions"];
+        put?: never;
+        /** 住院证登记（建单入候床队列） */
+        post: operations["createAdmission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/admissions/{no}/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 预约入院/预住院（WAITING→SCHEDULED） */
+        post: operations["scheduleAdmission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/admissions/{no}/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 入院登记确认（同事务签发 I 型 visit_id） */
+        post: operations["registerAdmission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/admissions/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 住院证作废（候床/预约态→CANCELLED） */
+        post: operations["cancelAdmission"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1818,6 +2364,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/billing/arrears-approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 创建住院欠费挂账审批单 */
+        post: operations["createArrearsApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/arrears-approvals/{approvalNo}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 挂账审批驳回（终态留痕） */
+        post: operations["rejectArrearsApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/arrears-approvals/{approvalNo}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 挂账审批通过（发布 arrears.approved 放行） */
+        post: operations["approveArrearsApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/dicts/{typeCode}": {
         parameters: {
             query?: never;
@@ -1826,6 +2423,23 @@ export interface paths {
             cookie?: never;
         };
         get: operations["readVersion"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/review-tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 审方工作台列表 */
+        get: operations["list_4"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1924,7 +2538,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_4"];
+        get: operations["list_5"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2225,7 +2839,7 @@ export interface paths {
             cookie?: never;
         };
         /** 病区交接班清单（按日检索） */
-        get: operations["list_5"];
+        get: operations["list_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2258,7 +2872,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_6"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2274,7 +2888,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_7"];
+        get: operations["list_8"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2290,7 +2904,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_8"];
+        get: operations["list_9"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2306,7 +2920,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_9"];
+        get: operations["list_10"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2323,6 +2937,142 @@ export interface paths {
             cookie?: never;
         };
         get: operations["detail_4"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/visits/arrears": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区欠费清单（欠费标识在院聚合，患者摘要脱敏） */
+        get: operations["listArrearsVisits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/transfer-worklist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 转抄工作台待转抄列表（病区/班次聚合 AUDITED 医嘱） */
+        get: operations["listTransferWorklist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 就诊医嘱分页（开立时间倒序） */
+        get: operations["listMedicalOrders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 医嘱详情（含明细行） */
+        get: operations["getMedicalOrder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/orders/{no}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 医嘱闭环追溯（开立→审核→转抄→计划执行→停止人/时/果一屏） */
+        get: operations["traceMedicalOrder"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/order-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 执行计划日视图分页（日期窗口+病区过滤） */
+        get: operations["listOrderPlans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/discharge-requests/{no}/clearance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 在途清理与预审结果查询 */
+        get: operations["getDischargeClearance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inpatient/beds/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区床位图聚合（五态+包床+占用摘要） */
+        get: operations["getBedMap"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2710,6 +3460,9 @@ export interface components {
         LoginRequest: {
             loginName: string;
             password: string;
+        };
+        ReviewDecisionRequest: {
+            opinion?: string;
         };
         PrescriptionCreateRequest: {
             /** @example 0 */
@@ -3586,6 +4339,235 @@ export interface components {
         DeadLetterCloseRequest: {
             handleNote: string;
         };
+        TransferRequest: {
+            toDeptId?: string;
+            toWardId: string;
+            /** @example 0 */
+            toBedId: string;
+        };
+        TransferResultVO: {
+            visitId?: string;
+            fromWardId?: string;
+            /** @example 0 */
+            fromBedId?: string;
+            toWardId?: string;
+            /** @example 0 */
+            toBedId?: string;
+            /** Format: date-time */
+            transferredAt?: string;
+        };
+        MedicalOrderVO: {
+            orderNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            orderType?: string;
+            orderClass?: string;
+            standbyFlag?: boolean;
+            groupNo?: string;
+            freqCode?: string;
+            /** Format: date-time */
+            beginAt?: string;
+            /** Format: date-time */
+            endAt?: string;
+            doctorId?: string;
+            /** Format: date-time */
+            orderedAt?: string;
+            stopReason?: string;
+            status?: string;
+        };
+        DischargeRequestCreate: {
+            /** Format: date-time */
+            expectDischargeAt: string;
+            dischargeWay: string;
+        };
+        DischargeRequestVO: {
+            requestNo?: string;
+            visitId?: string;
+            dischargeWay?: string;
+            /** Format: date-time */
+            expectDischargeAt?: string;
+            /** Format: date-time */
+            requestedAt?: string;
+            requesterId?: string;
+            status?: string;
+            /** @example 0 */
+            arrearsAmount?: string;
+            /** Format: date-time */
+            settlementCompletedAt?: string;
+            approvalNo?: string;
+        };
+        ChangeBedRequest: {
+            /** @example 0 */
+            toBedId: string;
+        };
+        WardAdmitRequest: {
+            deptId?: string;
+            wardId: string;
+            /** @example 0 */
+            bedId: string;
+            nursingLevel: string;
+            attendingDoctorId?: string;
+        };
+        InpatientVisitVO: {
+            visitId?: string;
+            /** @example 0 */
+            admissionId?: string;
+            /** @example 0 */
+            patientId?: string;
+            currentDeptId?: string;
+            currentWardId?: string;
+            /** @example 0 */
+            currentBedId?: string;
+            attendingDoctorId?: string;
+            nursingLevel?: string;
+            insuranceType?: string;
+            admissionDiagnosis?: string;
+            /** Format: date-time */
+            registeredAt?: string;
+            /** Format: date-time */
+            admittedAt?: string;
+            /** Format: date-time */
+            dischargeRequestedAt?: string;
+            /** Format: date-time */
+            dischargedAt?: string;
+            dischargeWay?: string;
+            arrearsFlag?: boolean;
+            status?: string;
+        };
+        OrderStopRequest: {
+            reason: string;
+        };
+        OrderCancelRequest: {
+            reason: string;
+        };
+        TransferCheckRequest: {
+            orderNos: string[];
+            transferNurseId: string;
+            /** @enum {string} */
+            conclusion: "PASSED" | "REJECTED";
+            secondCheckerId?: string;
+        };
+        OrderReorganizeRequest: {
+            visitId: string;
+            orderNos: string[];
+        };
+        ExecuteConfirmRequest: {
+            /** @example 0 */
+            executorId: string;
+            /** Format: date-time */
+            executedAt?: string;
+            routeCheckResult?: string;
+        };
+        ExecuteConfirmVO: {
+            planNo?: string;
+            m04OrderNo?: string;
+            orderStatus?: string;
+            planStatus?: string;
+        };
+        StandbyTriggerRequest: {
+            orderNo: string;
+        };
+        OrderPlanVO: {
+            planNo?: string;
+            orderNo?: string;
+            visitId?: string;
+            wardId?: string;
+            /** Format: date-time */
+            planTime?: string;
+            shift?: string;
+            executorId?: string;
+            /** Format: date-time */
+            executedAt?: string;
+            routeCheckResult?: string;
+            status?: string;
+        };
+        DischargeConfirmRequest: {
+            /** Format: int32 */
+            followUpDays?: number;
+            followUpWay?: string;
+            followUpSummary?: string;
+        };
+        ConsultationCreateRequest: {
+            visitId: string;
+            toDeptId: string;
+            urgency: string;
+            level?: string;
+            reason?: string;
+        };
+        ConsultationVO: {
+            consultNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            orderRef?: string;
+            fromDeptId?: string;
+            toDeptId?: string;
+            level?: string;
+            urgency?: string;
+            reason?: string;
+            requesterId?: string;
+            /** Format: date-time */
+            requestedAt?: string;
+            /** Format: date-time */
+            responseDeadline?: string;
+            /** Format: date-time */
+            responseTime?: string;
+            /** Format: date-time */
+            consultTime?: string;
+            opinion?: string;
+            overdueFlag?: boolean;
+            status?: string;
+        };
+        ConsultationOpinionRequest: {
+            opinion: string;
+        };
+        BedReserveRequest: unknown;
+        BedAssignRequest: {
+            visitId: string;
+        };
+        AdmissionCreateRequest: {
+            /** @example 0 */
+            patientId: string;
+            sourceType: string;
+            sourceVisitId?: string;
+            targetDeptId?: string;
+            targetWardId?: string;
+            admissionType: string;
+            /** Format: date */
+            expectDate?: string;
+            diagnosisSummary?: string;
+            issuedDoctorId: string;
+        };
+        AdmissionVO: {
+            admissionNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            sourceType?: string;
+            sourceVisitId?: string;
+            targetDeptId?: string;
+            targetWardId?: string;
+            /** @example 0 */
+            targetBedId?: string;
+            admissionType?: string;
+            /** Format: date */
+            expectDate?: string;
+            diagnosisSummary?: string;
+            issuedDoctorId?: string;
+            status?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        AdmissionScheduleRequest: {
+            targetWardId?: string;
+            /** @example 0 */
+            targetBedId?: string;
+            /** Format: date */
+            expectDate: string;
+        };
+        VisitRegisterRequest: {
+            insuranceType: string;
+        };
         PaymentLine: {
             /** @enum {string} */
             method: "CASH" | "BANK" | "SCAN" | "ONLINE" | "CARD_BALANCE" | "CHARGE_ON_CREDIT";
@@ -3786,6 +4768,19 @@ export interface components {
             componentItemId: string;
             defaultQuantity: number;
         };
+        ArrearsApprovalCreateRequest: {
+            visitId: string;
+            applyReason: string;
+        };
+        ArrearsApprovalVO: {
+            approvalNo?: string;
+            visitId?: string;
+            applyReason?: string;
+            approver?: string;
+            /** @example 0 */
+            approvedBalance?: string;
+            status?: string;
+        };
         PracticeGrantVO: {
             /** @example 0 */
             id?: string;
@@ -3799,6 +4794,30 @@ export interface components {
             validTo?: string;
             status?: string;
             approvalRef?: string;
+        };
+        PageResultReviewTaskVO: {
+            content?: components["schemas"]["ReviewTaskVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        ReviewTaskVO: {
+            /** @example 0 */
+            id?: string;
+            m04OrderNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            freqCode?: string;
+            items?: string;
+            applyDept?: string;
+            applyDoctor?: string;
+            status?: string;
+            pharmacistId?: string;
+            opinion?: string;
         };
         PageResultPrescriptionVO: {
             content?: components["schemas"]["PrescriptionVO"][];
@@ -4213,6 +5232,147 @@ export interface components {
         };
         PageResultDeadLetterVO: {
             content?: components["schemas"]["DeadLetterVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        ArrearsAlarmVO: {
+            visitId?: string;
+            patientName?: string;
+            bedNo?: string;
+            /** Format: date-time */
+            flaggedAt?: string;
+        };
+        PageResultTransferWorklistVO: {
+            content?: components["schemas"]["TransferWorklistVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        TransferWorklistVO: {
+            orderNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            orderType?: string;
+            orderClass?: string;
+            standbyFlag?: boolean;
+            freqCode?: string;
+            doctorId?: string;
+            /** Format: date-time */
+            orderedAt?: string;
+            highRisk?: boolean;
+        };
+        PageResultMedicalOrderVO: {
+            content?: components["schemas"]["MedicalOrderVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        OrderDetailVO: {
+            order?: components["schemas"]["MedicalOrderVO"];
+            items?: components["schemas"]["OrderItemVO"][];
+        };
+        OrderItemVO: {
+            /** Format: int32 */
+            itemSeq?: number;
+            continueFlag?: boolean;
+            itemType?: string;
+            itemCode?: string;
+            nameSnapshot?: string;
+            dosage?: string;
+            dosageUnit?: string;
+            route?: string;
+            dripRate?: string;
+            quantity?: number;
+            execDeptId?: string;
+            skinTestFlag?: boolean;
+            oralFlag?: boolean;
+            feePriced?: boolean;
+            feeStopped?: boolean;
+        };
+        OrderTraceVO: {
+            orderNo?: string;
+            visitId?: string;
+            orderType?: string;
+            orderClass?: string;
+            status?: string;
+            entries?: components["schemas"]["TraceEntry"][];
+        };
+        TraceEntry: {
+            stage?: string;
+            operator?: string;
+            /** Format: date-time */
+            occurredAt?: string;
+            result?: string;
+            detail?: string;
+        };
+        PageResultOrderPlanVO: {
+            content?: components["schemas"]["OrderPlanVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        ClearanceVO: {
+            requestNo?: string;
+            visitId?: string;
+            status?: string;
+            /** Format: int32 */
+            stoppedLongCount?: number;
+            trackedOrders?: components["schemas"]["TrackedOrderVO"][];
+            /** Format: int32 */
+            cancelledPlanCount?: number;
+            /** @example 0 */
+            arrearsAmount?: string;
+            /** Format: date-time */
+            settlementCompletedAt?: string;
+            approvalNo?: string;
+        };
+        TrackedOrderVO: {
+            orderNo?: string;
+            orderClass?: string;
+            status?: string;
+        };
+        PageResultConsultationVO: {
+            content?: components["schemas"]["ConsultationVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        BedMapVO: {
+            /** @example 0 */
+            bedId?: string;
+            wardId?: string;
+            bedNo?: string;
+            bedAttr?: string;
+            bedStatus?: string;
+            allowGender?: string;
+            occupiedVisit?: components["schemas"]["OccupiedVisit"];
+        };
+        OccupiedVisit: {
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** Format: date-time */
+            admittedAt?: string;
+        };
+        PageResultAdmissionVO: {
+            content?: components["schemas"]["AdmissionVO"][];
             /** @example 0 */
             page?: string;
             /** @example 0 */
@@ -4878,6 +6038,54 @@ export interface operations {
             };
         };
     };
+    reject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ReviewDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    approve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ReviewDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list: {
         parameters: {
             query?: {
@@ -5397,7 +6605,7 @@ export interface operations {
             };
         };
     };
-    approve: {
+    approve_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -6247,7 +7455,7 @@ export interface operations {
             };
         };
     };
-    reject: {
+    reject_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -6871,6 +8079,761 @@ export interface operations {
             };
         };
     };
+    transferVisit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TransferResultVO"];
+                };
+            };
+        };
+    };
+    createMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MedicalOrderVO"];
+                };
+            };
+        };
+    };
+    createDischargeRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DischargeRequestCreate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DischargeRequestVO"];
+                };
+            };
+        };
+    };
+    changeBed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangeBedRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TransferResultVO"];
+                };
+            };
+        };
+    };
+    admitWard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                visitId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WardAdmitRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["InpatientVisitVO"];
+                };
+            };
+        };
+    };
+    stopMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderStopRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    revokeMedicalOrderAudit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resubmitMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MedicalOrderVO"];
+                };
+            };
+        };
+    };
+    confirmOralMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancelMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderCancelRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    transferCheckOrders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reorganizeMedicalOrders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrderReorganizeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    executeConfirmOrderPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecuteConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ExecuteConfirmVO"];
+                };
+            };
+        };
+    };
+    triggerStandbyOrderPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StandbyTriggerRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderPlanVO"][];
+                };
+            };
+        };
+    };
+    confirmDischarge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DischargeConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DischargeRequestVO"];
+                };
+            };
+        };
+    };
+    cancelDischargeRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DischargeRequestVO"];
+                };
+            };
+        };
+    };
+    listConsultations: {
+        parameters: {
+            query?: {
+                status?: "REQUESTED" | "ACCEPTED" | "COMPLETED" | "CANCELLED";
+                deptId?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultConsultationVO"];
+                };
+            };
+        };
+    };
+    createConsultation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsultationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsultationVO"];
+                };
+            };
+        };
+    };
+    submitConsultationOpinion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConsultationOpinionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsultationVO"];
+                };
+            };
+        };
+    };
+    cancelConsultation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsultationVO"];
+                };
+            };
+        };
+    };
+    acceptConsultation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsultationVO"];
+                };
+            };
+        };
+    };
+    reserveBed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BedReserveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    releaseBed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    maintainBed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    maintainDone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    disinfectDone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    assignBed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BedAssignRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    listAdmissions: {
+        parameters: {
+            query?: {
+                status?: "WAITING" | "SCHEDULED" | "COMPLETED" | "CANCELLED";
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultAdmissionVO"];
+                };
+            };
+        };
+    };
+    createAdmission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdmissionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdmissionVO"];
+                };
+            };
+        };
+    };
+    scheduleAdmission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdmissionScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdmissionVO"];
+                };
+            };
+        };
+    };
+    registerAdmission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VisitRegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["InpatientVisitVO"];
+                };
+            };
+        };
+    };
+    cancelAdmission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdmissionVO"];
+                };
+            };
+        };
+    };
     settleSettlement: {
         parameters: {
             query?: never;
@@ -7431,6 +9394,74 @@ export interface operations {
             };
         };
     };
+    createArrearsApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArrearsApprovalCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ArrearsApprovalVO"];
+                };
+            };
+        };
+    };
+    rejectArrearsApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approvalNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ArrearsApprovalVO"];
+                };
+            };
+        };
+    };
+    approveArrearsApproval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                approvalNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ArrearsApprovalVO"];
+                };
+            };
+        };
+    };
     readVersion: {
         parameters: {
             query?: {
@@ -7451,6 +9482,30 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["DictVersionVO"];
+                };
+            };
+        };
+    };
+    list_4: {
+        parameters: {
+            query?: {
+                status?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultReviewTaskVO"];
                 };
             };
         };
@@ -7572,7 +9627,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_5: {
         parameters: {
             query?: {
                 status?: string;
@@ -7985,7 +10040,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_6: {
         parameters: {
             query: {
                 wardId: string;
@@ -8028,7 +10083,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_7: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -8057,7 +10112,7 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    list_8: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -8083,7 +10138,7 @@ export interface operations {
             };
         };
     };
-    list_8: {
+    list_9: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -8110,7 +10165,7 @@ export interface operations {
             };
         };
     };
-    list_9: {
+    list_10: {
         parameters: {
             query?: {
                 status?: string;
@@ -8155,6 +10210,191 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["DeadLetterDetailVO"];
+                };
+            };
+        };
+    };
+    listArrearsVisits: {
+        parameters: {
+            query: {
+                wardId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ArrearsAlarmVO"][];
+                };
+            };
+        };
+    };
+    listTransferWorklist: {
+        parameters: {
+            query: {
+                wardId: string;
+                shift?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultTransferWorklistVO"];
+                };
+            };
+        };
+    };
+    listMedicalOrders: {
+        parameters: {
+            query: {
+                visitId: string;
+                class?: "LONG" | "STAT";
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultMedicalOrderVO"];
+                };
+            };
+        };
+    };
+    getMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderDetailVO"];
+                };
+            };
+        };
+    };
+    traceMedicalOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderTraceVO"];
+                };
+            };
+        };
+    };
+    listOrderPlans: {
+        parameters: {
+            query: {
+                date: string;
+                wardId?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultOrderPlanVO"];
+                };
+            };
+        };
+    };
+    getDischargeClearance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ClearanceVO"];
+                };
+            };
+        };
+    };
+    getBedMap: {
+        parameters: {
+            query: {
+                wardId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BedMapVO"][];
                 };
             };
         };

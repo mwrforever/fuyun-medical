@@ -27,6 +27,12 @@ public final class PharmacyMessagingConstants {
     /** 发布事件：药品字典变更广播（id 30） */
     public static final String EVENT_DRUG_CHANGED = "pharmacy.drug.changed";
 
+    /** 发布事件：住院医嘱审方通过（id 53 既有 V800 登记；消费方 M04 置医嘱可执行，P2 PR-1 起有发布点） */
+    public static final String EVENT_MEDICATION_ORDER_AUDIT_COMPLETED = "pharmacy.medication-order.audit-completed";
+
+    /** 发布事件：住院医嘱审方驳回（id 54 既有 V800 登记；rejectReason 必附药师意见，消费方 M04 置驳回态） */
+    public static final String EVENT_MEDICATION_ORDER_AUDIT_REJECTED = "pharmacy.medication-order.audit-rejected";
+
     /** 订阅事件：门诊缴费放行（占位 id 25，producer=outpatient；PR-5 实装发布方） */
     public static final String EVENT_SUB_OUTPATIENT_ORDER_CHARGED = "outpatient.order.charged";
 
@@ -48,6 +54,24 @@ public final class PharmacyMessagingConstants {
 
     /** 订阅事件：患者拆分（V105 id 12 既有；与 merged 成对，M-25） */
     public static final String EVENT_SUB_PATIENT_SPLIT = "patient.patient.split";
+
+    /**
+     * 订阅绑定键：住院医嘱开立 drug 子键（生产方 inpatient）。登记名 inpatient.order.created
+     * 不带子键（R3-06 口径），绑定键=登记名 + "." + order_type 子键——governance 订阅登记按
+     * 登记名精确匹配无法承载子键（declareConsumerQueue 会因 inpatient.order.created.drug 未
+     * 登记而阻断启动），故本队列经 PharmacyMessagingConfig 自声明队列与绑定（exchange/队列
+     * 前缀字面量与治理约定同源，非私建交换机）。
+     */
+    public static final String BINDING_KEY_INPATIENT_ORDER_CREATED_DRUG = "inpatient.order.created.drug";
+
+    /** 主交换机（治理三件套字面量，与 integration 治理实现同源；仅声明队列绑定不禁用） */
+    public static final String TOPIC_EXCHANGE = "fy.topic";
+
+    /** 死信交换机（治理约定字面量；消费队列死信统一指向） */
+    public static final String DLX_EXCHANGE = "fy.dlx";
+
+    /** 消费队列命名前缀（治理约定 q.&lt;consumerModule&gt;.&lt;eventType&gt; 字面量） */
+    public static final String CONSUMER_QUEUE_PREFIX = "q.";
 
     /**
      * 订阅事件全集（队列声明与监听器同源）：Task 5 补 charged/fee.created，

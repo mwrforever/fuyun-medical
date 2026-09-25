@@ -90,4 +90,20 @@ class BillingPayloadsContractTest {
         assertThat(payload).isEqualTo(same).hasSameHashCodeAs(same);
         assertThat(payload.toString()).contains("C001");
     }
+
+    @Test
+    @DisplayName("ArrearsApprovedPayload：四组件（含 Instant 审批时点）存取与等值/哈希/toString 契约（V1002 id 73）")
+    void arrearsApprovedPayloadContract() {
+        ArrearsApprovedPayload payload = new ArrearsApprovedPayload(
+                "I20260925000001", "AR2026092500001", Instant.parse("2026-09-25T02:00:00Z"), 8000L);
+        ArrearsApprovedPayload same = new ArrearsApprovedPayload(
+                "I20260925000001", "AR2026092500001", Instant.parse("2026-09-25T02:00:00Z"), 8000L);
+
+        assertThat(payload.visitId()).isEqualTo("I20260925000001");
+        assertThat(payload.approvalNo()).isEqualTo("AR2026092500001");
+        assertThat(payload.approvedAt()).isEqualTo(Instant.parse("2026-09-25T02:00:00Z"));
+        assertThat(payload.approvedBalance()).isEqualTo(8000L);
+        assertThat(payload).isEqualTo(same).hasSameHashCodeAs(same);
+        assertThat(payload.toString()).contains("AR2026092500001").contains("8000");
+    }
 }

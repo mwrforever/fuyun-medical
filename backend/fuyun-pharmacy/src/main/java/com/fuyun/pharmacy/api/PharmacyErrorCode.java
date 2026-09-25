@@ -56,7 +56,13 @@ public enum PharmacyErrorCode implements ErrorCode {
      * 经 billing SettlementQueryPort.settledUnder 反查该结算单下无该处方 SETTLED 费用行即拒；
      * PH-1017 已被 PRACTICE_NOT_ALLOWED 占用，本码接续顺延）
      */
-    CREDENTIAL_MISMATCH("PH-1018");
+    CREDENTIAL_MISMATCH("PH-1018"),
+    /** 审方任务不存在（404；taskId 无命中——P2 PR-1 Task 12 审方薄切片接续顺延） */
+    REVIEW_TASK_NOT_FOUND("PH-1019"),
+    /** 审方任务状态不允许该操作（409；非 PENDING 决策、驳回缺意见、CAS 并发被抢等三态机违例） */
+    REVIEW_TASK_STATE_NOT_ALLOWED("PH-1020"),
+    /** 住院用药快照不存在（404；m04_order_no 无命中或任务关联快照缺失——数据不一致面） */
+    MEDICATION_ORDER_NOT_FOUND("PH-1021");
 
     /** 码值（如 PH-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;
