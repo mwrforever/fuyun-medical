@@ -26,8 +26,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
  * <p>幂等双层：eventId 构件幂等（IdempotentConsumerSupport 三段式，键=eventId+消费模块）+
  * 业务级幂等（锚点/停费标记存在性守卫、计费唯一键数据库硬防重——服务层承载）。载荷以 JsonNode
  * 读（禁依赖 inpatient api——GC11 模块依赖单向红线，PharmacyAuditReplyListener 同款口径）。
- * 通配队列还承载六事件之外的 visit/order 族帧（registered/discharged/cancelled/revoked/
- * transferred-order/audit-rejected 等），未知类型 info 留痕直返（消费面零误伤）。
+ * 通配队列还承载六事件与三终态事件之外的 visit/order 族帧（registered/discharged/
+ * transferred-order/order-plan.generated 等），未知类型 info 留痕直返（消费面零误伤）。
  *
  * <p>归 internal/：容器驱动入口禁外引；Bean 注册点 BillingMessagingConfig @Import。
  */
@@ -69,8 +69,9 @@ public class BillingInpatientEventListener {
     }
 
     /**
-     * 住院医嘱域通配入口（q.billing.inpatient.order.#；created 离散计价/executed 确认/stopped
-     * 截断三事件派发，其余 order 族帧——含 audited 冻结载荷无业务动作——info 直返）。
+     * 住院医嘱域通配入口（q.billing.inpatient.order.#；created 离散计价/executed 确认/stopped+
+     * cancelled/revoked/audit-rejected 终态截断派发，其余 order 族帧——含 audited 冻结载荷无业务
+     * 动作——info 直返）。
      *
      * @param message 原始消息帧，非空
      */
@@ -116,8 +117,9 @@ public class BillingInpatientEventListener {
     }
 
     /**
-     * 医嘱域业务体派发（包级直驱可测）：created 计价/executed 确认/stopped 截断；audited 到店
-     * info 留痕直返（冻结载荷不携 items，计价数据面在 created——类注释适配留痕）。
+     * 医嘱域业务体派发（包级直驱可测）：created 计价/executed 确认/stopped+三终态（cancelled/
+     * revoked/audit-rejected）截断；audited 到店 info 留痕直返（冻结载荷不携 items，计价数据面
+     * 在 created——类注释适配留痕）。
      *
      * @param envelope 已解析信封，非空
      * @throws IllegalStateException 载荷缺定位键或 items 非数组（不合规帧死信留痕）时触发
@@ -141,6 +143,13 @@ public class BillingInpatientEventListener {
                 inpatientChargeService.onOrderExecuted(
                         requireText(envelope, payload, "m04OrderNo"), requireVisitId(envelope, payload));
             case BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_STOPPED ->
+                inpatientChargeService.onOrderStopped(
+                        requireText(envelope, payload, "m04OrderNo"), requireVisitId(envelope, payload));
+            case BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_AUDIT_REJECTED,
+                    BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_CANCELLED,
+                    BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_REVOKED ->
+                // 驳回/作废/撤回=医嘱不可能再执行的终态（V800 id 45/46、V901 id 67）：与 stopped
+                // 同款截断语义收敛在途 PENDING 费用行，防未结清合计虚增误导出院费用预审
                 inpatientChargeService.onOrderStopped(
                         requireText(envelope, payload, "m04OrderNo"), requireVisitId(envelope, payload));
             case BillingMessagingConstants.EVENT_SUB_INPATIENT_ORDER_AUDITED ->

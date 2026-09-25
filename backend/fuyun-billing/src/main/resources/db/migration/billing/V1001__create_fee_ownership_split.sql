@@ -33,6 +33,13 @@ CREATE TABLE billing.fee_ownership_split (
 CREATE INDEX idx_fee_ownership_visit ON billing.fee_ownership_split (visit_id) WHERE deleted = 0;
 CREATE INDEX idx_fee_ownership_type ON billing.fee_ownership_split (split_type) WHERE deleted = 0;
 
+-- 幂等硬防线（修复环 R1 补）：ADMIT_START 入科锚点/DISCHARGE_STOP 出院停费标记类行同就诊至多一行
+--   ——服务层 check-then-insert 守卫存在读-写间隙，并发重投由本部分唯一索引兜底（冲突方
+--   DuplicateKey 幂等吞过，应用层照既有先例容错）；TRANSFER 转科切分行一就诊多次转科多行合法，
+--   不纳入唯一约束（事件重投幂等由 eventId 构件幂等承载，同就诊同类型多行属业务正常态）。
+CREATE UNIQUE INDEX uk_fee_split_visit_type ON billing.fee_ownership_split (visit_id, split_type)
+    WHERE deleted = 0 AND split_type IN ('ADMIT_START', 'DISCHARGE_STOP');
+
 -- updated_at 触发器（V1 公共函数复用，A.4.2-9 应用层禁写）
 CREATE TRIGGER trg_fee_ownership_split_updated_at BEFORE UPDATE ON billing.fee_ownership_split
     FOR EACH ROW EXECUTE FUNCTION public.fuyun_set_updated_at();

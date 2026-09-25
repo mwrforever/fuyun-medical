@@ -31,10 +31,11 @@ import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 
 /**
- * 住院域事件消费单测（P2 PR-1 Task 13）：两通配队列六事件派发透传（visit 三事件/order 三事件）、
- * audited 无业务动作留痕（冻结载荷不携 items——计价数据面在 created）、未知类型零业务触达、
- * 不合规帧守卫死信留痕、绑定键双锚（@RabbitListener 队列名注解反射 + 自声明 Bean 通配绑定形态）。
- * driveHandler 打桩模板照 BillingChargeEventListenerTest 同款（绕开三段式只测业务派发）。
+ * 住院域事件消费单测（P2 PR-1 Task 13，修复环 R1 补三终态收敛面）：两通配队列六事件派发透传
+ * （visit 三事件/order 三事件）+ cancelled/revoked/audit-rejected 三终态截断派发（共用 stopped
+ * 同款截断入口）、audited 无业务动作留痕（冻结载荷不携 items——计价数据面在 created）、未知类型
+ * 零业务触达、不合规帧守卫死信留痕、绑定键双锚（@RabbitListener 队列名注解反射 + 自声明 Bean
+ * 通配绑定形态）。driveHandler 打桩模板照 BillingChargeEventListenerTest 同款（绕开三段式只测业务派发）。
  */
 class BillingInpatientEventListenerTest {
 
@@ -177,12 +178,39 @@ class BillingInpatientEventListenerTest {
     }
 
     @Test
-    @DisplayName("通配队列未纳管类型零业务触达（registered/cancelled 等族帧 info 直返）")
+    @DisplayName("通配队列未纳管类型零业务触达（registered/order.transferred 等族帧 info 直返）")
     void unknownWildcardFramesBypassBusiness() throws Exception {
         driveHandler(envelope("inpatient.visit.registered", "{\"visitId\":\"I20260925000001\"}"), true);
-        driveHandler(envelope("inpatient.order.cancelled", "{\"visitId\":\"I20260925000001\"}"), false);
+        driveHandler(envelope("inpatient.order.transferred", "{\"visitId\":\"I20260925000001\"}"), false);
 
         verifyNoInteractions(inpatientChargeService);
+    }
+
+    @Test
+    @DisplayName("cancelled/revoked/audit-rejected 三终态事件派发截断：共用 stopped 同款截断入口（R1 补收敛）")
+    void terminalOrderEventsDispatchTruncation() throws Exception {
+        // 三终态载荷照 V800 id 45/46、V901 id 67 冻结契约子集（m04OrderNo/visitId 定位键）
+        driveHandler(
+                envelope(
+                        "inpatient.order.cancelled",
+                        "{\"m04OrderNo\":\"MO2026092500001\",\"visitId\":\"I20260925000001\",\"patientId\":7,"
+                                + "\"cancelledAt\":\"2026-09-25T07:00:00Z\",\"cancelReason\":\"开错医嘱\"}"),
+                false);
+        driveHandler(
+                envelope(
+                        "inpatient.order.revoked",
+                        "{\"m04OrderNo\":\"MO2026092500001\",\"visitId\":\"I20260925000001\",\"patientId\":7,"
+                                + "\"revokedAt\":\"2026-09-25T08:00:00Z\"}"),
+                false);
+        driveHandler(
+                envelope(
+                        "inpatient.order.audit-rejected",
+                        "{\"m04OrderNo\":\"MO2026092500001\",\"visitId\":\"I20260925000001\",\"patientId\":7,"
+                                + "\"rejectReason\":\"用法不适宜\",\"rejectedAt\":\"2026-09-25T09:00:00Z\"}"),
+                false);
+
+        // 三事件同落截断入口（PENDING→CANCELLED 作废收敛），未纳管派发面零旁路
+        verify(inpatientChargeService, times(3)).onOrderStopped("MO2026092500001", "I20260925000001");
     }
 
     @Test

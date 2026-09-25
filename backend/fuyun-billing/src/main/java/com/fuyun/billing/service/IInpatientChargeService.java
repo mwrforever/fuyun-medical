@@ -49,8 +49,10 @@ public interface IInpatientChargeService {
     void onOrderExecuted(String m04OrderNo, String visitId);
 
     /**
-     * 医嘱停止消费（inpatient.order.stopped，V800 id 44）：该医嘱未确认 PENDING 费用行
-     * 截断作废（PENDING→CANCELLED；已确认/已结算行不回冲）。重复投递零行幂等达成。
+     * 医嘱终态费用截断（stopped/cancelled/revoked/audit-rejected 四事件共用入口，V800 id 44/45/46、
+     * V901 id 67）：四者同属「医嘱不可能再执行」终态——该医嘱未确认 PENDING 费用行截断作废
+     * （PENDING→CANCELLED；已确认/已结算行不回冲），防未结清合计虚增误导出院费用预审。
+     * 重复投递零行幂等达成。
      *
      * @param m04OrderNo 医嘱号，非空；来源：事件载荷
      * @param visitId    住院就诊号，非空；来源：事件载荷

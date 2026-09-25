@@ -20,6 +20,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -75,8 +76,14 @@ public class InpatientChargeServiceImpl implements IInpatientChargeService {
             anchor.setToWardId(wardId);
             anchor.setSplitType(FeeSplitType.ADMIT_START);
             anchor.setSplitAt(utc(admittedAt));
-            // 数据库写操作：入科起费锚点落行（fee_ownership_split，归属时间线起点）
-            feeOwnershipSplitMapper.insert(anchor);
+            try {
+                // 数据库写操作：入科起费锚点落行（fee_ownership_split，归属时间线起点）
+                feeOwnershipSplitMapper.insert(anchor);
+            } catch (DuplicateKeyException e) {
+                // 并发重投兜底：check-then-insert 读-写间隙同就诊锚点已被并行消费落行，唯一索引
+                //   uk_fee_split_visit_type 拦截——幂等吞过（与存在性守卫命中同一业务结果）
+                log.warn("入科起费锚点并发重复落行（唯一索引幂等吞过）：visitId={}", visitId);
+            }
         }
         chargeBedFee(visitId, patientId, "入科起费");
     }
@@ -127,13 +134,14 @@ public class InpatientChargeServiceImpl implements IInpatientChargeService {
         log.info("住院医嘱费用确认：m04OrderNo={}，visitId={}，确认行数={}", m04OrderNo, visitId, confirmed);
     }
 
-    /** {@inheritDoc}：未确认 PENDING 行截断作废（已确认/已结算行不回冲）。 */
+    /** {@inheritDoc}：未确认 PENDING 行截断作废（已确认/已结算行不回冲，作废行不可逆）。 */
     @Override
     @Transactional
     public void onOrderStopped(String m04OrderNo, String visitId) {
-        // 数据库写操作：停嘱费用截断（PENDING→CANCELLED，部分唯一索引释放计费键占位）
+        // 数据库写操作：医嘱终态费用截断（stopped/作废/撤回/审方驳回四事件共用——PENDING→CANCELLED，
+        // 部分唯一索引释放计费键占位；已 CONFIRMED 行不满足 WHERE 天然不可逆，重投零行幂等）
         int cancelled = feeRecordMapper.casCancelPendingByOrder(m04OrderNo, visitId);
-        log.info("住院停嘱费用截断：m04OrderNo={}，visitId={}，作废行数={}", m04OrderNo, visitId, cancelled);
+        log.info("住院医嘱终态费用截断（停嘱/作废/撤回/审方驳回）：m04OrderNo={}，visitId={}，作废行数={}", m04OrderNo, visitId, cancelled);
     }
 
     /** {@inheritDoc}：转科切分点落行（时间线记录面，无费用动作）。 */
@@ -167,8 +175,14 @@ public class InpatientChargeServiceImpl implements IInpatientChargeService {
         stop.setPatientId(patientId);
         stop.setSplitType(FeeSplitType.DISCHARGE_STOP);
         stop.setSplitAt(utc(requestedAt));
-        // 数据库写操作：出院停费标记落行（停止持续性计费——日切不再生成床位费）
-        feeOwnershipSplitMapper.insert(stop);
+        try {
+            // 数据库写操作：出院停费标记落行（停止持续性计费——日切不再生成床位费）
+            feeOwnershipSplitMapper.insert(stop);
+        } catch (DuplicateKeyException e) {
+            // 并发重投兜底：check-then-insert 读-写间隙同就诊停费标记已被并行消费落行，唯一索引
+            //   uk_fee_split_visit_type 拦截——幂等吞过（与存在性守卫命中同一业务结果）
+            log.warn("出院停费标记并发重复落行（唯一索引幂等吞过）：visitId={}", visitId);
+        }
     }
 
     /** {@inheritDoc}：在院人群逐就诊计价（逐就诊独立事务，单点失败不阻断批次）。 */

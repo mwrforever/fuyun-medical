@@ -7,6 +7,7 @@
 -- 种子 ID 取小整数（V904 先例：跨表 ID 空间独立，雪花 ID 19 位量级永不冲突）。
 -- 价格红线（A.4.2-8）：price BIGINT 存「分」；PUBLISHED 且 effective_to NULL 即当前唯一有效价
 --   （uk_price_item_current 承载，snapshot 直接可取）。幂等形态：INSERT ... WHERE NOT EXISTS。
+-- 演示价留痕：床位费 6000 分/护理费 3000 分为 P2 演示价，物价归集校准随运营配置修正。
 
 -- 普通床位费（床日，60.00 元/床日）
 INSERT INTO billing.charge_item (id, item_code, item_name, item_class, unit, exec_dept_id, price_flag, combo_flag, fee_category, status)

@@ -39,6 +39,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -118,6 +119,22 @@ class InpatientChargeServiceImplTest {
         service.onVisitAdmitted("I20260925000001", 7L, "W-NEURO", AT);
 
         verify(feeOwnershipSplitMapper, never()).insert(any(FeeOwnershipSplit.class));
+        verify(engine).generateFromSource(any());
+    }
+
+    @Test
+    @DisplayName("① 补面（R1）：并发重投锚点插入撞唯一索引（DuplicateKey）幂等吞过，床位费仍照常计价")
+    void admittedConcurrentAnchorInsertConflictSwallowed() {
+        // check-then-insert 读-写间隙：守卫读到 0 行后并行消费已落行，插入被 uk_fee_split_visit_type 拦截
+        when(feeOwnershipSplitMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(feeOwnershipSplitMapper.insert(any(FeeOwnershipSplit.class)))
+                .thenThrow(new DuplicateKeyException("uk_fee_split_visit_type 唯一冲突"));
+        when(engine.generateFromSource(any())).thenReturn(1L);
+
+        assertThatCode(() -> service.onVisitAdmitted("I20260925000001", 7L, "W-NEURO", AT))
+                .doesNotThrowAnyException();
+
+        verify(feeOwnershipSplitMapper).insert(any(FeeOwnershipSplit.class));
         verify(engine).generateFromSource(any());
     }
 
@@ -225,6 +242,20 @@ class InpatientChargeServiceImplTest {
         ArgumentCaptor<FeeOwnershipSplit> captor = ArgumentCaptor.forClass(FeeOwnershipSplit.class);
         verify(feeOwnershipSplitMapper, times(1)).insert(captor.capture());
         assertThat(captor.getValue().getSplitType()).isEqualTo(FeeSplitType.DISCHARGE_STOP);
+    }
+
+    @Test
+    @DisplayName("⑦ 补面（R1）：并发重投停费标记插入撞唯一索引（DuplicateKey）幂等吞过")
+    void dischargeRequestedConcurrentInsertConflictSwallowed() {
+        // check-then-insert 读-写间隙：守卫读到无标记后并行消费已落行，插入被 uk_fee_split_visit_type 拦截
+        when(feeOwnershipSplitMapper.selectCount(any(Wrapper.class))).thenReturn(0L);
+        when(feeOwnershipSplitMapper.insert(any(FeeOwnershipSplit.class)))
+                .thenThrow(new DuplicateKeyException("uk_fee_split_visit_type 唯一冲突"));
+
+        assertThatCode(() -> service.onDischargeRequested("I20260925000001", 7L, AT))
+                .doesNotThrowAnyException();
+
+        verify(feeOwnershipSplitMapper).insert(any(FeeOwnershipSplit.class));
     }
 
     @Test

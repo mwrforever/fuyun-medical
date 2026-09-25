@@ -64,6 +64,24 @@ public final class BillingMessagingConstants {
     public static final String EVENT_SUB_INPATIENT_ORDER_STOPPED = "inpatient.order.stopped";
 
     /**
+     * 订阅事件：医嘱作废（V800 id 45；仅未产生执行的医嘱可作废，作废后不可能再执行）——
+     * 在途 PENDING 费用行截断收敛（修复环 R1 补，防未结清合计虚增误导出院预审）。
+     */
+    public static final String EVENT_SUB_INPATIENT_ORDER_CANCELLED = "inpatient.order.cancelled";
+
+    /**
+     * 订阅事件：医嘱撤回（V800 id 46；转抄前撤回重审，撤回态不可能执行计费）——
+     * 在途 PENDING 费用行截断收敛（修复环 R1 补，语义同作废）。
+     */
+    public static final String EVENT_SUB_INPATIENT_ORDER_REVOKED = "inpatient.order.revoked";
+
+    /**
+     * 订阅事件：医嘱审核驳回（V901 id 67；审方驳回医嘱禁止执行，修改重提前不可能计费）——
+     * 在途 PENDING 费用行截断收敛（修复环 R1 补，语义同作废）。
+     */
+    public static final String EVENT_SUB_INPATIENT_ORDER_AUDIT_REJECTED = "inpatient.order.audit-rejected";
+
+    /**
      * 订阅绑定键：住院就诊域事件通配（生产方 inpatient）。governance 订阅登记按登记名精确匹配
      * 且命名审查拒绝 # 通配段（QueueGovernorImpl EVENT_TYPE_PATTERN/registerSubscriber），无法
      * 承载通配绑定——故本队列经 BillingMessagingConfig 自声明（Task 12 drug 子键队列自声明同款
