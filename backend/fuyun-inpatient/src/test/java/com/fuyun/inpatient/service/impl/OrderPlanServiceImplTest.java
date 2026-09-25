@@ -80,12 +80,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 医嘱执行计划服务单测（Task 8 冻结九用例 + 覆盖率补面）：①日切分解（bid 长期医嘱→次日
  * 2 行、时点 08:00/16:00、generated 事件）②重复日切幂等（查前置零新行）③当日补偿（16:30
  * 转抄 bid→当日 0 行次日 2 行）④长期首个回签（TRANSFERRED→EXECUTING+executed 事件）
- * ⑤临时单次回签（TRANSFERRED→COMPLETED）⑥全部终态推进（EXECUTING→COMPLETED）⑦重复
- * 回签幂等（返回当前状态零事件）⑧停嘱作废未来计划（复用 cancelFuturePlans 已落库面）
- * ⑨trace 五环节聚合；补面：分批事务边界计数、字典缺失/prn/无时点/明细缺失/就诊缺失跳过面、
- * 批次失败续跑、补偿守卫、回签守卫（IP-1014/1015/1009/1007/1022）、首个回签穿透终态判定、
- * GC26 注解 SQL 锚。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册表信息；
- * 状态机 mock 以 doAnswer 同步内存态（生产语义：迁移后内存行置目标态）。
+ * ⑤临时单次回签（TRANSFERRED→COMPLETED）⑥全部终态推进（EXECUTING→COMPLETED，end_at
+ * 到期面）⑦重复回签幂等（返回当前状态零事件）⑧停嘱作废未来计划（复用 cancelFuturePlans
+ * 已落库面）⑨trace 五环节聚合；补面：分批事务边界计数、字典缺失/prn/无时点/明细缺失/就诊
+ * 缺失跳过面、批次失败续跑、补偿守卫、回签守卫（IP-1014/1015/1009/1007/1022）、首个回签
+ * 穿透终态判定、GC26 注解 SQL 锚。审查修复环 R1 增面：跨日窗口守卫（qd 无 end_at 保持
+ * EXECUTING 且次日仍入候选并排除 end_at 已过医嘱 / qd end_at=当日全终态→COMPLETED）、
+ * 补偿冲突仅 warn 不阻断转抄主链。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工
+ * 注册表信息；状态机 mock 以 doAnswer 同步内存态（生产语义：迁移后内存行置目标态）。
  */
 @ExtendWith(MockitoExtension.class)
 class OrderPlanServiceImplTest {
@@ -417,9 +419,12 @@ class OrderPlanServiceImplTest {
     }
 
     @Test
-    @DisplayName("用例⑥全部终态推进：EXECUTING 医嘱末个计划回签（PENDING 计数为 0）→COMPLETED")
+    @DisplayName("用例⑥全部终态推进：EXECUTING 医嘱末个计划回签（PENDING 计数 0 且 end_at 到期）→COMPLETED")
     void executeConfirmCompletesExecutingOrderWhenAllPlansTerminal() {
+        ZoneOffset offset = OffsetDateTime.now().getOffset();
         MedicalOrder order = orderRow(OrderStatus.EXECUTING, "LONG", false, "bid");
+        // 医嘱明示结束日=当日（审查修复环 R1 守卫生效面）：生命周期内计划确已穷尽方判 COMPLETED
+        order.setEndAt(LocalDate.now().atTime(23, 59).atOffset(offset));
         doAnswer(invocation -> {
                     invocation
                             .getArgument(0, MedicalOrder.class)
@@ -441,6 +446,80 @@ class OrderPlanServiceImplTest {
 
         verify(stateMachine).transition(order, OrderStatus.COMPLETED, "全部执行计划实例终态", OPERATOR);
         assertThat(vo).isEqualTo(new ExecuteConfirmVO(PLAN_NO, ORDER_NO, "COMPLETED", "EXECUTED"));
+        verify(events, times(1)).publishEvent(any(InpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("跨日窗口守卫：qd 无 end_at 当日末点回签后保持 EXECUTING（无 COMPLETED 推进）且次日仍入日切候选")
+    void executeConfirmKeepsExecutingAcrossDayWindowWhenEndAtAbsent() {
+        // 场景（审查修复环 R1 Critical 面）：qd 长期医嘱当日唯一时点回签后至次日 02:00 日切前
+        // 「已有计划全终态」成立，但 end_at 为空——生命周期未穷尽，不得判 COMPLETED 静默中断
+        MedicalOrder order = orderRow(OrderStatus.EXECUTING, "LONG", false, "qd");
+        when(planMapper.selectOne(any())).thenReturn(pendingPlanRow());
+        when(planMapper.casExecuteConfirm(eq(PLAN_NO), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(orderMapper.selectById(ORDER_PK)).thenReturn(order);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        // 当日唯一时点（qd 08:00）回签：在途 PENDING 清零——end_at 为空，保持 EXECUTING
+        when(planMapper.selectCount(any())).thenReturn(0L);
+
+        ExecuteConfirmVO vo = service.executeConfirm(PLAN_NO, new ExecuteConfirmRequest(EXECUTOR_NURSE, null, null));
+
+        // 无任何头迁移（EXECUTING 停留待次日日切继续分解，正常终结路径=停嘱）且 executed 事件照发
+        verifyNoInteractions(stateMachine);
+        assertThat(vo.orderStatus()).isEqualTo("EXECUTING");
+        verify(events, times(1)).publishEvent(any(InpatientDomainEvent.class));
+
+        // 次日日切：该医嘱仍入候选（end_at 为空不越界）——qd 单时点 1 行；end_at 已过医嘱被过滤不排程
+        Mockito.reset(planMapper, orderMapper, frequencyMapper, itemMapper, seqGate, events);
+        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        MedicalOrder expired = orderRow(OrderStatus.EXECUTING, "LONG", false, "bid");
+        expired.setId(9002L);
+        expired.setOrderNo("MO2026092500002");
+        expired.setEndAt(LocalDate.now().minusDays(1).atTime(8, 0).atOffset(offset));
+        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
+        when(orderMapper.selectList(any())).thenReturn(List.of(order, expired));
+        when(frequencyMapper.selectOne(any())).thenReturn(freqRow("qd", "08:00", false));
+        when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)));
+        when(planMapper.selectList(any())).thenReturn(List.of());
+        when(seqGate.nextNo("PL")).thenReturn("PL2026092600001");
+
+        assertThat(service.decomposeNextDay(tomorrow)).isEqualTo(1);
+        verify(planMapper).insert(planCaptor.capture());
+        // 唯一生成行归属存活医嘱（end_at 已过者被候选过滤剔除——过滤失效则生成 2 行即失败）
+        assertThat(planCaptor.getValue().getOrderId()).isEqualTo(ORDER_PK);
+        assertThat(planCaptor.getValue().getPlanTime().toLocalDate()).isEqualTo(tomorrow);
+        verify(events, times(1)).publishEvent(any(InpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("跨日窗口守卫（end_at 到期面）：qd 有 end_at=当日，末点回签后全终态→COMPLETED")
+    void executeConfirmCompletesQdOrderWhenEndAtReachedToday() {
+        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        MedicalOrder order = orderRow(OrderStatus.EXECUTING, "LONG", false, "qd");
+        // 医嘱明示结束日=当日：末点回签后已有计划全终态且生命周期确已穷尽——允许 COMPLETED
+        order.setEndAt(LocalDate.now().atTime(23, 59).atOffset(offset));
+        doAnswer(invocation -> {
+                    invocation
+                            .getArgument(0, MedicalOrder.class)
+                            .setStatus(
+                                    invocation.getArgument(1, OrderStatus.class).getCode());
+                    return null;
+                })
+                .when(stateMachine)
+                .transition(any(), any(), any(), anyLong());
+        when(planMapper.selectOne(any())).thenReturn(pendingPlanRow());
+        when(planMapper.casExecuteConfirm(eq(PLAN_NO), any(), any(), any(), any()))
+                .thenReturn(1);
+        when(orderMapper.selectById(ORDER_PK)).thenReturn(order);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        when(planMapper.selectCount(any())).thenReturn(0L);
+
+        ExecuteConfirmVO vo = service.executeConfirm(PLAN_NO, new ExecuteConfirmRequest(EXECUTOR_NURSE, null, null));
+
+        verify(stateMachine).transition(order, OrderStatus.COMPLETED, "全部执行计划实例终态", OPERATOR);
+        assertThat(vo.orderStatus()).isEqualTo("COMPLETED");
         verify(events, times(1)).publishEvent(any(InpatientDomainEvent.class));
     }
 
@@ -658,18 +737,15 @@ class OrderPlanServiceImplTest {
     }
 
     @Test
-    @DisplayName("补偿守卫面：非长期医嘱/未经转抄状态/操作者上下文缺失回退 system/医嘱不存在 IP-1009")
+    @DisplayName("补偿守卫面：非长期医嘱/未经转抄状态/操作者上下文缺失回退 system/医嘱不存在降级 warn（IP-1009）")
     void compensateTodayCoversGuardFaces() {
         // 公共入口（服务器时钟形态）直测：STAT 守卫直过零生成——无异常路径承载 public 委托行
         when(orderMapper.selectOne(any())).thenReturn(orderRow(OrderStatus.TRANSFERRED, "STAT", false, null));
         assertThat(service.compensateToday(ORDER_NO)).isZero();
 
-        // 医嘱不存在：IP-1009（固定时钟注入形态直测）
+        // 医嘱不存在：IP-1009 降级 warn 不向上传播（审查修复环 R1——补偿面异常不阻断转抄主链）
         when(orderMapper.selectOne(any())).thenReturn(null);
-        assertThatThrownBy(() -> service.compensateToday("MISSING", OffsetDateTime.now()))
-                .isInstanceOf(BizException.class)
-                .satisfies(e ->
-                        assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.ORDER_NOT_FOUND));
+        assertThat(service.compensateToday("MISSING", OffsetDateTime.now())).isZero();
 
         // 非长期医嘱（STAT——临时单次计划由转抄链生成，勿双头生成）：直过零生成
         when(orderMapper.selectOne(any())).thenReturn(orderRow(OrderStatus.TRANSFERRED, "STAT", false, null));
@@ -695,6 +771,28 @@ class OrderPlanServiceImplTest {
         // 10:00 补偿仅生成 16:00 剩余时点；审计操作者回退 system
         assertThat(planCaptor.getValue().getPlanTime().toLocalTime().toString()).isEqualTo("16:00");
         assertThat(planCaptor.getValue().getCreatedBy()).isEqualTo("system");
+    }
+
+    @Test
+    @DisplayName("补偿冲突仅 warn：并发唯一冲突 IP-1023 降级不向上传播（转抄主链成功不受阻断）")
+    void compensateTodayDegradesConflictToWarnWithoutBlockingTransferChain() {
+        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        OffsetDateTime at1000 = LocalDate.now().atTime(10, 0).atOffset(offset);
+        when(orderMapper.selectOne(any())).thenReturn(orderRow(OrderStatus.TRANSFERRED, "LONG", false, "bid"));
+        when(frequencyMapper.selectOne(any())).thenReturn(freqRow("bid", "08:00,16:00", false));
+        when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)));
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        when(planMapper.selectList(any())).thenReturn(List.of());
+        when(seqGate.nextNo("PL")).thenReturn("PL2026092500098");
+        // 并发窗口同项同时点重复生成（转抄链与补偿面竞态）：insertPlan 定性 IP-1023——
+        // 修复环 R1 前该异常会传播回滚整批转抄事务，现降级 warn 不再向上抛
+        when(planMapper.insert(any(OrderExecutePlan.class)))
+                .thenThrow(new DuplicateKeyException("uk_plan_order_item_time"));
+
+        // 补偿面降级：不抛异常（转抄主链事务不因此回滚=主链成功）、返回 0、零事件
+        assertThat(service.compensateToday(ORDER_NO, at1000)).isZero();
+        verify(planMapper).insert(any(OrderExecutePlan.class));
+        verifyNoInteractions(events);
     }
 
     @Test
@@ -744,9 +842,12 @@ class OrderPlanServiceImplTest {
     }
 
     @Test
-    @DisplayName("首个回签穿透终态判定（单点日计划全回签场景）：TRANSFERRED→EXECUTING→COMPLETED 链式迁移")
+    @DisplayName("首个回签穿透终态判定（单点日计划全回签且 end_at 到期场景）：TRANSFERRED→EXECUTING→COMPLETED 链式迁移")
     void executeConfirmChainsFirstConfirmIntoTerminalAdvance() {
+        ZoneOffset offset = OffsetDateTime.now().getOffset();
         MedicalOrder order = orderRow(OrderStatus.TRANSFERRED, "LONG", false, "qn");
+        // 医嘱明示结束日=当日（审查修复环 R1）：单点频次当日全回签且生命周期穷尽——链式迁移
+        order.setEndAt(LocalDate.now().atTime(23, 59).atOffset(offset));
         doAnswer(invocation -> {
                     invocation
                             .getArgument(0, MedicalOrder.class)

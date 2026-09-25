@@ -174,6 +174,10 @@ class InpatientMessagingContractTest {
                 .contains("planNo/m04OrderNo/orderStatus(迁移后医嘱头状态)/planStatus(迁移后计划状态)");
         assertThat(updateSegment()).as("id 55 desc 缺 W-33 闭合标注").contains("W-33 闭合");
         assertThat(updateSegment()).as("id 55 desc 缺幂等语义锚").contains("重复回签已 EXECUTED 计划返回当前状态、不迁移不发事件");
+        // 审查修复环 R1 契约增补锚：跨日窗口守卫——长期医嘱计划穷尽判定受 end_at 限定
+        assertThat(updateSegment())
+                .as("id 55 desc 缺长期医嘱 end_at 守卫锚（修复环 R1 契约增补）")
+                .contains("长期医嘱仅 end_at 到期后计划穷尽方判 COMPLETED，end_at 为空者经停嘱终结");
     }
 
     @Test

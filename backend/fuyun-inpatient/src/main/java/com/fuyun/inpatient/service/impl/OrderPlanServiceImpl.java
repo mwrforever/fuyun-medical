@@ -66,11 +66,16 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>② 当日增量补偿（compensateToday）：长期医嘱审核+转抄后即时补生成当日剩余时点（now
  * 之后）计划——OrderTransferServiceImpl.transferCheck 长期医嘱分支调用（转抄事务内加入，
- * 与 Task 7 临时单次计划生成点互斥勿双头生成）。
+ * 与 Task 7 临时单次计划生成点互斥勿双头生成）。BizException（并发唯一冲突 IP-1023/医嘱
+ * 定位缺失 IP-1009 等）统一降级 warn 留痕不向上传播——转抄主链不因补偿面回滚（审查修复
+ * 环 R1 修正异常口径）。
  *
  * <p>③ 执行回签（executeConfirm，CF-6/W-33 契约实装）：计划 PENDING→EXECUTED CAS（0 行=
  * 已 EXECUTED 幂等返回当前状态、不迁移不发事件；CANCELLED 拒 IP-1015）+ 医嘱头三态推进
- * （唯一经状态机）+ 事务内发布 inpatient.order.executed（V800 id 47 载荷）。
+ * （唯一经状态机）+ 事务内发布 inpatient.order.executed（V800 id 47 载荷）。长期医嘱
+ * 「全部计划实例终态→COMPLETED」受 end_at 守卫（审查修复环 R1，临床安全默认项）：仅当
+ * 医嘱明示结束日已到方判计划穷尽完成，否则保持 EXECUTING 待次日日切继续分解——单点频次
+ * （qd/qn）跨日窗口不静默中断。
  *
  * <p>④ 闭环追溯（trace）：order_status_log + order_audit + order_transfer_log +
  * order_execute_plan 四源时间线按发生时点升序稳定排序聚合（人/时/果一屏）。
@@ -182,12 +187,13 @@ public class OrderPlanServiceImpl implements OrderPlanService {
     }
 
     /**
-     * 日切批量分解全量入口：候选查询 → 500 医嘱分批编程式事务逐批提交。单批业务冲突
-     * （并发唯一冲突等）仅回滚该批并续跑下一批——已提交批次由查前置幂等跳过（断点续跑）。
+     * 日切批量分解全量入口：候选查询（尊重 end_at——次日已越过医嘱明示结束日者不排程，
+     * 与回签终态守卫语义一致）→ 500 医嘱分批编程式事务逐批提交。单批业务冲突（并发唯一
+     * 冲突等）仅回滚该批并续跑下一批——已提交批次由查前置幂等跳过（断点续跑）。
      */
     @Override
     public int decomposeNextDay(LocalDate planDate) {
-        List<MedicalOrder> candidates = decomposeCandidates();
+        List<MedicalOrder> candidates = decomposeCandidates(planDate);
         if (candidates.isEmpty()) {
             log.info("日切分解无候选长期医嘱（全院无在院 TRANSFERRED/EXECUTING 长期医嘱）：planDate={}", planDate);
             return 0;
@@ -223,15 +229,39 @@ public class OrderPlanServiceImpl implements OrderPlanService {
 
     /**
      * 当日增量补偿（固定时钟注入形态，包级可见供单测直测补偿时点过滤语义）：长期医嘱剩余
-     * 时点（now 之后）即时补生成；频次字典缺失等异常 warn 留痕不阻断调用方事务（转抄主链
-     * 不因补偿面回滚）。非长期医嘱与未经转抄医嘱直过（临时单次计划由 Task 7 转抄链生成，
-     * 勿双头生成）。
+     * 时点（now 之后）即时补生成；BizException（并发唯一冲突 IP-1023/医嘱定位缺失 IP-1009
+     * 等）统一降级 warn 留痕（含 orderNo 与 errorCode）不向上传播——转抄主链不因补偿面回滚
+     * （审查修复环 R1：使「异常仅 warn 不阻断」口径成为真实语义）。非长期医嘱与未经转抄
+     * 医嘱直过（临时单次计划由 Task 7 转抄链生成，勿双头生成）。
+     *
+     * @param orderNo 医嘱号，非空
+     * @param now     补偿基准时点（仅生成该时点之后的当日时点），非空
+     * @return 新生成计划行数（无剩余时点/跳过面/降级面为 0），非负
+     */
+    int compensateToday(String orderNo, OffsetDateTime now) {
+        try {
+            return doCompensateToday(orderNo, now);
+        } catch (BizException e) {
+            // 补偿面业务异常降级（审查修复环 R1）：catch 必须位于事务边界之内——异常一旦穿透
+            // @Transactional 代理，共享的转抄事务即被标记 rollback-only 整批回滚主链
+            log.warn(
+                    "当日增量补偿降级（异常不阻断转抄主链）：orderNo={}，errorCode={}，原因={}",
+                    orderNo,
+                    e.getErrorCode().getCode(),
+                    e.getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * 当日增量补偿业务体（由 {@link #compensateToday(String, OffsetDateTime)} 降级包裹承载）。
      *
      * @param orderNo 医嘱号，非空
      * @param now     补偿基准时点（仅生成该时点之后的当日时点），非空
      * @return 新生成计划行数（无剩余时点/跳过面为 0），非负
+     * @throws BizException IP-1009 医嘱定位缺失/IP-1023 并发唯一冲突等（由补偿入口降级 warn）
      */
-    int compensateToday(String orderNo, OffsetDateTime now) {
+    private int doCompensateToday(String orderNo, OffsetDateTime now) {
         MedicalOrder order = requireOrder(orderNo);
         // 补偿面仅长期医嘱（临时医嘱转抄同步生成单次计划——Task 7 既有生成点）
         if (!OrderClass.LONG.getCode().equals(order.getOrderClass())) {
@@ -297,8 +327,9 @@ public class OrderPlanServiceImpl implements OrderPlanService {
         }
         MedicalOrder order = requireOrderById(plan.getOrderId());
         InpatientVisit visit = requireVisitById(order.getVisitId());
-        // 医嘱头三态推进（唯一经状态机——留痕随状态机自动落 order_status_log）
-        advanceOrderHead(order, operator);
+        // 医嘱头三态推进（唯一经状态机——留痕随状态机自动落 order_status_log）；executedAt
+        // 同源传入作为 end_at 守卫的「当日」基准（回签执行时点即判定基准）
+        advanceOrderHead(order, executedAt, operator);
         // 事务内发布执行回签事件（AFTER_COMMIT 出 fy.topic；M13 据此确认住院费用——V800 id 47
         // 载荷逐字：m04OrderNo/visitId/patientId/planNo/executedAt；禁患者姓名/诊断文本）
         events.publishEvent(new InpatientDomainEvent(
@@ -382,11 +413,15 @@ public class OrderPlanServiceImpl implements OrderPlanService {
 
     /**
      * 日切候选长期医嘱查询：全院在院（ADMITTED）就诊 × TRANSFERRED/EXECUTING × LONG
-     * （brief 冻结候选面；COMPLETED/STOPPED/CANCELLED 终态不再分解）。
+     * （brief 冻结候选面；COMPLETED/STOPPED/CANCELLED 终态不再分解）× end_at 未越界——
+     * 次日已越过医嘱明示结束日（end_at）者不排程（审查修复环 R1，与回签终态守卫
+     * {@link #longOrderExhausted} 语义一致：end_at 到期日之后生命周期已尽，无需再生成次日
+     * 计划）。
      *
+     * @param planDate 目标计划日期（end_at 越界判定基准），非空
      * @return 候选医嘱行全集（未分批），非空（空集=无候选）
      */
-    private List<MedicalOrder> decomposeCandidates() {
+    private List<MedicalOrder> decomposeCandidates(LocalDate planDate) {
         // 数据库读操作：在院就诊全集（ADMITTED——出院申请中患者的在途医嘱由出院清理面收口）
         List<InpatientVisit> visits = visitMapper.selectList(
                 Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getStatus, VisitStatus.ADMITTED.getCode()));
@@ -394,12 +429,18 @@ public class OrderPlanServiceImpl implements OrderPlanService {
             return List.of();
         }
         // 数据库读操作：在院就诊下转抄后长期医嘱全集（频率面广时 IN 集约千级，单查询承载）
-        return orderMapper.selectList(Wrappers.<MedicalOrder>lambdaQuery()
+        List<MedicalOrder> candidates = orderMapper.selectList(Wrappers.<MedicalOrder>lambdaQuery()
                 .in(
                         MedicalOrder::getVisitId,
                         visits.stream().map(InpatientVisit::getId).toList())
                 .in(MedicalOrder::getStatus, OrderStatus.TRANSFERRED.getCode(), OrderStatus.EXECUTING.getCode())
                 .eq(MedicalOrder::getOrderClass, OrderClass.LONG.getCode()));
+        // end_at 越界过滤（日期粒度与回签守卫同源）：次日 > end_at 当日的长期医嘱不排程——
+        // 医嘱明示结束日已过，生命周期内计划已穷尽，再排程即为过期用药
+        return candidates.stream()
+                .filter(order -> order.getEndAt() == null
+                        || !planDate.isAfter(order.getEndAt().toLocalDate()))
+                .toList();
     }
 
     /**
@@ -611,14 +652,16 @@ public class OrderPlanServiceImpl implements OrderPlanService {
 
     /**
      * 医嘱头三态推进（W-33 契约）：临时单次 TRANSFERRED→COMPLETED；长期首个回签
-     * TRANSFERRED→EXECUTING（随后穿透终态判定——单点频次当日全部回签即完成场景）；长期
-     * 全部计划实例终态 EXECUTING→COMPLETED。终态/他态（STOPPED/CANCELLED/COMPLETED）无
-     * 推进面——回签仅落计划面（executed 事件仍发布，M13 费用确认需要）。
+     * TRANSFERRED→EXECUTING（随后穿透终态判定——计划穷尽且 end_at 到期方完成）；长期全部
+     * 计划实例终态 EXECUTING→COMPLETED（受 {@link #longOrderExhausted} 守卫——审查修复环
+     * R1）。终态/他态（STOPPED/CANCELLED/COMPLETED）无推进面——回签仅落计划面（executed
+     * 事件仍发布，M13 费用确认需要）。
      *
-     * @param order    回签关联医嘱行（status 为回签前实态，迁移后内存同步），非空
-     * @param operator 操作者员工 ID（状态机审计面），非空
+     * @param order      回签关联医嘱行（status 为回签前实态，迁移后内存同步），非空
+     * @param executedAt 回签执行时点（end_at 守卫「当日」基准，与 W-33 executedAt 同源），非空
+     * @param operator   操作者员工 ID（状态机审计面），非空
      */
-    private void advanceOrderHead(MedicalOrder order, long operator) {
+    private void advanceOrderHead(MedicalOrder order, OffsetDateTime executedAt, long operator) {
         // 临时医嘱：单次回签即完成（多明细行后续回签头已 COMPLETED——仅落计划面）
         if (OrderClass.STAT.getCode().equals(order.getOrderClass())) {
             if (OrderStatus.TRANSFERRED.getCode().equals(order.getStatus())) {
@@ -637,13 +680,39 @@ public class OrderPlanServiceImpl implements OrderPlanService {
             Long pending = planMapper.selectCount(Wrappers.<OrderExecutePlan>lambdaQuery()
                     .eq(OrderExecutePlan::getOrderId, order.getId())
                     .eq(OrderExecutePlan::getStatus, PlanStatus.PENDING.getCode()));
-            if (pending != null && pending == 0) {
+            if (pending != null && pending == 0 && longOrderExhausted(order, executedAt)) {
                 stateMachine.transition(order, OrderStatus.COMPLETED, REASON_ALL_PLANS_TERMINAL, operator);
+            } else if (pending != null && pending == 0) {
+                // 跨日窗口守卫留痕（审查修复环 R1）：当日末点回签后至次日 02:00 日切前「已有计划
+                // 全终态」窗口内不判 COMPLETED——保持 EXECUTING 待次日日切继续分解（正常终结路径
+                // =停嘱 STOPPED），长期用药不静默中断
+                log.info(
+                        "全部计划实例已终态但医嘱未到明示结束日（保持 EXECUTING 待次日日切继续分解）：orderNo={}，endAt={}",
+                        order.getOrderNo(),
+                        order.getEndAt());
             }
             return;
         }
         // 长期医嘱终态/他态（STOPPED/CANCELLED/COMPLETED）：头无推进面，回签仅落计划面
         log.info("医嘱头状态无回签推进面（终态/他态仅落计划面）：orderNo={}，status={}", order.getOrderNo(), order.getStatus());
+    }
+
+    /**
+     * 长期医嘱计划穷尽守卫（审查修复环 R1，临床安全默认项、全链留痕可推翻）：单点频次
+     * （qd/qn）长期医嘱当日末点回签后至次日 02:00 日切前存在「已有计划全终态」窗口，若据此
+     * 判 COMPLETED 将把医嘱排除出次日日切候选（终态不再分解），长期用药静默中断。故仅当
+     * 医嘱明示结束时点（end_at）已到——回签当日 ≥ end_at 当日，生命周期内计划确已穷尽——方
+     * 允许 COMPLETED；end_at 为空的长期医嘱保持 EXECUTING（由次日日切继续分解，正常终结
+     * 路径=停嘱 STOPPED）。与日切候选面的 end_at 过滤（{@link #decomposeCandidates}）以
+     * 日期粒度互为同源自洽。
+     *
+     * @param order      长期医嘱行，非空
+     * @param executedAt 回签执行时点（「当日」基准），非空
+     * @return true=医嘱明示结束日已到（计划穷尽方判 COMPLETED）；false=保持 EXECUTING 待分解
+     */
+    private static boolean longOrderExhausted(MedicalOrder order, OffsetDateTime executedAt) {
+        return order.getEndAt() != null
+                && !executedAt.toLocalDate().isBefore(order.getEndAt().toLocalDate());
     }
 
     /**

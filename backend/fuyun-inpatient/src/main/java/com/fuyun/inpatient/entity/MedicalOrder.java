@@ -51,7 +51,7 @@ public class MedicalOrder {
     /** 医嘱生效起始时点（审核通过面写入，开立时缺省 null） */
     private OffsetDateTime beginAt;
 
-    /** 停嘱时点（STOPPED 迁移补写=服务器时间；未停为 null） */
+    /** 停嘱时点（STOPPED 迁移补写=服务器时间；未停为 null；执行回签终态判定与日切候选守卫读取面——非空且回签当日已越过方判长期医嘱计划穷尽，审查修复环 R1） */
     private OffsetDateTime endAt;
 
     /** 开立医生（M01 用户标识，与审计列口径统一） */
