@@ -413,7 +413,7 @@ onMounted(() => {
           :loading="transferring"
           :disabled="transferring"
           @click="onTransferConfirm"
-          >确认转科</el-button
+          >{{ transferMode === 'transfer' ? '确认转科' : '确认转床' }}</el-button
         >
       </template>
     </el-dialog>
@@ -435,11 +435,11 @@ onMounted(() => {
 
 .bed-map-ward {
   padding: 5px var(--fuy-space-2);
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: var(--fuy-radius-md);
   font-size: var(--fuy-font-size-sm);
   color: var(--fuy-color-text-emphasis);
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 /* 五态图例（圆点取对应状态语义 token，计数 tabular-nums） */
@@ -561,7 +561,7 @@ onMounted(() => {
   border-radius: var(--fuy-radius-md);
   font-size: var(--fuy-font-size-xs);
   color: var(--fuy-color-text-emphasis);
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .bed-transfer-patient {
@@ -610,11 +610,11 @@ onMounted(() => {
   box-sizing: border-box;
   margin-bottom: var(--fuy-space-3);
   padding: 5px var(--fuy-space-2);
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: var(--fuy-radius-md);
   font-size: var(--fuy-font-size-sm);
   color: var(--fuy-color-text-emphasis);
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .bed-transfer-stages {

@@ -625,11 +625,11 @@ onMounted(() => {
   box-sizing: border-box;
   margin-bottom: var(--fuy-space-3);
   padding: 5px var(--fuy-space-2);
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--el-border-color);
   border-radius: var(--fuy-radius-md);
   font-size: var(--fuy-font-size-sm);
   color: var(--fuy-color-text-emphasis);
-  background: #fff;
+  background: var(--el-bg-color);
 }
 
 .admission-textarea {

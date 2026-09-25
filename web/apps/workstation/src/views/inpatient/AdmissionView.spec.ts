@@ -73,6 +73,7 @@ vi.mock('@/api/patient', () => ({
 }));
 
 // 仅替身 ElMessage/ElMessageBox（提示与确认断言用），其余导出原样保留供组件解析
+// （本组件不使用 prompt，不替身 prompt——不留死种子）
 vi.mock('element-plus', async (importOriginal) => {
   const mod = await importOriginal<typeof import('element-plus')>();
   return {
@@ -81,7 +82,6 @@ vi.mock('element-plus', async (importOriginal) => {
     ElMessageBox: {
       ...mod.ElMessageBox,
       confirm: vi.fn().mockResolvedValue('confirm'),
-      prompt: vi.fn().mockResolvedValue({ value: 'I20260925000000001' }),
     },
   };
 });
