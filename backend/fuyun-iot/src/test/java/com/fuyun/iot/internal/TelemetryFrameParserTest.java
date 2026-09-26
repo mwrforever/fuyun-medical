@@ -391,4 +391,75 @@ class TelemetryFrameParserTest {
                 .isInstanceOf(FrameParseException.class)
                 .hasMessageContaining("形态判别失败");
     }
+
+    // ------------------------------------------------- 设备告警帧分支（Task 7 透传规则源）
+
+    @Test
+    @DisplayName("resource=device.alarm：判为第四形态并按 IoTDA 文档结构解析（告警名/描述/时刻）")
+    void deviceAlarmFrameParsesWithDocumentedShape() {
+        byte[] raw = """
+                {"resource":"device.alarm","event":"alarm","event_time_ms":"2026-09-26T08:00:00Z",
+                 "notify_data":{"header":{"device_id":"dev-a1"},
+                 "body":{"alarm_id":"al-9","name":"deviceAlarmEvent","severity":"MAJOR",
+                 "description":"设备自检告警"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        ParsedFrame frame = TelemetryFrameParser.parse(raw);
+
+        assertThat(frame).isInstanceOf(ParsedFrame.DeviceAlarmFrame.class);
+        ParsedFrame.DeviceAlarmFrame alarmFrame = (ParsedFrame.DeviceAlarmFrame) frame;
+        assertThat(alarmFrame.deviceId()).isEqualTo("dev-a1");
+        assertThat(alarmFrame.metricCode()).isEqualTo("deviceAlarmEvent");
+        assertThat(alarmFrame.severity()).isEqualTo("MAJOR");
+        assertThat(alarmFrame.description()).isEqualTo("设备自检告警");
+        assertThat(alarmFrame.occurredAt()).isEqualTo(Instant.parse("2026-09-26T08:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("device.alarm 帧告警名缺失：回退 alarm_id 承载 metricCode")
+    void deviceAlarmFrameFallsBackToAlarmId() {
+        byte[] raw = """
+                {"resource":"device.alarm","event_time_ms":"2026-09-26T08:00:00Z",
+                 "notify_data":{"header":{"device_id":"dev-a1"},
+                 "body":{"alarm_id":"al-9","severity":"MAJOR"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        ParsedFrame frame = TelemetryFrameParser.parse(raw);
+
+        assertThat(((ParsedFrame.DeviceAlarmFrame) frame).metricCode()).isEqualTo("al-9");
+    }
+
+    @Test
+    @DisplayName("device.alarm 帧告警名与标识均缺失：毒丸拒绝（不可归因报文不透传）")
+    void deviceAlarmFrameWithoutNameAndIdIsPoison() {
+        byte[] raw = """
+                {"resource":"device.alarm","event_time_ms":"2026-09-26T08:00:00Z",
+                 "notify_data":{"header":{"device_id":"dev-a1"},"body":{"severity":"MAJOR"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> TelemetryFrameParser.parse(raw))
+                .isInstanceOf(FrameParseException.class)
+                .hasMessageContaining("name/alarm_id");
+    }
+
+    @Test
+    @DisplayName("device.alarm 帧 device_id 缺失或 body 非对象：毒丸拒绝")
+    void deviceAlarmFrameStructuralViolationsArePoison() {
+        byte[] missingDevice = """
+                {"resource":"device.alarm","event_time_ms":"2026-09-26T08:00:00Z",
+                 "notify_data":{"header":{},
+                 "body":{"name":"deviceAlarmEvent"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+        byte[] missingBody = """
+                {"resource":"device.alarm","event_time_ms":"2026-09-26T08:00:00Z",
+                 "notify_data":{"header":{"device_id":"dev-a1"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> TelemetryFrameParser.parse(missingDevice))
+                .isInstanceOf(FrameParseException.class)
+                .hasMessageContaining("device_id");
+        assertThatThrownBy(() -> TelemetryFrameParser.parse(missingBody))
+                .isInstanceOf(FrameParseException.class)
+                .hasMessageContaining("body");
+    }
 }

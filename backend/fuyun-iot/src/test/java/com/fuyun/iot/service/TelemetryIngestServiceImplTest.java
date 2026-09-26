@@ -27,6 +27,7 @@ import com.fuyun.iot.enums.BindingStatus;
 import com.fuyun.iot.enums.MetricCategory;
 import com.fuyun.iot.enums.TelemetryQuality;
 import com.fuyun.iot.enums.TelemetrySource;
+import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.mapper.IotDeviceMapper;
 import com.fuyun.iot.mapper.IotMetricDictMapper;
 import com.fuyun.iot.mapper.IotMetricMappingMapper;
@@ -111,6 +112,9 @@ class TelemetryIngestServiceImplTest {
     @Mock
     private ValueOperations<String, String> valueOperations;
 
+    @Mock
+    private AlarmEngine alarmEngine;
+
     @Captor
     private ArgumentCaptor<List<IotTelemetryEntity>> batchCaptor;
 
@@ -154,7 +158,8 @@ class TelemetryIngestServiceImplTest {
                 metricMappingMapper,
                 metricDictMapper,
                 redisTemplate,
-                new TelemetryValidationProperties(Duration.ofSeconds(300), List.of(WARD_A), 1_000_000));
+                new TelemetryValidationProperties(Duration.ofSeconds(300), List.of(WARD_A), 1_000_000),
+                alarmEngine);
         // 无资源事务管理器（AbstractPlatformTransactionManager 最小实现）：仅承载真实事务同步链
         // 语义——getTransaction 激活同步、commit 触发 afterCommit 回调，无数据源即可驱动被测时序
         transactionTemplate = new TransactionTemplate(new AbstractPlatformTransactionManager() {
@@ -439,6 +444,47 @@ class TelemetryIngestServiceImplTest {
         assertThat(timeline)
                 .as("推送必须晚于 ingest 返回（事务内）与提交点、早于 execute 返回（afterCommit 回调时序）")
                 .containsExactly("ingest-returned", "push", "commit-returned");
+    }
+
+    @Test
+    @DisplayName("告警引擎挂接（Task 7）：afterCommit 调起旁路评估——评估失败吞并不影响已提交批次")
+    void alarmEngineEvaluateInvokedAfterCommitAndFailureSwallowed() {
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
+        // 引擎抛错：评估为旁路语义，落库批次与推送时序不受影响
+        doThrow(new RuntimeException("引擎内部异常")).when(alarmEngine).evaluate(any());
+
+        int inserted = service.ingest(List.of(message("dev-001", "MDC_ECG_HEART_RATE", "72")));
+
+        assertThat(inserted).as("评估失败不影响已提交落库批次").isEqualTo(1);
+        verify(alarmEngine).evaluate(any(AlarmEngine.TelemetryBatch.class));
+    }
+
+    @Test
+    @DisplayName("告警引擎挂接（Task 7）：afterCommit 时点调起 evaluate——事务内不评估、提交后评估")
+    void defersAlarmEvaluationUntilAfterCommit() {
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
+        List<String> timeline = new ArrayList<>();
+        doAnswer(invocation -> {
+                    timeline.add("evaluate");
+                    return null;
+                })
+                .when(alarmEngine)
+                .evaluate(any());
+
+        transactionTemplate.executeWithoutResult(status -> {
+            service.ingest(List.of(message("dev-001", "MDC_ECG_HEART_RATE", "72")));
+            assertThat(timeline).as("事务提交前评估不得执行（旁路不阻塞主链）").isEmpty();
+            timeline.add("ingest-returned");
+        });
+        timeline.add("commit-returned");
+
+        assertThat(timeline)
+                .as("评估必须晚于提交点、早于 execute 返回（afterCommit 回调时序）")
+                .containsExactly("ingest-returned", "evaluate", "commit-returned");
     }
 
     @Test

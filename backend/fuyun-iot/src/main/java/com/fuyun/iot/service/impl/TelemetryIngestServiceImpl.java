@@ -12,6 +12,7 @@ import com.fuyun.iot.entity.IotTelemetryEntity;
 import com.fuyun.iot.enums.MetricCategory;
 import com.fuyun.iot.enums.TelemetryQuality;
 import com.fuyun.iot.enums.TelemetrySource;
+import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.mapper.IotDeviceMapper;
 import com.fuyun.iot.mapper.IotMetricDictMapper;
 import com.fuyun.iot.mapper.IotMetricMappingMapper;
@@ -73,6 +74,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 事务不推送——摘要只对已提交批次负责）；无事务同步上下文（单测直调等未经代理场景）时直接
  * 推送，行为不变。推送失败仅 error 告警不回滚落库批次——落库是主职责、推送是辅助语义。
  *
+ * <p>告警引擎挂接（P2 PR-2 Task 7 / FU-M14-08，afterCommit 推送钩子形态照抄扩展）：事务提交后
+ * 经 {@link com.fuyun.iot.internal.alarm.AlarmEngine}#evaluate 旁路评估三类规则源（阈值/透传/
+ * 离线）——评估在 ingest 事务外（afterCommit 时点原事务已提交），引擎自身独立短事务承载落行与
+ * 事件发布，不阻塞 ingest 主链路；评估失败仅 error 告警，不影响已提交批次。
+ *
  * <p>W-7 非数值承载语义（D-9 裁决，V1005 raw_value 列）：整批全量入库不再丢弃任何行——value 可
  * 数值定型的行落 NUMERIC 值列且 raw_value 为 NULL；非数值行 value 落 NULL（哨兵值会污染生理指标
  * 统计，禁回填）、raw_value 承载原文（标量原文；对象/数组经 Jackson 树规整为紧凑 JSON 标准输出）
@@ -119,6 +125,9 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
     /** 五步校验配置属性：时间合理性阈值与波形白名单病区清单 */
     private final TelemetryValidationProperties properties;
 
+    /** 告警引擎（Task 7 / FU-M14-08）：afterCommit 后旁路评估三类规则源，独立短事务不阻塞主链 */
+    private final AlarmEngine alarmEngine;
+
     /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1）。
      *
@@ -130,6 +139,7 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
      * @param metricDictMapper    MDC 字典 mapper，非空；来源：同模块 mapper 包
      * @param redisTemplate       String 模板（A.5-1），非空；来源：Boot Redis 自动配置
      * @param properties          五步校验配置属性，非空；来源：fuyun-app IotConfig 属性注册
+     * @param alarmEngine         告警引擎，非空；afterCommit 后旁路评估（Task 7）
      */
     public TelemetryIngestServiceImpl(
             IBindingService bindingService,
@@ -139,7 +149,8 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
             IotMetricMappingMapper metricMappingMapper,
             IotMetricDictMapper metricDictMapper,
             StringRedisTemplate redisTemplate,
-            TelemetryValidationProperties properties) {
+            TelemetryValidationProperties properties,
+            AlarmEngine alarmEngine) {
         this.bindingService = bindingService;
         this.telemetryMapper = telemetryMapper;
         this.pushService = pushService;
@@ -148,6 +159,7 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
         this.metricDictMapper = metricDictMapper;
         this.redisTemplate = redisTemplate;
         this.properties = properties;
+        this.alarmEngine = alarmEngine;
     }
 
     @Override
@@ -262,13 +274,29 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
                 @Override
                 public void afterCommit() {
                     pushSummariesByWard(writtenByWardId);
+                    evaluateAlarms(entities);
                 }
             });
         } else {
             // 无事务同步上下文（单测直调等未经代理场景）：无事务可出，行为不变直接推送
             pushSummariesByWard(writtenByWardId);
+            evaluateAlarms(entities);
         }
         return inserted;
+    }
+
+    /**
+     * 告警引擎旁路评估（afterCommit 推送钩子形态照抄扩展，Task 7）：评估失败仅 error 告警，
+     * 不影响已提交落库批次（评估是旁路语义，落库是主职责）。
+     *
+     * @param entities 本批已写入遥测实体，非空
+     */
+    private void evaluateAlarms(List<IotTelemetryEntity> entities) {
+        try {
+            alarmEngine.evaluate(new AlarmEngine.TelemetryBatch(entities));
+        } catch (RuntimeException e) {
+            log.error("告警引擎评估失败（不影响已提交批次）：count={}，原因={}", entities.size(), e.getMessage(), e);
+        }
     }
 
     /**

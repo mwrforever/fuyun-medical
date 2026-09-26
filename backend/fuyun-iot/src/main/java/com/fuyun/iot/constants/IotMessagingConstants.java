@@ -89,6 +89,26 @@ public final class IotMessagingConstants {
     /** IoTDA 推送形态 resource 精确匹配值：设备属性上报（等于该值判为推送形态，其余回退 CF-7 判别） */
     public static final String IOTDA_RESOURCE_DEVICE_PROPERTY = "device.property";
 
+    /**
+     * IoTDA 推送形态 resource 精确匹配值：设备告警（第四形态判别，P2 PR-2 Task 7 透传规则源）。
+     * <b>样例缺位申报</b>：仓库与模拟器无真实 device.alarm 报文样例，本形态按 IoTDA 官方文档
+     * 《数据转发规则-设备告警》报文结构实现（resource=device.alarm + notify_data.header/body），
+     * 真实联调如发现字段漂移以样例实测修订。
+     */
+    public static final String IOTDA_RESOURCE_DEVICE_ALARM = "device.alarm";
+
+    /** IoTDA 设备告警报文字段：告警标识（body.alarm_id，告警名缺失时 metricCode 回退来源） */
+    public static final String IOTDA_FIELD_ALARM_ID = "alarm_id";
+
+    /** IoTDA 设备告警报文字段：告警名称（body.name，metricCode 唯一来源——物模型事件名） */
+    public static final String IOTDA_FIELD_ALARM_NAME = "name";
+
+    /** IoTDA 设备告警报文字段：告警级别（body.severity，IoTDA 词表透传注记） */
+    public static final String IOTDA_FIELD_ALARM_SEVERITY = "severity";
+
+    /** IoTDA 设备告警报文字段：告警描述（body.description，triggerValue 唯一来源） */
+    public static final String IOTDA_FIELD_ALARM_DESCRIPTION = "description";
+
     /** IoTDA 推送报文字段：数据通知载体（header 设备标识 + body 服务属性列表） */
     public static final String IOTDA_FIELD_NOTIFY_DATA = "notify_data";
 
@@ -127,6 +147,9 @@ public final class IotMessagingConstants {
 
     /** STOMP 设备状态主题前缀：/topic/iot/device-status/{wardId}（B4.3 推送语义，简报 §1.5） */
     public static final String TOPIC_DEVICE_STATUS_PREFIX = "/topic/iot/device-status/";
+
+    /** STOMP 告警主题前缀：/topic/iot/alarm/{wardId}（FU-M14-08 分级通知面，P2 PR-2 Task 7） */
+    public static final String TOPIC_ALARM_PREFIX = "/topic/iot/alarm/";
 
     /** 错误留痕摘要算法：SHA-256，十六进制摘要 64 位与 raw_digest 列宽一致（DeadLetterListener 同口径） */
     public static final String DIGEST_ALGORITHM_SHA256 = "SHA-256";

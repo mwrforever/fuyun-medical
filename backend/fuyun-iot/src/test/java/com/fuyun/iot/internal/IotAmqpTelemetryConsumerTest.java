@@ -129,6 +129,10 @@ class IotAmqpTelemetryConsumerTest {
     /** 状态事件回调收集器：构造期注入消费者（发布器接线点的记录型替身） */
     private final List<DeviceStatusEvent> statusEventsPublished = new CopyOnWriteArrayList<>();
 
+    /** 设备告警帧回调收集器（Task 7 透传规则源接线点的记录型替身） */
+    private final List<TelemetryFrameParser.ParsedFrame.DeviceAlarmFrame> deviceAlarmFrames =
+            new CopyOnWriteArrayList<>();
+
     /** 记录型假 sleeper：只记不睡（避免真实 sleep，退避节奏断言载体） */
     private List<Long> recordedDelays;
 
@@ -163,7 +167,8 @@ class IotAmqpTelemetryConsumerTest {
                 deviceStatusService,
                 mutableClock,
                 recordedDelays::add,
-                statusEventsPublished::add);
+                statusEventsPublished::add,
+                deviceAlarmFrames::add);
     }
 
     @AfterEach
@@ -363,7 +368,8 @@ class IotAmqpTelemetryConsumerTest {
                 deviceStatusService,
                 mutableClock,
                 recordedDelays::add,
-                statusEventsPublished::add);
+                statusEventsPublished::add,
+                deviceAlarmFrames::add);
         try {
             Message firstFrame = bytesMessage(telemetryJson("it-dev-001", "vital.heart-rate", "72"));
             Message secondFrame = bytesMessage(telemetryJson("it-dev-001", "vital.spo2", "98"));

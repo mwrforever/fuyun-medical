@@ -5,14 +5,22 @@ import com.fuyun.iot.config.IotAmqpConfig;
 import com.fuyun.iot.config.IotMessagingConfig;
 import com.fuyun.iot.config.IotRegistryConfig;
 import com.fuyun.iot.config.IotWebSocketConfig;
+import com.fuyun.iot.controller.AlarmController;
+import com.fuyun.iot.controller.AlarmRuleController;
 import com.fuyun.iot.controller.BindingController;
 import com.fuyun.iot.controller.DeviceController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
 import com.fuyun.iot.controller.MetricDictController;
 import com.fuyun.iot.controller.ProductController;
 import com.fuyun.iot.internal.IotFallbackAuthService;
+import com.fuyun.iot.internal.alarm.AlarmEngine;
+import com.fuyun.iot.internal.alarm.OfflineDetector;
+import com.fuyun.iot.internal.alarm.StormGuard;
+import com.fuyun.iot.properties.AlarmProperties;
 import com.fuyun.iot.properties.IotProperties;
 import com.fuyun.iot.properties.TelemetryValidationProperties;
+import com.fuyun.iot.service.impl.AlarmRuleServiceImpl;
+import com.fuyun.iot.service.impl.AlarmServiceImpl;
 import com.fuyun.iot.service.impl.BindingServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
@@ -45,10 +53,12 @@ import org.springframework.context.annotation.Import;
  * 生效——该配置类带 enabled 开关条件装配，默认 {@code fuyun.iot.amqp.enabled=false} 下零连接
  * 尝试（存量 IT 回归零行为差异的保障）；MQ 事件总线域（fy.topic 状态事件发布器 + 自事件幂等
  * 消费者 + 治理队列声明）经 {@link IotMessagingConfig} 生效（无条件装配，与 AMQP 开关解耦）；
- * /ws/iot STOMP 端点与 HTTP 兜底端点无条件装配（B4.3 任务 B）。
+ * /ws/iot STOMP 端点与 HTTP 兜底端点无条件装配（B4.3 任务 B）；P2 PR-2 Task 7 追加告警域七件
+ * （告警引擎/风暴抑制器/离线探测器、规则与告警双服务、规则与告警双端点）与告警引擎配置属性
+ * （fuyun.iot.alarm.*）——引擎/服务依赖绑定快照、发号器与推送服务等既有装配链零新增外部依赖。
  */
 @Configuration
-@EnableConfigurationProperties({IotProperties.class, TelemetryValidationProperties.class})
+@EnableConfigurationProperties({IotProperties.class, TelemetryValidationProperties.class, AlarmProperties.class})
 @Import({
     TelemetryIngestServiceImpl.class,
     ConsumeErrorLogServiceImpl.class,
@@ -68,6 +78,15 @@ import org.springframework.context.annotation.Import;
     IotRegistryConfig.class,
     IotAmqpConfig.class,
     IotMessagingConfig.class,
-    IotWebSocketConfig.class
+    IotWebSocketConfig.class,
+    // P2 PR-2 Task 7 告警域八件（FU-M14-08）：引擎/风暴抑制器/离线探测器、双服务、双端点
+    // 与告警引擎配置属性（fuyun.iot.alarm.*）
+    AlarmEngine.class,
+    StormGuard.class,
+    OfflineDetector.class,
+    AlarmRuleServiceImpl.class,
+    AlarmServiceImpl.class,
+    AlarmRuleController.class,
+    AlarmController.class
 })
 public class IotConfig {}

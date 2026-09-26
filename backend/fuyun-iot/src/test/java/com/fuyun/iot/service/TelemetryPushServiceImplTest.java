@@ -136,4 +136,55 @@ class TelemetryPushServiceImplTest {
         entity.setQuality(TelemetryQuality.GOOD);
         return entity;
     }
+
+    @Test
+    @DisplayName("告警帧推送（Task 7）：载荷 = triggered 契约 record 且字段与告警行一一对应，主题按病区路由")
+    void pushAlarmSendsTriggeredPayloadToWardTopic() {
+        com.fuyun.iot.entity.IotAlarmEntity alarm = alarmEntity();
+        Instant occurredAt = Instant.parse("2026-09-26T08:00:00Z");
+        alarm.setLastTriggeredAt(OffsetDateTime.ofInstant(occurredAt, ZoneOffset.UTC));
+
+        service.pushAlarm(alarm);
+
+        verify(messagingTemplate).convertAndSend(eq("/topic/iot/alarm/" + WARD_ID), payloadCaptor.capture());
+        com.fuyun.iot.api.payload.AlarmTriggeredPayload payload =
+                (com.fuyun.iot.api.payload.AlarmTriggeredPayload) payloadCaptor.getValue();
+        assertThat(payload.alarmNo()).isEqualTo("AL2026092600001");
+        assertThat(payload.deviceId()).isEqualTo("dev-001");
+        assertThat(payload.patientId()).isEqualTo(5L);
+        assertThat(payload.visitId()).isEqualTo("20260901000001");
+        assertThat(payload.wardId()).isEqualTo(WARD_ID);
+        assertThat(payload.alarmLevel()).isEqualTo("CRITICAL");
+        assertThat(payload.metricCode()).isEqualTo("MDC_ECG_HEART_RATE");
+        assertThat(payload.triggerValue()).isEqualTo("170");
+        assertThat(payload.ruleId()).isEqualTo(900001L);
+        assertThat(payload.occurredAt()).isEqualTo(occurredAt);
+    }
+
+    @Test
+    @DisplayName("告警帧推送：wardId 为 null 跳过（引擎侧病区路由缺失防御口径）")
+    void pushAlarmSkipsWhenWardMissing() {
+        com.fuyun.iot.entity.IotAlarmEntity alarm = alarmEntity();
+        alarm.setWardId(null);
+
+        service.pushAlarm(alarm);
+
+        verifyNoInteractions(messagingTemplate);
+    }
+
+    /** 告警行夹具（心率危急告警，绑定快照五元组冗余） */
+    private static com.fuyun.iot.entity.IotAlarmEntity alarmEntity() {
+        com.fuyun.iot.entity.IotAlarmEntity entity = new com.fuyun.iot.entity.IotAlarmEntity();
+        entity.setAlarmNo("AL2026092600001");
+        entity.setRuleId(900001L);
+        entity.setDeviceId("dev-001");
+        entity.setPatientId(5L);
+        entity.setVisitId("20260901000001");
+        entity.setWardId(WARD_ID);
+        entity.setAlarmLevel(com.fuyun.iot.enums.AlarmLevel.CRITICAL);
+        entity.setMetricCode("MDC_ECG_HEART_RATE");
+        entity.setTriggerValue("170");
+        entity.setStatus(com.fuyun.iot.enums.AlarmStatus.ACTIVE);
+        return entity;
+    }
 }

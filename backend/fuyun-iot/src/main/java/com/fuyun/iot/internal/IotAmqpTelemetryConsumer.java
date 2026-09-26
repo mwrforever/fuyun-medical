@@ -4,6 +4,7 @@ import com.fuyun.common.messaging.StandardTelemetryMessage;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.enums.ConsumeErrorStage;
 import com.fuyun.iot.internal.TelemetryFrameParser.ParsedFrame;
+import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.properties.IotProperties;
 import com.fuyun.iot.service.IConsumeErrorLogService;
 import com.fuyun.iot.service.IDeviceStatusService;
@@ -134,6 +135,13 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
      */
     private final Consumer<DeviceStatusEvent> statusEventSink;
 
+    /**
+     * 告警引擎回调（构造期注入，P2 PR-2 Task 7 透传规则源）：device.alarm 帧解析产物经回调交
+     * 告警引擎评估（evaluateDeviceAlarm 独立短事务承载落行与事件发布）；上下文未装配引擎时为
+     * 空实现防御（enabled=false 无消费源头，回调不会被触达）。
+     */
+    private final Consumer<ParsedFrame.DeviceAlarmFrame> alarmFrameSink;
+
     /** connected gauge 载体：1=连接正常 / 0=断链（IotAmqpMetrics 以此绑定 gauge iot.amqp.connected） */
     private final AtomicLong connectedFlag = new AtomicLong(0);
 
@@ -186,7 +194,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             IConsumeErrorLogService errorLogService,
             IDeviceStatusService deviceStatusService,
             Clock clock,
-            ObjectProvider<IotEventPublisher> statusEventPublisher) {
+            ObjectProvider<IotEventPublisher> statusEventPublisher,
+            ObjectProvider<AlarmEngine> alarmEngine) {
         this(
                 properties,
                 connectionFactory,
@@ -195,15 +204,17 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 deviceStatusService,
                 clock,
                 Thread::sleep,
-                optionalSink(statusEventPublisher));
+                optionalSink(statusEventPublisher),
+                optionalAlarmSink(alarmEngine));
     }
 
     /**
-     * 全参构造器（包内测试用）：显式注入时钟、退避睡眠抽象与状态事件回调。
+     * 全参构造器（包内测试用）：显式注入时钟、退避睡眠抽象、状态事件回调与告警引擎回调。
      *
      * @param clock               时钟，非空；凭证时间戳与断链计时来源
      * @param sleeper             退避睡眠，非空；可中断
      * @param statusEventSink     状态事件回调，非空；测试注入记录型收集器（生产为发布器方法引用）
+     * @param alarmFrameSink      设备告警帧回调，非空；测试注入记录型收集器（生产为引擎方法引用）
      */
     IotAmqpTelemetryConsumer(
             IotProperties properties,
@@ -213,7 +224,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             IDeviceStatusService deviceStatusService,
             Clock clock,
             Sleeper sleeper,
-            Consumer<DeviceStatusEvent> statusEventSink) {
+            Consumer<DeviceStatusEvent> statusEventSink,
+            Consumer<ParsedFrame.DeviceAlarmFrame> alarmFrameSink) {
         this.amqp = properties.amqp();
         this.connectionFactory = connectionFactory;
         this.assembler = assembler;
@@ -222,6 +234,7 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         this.clock = clock;
         this.sleeper = sleeper;
         this.statusEventSink = statusEventSink;
+        this.alarmFrameSink = alarmFrameSink;
         // 攒批器落库失败回调接线（审查修复）：失败批必须以会话销毁收场——CLIENT_ACKNOWLEDGE 累计
         // 确认下"零确认待重推"仅在会话销毁时成立，关闭全部在册上下文令未确认交付回归重投域
         assembler.registerFlushFailureListener(() -> triggerGlobalRebuildForRedelivery("遥测批落库失败"));
@@ -236,6 +249,18 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     private static Consumer<DeviceStatusEvent> optionalSink(ObjectProvider<IotEventPublisher> statusEventPublisher) {
         IotEventPublisher publisher = statusEventPublisher.getIfAvailable();
         return publisher == null ? event -> {} : publisher::publishDeviceStatus;
+    }
+
+    /**
+     * 解析可选告警引擎为设备告警帧回调：引擎在场取其方法引用，缺席降级为空实现（Task 7 透传
+     * 规则源接线——引擎为 IotConfig 无条件 Bean，缺席仅见于单测直构场景）。
+     *
+     * @param alarmEngine 告警引擎解析器，非空
+     * @return 设备告警帧回调，非空
+     */
+    private static Consumer<ParsedFrame.DeviceAlarmFrame> optionalAlarmSink(ObjectProvider<AlarmEngine> alarmEngine) {
+        AlarmEngine engine = alarmEngine.getIfAvailable();
+        return engine == null ? frame -> {} : engine::evaluateDeviceAlarm;
     }
 
     /** connected gauge 载体（单测断言 + IotAmqpMetrics gauge 绑定点），非空 */
@@ -542,8 +567,11 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 dispatchTelemetryBatch(queueAddress, batchFrame.messages(), message, rawText);
             } else if (frame instanceof ParsedFrame.StatusFrame statusFrame) {
                 handleStatusFrame(statusFrame.event(), message);
+            } else if (frame instanceof ParsedFrame.DeviceAlarmFrame alarmFrame) {
+                // 设备告警帧（Task 7 透传规则源）：交告警引擎评估（独立短事务），成功后即时确认
+                handleDeviceAlarmFrame(alarmFrame, message);
             } else {
-                // sealed 三形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
+                // sealed 四形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
                 throw new IllegalStateException("未接线的帧解析形态：" + frame.getClass().getName());
             }
         } catch (InterruptedException e) {
@@ -631,6 +659,31 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 event.status(),
                 wardId,
                 event.occurredAt());
+    }
+
+    /**
+     * 设备告警帧即时处理（Task 7 透传规则源）：交告警引擎评估（evaluateDeviceAlarm 独立短事务
+     * 承载落行与 triggered 事件发布；运行于本消费线程非事务上下文，事务由引擎代理开启）；随后
+     * 即时确认（告警帧不入攒批）。评估失败按业务失败上抛——外层统一触发全局会话重建令本帧回归
+     * 重投域（重投后由抑制①同源聚合幂等去重：活跃行仅聚合计数不新发）。
+     *
+     * @param frame   设备告警帧解析产物，非空
+     * @param message 来源 JMS 消息，非空
+     */
+    private void handleDeviceAlarmFrame(ParsedFrame.DeviceAlarmFrame frame, Message message) {
+        alarmFrameSink.accept(frame);
+        try {
+            message.acknowledge();
+        } catch (JMSException e) {
+            // 确认失败属连接级异常：转运行时异常交 supervisor 重建（重投后评估幂等无害）
+            throw new JMSRuntimeException(e.getMessage(), e.getErrorCode(), e);
+        }
+        log.info(
+                "设备告警帧已处理：deviceId={}，alarm={}，severity={}，occurredAt={}",
+                frame.deviceId(),
+                frame.metricCode(),
+                frame.severity(),
+                frame.occurredAt());
     }
 
     /**

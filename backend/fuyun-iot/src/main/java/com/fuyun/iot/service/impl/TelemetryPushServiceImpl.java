@@ -1,7 +1,9 @@
 package com.fuyun.iot.service.impl;
 
 import com.fuyun.iot.api.DeviceStatusEvent;
+import com.fuyun.iot.api.payload.AlarmTriggeredPayload;
 import com.fuyun.iot.constants.IotMessagingConstants;
+import com.fuyun.iot.entity.IotAlarmEntity;
 import com.fuyun.iot.entity.IotTelemetryEntity;
 import com.fuyun.iot.service.ITelemetryPushService;
 import java.time.Instant;
@@ -79,5 +81,34 @@ public class TelemetryPushServiceImpl implements ITelemetryPushService {
                 event.deviceId(),
                 event.status(),
                 event.occurredAt());
+    }
+
+    @Override
+    public void pushAlarm(IotAlarmEntity alarm) {
+        // 跳过分支：wardId 为空属引擎侧防御缺口（病区路由缺失的告警在引擎已跳过新发），info 留痕
+        if (alarm.getWardId() == null) {
+            log.info("告警帧推送跳过（告警行无病区归属）：alarmNo={}", alarm.getAlarmNo());
+            return;
+        }
+        // 载荷 = triggered 事件契约 record（订阅方与 MQ 消费方同构消费，字段一一对应告警行快照）
+        AlarmTriggeredPayload payload = new AlarmTriggeredPayload(
+                alarm.getAlarmNo(),
+                alarm.getDeviceId(),
+                alarm.getPatientId(),
+                alarm.getVisitId(),
+                alarm.getWardId(),
+                alarm.getAlarmLevel().getCode(),
+                alarm.getMetricCode(),
+                alarm.getTriggerValue(),
+                alarm.getRuleId(),
+                alarm.getLastTriggeredAt().toInstant());
+        messagingTemplate.convertAndSend(IotMessagingConstants.TOPIC_ALARM_PREFIX + alarm.getWardId(), payload);
+        log.info(
+                "告警帧已推送：topic={}{}，alarmNo={}，level={}，deviceId={}",
+                IotMessagingConstants.TOPIC_ALARM_PREFIX,
+                alarm.getWardId(),
+                alarm.getAlarmNo(),
+                alarm.getAlarmLevel(),
+                alarm.getDeviceId());
     }
 }

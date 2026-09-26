@@ -24,23 +24,25 @@ import java.util.Map;
  * （用户 2026-09-13 批准选项 B 代码映射），真实报文在解析器内展开为 N 条 CF-7 标准遥测消息，
  * 下游攒批/落库/推送管道零改动。
  *
- * <p>形态判别（三形态，按序优先）：①顶层 {@code resource} 精确等于 {@code "device.property"} 判为
+ * <p>形态判别（四形态，按序优先）：①顶层 {@code resource} 精确等于 {@code "device.property"} 判为
  * IoTDA 推送形态——deviceId ← {@code notify_data.header.device_id}（必填非空白），occurredAt ← 顶层
  * {@code event_time_ms}（ISO-8601 解析为 UTC Instant），{@code notify_data.body.services[]} 每元素的
  * {@code properties} 键值各展开一条标准消息（metricCode=属性名，value 字符串承载，unit 恒 null，
- * quality 按数值可定型与否 GOOD/BAD 标注不阻断，source=IOTDA）；②含 deviceId+metricCode+value+
- * occurredAt 判为 CF-7 遥测帧（→ {@link StandardTelemetryMessage}）；③含 deviceId+status+
- * occurredAt 判为状态帧（→ {@link DeviceStatusEvent}）。非 IoTDA 形态回退②③既有判别（CF-7 帧不
- * 含 resource 字段，判别前移零冲突）；均不匹配抛 {@link FrameParseException}（毒丸，交调用方落
- * iot_consume_error_log 后确认抛弃）。遥测帧 value 非数值时 quality 强制 BAD 并保留原文（标注不
- * 阻断口径）；occurredAt/event_time_ms 缺失或不可解析按解析失败处置。
+ * quality 按数值可定型与否 GOOD/BAD 标注不阻断，source=IOTDA）；①'顶层 {@code resource} 精确等于
+ * {@code "device.alarm"} 判为 IoTDA 设备告警形态（→ {@link DeviceAlarmFrame}，告警引擎透传规则源
+ * ——P2 PR-2 Task 7；仓库无真实样例，按 IoTDA 文档形态实现并注记）；②含
+ * deviceId+metricCode+value+occurredAt 判为 CF-7 遥测帧（→ {@link StandardTelemetryMessage}）；
+ * ③含 deviceId+status+occurredAt 判为状态帧（→ {@link DeviceStatusEvent}）。非 IoTDA 形态回退
+ * ②③既有判别（CF-7 帧不含 resource 字段，判别前移零冲突）；均不匹配抛 {@link FrameParseException}
+ * （毒丸，交调用方落 iot_consume_error_log 后确认抛弃）。遥测帧 value 非数值时 quality 强制 BAD
+ * 并保留原文（标注不阻断口径）；occurredAt/event_time_ms 缺失或不可解析按解析失败处置。
  *
  * <p>metric_code 原生属性名直通契约（P2 PR-2 Task 6 / FU-M14-05 五步校验）：两遥测形态的
  * metricCode 均以<b>原生物模型属性名</b>承载（CF-7 为帧内 metricCode 字段原值、IoTDA 为 properties
  * 键名），解析器不做任何术语归一——物模型属性 → MDC 编码的映射由下游 ingest 五步校验之术语映射步
  * 完成（TelemetryIngestServiceImpl）；映射缺失时按 RAW_PASSTHROUGH 原样入库（metric_code=原生属性
- * 名不静默丢弃，Spec 红线），解析产物形态对此无感知（直通即"不加工"的自然结果）。设备告警帧/
- * 命令帧形态归后续任务扩展，本类既有判别零改动。
+ * 名不静默丢弃，Spec 红线），解析产物形态对此无感知（直通即"不加工"的自然结果）。设备告警帧
+ * （DeviceAlarmFrame，Task 7 透传规则源）已实装，命令帧形态归后续任务扩展，本类既有判别零改动。
  *
  * <p>static 纯函数式、无状态（backend 宪法 A.1-9 服务无状态多实例前提）；ObjectMapper 线程安全
  * 可静态复用。归 internal/ 包：容器驱动链路的模块内组件，禁止外部引用（宪法 B.1）。
@@ -56,8 +58,8 @@ public final class TelemetryFrameParser {
     private TelemetryFrameParser() {}
 
     /**
-     * 解析帧的三形态结果（sealed 受限子类型，宪法 A.1-3 编译器穷尽检查——消费侧 switch
-     * 仅需处理遥测/批量遥测/状态三分支，新增形态编译期强制补齐）。
+     * 解析帧的形态结果（sealed 受限子类型，宪法 A.1-3 编译器穷尽检查——消费侧 instanceof 链
+     * 需处理遥测/批量遥测/状态/设备告警四分支，新增形态编译期强制补齐）。
      */
     public sealed interface ParsedFrame {
 
@@ -83,13 +85,28 @@ public final class TelemetryFrameParser {
          * @param event 设备状态变更事件，非空
          */
         record StatusFrame(DeviceStatusEvent event) implements ParsedFrame {}
+
+        /**
+         * IoTDA 设备告警帧解析产物（第四形态，P2 PR-2 Task 7 透传规则源）。
+         *
+         * @param deviceId    设备号（notify_data.header.device_id），非空
+         * @param metricCode  告警关联编码（body.name 告警名，缺失回退 body.alarm_id），非空；
+         *                    与 DEVICE_ALARM 规则的 metric_code 匹配
+         * @param severity    告警级别（body.severity，IoTDA 词表透传——告警级别以规则配置为准，
+         *                    本字段仅作留痕），可空
+         * @param description 告警描述（body.description，告警行 triggerValue 承载），可空
+         * @param occurredAt  告警时刻（顶层 event_time_ms，与属性上报形态同源），非空
+         */
+        record DeviceAlarmFrame(
+                String deviceId, String metricCode, String severity, String description, Instant occurredAt)
+                implements ParsedFrame {}
     }
 
     /**
-     * 解析一帧原始报文为 IoTDA 推送帧（展开）、遥测帧或状态帧。
+     * 解析一帧原始报文为 IoTDA 推送帧（展开）、设备告警帧、遥测帧或状态帧。
      *
      * @param raw 帧原始字节（消费侧 receive 原文），非空；UTF-8 解码
-     * @return 解析产物：IoTDA 推送展开帧、遥测帧或状态帧（sealed 三分支），非空
+     * @return 解析产物：IoTDA 推送展开帧、设备告警帧、遥测帧或状态帧（sealed 四分支），非空
      * @throws FrameParseException 非 JSON 报文、形态判别失败（缺必填字段）、字段值域越界
      *                             （quality/source/status 非法值）或时间字段不可解析；
      *                             调用方应落错误日志后确认抛弃（毒丸隔离），禁无限重投
@@ -106,9 +123,13 @@ public final class TelemetryFrameParser {
         if (!root.isObject()) {
             throw new FrameParseException("帧顶层必须是 JSON 对象");
         }
-        // IoTDA 推送形态优先判别（顶层 resource 精确匹配，L-3 冻结）；非该形态回退 CF-7 既有判别
+        // IoTDA 推送形态优先判别（顶层 resource 精确匹配，L-3 冻结）；设备告警形态次之（Task 7
+        // 透传规则源）；均非该形态回退 CF-7 既有判别
         if (isIotdaPushShape(root)) {
             return parseIotdaDeviceProperty(root);
+        }
+        if (isIotdaDeviceAlarmShape(root)) {
+            return parseIotdaDeviceAlarm(root);
         }
         if (isTelemetryShape(root)) {
             return new ParsedFrame.TelemetryFrame(parseTelemetry(root));
@@ -131,6 +152,61 @@ public final class TelemetryFrameParser {
         JsonNode resource = root.path(IotMessagingConstants.FRAME_FIELD_RESOURCE);
         return !resource.isMissingNode()
                 && IotMessagingConstants.IOTDA_RESOURCE_DEVICE_PROPERTY.equals(resource.asText());
+    }
+
+    /**
+     * IoTDA 设备告警形态判别：顶层 resource 字段精确等于 "device.alarm"（区分大小写；P2 PR-2
+     * Task 7 第四形态——仓库无真实样例，按 IoTDA 文档《数据转发规则-设备告警》报文结构实现，
+     * 真实联调如发现字段漂移以样例实测修订）。
+     *
+     * @param root 帧根节点，非空且为对象
+     * @return true=按 IoTDA 设备告警帧解析
+     */
+    private static boolean isIotdaDeviceAlarmShape(JsonNode root) {
+        JsonNode resource = root.path(IotMessagingConstants.FRAME_FIELD_RESOURCE);
+        return !resource.isMissingNode() && IotMessagingConstants.IOTDA_RESOURCE_DEVICE_ALARM.equals(resource.asText());
+    }
+
+    /**
+     * 解析 IoTDA 设备告警帧（文档形态映射）：deviceId ← notify_data.header.device_id（必填非空白）；
+     * occurredAt ← 顶层 event_time_ms（与属性上报形态同源）；metricCode ← body.name 告警名
+     * （缺失回退 body.alarm_id，均缺失即毒丸）；severity/description 可选透传留痕（告警级别以
+     * 命中规则配置为准，帧级别不作业务判定输入）。
+     *
+     * @param root 帧根节点（已判别为设备告警形态），非空
+     * @return 设备告警帧解析产物，非空
+     * @throws FrameParseException 结构契约不满足（deviceId/时间缺失、body 非对象、告警名与标识均缺失）
+     */
+    private static ParsedFrame.DeviceAlarmFrame parseIotdaDeviceAlarm(JsonNode root) {
+        JsonNode header =
+                root.path(IotMessagingConstants.IOTDA_FIELD_NOTIFY_DATA).path(IotMessagingConstants.IOTDA_FIELD_HEADER);
+        if (!hasNonBlankScalar(header, IotMessagingConstants.IOTDA_FIELD_DEVICE_ID)) {
+            throw new FrameParseException("IoTDA 设备告警帧 device_id 缺失或空白（notify_data.header.device_id 必填）");
+        }
+        String deviceId =
+                header.path(IotMessagingConstants.IOTDA_FIELD_DEVICE_ID).asText();
+        Instant occurredAt = parseInstantText(
+                root.path(IotMessagingConstants.IOTDA_FIELD_EVENT_TIME_MS).asText(),
+                IotMessagingConstants.IOTDA_FIELD_EVENT_TIME_MS);
+        JsonNode body =
+                root.path(IotMessagingConstants.IOTDA_FIELD_NOTIFY_DATA).path(IotMessagingConstants.IOTDA_FIELD_BODY);
+        if (!body.isObject()) {
+            throw new FrameParseException("IoTDA 设备告警帧 body 缺失或非对象（notify_data.body 必填）");
+        }
+        String metricCode = textOrNull(body, IotMessagingConstants.IOTDA_FIELD_ALARM_NAME);
+        if (metricCode == null || metricCode.isBlank()) {
+            // 告警名缺失回退告警标识（文档两字段语义近似，均缺失说明报文不可归因——毒丸）
+            metricCode = textOrNull(body, IotMessagingConstants.IOTDA_FIELD_ALARM_ID);
+        }
+        if (metricCode == null || metricCode.isBlank()) {
+            throw new FrameParseException("IoTDA 设备告警帧告警名与告警标识均缺失（body.name/alarm_id 必填其一）");
+        }
+        return new ParsedFrame.DeviceAlarmFrame(
+                deviceId,
+                metricCode,
+                textOrNull(body, IotMessagingConstants.IOTDA_FIELD_ALARM_SEVERITY),
+                textOrNull(body, IotMessagingConstants.IOTDA_FIELD_ALARM_DESCRIPTION),
+                occurredAt);
     }
 
     /**
