@@ -1,0 +1,14 @@
+package com.fuyun.iot.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.fuyun.iot.entity.IotMetricMappingEntity;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * 物模型属性 MDC 映射 mapper：映射全量替换（逻辑删旧 + 插新）、失配检测批量取数与按字典
+ * 编码反查引用面。
+ *
+ * <p>必须标注 {@code @Mapper}：app 侧 MybatisPlusConfig 的 @MapperScan 按注解过滤扫描。
+ */
+@Mapper
+public interface IotMetricMappingMapper extends BaseMapper<IotMetricMappingEntity> {}

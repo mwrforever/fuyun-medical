@@ -159,3 +159,14 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
     fallback:                     # HTTP 兜底通道（POST /ingest/iotda-fallback 独立鉴权，B4.3）
       token: ${FUYUN_IOT_FALLBACK_TOKEN:}   # 敏感红线：仅 env 注入，任何 profile 禁明文默认值；
                                             #   空默认 = 未配置，鉴权比对侧 fail-closed 一律拒绝
+    admin:                        # IoTDA 管理面（P2 PR-2 Task 4：产品/物模型 Registry 双实现）——
+                                  #   enabled=false 默认装配 SimulatedRegistry（CI/单测无云依赖）；
+                                  #   true 时凭证四要素任一缺失启动即 fail-fast（IotRegistryConfig
+                                  #   装配前校验）；client 惰性构建，装配期零网络请求
+      # 启用开关仅经 IOTDA_ADMIN_ENABLED 注入：只接受 true/false（留空会 boolean 绑定失败阻断启动），
+      # 未置 env 取默认 false（双条件装配红线：CI 与单测一律走 Simulated）
+      enabled: ${IOTDA_ADMIN_ENABLED:false}
+      endpoint: ${IOTDA_ADMIN_ENDPOINT:}          # IoTDA v5 端点（如 https://{instance-id}.iot-daas.cn-north-4.myhuaweicloud.com）
+      project-id: ${IOTDA_ADMIN_PROJECT_ID:}      # 华为云项目 ID（BasicCredentials 三要素之一）
+      access-key: ${IOTDA_ADMIN_ACCESS_KEY:}      # AK（敏感红线：仅 env 注入，任何 profile 禁明文默认值）
+      access-secret: ${IOTDA_ADMIN_ACCESS_SECRET:} # SK（同上；IotdaAdminProperties.toString 恒打码）
