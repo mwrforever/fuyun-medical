@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -158,6 +159,38 @@ class StormGuardTest {
 
         assertThat(storm).isFalse();
         verify(valueOperations, never()).set(eq(STORM_KEY), anyString(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("抑制④自愈：非首触发也重续计数键 TTL（窗口起点键不依赖首触发存活）")
+    void renewsRateKeyTtlOnEveryIncrement() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 第 7 次触发（非首触发）：仍须续期，防首触发 expire 丢失后遗留永久键
+        when(valueOperations.increment(RATE_KEY)).thenReturn(7L);
+        when(redisTemplate.hasKey(STORM_KEY)).thenReturn(false);
+
+        stormGuard.recordTriggerAndCheckStorm(RULE_ID);
+
+        verify(redisTemplate).expire(RATE_KEY, Duration.ofMinutes(10));
+    }
+
+    @Test
+    @DisplayName("抑制④自愈：expire 异常不破坏风暴判定，下次成功触发重武 TTL（不产生永久键）")
+    void healsRateKeyTtlAfterRenewalFailure() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 首次续期抛异常（降级吞并），第二次成功（自愈重武）
+        when(valueOperations.increment(RATE_KEY)).thenReturn(51L, 52L);
+        when(redisTemplate.expire(eq(RATE_KEY), any(Duration.class)))
+                .thenThrow(new DuplicateKeyException("ttl lost"))
+                .thenReturn(true);
+
+        // 第一次：续期失败不中断——风暴判定照常完成（超基线置位返回 true）
+        assertThat(stormGuard.recordTriggerAndCheckStorm(RULE_ID)).isTrue();
+        verify(valueOperations).set(eq(STORM_KEY), eq("1"), eq(Duration.ofMinutes(10)));
+        // 第二次：成功触发重武 TTL（遗留无 TTL 计数键自愈）
+        stormGuard.recordTriggerAndCheckStorm(RULE_ID);
+
+        verify(redisTemplate, times(2)).expire(RATE_KEY, Duration.ofMinutes(10));
     }
 
     @Test

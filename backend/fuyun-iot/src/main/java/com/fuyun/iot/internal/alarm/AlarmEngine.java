@@ -39,6 +39,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -62,8 +63,13 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  *
  * <p><b>事件与推送时机</b>：新告警落行与 iot.alarm.triggered 发布同事务（事务内 publishEvent →
  * IotDomainPublisher AFTER_COMMIT 出 MQ，宪法 A.4.2-7）；WS 推送挂本事务 afterCommit（无事务
- * 同步上下文时直推，单测直调场景行为不变）。评估由 ingest afterCommit 调起，本类 @Transactional
- * 开新短事务，不与 ingest 事务叠加。
+ * 同步上下文时直推，单测直调场景行为不变）。评估由 ingest afterCommit 调起——该时点原 ingest
+ * 事务已提交但同步上下文仍激活，默认 REQUIRED 会令引擎加入已提交的死事务（afterCommit 快照
+ * 已触发完毕，链内 publishEvent 的 AFTER_COMMIT 监听与推送侧新注册同步均不再执行，Spring
+ * TransactionSynchronization#afterCommit javadoc 明文场景），故 evaluate 强制
+ * {@link Propagation#REQUIRES_NEW}：挂起死事务、新建短事务承载落行与事件发布，新事务提交时
+ * AFTER_COMMIT 监听与 WS 推送同步正常触发；evaluateDeviceAlarm 唯一入口为消费线程直入
+ * （无激活事务），REQUIRED 语义不受传播选择影响，维持现状。
  *
  * <p>Redis 降级语义：越限回合标记/最新值快照为辅助状态，Redis 异常降级为跳过该规则设备评估并
  * warn 留痕，不阻断评估链其余部分（与风暴抑制降级同口径）。
@@ -167,12 +173,14 @@ public class AlarmEngine {
      * <p>执行流程：①最新值快照补写（实测 fy:iot:snapshot:latest 无写入方，自 ingest 链补齐，
      * TTL ≥2×采集周期）→②阈值规则逐条评估（越限回合状态机 + 触发链）→③离线规则源惰性扫描
      * →④抑制⑤升级惰性扫描→⑤风暴解除补推排空（随规则评估顺带执行）。全程独立短事务：
-     * 新告警落行与事件发布同事务，WS 推送挂事务 afterCommit。
+     * 新告警落行与事件发布同事务，WS 推送挂事务 afterCommit。传播强制 REQUIRES_NEW：调用点
+     * ingest afterCommit 阶段原事务已提交但同步上下文仍激活（Spring afterCommit javadoc 场景），
+     * REQUIRED 会加入死事务致 AFTER_COMMIT 监听与推送同步双双失联——见类注释「事件与推送时机」。
      *
      * @param batch 本批已落库遥测实体批次，非空；来源：TelemetryIngestServiceImpl afterCommit
      *              （事务提交后调起，不阻塞 ingest 事务）；空批次直接返回
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void evaluate(TelemetryBatch batch) {
         // 空批次防御：不触库不触 Redis（防空 IN 列表与无意义 Redis 往返）
         if (batch == null || batch.rows().isEmpty()) {

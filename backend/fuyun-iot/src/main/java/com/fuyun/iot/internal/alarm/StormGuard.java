@@ -117,7 +117,8 @@ public class StormGuard {
     }
 
     /**
-     * 抑制④触发计数与风暴态判定：同规则窗口计数+1（窗口内首触发起 TTL=风暴窗口），超基线置
+     * 抑制④触发计数与风暴态判定：同规则窗口计数+1（每次自增后续期计数键 TTL=风暴窗口——首触发
+     * 后进程崩溃或当次 expire 异常被降级吞并时不会遗留永久键，下一次成功触发自愈重续），超基线置
      * 风暴标记 {@code fy:iot:alarm:storm:{ruleId}}（TTL=风暴窗口）。
      *
      * @param ruleId 命中规则 ID，非空
@@ -126,16 +127,13 @@ public class StormGuard {
     public boolean recordTriggerAndCheckStorm(long ruleId) {
         try {
             ValueOperations<String, String> ops = redisTemplate.opsForValue();
-            // Redis INCR 原子计数：窗口内首触发返回 1（计数键 TTL 由首触发统一续期）
+            // Redis INCR 原子计数：窗口内首触发返回 1
             Long count = ops.increment(RATE_KEY_PREFIX + ruleId);
             if (count == null) {
                 // 降级计数（理论不可达）：沿用既有风暴态
                 return isStorm(ruleId);
             }
-            if (count == 1) {
-                // 窗口首触发：计数键起算风暴窗口（固定窗口计数）
-                redisTemplate.expire(RATE_KEY_PREFIX + ruleId, properties.stormWindow());
-            }
+            renewRateKeyTtlQuietly(ruleId);
             if (count > properties.stormBaseline()) {
                 // 超基线：置风暴标记（TTL=风暴窗口，到期自然解除）
                 ops.set(STORM_KEY_PREFIX + ruleId, "1", properties.stormWindow());
@@ -147,6 +145,23 @@ public class StormGuard {
             log.warn("风暴计数 Redis 操作失败（降级沿用既有风暴态）：ruleId={}，原因={}", ruleId, e.getMessage());
         }
         return isStorm(ruleId);
+    }
+
+    /**
+     * 计数键 TTL 续期（独立降级面）：每次自增后重续风暴窗口——仅首触发续期的原实现存在「首触发后
+     * 进程崩溃/当次 expire 异常吞并 → 计数键永久无 TTL → 计数只增不清 → 非危急推送被无限期抑制」
+     * 的不自愈风险；改为每次续期后，任何一次成功触发即重武 TTL，遗留键最迟下次触发自愈。
+     *
+     * @param ruleId 规则 ID，非空
+     */
+    private void renewRateKeyTtlQuietly(long ruleId) {
+        try {
+            // Redis EXPIRE 单命令：固定窗口计数键与窗口起点无关，重续仅保证键生命周期有界
+            redisTemplate.expire(RATE_KEY_PREFIX + ruleId, properties.stormWindow());
+        } catch (RuntimeException e) {
+            // 续期失败与计数/风暴判定解耦：本轮降级留痕，下次成功触发自愈（不产生永久键语义）
+            log.warn("风暴计数键 TTL 续期失败（下次触发自愈）：ruleId={}，原因={}", ruleId, e.getMessage());
+        }
     }
 
     /**
