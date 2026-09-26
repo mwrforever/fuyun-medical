@@ -120,8 +120,9 @@ class BindingServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        // 无 Spring 上下文直构（Bean 注册归 app 侧 IotConfig @Import）；ServiceImpl 基类字段手工注入
-        service = new BindingServiceImpl(deviceMapper, patientResolver, ongoingVisitQuery, events);
+        // 无 Spring 上下文直构（Bean 注册归 app 侧 IotConfig @Import）；ServiceImpl 基类字段手工注入；
+        // 在途就诊契约以单元素清单注入（生产为 Spring 按类型收集的多模块实现集合，任一命中即在途）
+        service = new BindingServiceImpl(deviceMapper, patientResolver, List.of(ongoingVisitQuery), events);
         ReflectionTestUtils.setField(service, "baseMapper", bindingMapper);
         ReflectionTestUtils.setField(service, "entityClass", IotBindingEntity.class);
         OperatorContextHolder.set("E1001");

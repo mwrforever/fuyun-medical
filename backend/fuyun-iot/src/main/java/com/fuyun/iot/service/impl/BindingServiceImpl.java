@@ -70,8 +70,8 @@ public class BindingServiceImpl extends ServiceImpl<IotBindingMapper, IotBinding
     /** 患者上下文解析契约（CF-3）：归一主档 + 冻结/合并拦截 */
     private final PatientContextResolver patientResolver;
 
-    /** 在途就诊查询契约（M02 红线 4 SPI，M04 在院三态实现）：绑定必须有在途就诊承载 */
-    private final OngoingVisitQuery ongoingVisitQuery;
+    /** 在途就诊查询契约集合（M02 红线 4 SPI，M03/M04/M16 多模块注册）：任一命中即认定存在在途就诊 */
+    private final List<OngoingVisitQuery> ongoingVisitQueries;
 
     /** 应用事件发布器：事务内发布 IotDomainEvent，IotDomainPublisher AFTER_COMMIT 直发 MQ */
     private final ApplicationEventPublisher events;
@@ -79,19 +79,20 @@ public class BindingServiceImpl extends ServiceImpl<IotBindingMapper, IotBinding
     /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1）。
      *
-     * @param deviceMapper       设备档案 mapper，非空；来源：同模块 mapper 包
-     * @param patientResolver    患者上下文解析契约，非空；来源：fuyun-patient api（容器实现注入）
-     * @param ongoingVisitQuery  在途就诊查询契约，非空；来源：fuyun-patient api（M04 实现注入）
-     * @param events             应用事件发布器，非空；来源：Spring 上下文
+     * @param deviceMapper         设备档案 mapper，非空；来源：同模块 mapper 包
+     * @param patientResolver      患者上下文解析契约，非空；来源：fuyun-patient api（容器实现注入）
+     * @param ongoingVisitQueries  在途就诊查询契约集合（Spring 按类型收集全部注册实现），非空；
+     *                             来源：fuyun-patient api（M03/M04/M16 实现注入；空清单=无在途就诊）
+     * @param events               应用事件发布器，非空；来源：Spring 上下文
      */
     public BindingServiceImpl(
             IotDeviceMapper deviceMapper,
             PatientContextResolver patientResolver,
-            OngoingVisitQuery ongoingVisitQuery,
+            List<OngoingVisitQuery> ongoingVisitQueries,
             ApplicationEventPublisher events) {
         this.deviceMapper = deviceMapper;
         this.patientResolver = patientResolver;
-        this.ongoingVisitQuery = ongoingVisitQuery;
+        this.ongoingVisitQueries = ongoingVisitQueries;
         this.events = events;
     }
 
@@ -129,8 +130,9 @@ public class BindingServiceImpl extends ServiceImpl<IotBindingMapper, IotBinding
             throw new BizException(
                     IotErrorCode.BINDING_CHECK_INVALID, HttpStatus.CONFLICT, "患者档案冻结或合并中，禁止绑定：" + req.patientId());
         }
-        // 校验链第四环（就诊面）：归一主档必须存在在途就诊（M04 在院三态），无在途即 IOT-1011
-        if (!ongoingVisitQuery.hasOngoingVisit(view.resolvedPatientId())) {
+        // 校验链第四环（就诊面）：归一主档必须存在在途就诊——任一注册模块（门诊在诊/住院在院/
+        // 病区在册）报告命中即视为在途（M02 合并检查"任一命中"同构语义），全无命中即 IOT-1011
+        if (ongoingVisitQueries.stream().noneMatch(query -> query.hasOngoingVisit(view.resolvedPatientId()))) {
             log.warn("绑定拒绝：患者无在途就诊：resolvedPatientId={}", view.resolvedPatientId());
             throw new BizException(
                     IotErrorCode.BINDING_CHECK_INVALID,

@@ -1,11 +1,14 @@
 package com.fuyun.app.config;
 
+import com.fuyun.iot.cache.IotSeqGate;
 import com.fuyun.iot.config.IotAmqpConfig;
 import com.fuyun.iot.config.IotMessagingConfig;
 import com.fuyun.iot.config.IotWebSocketConfig;
+import com.fuyun.iot.controller.BindingController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
 import com.fuyun.iot.internal.IotFallbackAuthService;
 import com.fuyun.iot.properties.IotProperties;
+import com.fuyun.iot.service.impl.BindingServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
 import com.fuyun.iot.service.impl.TelemetryIngestServiceImpl;
@@ -22,6 +25,8 @@ import org.springframework.context.annotation.Import;
  * {@link EnableConfigurationProperties} 注册；遥测消费链三服务（入库/错误留痕/设备状态）与
  * B4.3 任务 B 四件（STOMP 推送服务/兜底鉴权/兜底端点/WS 端点配置）经 @Import 注册为 Bean
  * （com.fuyun.iot 不在扫描范围，宪法 B.1；mapper 由既有 @MapperScan 按注解自动覆盖）；
+ * P2 PR-2 Task 3 追加绑定管理域三件（绑定服务/绑定五端点/AL-CMD 发号器——发号器构造注入
+ * Boot Redis 自动配置 StringRedisTemplate，InpatientSeqGate 同款形态）；
  * AMQP 消费链（Qpid 连接工厂/攒批器/SmartLifecycle 消费者/双指标绑定）经 {@link IotAmqpConfig}
  * 生效——该配置类带 enabled 开关条件装配，默认 {@code fuyun.iot.amqp.enabled=false} 下零连接
  * 尝试（存量 IT 回归零行为差异的保障）；MQ 事件总线域（fy.topic 状态事件发布器 + 自事件幂等
@@ -37,6 +42,9 @@ import org.springframework.context.annotation.Import;
     TelemetryPushServiceImpl.class,
     IotFallbackAuthService.class,
     IotFallbackIngestController.class,
+    BindingServiceImpl.class,
+    BindingController.class,
+    IotSeqGate.class,
     IotAmqpConfig.class,
     IotMessagingConfig.class,
     IotWebSocketConfig.class

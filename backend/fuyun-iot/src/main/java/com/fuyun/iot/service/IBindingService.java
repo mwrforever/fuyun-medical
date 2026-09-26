@@ -16,9 +16,9 @@ import java.util.Optional;
  * 绑定视图（单点口径，禁旁路快照查询）。
  *
  * <p>写路径语义：bind 校验链（设备存在且非 DISABLED[IOT-1006/1007]→无生效绑定[IOT-1010]→患者
- * 归一非冻结/合并中且存在在途就诊[IOT-1011]）→ 落 BOUND 行 + 事务内发布 iot.binding.changed
- * （BIND，经 IotDomainPublisher AFTER_COMMIT 出 MQ）；unbind 原因强制[IOT-1010] + 状态 CAS
- * BOUND→UNBINDING→UNBOUND 双迁移 + 发布 changeType=UNBIND。
+ * 归一非冻结/合并中且存在在途就诊——OngoingVisitQuery 集合任一实现命中即在途[IOT-1011]）→
+ * 落 BOUND 行 + 事务内发布 iot.binding.changed（BIND，经 IotDomainPublisher AFTER_COMMIT 出 MQ）；
+ * unbind 原因强制[IOT-1010] + 状态 CAS BOUND→UNBINDING→UNBOUND 双迁移 + 发布 changeType=UNBIND。
  */
 public interface IBindingService extends IService<IotBindingEntity> {
 

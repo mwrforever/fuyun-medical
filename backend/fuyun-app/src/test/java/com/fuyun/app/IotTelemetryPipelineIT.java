@@ -207,8 +207,8 @@ class IotTelemetryPipelineIT {
     /** 绑定快照断言值：患者 ID（种子固定值） */
     private static final long SNAPSHOT_PATIENT_ID = 9001L;
 
-    /** 绑定快照断言值：就诊 ID（种子固定值） */
-    private static final long SNAPSHOT_VISIT_ID = 8001L;
+    /** 绑定快照断言值：就诊号（CF-3 定长 14 位字符串，V1006 类型改造后形态，种子固定值） */
+    private static final String SNAPSHOT_VISIT_ID = "I2026090100001";
 
     /** 绑定快照断言值：病区 ID（种子固定值，STOMP 两主题的路由锚点） */
     private static final long SNAPSHOT_WARD_ID = 1001L;
@@ -330,7 +330,7 @@ class IotTelemetryPipelineIT {
      */
     @Test
     @Order(1)
-    @DisplayName("种子：设备档案与 BOUND 绑定直插（绑定快照 9001/8001/1001 供消费链冗余）")
+    @DisplayName("种子：设备档案与 BOUND 绑定直插（绑定快照 9001/I2026090100001/1001 供消费链冗余）")
     void seedsDeviceAndBinding() {
         IotDeviceEntity device = new IotDeviceEntity();
         device.setDeviceId(DEVICE_ID);
@@ -375,7 +375,7 @@ class IotTelemetryPipelineIT {
         List<LineRow> rows = jdbcTemplate.query(
                 "SELECT metric_code, value, patient_id, visit_id FROM iot.iot_telemetry"
                         + " WHERE device_id = ? ORDER BY metric_code",
-                (rs, rowNum) -> new LineRow(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getLong(4)),
+                (rs, rowNum) -> new LineRow(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getString(4)),
                 DEVICE_ID);
         assertThat(rows).hasSize(2);
         assertThat(rows).extracting(LineRow::metricCode).containsExactly("vital.heart-rate", "vital.spo2");
@@ -804,8 +804,8 @@ class IotTelemetryPipelineIT {
         assertThat(condition.getAsBoolean()).as(description).isTrue();
     }
 
-    /** 遥测行投影（metric/value + 绑定快照两列） */
-    private record LineRow(String metricCode, String value, long patientId, long visitId) {}
+    /** 遥测行投影（metric/value + 绑定快照两列；visit_id 为 CF-3 字符串） */
+    private record LineRow(String metricCode, String value, long patientId, String visitId) {}
 
     /** 错误日志行投影（stage/status/摘要） */
     private record ErrorRow(String errorStage, String status, String rawDigest) {}
