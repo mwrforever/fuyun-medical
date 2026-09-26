@@ -1,16 +1,17 @@
 package com.fuyun.iot.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.StandardTelemetryMessage;
-import com.fuyun.iot.entity.IotBindingEntity;
 import com.fuyun.iot.entity.IotTelemetryEntity;
-import com.fuyun.iot.enums.BindingStatus;
 import com.fuyun.iot.enums.TelemetryQuality;
 import com.fuyun.iot.enums.TelemetrySource;
-import com.fuyun.iot.mapper.IotBindingMapper;
 import com.fuyun.iot.mapper.IotTelemetryMapper;
+import com.fuyun.iot.service.IBindingService;
 import com.fuyun.iot.service.ITelemetryIngestService;
 import com.fuyun.iot.service.ITelemetryPushService;
+import com.fuyun.iot.vo.BindingVO;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -18,8 +19,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -28,10 +27,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * 遥测入库服务实现（iot.iot_telemetry 批量写唯一入口，BRIEF-PR4-01 §3 service 行）。
  *
- * <p>写路径：绑定快照按 deviceId 单次批量 in 查询（只取 BOUND，拒 N+1，宪法 A.4.3-14）→
- * 冗余 patient_id/visit_id（写入时快照，无绑定落 NULL——遥测仍入库仅无患者归属，14-iot §3.3
- * "消毒/未绑定场景设备数据标'未关联'仍入库"）→ mapper 多值 INSERT ON CONFLICT DO NOTHING
- * （唯一约束冲突忽略 = 明细层幂等，返回实际插入行数）。方法级独立事务（宪法 A.4.2-7）。
+ * <p>写路径：绑定快照经绑定域 {@link IBindingService#findActiveByDevice} 按 distinct 设备去重消费
+ * （批内同设备多帧只查一次；单点口径复用绑定管理域查询，禁旁路快照查询）→ 冗余 patient_id/visit_id
+ * （写入时快照，无绑定落 NULL——遥测仍入库仅无患者归属，14-iot §3.3 "消毒/未绑定场景设备数据
+ * 标'未关联'仍入库"）→ mapper 多值 INSERT ON CONFLICT DO NOTHING（唯一约束冲突忽略 = 明细层幂等，
+ * 返回实际插入行数）。方法级独立事务（宪法 A.4.2-7）。
  *
  * <p>B4.3 摘要推送接线：落库成功后按绑定快照病区分组，每组经 {@link ITelemetryPushService}
  * 推一帧遥测摘要（/topic/iot/telemetry/{wardId}，简报 §1.4"遥测批量落库成功后推一帧汇总；
@@ -41,11 +41,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 事务不推送——摘要只对已提交批次负责）；无事务同步上下文（单测直调等未经代理场景）时直接
  * 推送，行为不变。推送失败仅 error 告警不回滚落库批次——落库是主职责、推送是辅助语义。
  *
- * <p>value 定型语义：CF-7 value 为字符串载体，落 NUMERIC NOT NULL 列前经 BigDecimal 解析；
- * 不可解析行（解析器已标 BAD 保留原文）跳过并整批汇总告警——跳过理由：NOT NULL 列无法承载
- * 非数值原文，哨兵值（如 0）会污染生理指标统计，跳过是"标注不阻断"约束下的批次无损选项
- * （BAD 行本就供质量统计口径，不参与有效值分析）；整批均不可解析时零触库短路返回 0
- * （防空 VALUES 非法 SQL 引发事务异常与 IoTDA 毒帧重投循环）。
+ * <p>W-7 非数值承载语义（D-9 裁决，V1005 raw_value 列）：整批全量入库不再丢弃任何行——value 可
+ * 数值定型的行落 NUMERIC 值列且 raw_value 为 NULL；非数值行 value 落 NULL（哨兵值会污染生理指标
+ * 统计，禁回填）、raw_value 承载原文（标量原文；对象/数组经 Jackson 树规整为紧凑 JSON 标准输出）
+ * 且 quality 强制 BAD（语义 = 非数值定型标注，不阻断入库）。批次观测口径为
+ * received/inserted/unbound/non_numeric_bad 四计数（历史 skipped_non_numeric 丢弃口径已退役）。
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1/B.4.2-12）。
  * JaCoCo 核心包（com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
@@ -53,8 +53,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Slf4j
 public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
 
-    /** 绑定快照数据访问：BOUND 绑定的批量 in 查询（跨表查询按 A.4.3-13 用 Wrappers 静态工厂） */
-    private final IotBindingMapper bindingMapper;
+    /** 紧凑 JSON 规整器（线程安全，树读入 + 标准写出去除原文内部空白；无 Boot 定制依赖，静态持有） */
+    private static final ObjectMapper COMPACT_JSON_MAPPER = new ObjectMapper();
+
+    /** 绑定域服务：生效绑定查询唯一出口（findActiveByDevice，遥测富化与设备归属查询同源） */
+    private final IBindingService bindingService;
 
     /** 遥测明细数据访问：多值 INSERT ON CONFLICT DO NOTHING 唯一写通道 */
     private final IotTelemetryMapper telemetryMapper;
@@ -65,13 +68,13 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
     /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1）。
      *
-     * @param bindingMapper   设备绑定 mapper，非空；来源：同模块 mapper 包
+     * @param bindingService  绑定域服务，非空；来源：同模块 service 装配链
      * @param telemetryMapper 遥测明细 mapper，非空；来源：同模块 mapper 包
      * @param pushService     STOMP 推送服务，非空；来源：IotConfig 装配链
      */
     public TelemetryIngestServiceImpl(
-            IotBindingMapper bindingMapper, IotTelemetryMapper telemetryMapper, ITelemetryPushService pushService) {
-        this.bindingMapper = bindingMapper;
+            IBindingService bindingService, IotTelemetryMapper telemetryMapper, ITelemetryPushService pushService) {
+        this.bindingService = bindingService;
         this.telemetryMapper = telemetryMapper;
         this.pushService = pushService;
     }
@@ -83,56 +86,36 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
         if (batch.isEmpty()) {
             return 0;
         }
-        // 整批非数值短路：全部行 value 均不可数值定型时无可写实体（唯一跳过路径即 value 解析失败，
-        // 实体列表必为空），先于一切触库返回零行——否则空实体批次会渲染出空 VALUES 非法 SQL，事务异常
-        // 致攒批器零确认，IoTDA 重推同帧形成毒帧重投循环
-        if (batch.stream().allMatch(message -> parseValue(message) == null)) {
-            log.warn("遥测批次全部为非数值/无效行，跳过绑定查询与落库：batchSize={}", batch.size());
-            return 0;
-        }
-        // 绑定快照一次批量查询（distinct 去重防同设备多帧撑大 in 列表；只取 BOUND 精确投影四列，
-        // wardId 供 B4.3 摘要推送按病区分组）
+        // 绑定快照按 distinct 设备去重消费绑定域查询：批内同设备多帧仅一次查询（禁逐行查询），
+        // 只取 BOUND 生效绑定，patient/visit/ward 供快照冗余与摘要推送分组
         List<String> deviceIds = batch.stream()
                 .map(StandardTelemetryMessage::deviceId)
                 .distinct()
                 .toList();
-        Map<String, IotBindingEntity> boundByDeviceId = bindingMapper
-                .selectList(Wrappers.<IotBindingEntity>lambdaQuery()
-                        .in(IotBindingEntity::getDeviceId, deviceIds)
-                        .eq(IotBindingEntity::getStatus, BindingStatus.BOUND)
-                        .select(
-                                IotBindingEntity::getDeviceId,
-                                IotBindingEntity::getPatientId,
-                                IotBindingEntity::getVisitId,
-                                IotBindingEntity::getWardId))
-                .stream()
-                .collect(Collectors.toMap(IotBindingEntity::getDeviceId, Function.identity()));
+        Map<String, BindingVO> boundByDeviceId = new HashMap<>(deviceIds.size());
+        for (String deviceId : deviceIds) {
+            bindingService.findActiveByDevice(deviceId).ifPresent(vo -> boundByDeviceId.put(deviceId, vo));
+        }
 
+        // 全量组装实体（W-7：非数值行不再丢弃，raw_value 承载原文 + quality 强制 BAD 标注）
         List<IotTelemetryEntity> entities = new ArrayList<>(batch.size());
-        List<String> unparsableValueKeys = new ArrayList<>();
+        long nonNumericBadCount = 0;
         for (StandardTelemetryMessage message : batch) {
-            BigDecimal value = parseValue(message);
-            if (value == null) {
-                // 非数值行跳过不入库（整批汇总一次告警，禁循环内逐行打日志）
-                unparsableValueKeys.add(message.deviceId() + "/" + message.metricCode());
-                continue;
+            IotTelemetryEntity entity = toEntity(message, boundByDeviceId.get(message.deviceId()));
+            if (entity.getValue() == null) {
+                // 非数值定型行计数（quality 已强制 BAD；日志观测口径 non_numeric_bad）
+                nonNumericBadCount++;
             }
-            // 绑定快照冗余：无绑定设备落 NULL（"未关联仍入库"口径），实体转换见 toEntity
-            IotBindingEntity binding = boundByDeviceId.get(message.deviceId());
-            entities.add(toEntity(message, value, binding));
+            entities.add(entity);
         }
-        if (!unparsableValueKeys.isEmpty()) {
-            log.warn(
-                    "遥测批次存在不可数值定型的行已跳过：skipped={}，devices/metrics={}", unparsableValueKeys.size(), unparsableValueKeys);
-        }
-        // 批量写：唯一键冲突行忽略，返回实际插入行数（冲突行不计入 = 明细层幂等语义）
+        // 数据库写操作：批量写唯一键冲突行忽略，返回实际插入行数（冲突行不计入 = 明细层幂等语义）
         int inserted = telemetryMapper.insertBatchIgnoreConflict(entities);
         log.info(
-                "遥测批量落库完成：received={}，inserted={}，unbound={}，skipped_non_numeric={}",
+                "遥测批量落库完成：received={}，inserted={}，unbound={}，non_numeric_bad={}",
                 batch.size(),
                 inserted,
                 countUnbound(entities),
-                unparsableValueKeys.size());
+                nonNumericBadCount);
         // 摘要推送分组数据在事务方法内组装完成（快照 wardId 分组），推送 I/O 移出事务执行——
         // 宪法 A.4.2-7"事务内禁止远程调用、消息发送与人工等待，对外调用在事务提交后执行"
         Map<Long, List<IotTelemetryEntity>> writtenByWardId = groupWrittenByWard(entities, boundByDeviceId);
@@ -160,15 +143,15 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
      * 未编病区的行仅落库不入组；每组一帧（条数/items/occurredAt 上界见推送服务载荷契约）。
      *
      * @param entities        已组装并落库的遥测实体批次，非空
-     * @param boundByDeviceId 绑定快照映射（deviceId → BOUND 绑定行，含 wardId 投影），非空
+     * @param boundByDeviceId 绑定快照映射（deviceId → BOUND 绑定视图，含 wardId），非空
      * @return 病区 → 本批该病区已写入实体列表（值列表非空），非空；无归属行不出现
      */
     private static Map<Long, List<IotTelemetryEntity>> groupWrittenByWard(
-            List<IotTelemetryEntity> entities, Map<String, IotBindingEntity> boundByDeviceId) {
+            List<IotTelemetryEntity> entities, Map<String, BindingVO> boundByDeviceId) {
         Map<Long, List<IotTelemetryEntity>> writtenByWardId = new HashMap<>();
         for (IotTelemetryEntity entity : entities) {
-            IotBindingEntity binding = boundByDeviceId.get(entity.getDeviceId());
-            Long wardId = binding == null ? null : binding.getWardId();
+            BindingVO binding = boundByDeviceId.get(entity.getDeviceId());
+            Long wardId = binding == null ? null : binding.wardId();
             if (wardId != null) {
                 // 按病区分组：同病区多设备/多帧合并为一帧摘要（每批每病区一帧，简报 §1.4 推送频率口径）
                 writtenByWardId
@@ -212,7 +195,7 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
      * 解析 CF-7 value 字符串为 NUMERIC 定型值。
      *
      * @param message 标准遥测消息，非空
-     * @return 数值定型结果；不可解析返回 null（调用方跳过该行）
+     * @return 数值定型结果；不可解析返回 null（调用方落 raw_value 原文承载）
      */
     private static BigDecimal parseValue(StandardTelemetryMessage message) {
         try {
@@ -223,24 +206,60 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
     }
 
     /**
+     * 非数值原文承载规整（W-7）：标量以原文承载；形似对象/数组的原文经 Jackson 树读入 + 标准写出
+     * 规整为紧凑 JSON（去除键值/元素间空白，无空格标准输出）。入参由 CF-7 契约保证非空
+     * （StandardTelemetryMessage.value 非空），且本方法仅在 parseValue 判定不可数值定型后调用
+     * （null 入参会在定型处先行暴露，此处不重复防御）。
+     *
+     * @param raw 遥测原文，非空（CF-7 契约）
+     * @return 承载文本：对象/数组为紧凑 JSON，其余为原文
+     */
+    private static String toRawValueText(String raw) {
+        String trimmed = raw.trim();
+        boolean shapedAsJson = (trimmed.startsWith("{") && trimmed.endsWith("}"))
+                || (trimmed.startsWith("[") && trimmed.endsWith("]"));
+        if (!shapedAsJson) {
+            // 标量原文：原样承载（quality=BAD 已完成非数值定型标注）
+            return raw;
+        }
+        try {
+            // 形似对象/数组：树规整为紧凑 JSON（标准输出无空格，规整重复上报的格式漂移）
+            JsonNode node = COMPACT_JSON_MAPPER.readTree(trimmed);
+            return COMPACT_JSON_MAPPER.writeValueAsString(node);
+        } catch (JsonProcessingException e) {
+            // 形似 JSON 但非法（如 "{"a": }"）：按标量原文承载，不因规整失败丢行（quality=BAD 兜底标注）
+            return raw;
+        }
+    }
+
+    /**
      * 标准遥测消息 → 超表行实体（枚举 code 已由解析器校验值域，fromCode 不会失败）。
      *
+     * <p>W-7 分流：value 可数值定型 → NUMERIC 值列、raw_value 保持 NULL、quality 取消息原值；
+     * 不可数值定型 → value 落 NULL、raw_value 承载原文/紧凑 JSON、quality 强制 BAD（非数值定型
+     * 标注，不阻断入库）。
+     *
      * @param message 标准遥测消息，非空
-     * @param value   已定型数值，非空
      * @param binding 该设备的 BOUND 绑定快照，可为 null（无绑定：患者/就诊列落 NULL）
      * @return 遥测实体，非空
      */
-    private static IotTelemetryEntity toEntity(
-            StandardTelemetryMessage message, BigDecimal value, IotBindingEntity binding) {
+    private static IotTelemetryEntity toEntity(StandardTelemetryMessage message, BindingVO binding) {
         IotTelemetryEntity entity = new IotTelemetryEntity();
         entity.setDeviceId(message.deviceId());
-        entity.setPatientId(binding == null ? null : binding.getPatientId());
-        entity.setVisitId(binding == null ? null : binding.getVisitId());
+        entity.setPatientId(binding == null ? null : binding.patientId());
+        entity.setVisitId(binding == null ? null : binding.visitId());
         entity.setMetricCode(message.metricCode());
+        BigDecimal value = parseValue(message);
         entity.setValue(value);
+        if (value == null) {
+            // 非数值行：raw_value 承载原文 + quality 强制 BAD（W-7 定型标注语义，不阻断入库）
+            entity.setRawValue(toRawValueText(message.value()));
+            entity.setQuality(TelemetryQuality.BAD);
+        } else {
+            entity.setQuality(TelemetryQuality.fromCode(message.quality()));
+        }
         entity.setUnit(message.unit());
         entity.setOccurredAt(OffsetDateTime.ofInstant(message.occurredAt(), ZoneOffset.UTC));
-        entity.setQuality(TelemetryQuality.fromCode(message.quality()));
         entity.setSource(TelemetrySource.fromCode(message.source()));
         return entity;
     }

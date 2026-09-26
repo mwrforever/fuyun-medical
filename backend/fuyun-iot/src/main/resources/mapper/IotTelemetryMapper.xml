@@ -9,14 +9,15 @@
 -->
 <mapper namespace="com.fuyun.iot.mapper.IotTelemetryMapper">
 
-    <!-- 多值 INSERT 一次落整批（500-5000 条/批独立事务由 service 层承担）；冲突行忽略不中断批次 -->
+    <!-- 多值 INSERT 一次落整批（500-5000 条/批独立事务由 service 层承担）；冲突行忽略不中断批次。
+         raw_value 为 W-7 非数值承载列（V1005）：非数值标量原文/对象数组紧凑 JSON，数值行 NULL -->
     <insert id="insertBatchIgnoreConflict">
         INSERT INTO iot.iot_telemetry
-            (device_id, patient_id, visit_id, metric_code, value, unit, occurred_at, quality, source)
+            (device_id, patient_id, visit_id, metric_code, value, raw_value, unit, occurred_at, quality, source)
         VALUES
         <foreach collection="batch" item="item" separator=",">
             (#{item.deviceId}, #{item.patientId}, #{item.visitId}, #{item.metricCode},
-             #{item.value}, #{item.unit}, #{item.occurredAt}, #{item.quality}, #{item.source})
+             #{item.value}, #{item.rawValue}, #{item.unit}, #{item.occurredAt}, #{item.quality}, #{item.source})
         </foreach>
         ON CONFLICT (device_id, metric_code, occurred_at) DO NOTHING
     </insert>

@@ -34,8 +34,8 @@ public class IotBindingEntity {
     /** 患者 ID（M02，绑定快照五元组） */
     private Long patientId;
 
-    /** 就诊 ID（M04，绑定快照五元组） */
-    private Long visitId;
+    /** 就诊 ID（M04，绑定快照五元组；CF-3 定长 14 位字符串，V1006 类型改造） */
+    private String visitId;
 
     /** 床位 ID（固定式绑定落，移动式可空），可空 */
     private Long bedId;
