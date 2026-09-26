@@ -7,6 +7,7 @@ import com.fuyun.iot.dto.BindingQueryRequest;
 import com.fuyun.iot.dto.UnbindDeviceRequest;
 import com.fuyun.iot.entity.IotBindingEntity;
 import com.fuyun.iot.vo.BindingVO;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -62,10 +63,20 @@ public interface IBindingService extends IService<IotBindingEntity> {
     List<BindingVO> listByWard(Long wardId);
 
     /**
-     * 查设备当前生效（BOUND）绑定：遥测入库富化与设备当前归属查询复用入口。
+     * 查设备当前生效（BOUND）绑定：设备当前归属查询复用入口（内部委托批量方法取单元素）。
      *
-     * @param deviceId IoTDA 设备标识，非空；来源：遥测帧设备号或路径变量
+     * @param deviceId IoTDA 设备标识，非空；来源：路径变量
      * @return 生效绑定视图；设备无 BOUND 绑定时为 Optional.empty()（遥测仍入库仅无患者归属）
      */
     Optional<BindingVO> findActiveByDevice(String deviceId);
+
+    /**
+     * 按设备集合批量查当前生效（BOUND）绑定：遥测入库富化的唯一快照通道（单次 IN 查询，
+     * 宪法 A.4.3-14 拒循环内单查；uk_iot_binding_device_bound 保证每设备至多一条活跃绑定）。
+     *
+     * @param deviceIds 设备标识集合（调用方先 distinct 去重），非空；空集合直接返回空清单不触库
+     *                  （防空 IN 列表非法 SQL）；来源：遥测批内 distinct 设备号
+     * @return 生效绑定视图清单（id 升序），非空；无命中为空清单
+     */
+    List<BindingVO> listActiveByDevices(Collection<String> deviceIds);
 }

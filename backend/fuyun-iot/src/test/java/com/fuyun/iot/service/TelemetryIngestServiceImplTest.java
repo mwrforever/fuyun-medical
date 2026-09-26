@@ -31,7 +31,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -54,8 +53,8 @@ import org.springframework.transaction.support.TransactionTemplate;
  * JaCoCo 核心包 com.fuyun.iot.service.impl LINE=1.00 承载测试。
  *
  * <p>绑定查询与推送服务以 Mockito 模拟（真实 SQL 与 ON CONFLICT 语义、STOMP 收帧归
- * IotTelemetryPipelineIT 端到端验证）；绑定查询消费绑定域 IBindingService.findActiveByDevice
- * （接口级 mock，真实 SQL 守卫归 BindingServiceImplTest）。
+ * IotTelemetryPipelineIT 端到端验证）；绑定查询消费绑定域 IBindingService.listActiveByDevices（接口级 mock，真实 SQL 守卫归
+ * BindingServiceImplTest）——每批恰好一次批量 IN 查询（宪法 A.4.3-14）。
  */
 @ExtendWith(MockitoExtension.class)
 class TelemetryIngestServiceImplTest {
@@ -85,6 +84,9 @@ class TelemetryIngestServiceImplTest {
 
     @Captor
     private ArgumentCaptor<Long> wardCaptor;
+
+    @Captor
+    private ArgumentCaptor<List<String>> devicesCaptor;
 
     private TelemetryIngestServiceImpl service;
 
@@ -139,8 +141,8 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("有 BOUND 绑定：快照 patient_id/visit_id 冗余注入遥测行并返回实际插入行数")
     void ingestEnrichesRowsWithBoundSnapshot() {
-        when(bindingService.findActiveByDevice("dev-001"))
-                .thenReturn(Optional.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(2);
 
         int inserted = service.ingest(
@@ -160,7 +162,7 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("无绑定设备：patient_id/visit_id 落 NULL 且行仍入库（未关联仍入库口径）")
     void ingestWithoutBindingWritesNullPatientColumns() {
-        when(bindingService.findActiveByDevice("dev-unbound")).thenReturn(Optional.empty());
+        when(bindingService.listActiveByDevices(any())).thenReturn(List.of());
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
 
         int inserted = service.ingest(List.of(message("dev-unbound", "MDC_BODY_TEMP", "36.8")));
@@ -177,8 +179,8 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("唯一键冲突忽略：mapper 返回实际插入行数（冲突行不计入幂等语义）")
     void ingestReturnsMapperReportedInsertCountOnConflict() {
-        when(bindingService.findActiveByDevice("dev-001"))
-                .thenReturn(Optional.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
         // 两行中一行命中 (device_id, metric_code, occurred_at) 唯一键已存在 → ON CONFLICT 忽略，实际插入 1
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
 
@@ -189,11 +191,10 @@ class TelemetryIngestServiceImplTest {
     }
 
     @Test
-    @DisplayName("绑定查询按 distinct 设备去重消费 + 单次批量写（同设备多帧只查一次，拒绝逐行查询）")
-    void ingestQueriesBindingOncePerDistinctDeviceAndWritesSingleBatch() {
-        when(bindingService.findActiveByDevice("dev-001"))
-                .thenReturn(Optional.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
-        when(bindingService.findActiveByDevice("dev-unbound")).thenReturn(Optional.empty());
+    @DisplayName("绑定快照每批恰好一次批量 IN 查询（入参为 distinct 设备集合）+ 单次批量写（A.4.3-14）")
+    void ingestIssuesSingleBindingQueryForDistinctDevicesAndSingleBatchWrite() {
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(3);
 
         service.ingest(List.of(
@@ -201,8 +202,9 @@ class TelemetryIngestServiceImplTest {
                 message("dev-001", "MDC_SPO2", "98"),
                 message("dev-unbound", "MDC_BODY_TEMP", "36.8")));
 
-        // 3 帧 2 设备：绑定查询恰好 2 次（按 distinct 设备去重，同设备多帧不重复查询）
-        verify(bindingService, times(2)).findActiveByDevice(any());
+        // 3 帧 2 设备：绑定查询恰好 1 次（批量 IN），入参 = 去重后的设备集合（同设备多帧不撑大入参）
+        verify(bindingService, times(1)).listActiveByDevices(devicesCaptor.capture());
+        assertThat(devicesCaptor.getValue()).containsExactlyInAnyOrder("dev-001", "dev-unbound");
         verify(telemetryMapper, times(1)).insertBatchIgnoreConflict(any());
     }
 
@@ -218,7 +220,7 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("W-7 非数值标量行：rawValue 承载原文、value 落 NULL、quality 强制 BAD，整批照常入库")
     void nonNumericScalarRowIsCarriedAsRawValueWithBadQuality() {
-        when(bindingService.findActiveByDevice("dev-001")).thenReturn(Optional.empty());
+        when(bindingService.listActiveByDevices(any())).thenReturn(List.of());
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
 
         int inserted = service.ingest(List.of(message("dev-001", "MDC_DEVICE_MSG", "异常")));
@@ -234,7 +236,7 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("W-7 对象/数组行：rawValue 以紧凑 JSON 承载（Jackson 标准输出无空格）")
     void objectAndArrayRowsAreCarriedAsCompactJson() {
-        when(bindingService.findActiveByDevice("dev-001")).thenReturn(Optional.empty());
+        when(bindingService.listActiveByDevices(any())).thenReturn(List.of());
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(2);
 
         service.ingest(List.of(
@@ -253,7 +255,7 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("W-7 形似 JSON 但非法的原文：规整失败不丢行，按原文承载（quality=BAD 兜底标注）")
     void malformedShapedJsonFallsBackToRawText() {
-        when(bindingService.findActiveByDevice("dev-001")).thenReturn(Optional.empty());
+        when(bindingService.listActiveByDevices(any())).thenReturn(List.of());
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
 
         service.ingest(List.of(message("dev-001", "MDC_BP_PANEL", "{\"systolic\": }")));
@@ -268,8 +270,8 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("W-7 混合批：数值行 value 定型正常且不写 rawValue，非数值行 rawValue 承载，两行同批入库")
     void mixedBatchCarriesNumericValueAndNonNumericRawValueSideBySide() {
-        when(bindingService.findActiveByDevice("dev-001"))
-                .thenReturn(Optional.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(2);
 
         int inserted = service.ingest(
@@ -290,7 +292,7 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("W-7 日志口径：info 摘要输出 received/inserted/unbound/non_numeric_bad 四计数（skip 口径退役）")
     void ingestLogsReceivedInsertedUnboundAndNonNumericBadCounters() {
-        when(bindingService.findActiveByDevice("dev-unbound")).thenReturn(Optional.empty());
+        when(bindingService.listActiveByDevices(any())).thenReturn(List.of());
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(3);
 
         service.ingest(List.of(
@@ -312,13 +314,12 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("B4.3 摘要推送：落库成功后按绑定快照病区分组推送（/topic/iot/telemetry/{wardId} 语义）")
     void pushesSummaryGroupedByWardAfterBatchWrite() {
-        when(bindingService.findActiveByDevice("dev-a"))
-                .thenReturn(Optional.of(bindingVo("dev-a", 1001L, "I2026090100001", WARD_A)));
-        when(bindingService.findActiveByDevice("dev-b"))
-                .thenReturn(Optional.of(bindingVo("dev-b", 1002L, "I2026090100002", WARD_B)));
-        // 绑定存在但 wardId 为空（档案未编病区）：该行仅落库不推送
-        when(bindingService.findActiveByDevice("dev-c"))
-                .thenReturn(Optional.of(bindingVo("dev-c", 1003L, "I2026090100003", null)));
+        // 单次批量查询一次带回三设备快照（dev-c 绑定存在但 wardId 为空：该行仅落库不推送）
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(
+                        bindingVo("dev-a", 1001L, "I2026090100001", WARD_A),
+                        bindingVo("dev-b", 1002L, "I2026090100002", WARD_B),
+                        bindingVo("dev-c", 1003L, "I2026090100003", null)));
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(4);
 
         int inserted = service.ingest(List.of(
@@ -346,8 +347,8 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("摘要推送失败：仅告警不回滚落库批次（推送是辅助语义，返回实际插入行数）")
     void swallowsSummaryPushFailureWithoutFailingIngest() {
-        when(bindingService.findActiveByDevice("dev-001"))
-                .thenReturn(Optional.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
         doThrow(new IllegalStateException("broker 不可用")).when(pushService).pushSummary(any(), eq(WARD_A));
 
@@ -359,8 +360,8 @@ class TelemetryIngestServiceImplTest {
     @Test
     @DisplayName("事务内推送时序（A.4.2-7）：事务同步激活时推送注册于 afterCommit——事务内不推、提交后推送")
     void defersSummaryPushUntilAfterCommitWhenTransactionSynchronizationActive() {
-        when(bindingService.findActiveByDevice("dev-001"))
-                .thenReturn(Optional.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
+        when(bindingService.listActiveByDevices(any()))
+                .thenReturn(List.of(bindingVo("dev-001", 1001L, "I2026090100001", WARD_A)));
         when(telemetryMapper.insertBatchIgnoreConflict(any())).thenReturn(1);
         // 推送时点记录器：push 记入 timeline，与 ingest 返回点 / execute（提交）返回点比对时序
         List<String> timeline = new ArrayList<>();

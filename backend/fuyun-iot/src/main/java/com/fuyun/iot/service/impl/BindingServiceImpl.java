@@ -24,6 +24,7 @@ import com.fuyun.patient.api.OngoingVisitQuery;
 import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
@@ -276,11 +277,26 @@ public class BindingServiceImpl extends ServiceImpl<IotBindingMapper, IotBinding
     @Override
     @Transactional(readOnly = true)
     public Optional<BindingVO> findActiveByDevice(String deviceId) {
-        // 数据库读操作：设备维度 BOUND 生效绑定；唯一索引保证至多一行（one() 对脏数据多行会显式报错）
-        IotBindingEntity active = lambdaQuery()
-                .eq(IotBindingEntity::getDeviceId, deviceId)
+        // 单设备查询委托批量通道取单元素（查询口径单点收口；唯一索引保证至多一条活跃绑定）
+        return listActiveByDevices(List.of(deviceId)).stream().findFirst();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<BindingVO> listActiveByDevices(Collection<String> deviceIds) {
+        // 空集合防御：直接返回空清单不触库（防空 IN 列表渲染非法 SQL）
+        if (deviceIds == null || deviceIds.isEmpty()) {
+            return List.of();
+        }
+        // 数据库读操作：单次 IN 批量取 BOUND 生效绑定（宪法 A.4.3-14 拒循环内单查；@TableLogic
+        // 自动携带 deleted = 0）；id 升序输出稳定，供调用侧按 deviceId 组装快照映射
+        return lambdaQuery()
+                .in(IotBindingEntity::getDeviceId, deviceIds)
                 .eq(IotBindingEntity::getStatus, BindingStatus.BOUND)
-                .one();
-        return Optional.ofNullable(active).map(BindingVO::from);
+                .orderByAsc(IotBindingEntity::getId)
+                .list()
+                .stream()
+                .map(BindingVO::from)
+                .toList();
     }
 }

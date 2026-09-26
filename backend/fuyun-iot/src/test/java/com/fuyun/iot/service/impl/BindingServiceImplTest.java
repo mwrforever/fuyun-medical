@@ -97,6 +97,10 @@ class BindingServiceImplTest {
     @Mock
     private OngoingVisitQuery ongoingVisitQuery;
 
+    /** 第二个在途就诊契约实现（多实现集合"任一命中即在途"语义的验证载体） */
+    @Mock
+    private OngoingVisitQuery ongoingVisitQuerySecond;
+
     @Mock
     private ApplicationEventPublisher events;
 
@@ -121,8 +125,9 @@ class BindingServiceImplTest {
     @BeforeEach
     void setUp() {
         // 无 Spring 上下文直构（Bean 注册归 app 侧 IotConfig @Import）；ServiceImpl 基类字段手工注入；
-        // 在途就诊契约以单元素清单注入（生产为 Spring 按类型收集的多模块实现集合，任一命中即在途）
-        service = new BindingServiceImpl(deviceMapper, patientResolver, List.of(ongoingVisitQuery), events);
+        // 在途就诊契约以双元素清单注入（生产为 Spring 按类型收集的多模块实现集合，任一命中即在途）
+        service = new BindingServiceImpl(
+                deviceMapper, patientResolver, List.of(ongoingVisitQuery, ongoingVisitQuerySecond), events);
         ReflectionTestUtils.setField(service, "baseMapper", bindingMapper);
         ReflectionTestUtils.setField(service, "entityClass", IotBindingEntity.class);
         OperatorContextHolder.set("E1001");
@@ -404,9 +409,9 @@ class BindingServiceImplTest {
     }
 
     @Test
-    @DisplayName("findActiveByDevice：有 BOUND 绑定回 Optional 命中、无绑定回 empty（遥测富化复用契约）")
+    @DisplayName("findActiveByDevice：委托批量通道取单元素——有 BOUND 绑定回命中、无绑定回 empty")
     void findActiveByDeviceReturnsPresentOrEmpty() {
-        when(bindingMapper.selectOne(any())).thenReturn(boundEntity(), (IotBindingEntity) null);
+        when(bindingMapper.selectList(any())).thenReturn(List.of(boundEntity()), List.of());
 
         Optional<BindingVO> present = service.findActiveByDevice(DEVICE_ID);
         Optional<BindingVO> absent = service.findActiveByDevice("dev-other");
@@ -414,6 +419,42 @@ class BindingServiceImplTest {
         assertThat(present).isPresent();
         assertThat(present.get().deviceId()).isEqualTo(DEVICE_ID);
         assertThat(absent).isEmpty();
+    }
+
+    @Test
+    @DisplayName("listActiveByDevices：设备集合单次批量 IN 查 BOUND 绑定（遥测富化批量通道）")
+    void listActiveByDevicesBatchesActiveBindingsForDeviceSet() {
+        when(bindingMapper.selectList(any())).thenReturn(List.of(boundEntity()));
+
+        List<BindingVO> rows = service.listActiveByDevices(List.of(DEVICE_ID, "dev-other"));
+
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).deviceId()).isEqualTo(DEVICE_ID);
+        assertThat(rows.get(0).status()).isEqualTo(BindingStatus.BOUND);
+    }
+
+    @Test
+    @DisplayName("listActiveByDevices：空集合直接返回空清单零触库（防空 IN 列表非法 SQL）")
+    void listActiveByDevicesShortCircuitsEmptyDeviceSet() {
+        List<BindingVO> rows = service.listActiveByDevices(List.of());
+
+        assertThat(rows).isEmpty();
+        verifyNoInteractions(bindingMapper);
+    }
+
+    @Test
+    @DisplayName("在途就诊契约多实现：任一实现命中即认定在途（首查未命中、次查命中放行落行）")
+    void bindPassesWhenAnyOngoingVisitQueryImplementationHits() {
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DeviceStatus.ONLINE));
+        when(bindingMapper.selectCount(any())).thenReturn(0L);
+        when(patientResolver.resolve(PATIENT_ID)).thenReturn(normalView());
+        when(ongoingVisitQuery.hasOngoingVisit(RESOLVED_PATIENT_ID)).thenReturn(false);
+        when(ongoingVisitQuerySecond.hasOngoingVisit(RESOLVED_PATIENT_ID)).thenReturn(true);
+
+        BindingVO vo = service.bind(request());
+
+        assertThat(vo.deviceId()).as("任一实现命中即在途，放行落行").isEqualTo(DEVICE_ID);
+        verify(bindingMapper).insert(any(IotBindingEntity.class));
     }
 
     /** 构造绑定请求（FIXED 固定式，床位/病区/就诊/患者齐备） */

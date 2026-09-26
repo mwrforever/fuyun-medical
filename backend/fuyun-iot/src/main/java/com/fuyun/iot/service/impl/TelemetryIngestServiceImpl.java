@@ -27,8 +27,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /**
  * 遥测入库服务实现（iot.iot_telemetry 批量写唯一入口，BRIEF-PR4-01 §3 service 行）。
  *
- * <p>写路径：绑定快照经绑定域 {@link IBindingService#findActiveByDevice} 按 distinct 设备去重消费
- * （批内同设备多帧只查一次；单点口径复用绑定管理域查询，禁旁路快照查询）→ 冗余 patient_id/visit_id
+ * <p>写路径：绑定快照经绑定域 {@link IBindingService#listActiveByDevices} 单次批量 in 查询
+ * （批内 distinct 设备集合入参，每批恰好一次绑定查询，拒循环内单查——宪法 A.4.3-14；只取 BOUND，
+ * uk_iot_binding_device_bound 保证每设备至多一条活跃绑定）→ 冗余 patient_id/visit_id
  * （写入时快照，无绑定落 NULL——遥测仍入库仅无患者归属，14-iot §3.3 "消毒/未绑定场景设备数据
  * 标'未关联'仍入库"）→ mapper 多值 INSERT ON CONFLICT DO NOTHING（唯一约束冲突忽略 = 明细层幂等，
  * 返回实际插入行数）。方法级独立事务（宪法 A.4.2-7）。
@@ -86,15 +87,16 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
         if (batch.isEmpty()) {
             return 0;
         }
-        // 绑定快照按 distinct 设备去重消费绑定域查询：批内同设备多帧仅一次查询（禁逐行查询），
-        // 只取 BOUND 生效绑定，patient/visit/ward 供快照冗余与摘要推送分组
+        // 绑定快照单次批量查询（每批恰好一次，宪法 A.4.3-14）：distinct 设备集合入参，只取 BOUND
+        // 生效绑定，patient/visit/ward 供快照冗余与摘要推送分组
         List<String> deviceIds = batch.stream()
                 .map(StandardTelemetryMessage::deviceId)
                 .distinct()
                 .toList();
         Map<String, BindingVO> boundByDeviceId = new HashMap<>(deviceIds.size());
-        for (String deviceId : deviceIds) {
-            bindingService.findActiveByDevice(deviceId).ifPresent(vo -> boundByDeviceId.put(deviceId, vo));
+        for (BindingVO binding : bindingService.listActiveByDevices(deviceIds)) {
+            // 快照映射组装（纯内存）：uk_iot_binding_device_bound 保证每设备至多一条活跃绑定
+            boundByDeviceId.put(binding.deviceId(), binding);
         }
 
         // 全量组装实体（W-7：非数值行不再丢弃，raw_value 承载原文 + quality 强制 BAD 标注）

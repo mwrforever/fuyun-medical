@@ -16,10 +16,11 @@ public interface ITelemetryIngestService {
     /**
      * 批量落库一攒批遥测消息。
      *
-     * <p>执行流程：经绑定域服务按 distinct 设备去重查询 BOUND 生效绑定（批内同设备多帧只查一次）
-     * → 冗余 patient_id/visit_id（无绑定落 NULL）→ mapper 多值 INSERT ON CONFLICT DO NOTHING。
-     * 全量入库不再丢弃非数值行（W-7，D-9 裁决）：非数值行 raw_value 承载原文（标量原文/对象数组
-     * 紧凑 JSON）、value 落 NULL、quality 强制 BAD（非数值定型标注，不阻断入库），javadoc 详见实现类。
+     * <p>执行流程：经绑定域服务对批内 distinct 设备集合做单次批量 in 查询 BOUND 生效绑定
+     * （每批恰好一次绑定查询，拒循环内单查——宪法 A.4.3-14）→ 冗余 patient_id/visit_id
+     * （无绑定落 NULL）→ mapper 多值 INSERT ON CONFLICT DO NOTHING。全量入库不再丢弃非数值行
+     * （W-7，D-9 裁决）：非数值行 raw_value 承载原文（标量原文/对象数组紧凑 JSON）、value 落 NULL、
+     * quality 强制 BAD（非数值定型标注，不阻断入库），javadoc 详见实现类。
      *
      * @param batch 标准遥测消息批次，非空；来源：攒批器（解析器产物，quality/source 已校验值域）；
      *              允许空列表（直接返回 0 不触库）
