@@ -284,6 +284,10 @@
                        状态机属核心业务状态机、计费停费联动属资金关联路径，2026-09-25 主控裁决；
                        CHANGELOG 2026-09-25 条目先记再改） -->
                   <include>com.fuyun.inpatient.service.impl</include>
+                  <!-- ward 病房域核心包（P2 PR-2 起随首个 impl 实装生效；呼叫对讲状态机与冷链
+                       合规台账属核心业务状态机路径，撰写期实测 iot.service.impl 已在名单无需增行；
+                       CHANGELOG 2026-09-26 条目先记再改） -->
+                  <include>com.fuyun.ward.service.impl</include>
                 </includes>
                 <limits>
                   <limit>

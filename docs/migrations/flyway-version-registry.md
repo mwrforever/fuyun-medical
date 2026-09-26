@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V404–V413/V809/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘]）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -36,6 +36,16 @@
 | V401 | V401__create_iot_consume_error_log.sql | iot / fuyun-iot | IoT 消费错误日志表 |
 | V402 | V402__create_iot_telemetry_hypertable.sql | iot / fuyun-iot | 遥测超表（TimescaleDB hypertable） |
 | V403 | V403__seed_iot_event_registry.sql | iot / fuyun-iot | IoT 域事件登记种子 |
+| V404 | V404__seed_iot_cf7_event_registry.sql | iot / fuyun-iot | CF-7 事件登记种子 id 74–81 八行（P2 PR-2 Task 2 落盘） |
+| V405 | V405__add_telemetry_raw_value.sql | iot / fuyun-iot | iot_telemetry 增 raw_value 非数值遥测文本承载列（W-7，P2 PR-2 Task 3 落盘） |
+| V406 | V406__alter_visit_id_to_cf3.sql | iot / fuyun-iot | iot_binding/iot_telemetry visit_id 类型改造 CF-3 + 演示夹具行处置（W-10，P2 PR-2 Task 3 落盘） |
+| V407 | V407__create_iot_product_metric_dict.sql | iot / fuyun-iot | iot_product/iot_product_command/iot_metric_dict/iot_metric_mapping 四表（产品与物模型管理，P2 PR-2 Task 4 落盘） |
+| V408 | V408__create_iot_alarm.sql | iot / fuyun-iot | alarm_rule/iot_alarm 两表（告警引擎，P2 PR-2 Task 7 落盘） |
+| V409 | V409__create_iot_command_log.sql | iot / fuyun-iot | iot_command_log 命令下发日志表（P2 PR-2 Task 8 落盘） |
+| V410 | V410__create_iot_linkage.sql | iot / fuyun-iot | linkage_rule/iot_linkage_log 两表含预置模板种子（联动规则，P2 PR-2 Task 9 落盘） |
+| V411 | V411__create_iot_continuous_aggregates.sql | iot / fuyun-iot | cagg_1min/cagg_1h 连续聚合（时序查询降采样，P2 PR-2 Task 10 落盘） |
+| V412 | V412__create_iot_quality_stat.sql | iot / fuyun-iot | iot_data_quality_stat/iot_consumer_stat 两表（数据质量监控，P2 PR-2 Task 10 落盘） |
+| V413 | V413__create_iot_gateway.sql | iot / fuyun-iot | iot_gateway 边缘网关表（P2 PR-2 Task 11 落盘） |
 | V500 | V500__create_event_publication.sql | integration / fuyun-integration | 事件发布表（Spring Modulith 出站） |
 | V501 | V501__create_shedlock.sql | integration / fuyun-integration | ShedLock 分布式任务锁表 |
 | V502 | V502__create_mdm_subscription.sql | integration / fuyun-integration | MDM 订阅表 |
@@ -64,6 +74,7 @@
 | V806 | V806__create_nursing_assessment.sql | nursing / fuyun-nursing | 护理评估单 |
 | V807 | V807__create_shift_handover.sql | nursing / fuyun-nursing | 交接班 |
 | V808 | V808__add_vital_sign_patient_time_index.sql | nursing / fuyun-nursing | 体征表患者维度前导索引（PERF-02：(patient_id, measured_at)，患者维度查询顺序扫描→索引范围扫描；nursing 段续号——全局最大 V807 的下一号，满足乱序守卫） |
+| V809 | V809__add_vital_sign_client_msg_id.sql | nursing / fuyun-nursing | vital_sign_record 增 client_msg_id 列 + 稀疏部分唯一索引（D-22 PDA 弱网补传客户端幂等键，P2 PR-2 Task 13 落盘） |
 | V900 | V900__add_patient_name_trgm_gin_index.sql | patient / fuyun-patient | 患者姓名 trigram GIN 索引（PERF-03：pg_trgm 扩展幂等启用 + gin (name gin_trgm_ops)，姓名 LIKE '%kw%' 前导通配顺序扫描→trigram 索引扫描；V500+ 通用段——V800–V899 为 nursing 专属段不得占用，故取全局最大 V808 之后的首个合法号） |
 | V901 | V901__upgrade_and_seed_inpatient_event_registry.sql | inpatient / fuyun-inpatient | 事件登记：UPDATE id 55 payload_desc 补齐执行回签字段级契约（W-33 闭合）+ inpatient 事件族补登 id 65–72（P2 PR-1 Task 2 落盘；inpatient 段——V900 已被 patient 借用，故自 V901 起） |
 | V902 | V902__create_admission_visit.sql | inpatient / fuyun-inpatient | admission / inpatient_visit 两表（入院登记域，P2 PR-1 Task 3 落盘） |
@@ -77,6 +88,9 @@
 | V1001 | V1001__create_fee_ownership_split.sql | billing / fuyun-billing | fee_ownership_split 费用归属切分表（M13 住院计费联动，P2 PR-1 Task 13 落盘；通用段四位数，理由同 V1000） |
 | V1002 | V1002__create_arrears_approval_seed_event.sql | billing / fuyun-billing | arrears_approval 挂账审批表 + event_registry id 73（billing.arrears.approved）种子（P2 PR-1 Task 13 落盘） |
 | V1003 | V1003__seed_inpatient_charge_item.sql | billing / fuyun-billing | 床位费等住院计价项目种子（P2 PR-1 Task 13 条件落盘：先实测已有种子则免） |
+| V1100 | V1100__create_ward_call.sql | ward / fuyun-ward | ward_call/ward_call_routing_rule 两表（呼叫对讲状态机，P2 PR-2 Task 12 落盘；ward 段首批——全新 schema 享号段初始化豁免） |
+| V1101 | V1101__create_cold_chain.sql | ward / fuyun-ward | cold_chain_archive/cold_chain_record 两表（冷链合规台账，P2 PR-2 Task 12 落盘） |
+| V1102 | V1102__seed_ward_cold_chain_event.sql | ward / fuyun-ward | ward 域事件登记种子 id 82（ward.cold-chain.alert-archived，P2 PR-2 Task 12 落盘） |
 
 ## 冻结段速查（禁落新文件）
 

@@ -2,6 +2,26 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-26 · P2 PR-2 前置：ward 号段登记（V1100 段）+ 事件 id 74–82 排定 + 表外依赖申报 + JaCoCo 扩名单
+
+- ① ward 固定百位段 **V1100–V1199** 登记（`scripts/check-migration-governance.py` `_SEGMENTS` 增行
+  + `docs/migrations/flyway-version-registry.md` 台账同步）：首批 V1100–V1102（呼叫域两表/冷链域两表/
+  事件种子 id 82，随 PR-2 Task 12 落盘）；基线全局最大 V1003，V1100 > V1003 乱序守卫天然通过
+  （ward 全新 schema 另享号段初始化豁免，双保险）。
+- ② **事件 id 74–82 排定**（全局递增，先例 V901 id 65–72/V1002 id 73，撰写期实测 event_registry
+  最大 id=73）：74–81 iot 八事件（alarm.triggered / alarm.escalated / alarm.closed /
+  binding.changed / telemetry.anomaly / command.completed / linkage.executed / call.triggered）
+  落 iot V404；82 ward.cold-chain.alert-archived（producer=ward）落 ward V1102；
+  MessagingGovernanceIT 总行断言两批落改——Task 2 改 73→81（V404 +8），Task 12 改 81→82（V1102 +1）。
+- ③ **表外依赖申报**：后端 `com.huaweicloud.sdk:huaweicloud-sdk-iotda` + `huaweicloud-sdk-core`
+  （华为云 IoTDA 管理 SDK，Registry 双实现之 HuaweiIotdaRegistry；Boot BOM 外依赖，版本执行期实取
+  maven central 锁定 **3.1.218**（2026-09-26 复核 metadata，lastUpdated 2026-09-24），仅 fuyun-iot
+  pom 显式声明，父 POM dependencyManagement 不动；PR-2 结束前补 docs/language 定稿表）；
+  前端 bigscreen `echarts`（IoT 运营大屏图表首引，pnpm 锁定，随 PR-2 前端任务引入）。
+- ④ **JaCoCo 规则二纳入 `com.fuyun.ward.service.impl`**（父 POM PACKAGE LINE=1.00）：呼叫状态机/
+  冷链合规台账属「核心业务状态机」路径；撰写期实测 `com.fuyun.iot.service.impl` 已在名单（父 POM
+  :271）无需增行，仅新增 ward 行；包不存在时规则零包平凡通过，首个 impl 落码即生效。
+
 ## 2026-09-26 · 宪法修订：web C.7 谋建琢三段律按体系模板内置条款补强
 
 - 范围：仅 `web/AGENTS.md` §C.7 一节（标题层级 `##`→`###` 归位，与 C.1–C.6 一致；正文按 constitution-generator `template.md` A.8 原文直写），其余章节零改动。
