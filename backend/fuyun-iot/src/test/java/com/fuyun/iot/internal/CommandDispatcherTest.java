@@ -230,6 +230,23 @@ class CommandDispatcherTest {
         verify(commandLogMapper, never()).insert(any(IotCommandLogEntity.class));
     }
 
+    @Test
+    @DisplayName("在线预检未知态拒绝：签发时 ONLINE 但 120s 凭证窗口内快照失效（缺失/未知）拒下发（IOT-1014），不落行不外呼")
+    void dispatchRejectsUnknownSnapshotStateAfterChallengeWindow() {
+        String challengeId = signedChallenge();
+        when(valueOperations.getAndDelete("fy:iot:cmd:challenge:" + challengeId))
+                .thenReturn(signedPayload);
+        // 签发期 ONLINE 前提在凭证窗口内失效：TTL 过期/损坏/值域外快照在读取侧统一降级为 null
+        when(valueOperations.get(SNAPSHOT_KEY)).thenReturn(null);
+
+        assertThatThrownBy(() -> dispatch(challengeId))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(IotErrorCode.COMMAND_NOT_ALLOWED));
+        // 未知态拒绝必须发生在落行与注册中心外呼之前（签发侧仅 ONLINE 的唯一下发侧防线）
+        verify(commandLogMapper, never()).insert(any(IotCommandLogEntity.class));
+        verify(registry, never()).sendCommand(any(), any(), any());
+    }
+
     // ---------------------------------------------------------------- 步骤④⑤：同步下发与终态回推
 
     @Test
