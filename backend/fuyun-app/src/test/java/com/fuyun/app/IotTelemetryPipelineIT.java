@@ -590,7 +590,9 @@ class IotTelemetryPipelineIT {
     /**
      * 步骤⑨：IoTDA 推送帧展开全链（TASK.md L-3 冻结映射端到端验证）——真实取证报文
      * （resource=device.property）经 fake broker 投递，解析器展开为 2 条 CF-7 标准遥测消息
-     * （heartRate/spo2），断言 iot_telemetry 落 2 行且 value 数值定型、quality=GOOD、source=IOTDA。
+     * （heartRate/spo2），断言 iot_telemetry 落 2 行且 value 数值定型、quality=SUSPECT、
+     * source=IOTDA（Task 6 时间合理性步：取证报文 event_time_ms 为固定历史时点，偏差远超
+     * 默认阈值 300s → SUSPECT 标注<b>不丢弃</b>——行数断言本身即"不丢弃"语义的守卫）。
      * 该设备无绑定档案：患者/就诊列落 NULL 仍入库（"未关联仍入库"口径，14-iot §3.3）。
      */
     @Test
@@ -611,7 +613,9 @@ class IotTelemetryPipelineIT {
                 .extracting(IotdaRow::value)
                 .containsExactly(new BigDecimal("78"), new BigDecimal("100"));
         assertThat(rows).allSatisfy(row -> {
-            assertThat(row.quality()).as("数值属性质量口径 GOOD").isEqualTo("GOOD");
+            assertThat(row.quality())
+                    .as("取证时点偏差超阈值 → SUSPECT 标注不丢弃（FU-M14-05 时间合理性，Task 6 断言现代化：原口径 GOOD）")
+                    .isEqualTo("SUSPECT");
             assertThat(row.source()).as("IoTDA 推送帧来源标注 IOTDA").isEqualTo("IOTDA");
         });
     }

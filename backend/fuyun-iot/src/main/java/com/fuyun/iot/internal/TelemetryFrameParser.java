@@ -35,6 +35,13 @@ import java.util.Map;
  * iot_consume_error_log 后确认抛弃）。遥测帧 value 非数值时 quality 强制 BAD 并保留原文（标注不
  * 阻断口径）；occurredAt/event_time_ms 缺失或不可解析按解析失败处置。
  *
+ * <p>metric_code 原生属性名直通契约（P2 PR-2 Task 6 / FU-M14-05 五步校验）：两遥测形态的
+ * metricCode 均以<b>原生物模型属性名</b>承载（CF-7 为帧内 metricCode 字段原值、IoTDA 为 properties
+ * 键名），解析器不做任何术语归一——物模型属性 → MDC 编码的映射由下游 ingest 五步校验之术语映射步
+ * 完成（TelemetryIngestServiceImpl）；映射缺失时按 RAW_PASSTHROUGH 原样入库（metric_code=原生属性
+ * 名不静默丢弃，Spec 红线），解析产物形态对此无感知（直通即"不加工"的自然结果）。设备告警帧/
+ * 命令帧形态归后续任务扩展，本类既有判别零改动。
+ *
  * <p>static 纯函数式、无状态（backend 宪法 A.1-9 服务无状态多实例前提）；ObjectMapper 线程安全
  * 可静态复用。归 internal/ 包：容器驱动链路的模块内组件，禁止外部引用（宪法 B.1）。
  */
@@ -152,7 +159,8 @@ public final class TelemetryFrameParser {
     }
 
     /**
-     * 解析遥测帧为 CF-7 标准消息（七字段映射，缺省字段按契约默认值补齐）。
+     * 解析遥测帧为 CF-7 标准消息（七字段映射，缺省字段按契约默认值补齐）。metricCode 取帧内
+     * 原值直通（原生属性名承载契约，术语归一在 ingest 五步校验，见类 javadoc）。
      *
      * @param root 帧根节点（已判别为遥测形态），非空
      * @return 标准遥测消息，非空
@@ -212,6 +220,7 @@ public final class TelemetryFrameParser {
 
     /**
      * 展开单个 service 的 properties 属性表为标准遥测消息并追加至批列表（顺序 = 属性键声明序）。
+     * metricCode = 属性键名原值直通（原生属性名承载契约，术语归一在 ingest 五步校验）。
      *
      * @param deviceId   设备号（notify_data.header.device_id，前置校验已通过），非空
      * @param occurredAt 发生时刻（顶层 event_time_ms 解析产物），非空

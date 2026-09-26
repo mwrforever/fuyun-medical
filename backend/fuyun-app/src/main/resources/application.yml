@@ -170,3 +170,11 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       project-id: ${IOTDA_ADMIN_PROJECT_ID:}      # 华为云项目 ID（BasicCredentials 三要素之一）
       access-key: ${IOTDA_ADMIN_ACCESS_KEY:}      # AK（敏感红线：仅 env 注入，任何 profile 禁明文默认值）
       access-secret: ${IOTDA_ADMIN_ACCESS_SECRET:} # SK（同上；IotdaAdminProperties.toString 恒打码）
+    telemetry:                    # 遥测五步校验（P2 PR-2 Task 6 / FU-M14-05 管道深化；TelemetryIngestServiceImpl 消费）
+      # 时间合理性阈值：occurred_at 与服务器时刻偏差超过该值标 SUSPECT 不丢弃（标注不丢弃口径）
+      clock-skew-threshold: ${FUYUN_IOT_TELEMETRY_CLOCK_SKEW_THRESHOLD:300s}
+      # 波形白名单病区清单：逗号分隔病区 ID（如 1001,1002）；空串 env 绑定为空清单 = 全部拒绝
+      # （安全默认：未显式授权病区不收波形，防高体量波形数据灌库）
+      waveform-whitelist-ward-ids: ${FUYUN_IOT_TELEMETRY_WAVEFORM_WHITELIST_WARD_IDS:}
+      # 波形日配额（条/天，预留参数）：强制执行随 P1 波形查询通道一并交付（见 TelemetryValidationProperties javadoc）
+      waveform-daily-quota: ${FUYUN_IOT_TELEMETRY_WAVEFORM_DAILY_QUOTA:1000000}

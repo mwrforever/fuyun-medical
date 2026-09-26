@@ -12,6 +12,7 @@ import com.fuyun.iot.controller.MetricDictController;
 import com.fuyun.iot.controller.ProductController;
 import com.fuyun.iot.internal.IotFallbackAuthService;
 import com.fuyun.iot.properties.IotProperties;
+import com.fuyun.iot.properties.TelemetryValidationProperties;
 import com.fuyun.iot.service.impl.BindingServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
@@ -28,7 +29,8 @@ import org.springframework.context.annotation.Import;
  * M14 医疗设备物联网模块装配：将 fuyun-iot 配置类引入 Boot 上下文的集中入口（backend 宪法 B.1
  * 装配归 app，与 MessagingConfig/SystemConfig 同模式，不放宽组件扫描）。
  *
- * <p>配置属性（fuyun.iot.*，含 AMQP 消费链与 HTTP 兜底通道参数）经
+ * <p>配置属性（fuyun.iot.*，含 AMQP 消费链与 HTTP 兜底通道参数，及 P2 PR-2 Task 6 遥测五步
+ * 校验参数 fuyun.iot.telemetry.*——TelemetryIngestServiceImpl 消费）经
  * {@link EnableConfigurationProperties} 注册；遥测消费链三服务（入库/错误留痕/设备状态）与
  * B4.3 任务 B 四件（STOMP 推送服务/兜底鉴权/兜底端点/WS 端点配置）经 @Import 注册为 Bean
  * （com.fuyun.iot 不在扫描范围，宪法 B.1；mapper 由既有 @MapperScan 按注解自动覆盖）；
@@ -46,7 +48,7 @@ import org.springframework.context.annotation.Import;
  * /ws/iot STOMP 端点与 HTTP 兜底端点无条件装配（B4.3 任务 B）。
  */
 @Configuration
-@EnableConfigurationProperties(IotProperties.class)
+@EnableConfigurationProperties({IotProperties.class, TelemetryValidationProperties.class})
 @Import({
     TelemetryIngestServiceImpl.class,
     ConsumeErrorLogServiceImpl.class,
