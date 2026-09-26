@@ -24,25 +24,31 @@ import java.util.Map;
  * （用户 2026-09-13 批准选项 B 代码映射），真实报文在解析器内展开为 N 条 CF-7 标准遥测消息，
  * 下游攒批/落库/推送管道零改动。
  *
- * <p>形态判别（四形态，按序优先）：①顶层 {@code resource} 精确等于 {@code "device.property"} 判为
+ * <p>形态判别（五形态，按序优先）：①顶层 {@code resource} 精确等于 {@code "device.property"} 判为
  * IoTDA 推送形态——deviceId ← {@code notify_data.header.device_id}（必填非空白），occurredAt ← 顶层
  * {@code event_time_ms}（ISO-8601 解析为 UTC Instant），{@code notify_data.body.services[]} 每元素的
  * {@code properties} 键值各展开一条标准消息（metricCode=属性名，value 字符串承载，unit 恒 null，
  * quality 按数值可定型与否 GOOD/BAD 标注不阻断，source=IOTDA）；①'顶层 {@code resource} 精确等于
  * {@code "device.alarm"} 判为 IoTDA 设备告警形态（→ {@link DeviceAlarmFrame}，告警引擎透传规则源
- * ——P2 PR-2 Task 7；仓库无真实样例，按 IoTDA 文档形态实现并注记）；②含
- * deviceId+metricCode+value+occurredAt 判为 CF-7 遥测帧（→ {@link StandardTelemetryMessage}）；
- * ③含 deviceId+status+occurredAt 判为状态帧（→ {@link DeviceStatusEvent}）。非 IoTDA 形态回退
- * ②③既有判别（CF-7 帧不含 resource 字段，判别前移零冲突）；均不匹配抛 {@link FrameParseException}
- * （毒丸，交调用方落 iot_consume_error_log 后确认抛弃）。遥测帧 value 非数值时 quality 强制 BAD
- * 并保留原文（标注不阻断口径）；occurredAt/event_time_ms 缺失或不可解析按解析失败处置。
+ * ——P2 PR-2 Task 7；仓库无真实样例，按 IoTDA 文档形态实现并注记）；①''顶层 {@code resource}
+ * 精确等于 {@code "device.command.status"} 判为 IoTDA 命令状态形态（→ {@link CommandResultFrame}，
+ * 命令结果回推消费源——P2 PR-2 Task 8；同设备告警形态，仓库无真实样例按 IoTDA 文档形态实现并
+ * 注记）；②含 deviceId+metricCode+value+occurredAt 判为 CF-7 遥测帧（→
+ * {@link StandardTelemetryMessage}）；③含 deviceId+status+occurredAt 判为状态帧（→
+ * {@link DeviceStatusEvent}）。非 IoTDA 形态回退②③既有判别（CF-7 帧不含 resource 字段，判别前移
+ * 零冲突）；均不匹配抛 {@link FrameParseException}（毒丸，交调用方落 iot_consume_error_log 后确认
+ * 抛弃）。遥测帧 value 非数值时 quality 强制 BAD 并保留原文（标注不阻断口径）；occurredAt/
+ * event_time_ms 缺失或不可解析按解析失败处置。
  *
  * <p>metric_code 原生属性名直通契约（P2 PR-2 Task 6 / FU-M14-05 五步校验）：两遥测形态的
  * metricCode 均以<b>原生物模型属性名</b>承载（CF-7 为帧内 metricCode 字段原值、IoTDA 为 properties
  * 键名），解析器不做任何术语归一——物模型属性 → MDC 编码的映射由下游 ingest 五步校验之术语映射步
  * 完成（TelemetryIngestServiceImpl）；映射缺失时按 RAW_PASSTHROUGH 原样入库（metric_code=原生属性
  * 名不静默丢弃，Spec 红线），解析产物形态对此无感知（直通即"不加工"的自然结果）。设备告警帧
- * （DeviceAlarmFrame，Task 7 透传规则源）已实装，命令帧形态归后续任务扩展，本类既有判别零改动。
+ * （DeviceAlarmFrame，Task 7 透传规则源）已实装；P2 PR-2 Task 8 追记：命令状态形态
+ * （CommandResultFrame，第五形态）同已实装——设备命令响应经 IoTDA 规则引擎「异步命令状态」
+ * 数据源转发，命令域以其驱动 ASYNC 命令行终态迁移（DELIVERED 中间态）与 iot.command.completed
+ * 事件发布；body.status 值域外的帧按毒丸拒绝（命令状态机不接收不可归类的状态值）。
  *
  * <p>static 纯函数式、无状态（backend 宪法 A.1-9 服务无状态多实例前提）；ObjectMapper 线程安全
  * 可静态复用。归 internal/ 包：容器驱动链路的模块内组件，禁止外部引用（宪法 B.1）。
@@ -59,7 +65,7 @@ public final class TelemetryFrameParser {
 
     /**
      * 解析帧的形态结果（sealed 受限子类型，宪法 A.1-3 编译器穷尽检查——消费侧 instanceof 链
-     * 需处理遥测/批量遥测/状态/设备告警四分支，新增形态编译期强制补齐）。
+     * 需处理遥测/批量遥测/状态/设备告警/命令状态五分支，新增形态编译期强制补齐）。
      */
     public sealed interface ParsedFrame {
 
@@ -100,13 +106,29 @@ public final class TelemetryFrameParser {
         record DeviceAlarmFrame(
                 String deviceId, String metricCode, String severity, String description, Instant occurredAt)
                 implements ParsedFrame {}
+
+        /**
+         * IoTDA 命令状态帧解析产物（第五形态，P2 PR-2 Task 8 结果回推消费源）。
+         *
+         * @param deviceId       设备号（notify_data.header.device_id），非空
+         * @param commandId      平台命令标识（body.command_id，结果归属对账锚），非空
+         * @param registryStatus 注册中心命令状态原值（body.status，值域
+         *                       {@link com.fuyun.iot.constants.IotMessagingConstants#IOTDA_COMMAND_STATUSES}），
+         *                       非空；命令域状态映射（DELIVERED 中间态/终态归并）由消费侧完成
+         * @param result         执行结果摘要（body.result，失败原因/回执摘要承载），可空
+         * @param occurredAt     命令状态发生时刻（顶层 event_time_ms），非空
+         */
+        record CommandResultFrame(
+                String deviceId, String commandId, String registryStatus, String result, Instant occurredAt)
+                implements ParsedFrame {}
     }
 
     /**
-     * 解析一帧原始报文为 IoTDA 推送帧（展开）、设备告警帧、遥测帧或状态帧。
+     * 解析一帧原始报文为 IoTDA 推送帧（展开）、设备告警帧、命令状态帧、遥测帧或状态帧。
      *
      * @param raw 帧原始字节（消费侧 receive 原文），非空；UTF-8 解码
-     * @return 解析产物：IoTDA 推送展开帧、设备告警帧、遥测帧或状态帧（sealed 四分支），非空
+     * @return 解析产物：IoTDA 推送展开帧、设备告警帧、命令状态帧、遥测帧或状态帧（sealed
+     *         五分支），非空
      * @throws FrameParseException 非 JSON 报文、形态判别失败（缺必填字段）、字段值域越界
      *                             （quality/source/status 非法值）或时间字段不可解析；
      *                             调用方应落错误日志后确认抛弃（毒丸隔离），禁无限重投
@@ -123,13 +145,16 @@ public final class TelemetryFrameParser {
         if (!root.isObject()) {
             throw new FrameParseException("帧顶层必须是 JSON 对象");
         }
-        // IoTDA 推送形态优先判别（顶层 resource 精确匹配，L-3 冻结）；设备告警形态次之（Task 7
-        // 透传规则源）；均非该形态回退 CF-7 既有判别
+        // IoTDA 推送形态优先判别（顶层 resource 精确匹配，L-3 冻结）；设备告警形态（Task 7）与
+        // 命令状态形态（Task 8）次之；均非该形态回退 CF-7 既有判别
         if (isIotdaPushShape(root)) {
             return parseIotdaDeviceProperty(root);
         }
         if (isIotdaDeviceAlarmShape(root)) {
             return parseIotdaDeviceAlarm(root);
+        }
+        if (isIotdaCommandStatusShape(root)) {
+            return parseIotdaCommandStatus(root);
         }
         if (isTelemetryShape(root)) {
             return new ParsedFrame.TelemetryFrame(parseTelemetry(root));
@@ -207,6 +232,71 @@ public final class TelemetryFrameParser {
                 textOrNull(body, IotMessagingConstants.IOTDA_FIELD_ALARM_SEVERITY),
                 textOrNull(body, IotMessagingConstants.IOTDA_FIELD_ALARM_DESCRIPTION),
                 occurredAt);
+    }
+
+    /**
+     * IoTDA 命令状态形态判别：顶层 resource 字段精确等于 "device.command.status"（区分大小写；
+     * P2 PR-2 Task 8 第五形态——仓库无真实样例，按 IoTDA 官方文档「异步命令状态」转发报文结构
+     * 实现，真实联调如发现字段漂移以样例实测修订）。
+     *
+     * @param root 帧根节点，非空且为对象
+     * @return true=按 IoTDA 命令状态帧解析
+     */
+    private static boolean isIotdaCommandStatusShape(JsonNode root) {
+        JsonNode resource = root.path(IotMessagingConstants.FRAME_FIELD_RESOURCE);
+        return !resource.isMissingNode()
+                && IotMessagingConstants.IOTDA_RESOURCE_DEVICE_COMMAND_STATUS.equals(resource.asText());
+    }
+
+    /**
+     * 解析 IoTDA 命令状态帧（文档形态映射）：deviceId ← notify_data.header.device_id（必填非
+     * 空白）；occurredAt ← 顶层 event_time_ms；commandId ← body.command_id（必填非空白）；
+     * registryStatus ← body.status（必填且 ∈ IOTDA_COMMAND_STATUSES，值域外毒丸）；result ←
+     * body.result 可选透传（失败原因/回执摘要承载）。
+     *
+     * @param root 帧根节点（已判别为命令状态形态），非空
+     * @return 命令状态帧解析产物，非空
+     * @throws FrameParseException 结构契约不满足（deviceId/command_id/状态缺失或空白、body 非对象、
+     *                             状态值域越界、时间缺失或不可解析）
+     */
+    private static ParsedFrame.CommandResultFrame parseIotdaCommandStatus(JsonNode root) {
+        JsonNode header =
+                root.path(IotMessagingConstants.IOTDA_FIELD_NOTIFY_DATA).path(IotMessagingConstants.IOTDA_FIELD_HEADER);
+        if (!hasNonBlankScalar(header, IotMessagingConstants.IOTDA_FIELD_DEVICE_ID)) {
+            throw new FrameParseException("IoTDA 命令状态帧 device_id 缺失或空白（notify_data.header.device_id 必填）");
+        }
+        String deviceId =
+                header.path(IotMessagingConstants.IOTDA_FIELD_DEVICE_ID).asText();
+        Instant occurredAt = parseInstantText(
+                root.path(IotMessagingConstants.IOTDA_FIELD_EVENT_TIME_MS).asText(),
+                IotMessagingConstants.IOTDA_FIELD_EVENT_TIME_MS);
+        JsonNode body =
+                root.path(IotMessagingConstants.IOTDA_FIELD_NOTIFY_DATA).path(IotMessagingConstants.IOTDA_FIELD_BODY);
+        if (!body.isObject()) {
+            throw new FrameParseException("IoTDA 命令状态帧 body 缺失或非对象（notify_data.body 必填）");
+        }
+        String commandId = textOrNull(body, IotMessagingConstants.IOTDA_FIELD_COMMAND_ID);
+        if (commandId == null || commandId.isBlank()) {
+            throw new FrameParseException("IoTDA 命令状态帧 command_id 缺失或空白（结果归属对账锚必填）");
+        }
+        String registryStatus = textOrNull(body, IotMessagingConstants.IOTDA_FIELD_COMMAND_STATUS);
+        // 状态值域校验（∈ IOTDA_COMMAND_STATUSES）：值域外属毒丸（统一收口），不得静默归类 FAILED
+        // ——错误归类将污染命令状态机（终态不可变更红线，误迁即不可逆）
+        if (registryStatus == null
+                || registryStatus.isBlank()
+                || !IotMessagingConstants.IOTDA_COMMAND_STATUSES.contains(registryStatus)) {
+            throw new FrameParseException(
+                    "IoTDA 命令状态帧 status 值域越界（要求 DELIVERED/SUCCESS/FAILED/TIMEOUT/EXPIRED/REMOVED）");
+        }
+        String result = textOrNull(body, IotMessagingConstants.IOTDA_FIELD_COMMAND_RESULT);
+        // 结果摘要承载：标量 asText 文本；对象/数组以紧凑 JSON 文本承载留证（value 承载同构口径）
+        if (result == null) {
+            JsonNode resultNode = body.path(IotMessagingConstants.IOTDA_FIELD_COMMAND_RESULT);
+            if (!resultNode.isMissingNode() && !resultNode.isNull()) {
+                result = resultNode.toString();
+            }
+        }
+        return new ParsedFrame.CommandResultFrame(deviceId, commandId, registryStatus, result, occurredAt);
     }
 
     /**

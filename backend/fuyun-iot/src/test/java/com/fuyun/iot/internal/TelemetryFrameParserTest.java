@@ -462,4 +462,78 @@ class TelemetryFrameParserTest {
                 .isInstanceOf(FrameParseException.class)
                 .hasMessageContaining("body");
     }
+
+    // ---------------------------------------------------------------- 命令状态帧分支（第五形态，Task 8）
+
+    @Test
+    @DisplayName("resource=device.command.status：判为第五形态并按 IoTDA 文档结构解析（设备/命令/状态/摘要/时刻）")
+    void commandStatusFrameMapsToCommandResultFrame() {
+        byte[] raw = """
+                {"resource":"device.command.status","event":"command.status.update","event_time_ms":"2026-09-26T01:02:03.456Z",
+                 "notify_data":{"header":{"device_id":"dev-cmd-01","product_id":"prod-01"},
+                 "body":{"command_id":"sim-cmd-2","status":"SUCCESS","result":{"resultCode":0}}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        ParsedFrame frame = TelemetryFrameParser.parse(raw);
+
+        assertThat(frame).isInstanceOf(ParsedFrame.CommandResultFrame.class);
+        ParsedFrame.CommandResultFrame commandFrame = (ParsedFrame.CommandResultFrame) frame;
+        assertThat(commandFrame.deviceId()).isEqualTo("dev-cmd-01");
+        assertThat(commandFrame.commandId()).isEqualTo("sim-cmd-2");
+        assertThat(commandFrame.registryStatus()).isEqualTo("SUCCESS");
+        // 对象形态结果摘要以紧凑 JSON 文本承载留证（value 承载同构口径）
+        assertThat(commandFrame.result()).isEqualTo("{\"resultCode\":0}");
+        assertThat(commandFrame.occurredAt()).isEqualTo(Instant.parse("2026-09-26T01:02:03.456Z"));
+    }
+
+    @Test
+    @DisplayName("命令状态帧 result 缺省：摘要为 null（成功终态无失败原因语义）")
+    void commandStatusFrameWithoutResultKeepsNullSummary() {
+        byte[] raw = """
+                {"resource":"device.command.status","event_time_ms":"2026-09-26T01:02:03Z",
+                 "notify_data":{"header":{"device_id":"dev-cmd-01"},
+                 "body":{"command_id":"sim-cmd-2","status":"DELIVERED"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        ParsedFrame.CommandResultFrame commandFrame = (ParsedFrame.CommandResultFrame) TelemetryFrameParser.parse(raw);
+
+        assertThat(commandFrame.registryStatus()).isEqualTo("DELIVERED");
+        assertThat(commandFrame.result()).isNull();
+    }
+
+    @Test
+    @DisplayName("命令状态帧 status 值域越界：毒丸拒绝（命令状态机不接收不可归类状态）")
+    void commandStatusFrameWithUnknownStatusIsPoison() {
+        byte[] raw = """
+                {"resource":"device.command.status","event_time_ms":"2026-09-26T01:02:03Z",
+                 "notify_data":{"header":{"device_id":"dev-cmd-01"},
+                 "body":{"command_id":"sim-cmd-2","status":"WHAT_IS_THIS"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> TelemetryFrameParser.parse(raw))
+                .isInstanceOf(FrameParseException.class)
+                .hasMessageContaining("status 值域越界");
+    }
+
+    @Test
+    @DisplayName("命令状态帧 command_id 缺失或 device_id 空白：毒丸拒绝（结构契约必填）")
+    void commandStatusFrameStructuralViolationsArePoison() {
+        byte[] missingCommandId = """
+                {"resource":"device.command.status","event_time_ms":"2026-09-26T01:02:03Z",
+                 "notify_data":{"header":{"device_id":"dev-cmd-01"},
+                 "body":{"status":"SUCCESS"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+        byte[] missingDevice = """
+                {"resource":"device.command.status","event_time_ms":"2026-09-26T01:02:03Z",
+                 "notify_data":{"header":{},
+                 "body":{"command_id":"sim-cmd-2","status":"SUCCESS"}}}
+                """.getBytes(StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> TelemetryFrameParser.parse(missingCommandId))
+                .isInstanceOf(FrameParseException.class)
+                .hasMessageContaining("command_id");
+        assertThatThrownBy(() -> TelemetryFrameParser.parse(missingDevice))
+                .isInstanceOf(FrameParseException.class)
+                .hasMessageContaining("device_id");
+    }
 }

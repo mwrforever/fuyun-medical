@@ -1,5 +1,7 @@
 package com.fuyun.iot.constants;
 
+import java.util.Set;
+
 /**
  * IoT 消息与遥测管道常量：事件/队列/交换机命名、遥测与状态帧判别键、IoTDA AMQP 推送报文字段键、
  * 错误留痕截断上限的集中定义（M14 词表，禁魔法值散落——backend 宪法 A.2-6）。
@@ -129,6 +131,32 @@ public final class IotMessagingConstants {
 
     /** IoTDA 推送报文字段：服务属性表（键=属性名即 metricCode，值=采集值；必须为非空对象） */
     public static final String IOTDA_FIELD_PROPERTIES = "properties";
+
+    /**
+     * IoTDA 推送形态 resource 精确匹配值：设备命令状态（第五形态判别，P2 PR-2 Task 8 结果回推
+     * 消费源）。<b>样例缺位申报</b>：仓库与模拟器无真实命令结果帧样例，本形态按 IoTDA 官方文档
+     * 报文结构实现（resource=device.command.status + notify_data.header/body；设备侧原始响应经
+     * {@code $oc/devices/{device_id}/sys/commands/response/request_id={request_id}} 主题上行，
+     * 经规则引擎「异步命令状态」数据源转发为本形态），真实联调如发现字段漂移以样例实测修订。
+     */
+    public static final String IOTDA_RESOURCE_DEVICE_COMMAND_STATUS = "device.command.status";
+
+    /** IoTDA 命令状态报文字段：平台命令标识（body.command_id，结果归属对账锚，非空） */
+    public static final String IOTDA_FIELD_COMMAND_ID = "command_id";
+
+    /** IoTDA 命令状态报文字段：命令状态（body.status，值域见 {@link #IOTDA_COMMAND_STATUSES}，非空） */
+    public static final String IOTDA_FIELD_COMMAND_STATUS = "status";
+
+    /** IoTDA 命令状态报文字段：执行结果摘要（body.result，可空——失败原因/回执摘要承载） */
+    public static final String IOTDA_FIELD_COMMAND_RESULT = "result";
+
+    /**
+     * IoTDA 命令状态值域（body.status 判别集合，样例缺位申报同上）：DELIVERED 已送达/SUCCESS
+     * 成功/FAILED 失败/TIMEOUT 超时/EXPIRED 缓存过期/REMOVED 已撤销；值域外属毒丸（不得静默
+     * 降级——错误归类将污染命令状态机）。
+     */
+    public static final Set<String> IOTDA_COMMAND_STATUSES =
+            Set.of("DELIVERED", "SUCCESS", "FAILED", "TIMEOUT", "EXPIRED", "REMOVED");
 
     /** IoTDA 推送报文字段：服务标识（白名单脱敏保留字段，毒丸留痕溯源用） */
     public static final String IOTDA_FIELD_SERVICE_ID = "service_id";

@@ -8,20 +8,25 @@ import com.fuyun.iot.config.IotWebSocketConfig;
 import com.fuyun.iot.controller.AlarmController;
 import com.fuyun.iot.controller.AlarmRuleController;
 import com.fuyun.iot.controller.BindingController;
+import com.fuyun.iot.controller.CommandController;
 import com.fuyun.iot.controller.DeviceController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
 import com.fuyun.iot.controller.MetricDictController;
 import com.fuyun.iot.controller.ProductController;
+import com.fuyun.iot.internal.CommandDispatcher;
+import com.fuyun.iot.internal.IotDeviceCommandListener;
 import com.fuyun.iot.internal.IotFallbackAuthService;
 import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.internal.alarm.OfflineDetector;
 import com.fuyun.iot.internal.alarm.StormGuard;
 import com.fuyun.iot.properties.AlarmProperties;
+import com.fuyun.iot.properties.CommandProperties;
 import com.fuyun.iot.properties.IotProperties;
 import com.fuyun.iot.properties.TelemetryValidationProperties;
 import com.fuyun.iot.service.impl.AlarmRuleServiceImpl;
 import com.fuyun.iot.service.impl.AlarmServiceImpl;
 import com.fuyun.iot.service.impl.BindingServiceImpl;
+import com.fuyun.iot.service.impl.CommandServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
@@ -55,10 +60,19 @@ import org.springframework.context.annotation.Import;
  * 消费者 + 治理队列声明）经 {@link IotMessagingConfig} 生效（无条件装配，与 AMQP 开关解耦）；
  * /ws/iot STOMP 端点与 HTTP 兜底端点无条件装配（B4.3 任务 B）；P2 PR-2 Task 7 追加告警域七件
  * （告警引擎/风暴抑制器/离线探测器、规则与告警双服务、规则与告警双端点）与告警引擎配置属性
- * （fuyun.iot.alarm.*）——引擎/服务依赖绑定快照、发号器与推送服务等既有装配链零新增外部依赖。
+ * （fuyun.iot.alarm.*）——引擎/服务依赖绑定快照、发号器与推送服务等既有装配链零新增外部依赖；
+ * P2 PR-2 Task 8 追加命令域四件（命令下发编排器——五步下发实装单点/命令服务/命令四端点/命令
+ * 结果帧监听器——AMQP 命令状态帧回推终态）与命令配置属性（fuyun.iot.command.*：同步等待超时
+ * 与治疗级豁免开关）——编排器依赖白名单与发号器等既有装配链，TransactionTemplate 由 Boot 事务
+ * 自动配置供给（终态 CAS 与事件发布同事务承载）。
  */
 @Configuration
-@EnableConfigurationProperties({IotProperties.class, TelemetryValidationProperties.class, AlarmProperties.class})
+@EnableConfigurationProperties({
+    IotProperties.class,
+    TelemetryValidationProperties.class,
+    AlarmProperties.class,
+    CommandProperties.class
+})
 @Import({
     TelemetryIngestServiceImpl.class,
     ConsumeErrorLogServiceImpl.class,
@@ -87,6 +101,12 @@ import org.springframework.context.annotation.Import;
     AlarmRuleServiceImpl.class,
     AlarmServiceImpl.class,
     AlarmRuleController.class,
-    AlarmController.class
+    AlarmController.class,
+    // P2 PR-2 Task 8 命令域四件（FU-M14-09）：下发编排器/命令服务/命令端点/命令结果帧监听器
+    // 与命令配置属性（fuyun.iot.command.*——同步超时与治疗级豁免开关）
+    CommandDispatcher.class,
+    IotDeviceCommandListener.class,
+    CommandServiceImpl.class,
+    CommandController.class
 })
 public class IotConfig {}
