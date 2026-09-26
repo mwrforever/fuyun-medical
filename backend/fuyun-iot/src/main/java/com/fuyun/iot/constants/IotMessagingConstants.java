@@ -5,8 +5,10 @@ package com.fuyun.iot.constants;
  * 错误留痕截断上限的集中定义（M14 词表，禁魔法值散落——backend 宪法 A.2-6）。
  *
  * <p>fy.topic 事件三件套词表与 fuyun-integration MessagingConstants 命名口径一致（q. 前缀队列、
- * iot.device.status-changed 事件，V403 已登记 event_registry）；本模块自持一份常量避免跨模块
- * 常量耦合（B.2-2 只依赖 api 契约，常量词表非 api 契约）。帧判别键为 CF-7 线格式（BRIEF-PR4-01
+ * iot.device.status-changed 事件，V403 已登记 event_registry；CF-7 实装事件族八条随 V1004 登记
+ * id 74–81，与 iot/api/payload 载荷 record 组件名三方一致，契约锚 IotMessagingContractTest）；
+ * 本模块自持一份常量避免跨模块常量耦合（B.2-2 只依赖 api 契约，常量词表非 api 契约）。帧判别键为
+ * CF-7 线格式（BRIEF-PR4-01
  * §1.3 P0 线格式契约）与状态帧 P0 契约形态的字段名；IOTDA_ 前缀常量为 IoTDA AMQP 推送报文
  * （TASK.md L-3 冻结映射）的字段键——解析器以顶层 {@link #FRAME_FIELD_RESOURCE} 精确等于
  * {@link #IOTDA_RESOURCE_DEVICE_PROPERTY} 判别该形态（三形态判别之 IoTDA 推送形态，优先于
@@ -20,8 +22,35 @@ public final class IotMessagingConstants {
     /** 领域事件主交换机：全部业务事件经此路由（Topic 类型，与 M20 治理词表同源） */
     public static final String TOPIC_EXCHANGE = "fy.topic";
 
-    /** P0 唯一发布事件：设备状态变更（V403 已登记 event_registry，P0 占位载荷随 P1 冻结） */
+    /** 消费队列命名前缀（q.&lt;消费者模块&gt;.&lt;事件类型&gt;，与治理构件 declareConsumerQueue 同源推导） */
+    public static final String QUEUE_PREFIX = "q." + MODULE + ".";
+
+    /** 发布事件：设备状态变更（V403 id 8 已登记 event_registry，P0 占位载荷随 P1 冻结；CF-7 扩展事件族见下方 V1004 增量） */
     public static final String EVENT_DEVICE_STATUS = "iot.device.status-changed";
+
+    /** 发布事件：告警触发（V1004 id 74；M05 挂单升级与 M16 播报消费；载荷 AlarmTriggeredPayload） */
+    public static final String EVENT_ALARM_TRIGGERED = "iot.alarm.triggered";
+
+    /** 发布事件：告警升级动作（V1004 id 75；升级为动作非状态；载荷 AlarmEscalatedPayload） */
+    public static final String EVENT_ALARM_ESCALATED = "iot.alarm.escalated";
+
+    /** 发布事件：告警关闭（V1004 id 76；M05/M16 复位与统计；载荷 AlarmClosedPayload） */
+    public static final String EVENT_ALARM_CLOSED = "iot.alarm.closed";
+
+    /** 发布事件：绑定变更（V1004 id 77；绑定五元组变更广播；载荷 BindingChangedPayload） */
+    public static final String EVENT_BINDING_CHANGED = "iot.binding.changed";
+
+    /** 发布事件：遥测断流异常（V1004 id 78；M16 体征质量确认提示；载荷 TelemetryAnomalyPayload） */
+    public static final String EVENT_TELEMETRY_ANOMALY = "iot.telemetry.anomaly";
+
+    /** 发布事件：命令结果回推（V1004 id 79；载荷 CommandCompletedPayload） */
+    public static final String EVENT_COMMAND_COMPLETED = "iot.command.completed";
+
+    /** 发布事件：联动执行（V1004 id 80；载荷 LinkageExecutedPayload） */
+    public static final String EVENT_LINKAGE_EXECUTED = "iot.linkage.executed";
+
+    /** 发布事件：设备呼叫触发（V1004 id 81；M16 呼叫域入口；载荷 CallTriggeredPayload） */
+    public static final String EVENT_CALL_TRIGGERED = "iot.call.triggered";
 
     /** 本模块自事件消费队列：q.&lt;消费者模块&gt;.&lt;事件类型&gt;（治理构件声明用） */
     public static final String QUEUE_DEVICE_STATUS = "q.iot.iot.device.status-changed";
