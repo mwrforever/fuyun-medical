@@ -75,10 +75,14 @@ public class SimulatedRegistry implements IotDeviceRegistry {
     }
 
     @Override
-    public void resetDeviceCredential(String deviceId) {
-        // 换发即覆盖旧 secret（内存丢弃，不返回不落日志；引用形态由调用方维持不变）
-        deviceSecrets.put(deviceId, UUID.randomUUID().toString());
-        log.info("模拟注册中心凭证换发：deviceId={}", deviceId);
+    public DeviceCredential resetDeviceCredential(String deviceId) {
+        // 换发即覆盖：全新 UUID secret 与全新凭证引用（本地 credential_ref 随返回值轮换），
+        // secret 仅随返回值一次性透出，不落日志（14-iot §9 红线）
+        String secret = UUID.randomUUID().toString();
+        String credentialRef = SIM_CREDENTIAL_PREFIX + UUID.randomUUID();
+        deviceSecrets.put(deviceId, secret);
+        log.info("模拟注册中心凭证换发：deviceId={}，credentialRef={}", deviceId, credentialRef);
+        return new DeviceCredential(credentialRef, secret);
     }
 
     @Override

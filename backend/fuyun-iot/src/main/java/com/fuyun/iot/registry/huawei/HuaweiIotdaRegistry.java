@@ -157,15 +157,18 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
     }
 
     @Override
-    public void resetDeviceCredential(String deviceId) {
+    public DeviceCredential resetDeviceCredential(String deviceId) {
         try {
-            // 换发即覆盖：本地生成新 secret 传云端，响应体 secret 不读取不落地（一次性透出红线）
-            ResetDeviceSecret body =
-                    new ResetDeviceSecret().withSecret(UUID.randomUUID().toString());
+            // 换发即覆盖：本地生成新 secret 传云端（IoTDA 重置密钥为入参式换发），secret 仅随
+            // 返回值一次性透出（与 registerDevice 同红线：禁日志禁落库，云端响应体不读取）
+            String secret = UUID.randomUUID().toString();
+            ResetDeviceSecret body = new ResetDeviceSecret().withSecret(secret);
             ResetDeviceSecretRequest request = new ResetDeviceSecretRequest().withDeviceId(deviceId);
             request.setBody(body);
             client().resetDeviceSecret(request);
-            log.info("IoTDA 设备凭证换发成功：deviceId={}", deviceId);
+            String credentialRef = "iotda-" + deviceId;
+            log.info("IoTDA 设备凭证换发成功：deviceId={}，credentialRef={}", deviceId, credentialRef);
+            return new DeviceCredential(credentialRef, secret);
         } catch (Exception e) {
             log.error("IoTDA 设备凭证换发失败：deviceId={}，原因={}", deviceId, e.getMessage(), e);
             throw new RegistryException("IoTDA 设备凭证换发失败：" + e.getMessage(), e);

@@ -49,13 +49,16 @@ public interface IotDeviceRegistry {
     DeviceCredential registerDevice(RegistryDeviceSpec spec);
 
     /**
-     * 换发设备凭证（凭证泄露/周期轮换场景）：注册中心侧换发新 secret，本地无需变更
-     * （credential_ref 引用不变）。
+     * 换发设备凭证（凭证泄露/周期轮换场景）：注册中心侧换发新 secret，返回新凭证载体——
+     * secret 仅在本返回值一次性透出（禁日志禁落库），本地 credential_ref 以返回的引用轮换
+     * （P2 PR-2 Task 5 热更新语义：设备侧重置即生效自行重连，新 secret 经管理台本次响应
+     * 一次性交付）。
      *
      * @param deviceId 注册中心设备标识，非空；来源：iot_device.device_id
+     * @return 换发后设备凭证（credentialRef 引用 + secret 明文一次性面），非空
      * @throws RegistryException 注册中心不可达或设备不存在于注册中心（IOT-1022 语义）
      */
-    void resetDeviceCredential(String deviceId);
+    DeviceCredential resetDeviceCredential(String deviceId);
 
     /**
      * 下发设备命令（同步命令面）：注册中心受理并等待设备回执。

@@ -6,6 +6,7 @@ import com.fuyun.iot.config.IotMessagingConfig;
 import com.fuyun.iot.config.IotRegistryConfig;
 import com.fuyun.iot.config.IotWebSocketConfig;
 import com.fuyun.iot.controller.BindingController;
+import com.fuyun.iot.controller.DeviceController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
 import com.fuyun.iot.controller.MetricDictController;
 import com.fuyun.iot.controller.ProductController;
@@ -13,6 +14,7 @@ import com.fuyun.iot.internal.IotFallbackAuthService;
 import com.fuyun.iot.properties.IotProperties;
 import com.fuyun.iot.service.impl.BindingServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
+import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
 import com.fuyun.iot.service.impl.MetricDictServiceImpl;
 import com.fuyun.iot.service.impl.ProductServiceImpl;
@@ -35,7 +37,8 @@ import org.springframework.context.annotation.Import;
  * 产品与物模型管理域四件（产品服务/MDC 字典服务/产品六端点/字典两端点）与注册中心双实现
  * 装配（{@link IotRegistryConfig}——fuyun.iot.admin.enabled 默认 false 下装配 SimulatedRegistry，
  * CI/单测无云依赖；true 且凭证齐全装配 HuaweiIotdaRegistry，其 IotdaAdminProperties 随该
- * 配置类 @EnableConfigurationProperties 注册，单一注册路径防双注册冲突）；
+ * 配置类 @EnableConfigurationProperties 注册，单一注册路径防双注册冲突）；P2 PR-2 Task 5 追加
+ * 设备管理域两件（设备管理服务——注册流水线/凭证热更新/CAS 停用，设备六端点）；
  * AMQP 消费链（Qpid 连接工厂/攒批器/SmartLifecycle 消费者/双指标绑定）经 {@link IotAmqpConfig}
  * 生效——该配置类带 enabled 开关条件装配，默认 {@code fuyun.iot.amqp.enabled=false} 下零连接
  * 尝试（存量 IT 回归零行为差异的保障）；MQ 事件总线域（fy.topic 状态事件发布器 + 自事件幂等
@@ -58,6 +61,8 @@ import org.springframework.context.annotation.Import;
     MetricDictServiceImpl.class,
     ProductController.class,
     MetricDictController.class,
+    DeviceManageServiceImpl.class,
+    DeviceController.class,
     IotRegistryConfig.class,
     IotAmqpConfig.class,
     IotMessagingConfig.class,

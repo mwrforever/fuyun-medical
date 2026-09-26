@@ -69,16 +69,26 @@ class SimulatedRegistryTest {
     }
 
     @Test
-    @DisplayName("resetDeviceCredential 换发后同 deviceId 再注册获得全新 UUID secret")
-    void resetCredentialThenReRegisterYieldsFreshSecret() {
+    @DisplayName("resetDeviceCredential 换发返回全新凭证（UUID secret + 不含明文引用），再注册 secret 仍全新")
+    void resetCredentialReturnsFreshCredentialThenReRegisterYieldsFreshSecret() {
         var first = registry.registerDevice(deviceSpec());
 
-        registry.resetDeviceCredential(DEVICE_ID);
+        var rotated = registry.resetDeviceCredential(DEVICE_ID);
+
+        assertThat(rotated.secret())
+                .as("换发返回新 secret 为 UUID 形态（一次性透出契约，禁日志禁落库）")
+                .isNotEqualTo(first.secret())
+                .matches(UUID_PATTERN.pattern());
+        assertThat(rotated.credentialRef())
+                .as("换发凭证引用非空且不含 secret 明文（本地 credential_ref 轮换数据源）")
+                .isNotBlank()
+                .doesNotContain(rotated.secret());
 
         var second = registry.registerDevice(deviceSpec());
         assertThat(second.secret())
-                .as("换发后 secret 为全新 UUID（与换发前不同，UUID 唯一性）")
+                .as("换发后再注册 secret 为全新 UUID（与换发前后均不同，UUID 唯一性）")
                 .isNotEqualTo(first.secret())
+                .isNotEqualTo(rotated.secret())
                 .matches(UUID_PATTERN.pattern());
     }
 
