@@ -11,8 +11,8 @@
 - ② **事件 id 74–82 排定**（全局递增，先例 V901 id 65–72/V1002 id 73，撰写期实测 event_registry
   最大 id=73）：74–81 iot 八事件（alarm.triggered / alarm.escalated / alarm.closed /
   binding.changed / telemetry.anomaly / command.completed / linkage.executed / call.triggered）
-  落 iot V404；82 ward.cold-chain.alert-archived（producer=ward）落 ward V1102；
-  MessagingGovernanceIT 总行断言两批落改——Task 2 改 73→81（V404 +8），Task 12 改 81→82（V1102 +1）。
+  落 iot V1004；82 ward.cold-chain.alert-archived（producer=ward）落 ward V1102；
+  MessagingGovernanceIT 总行断言两批落改——Task 2 改 73→81（V1004 +8），Task 12 改 81→82（V1102 +1）。
 - ③ **表外依赖申报**：后端 `com.huaweicloud.sdk:huaweicloud-sdk-iotda` + `huaweicloud-sdk-core`
   （华为云 IoTDA 管理 SDK，Registry 双实现之 HuaweiIotdaRegistry；Boot BOM 外依赖，版本执行期实取
   maven central 锁定 **3.1.218**（2026-09-26 复核 metadata，lastUpdated 2026-09-24），仅 fuyun-iot
@@ -21,6 +21,9 @@
 - ④ **JaCoCo 规则二纳入 `com.fuyun.ward.service.impl`**（父 POM PACKAGE LINE=1.00）：呼叫状态机/
   冷链合规台账属「核心业务状态机」路径；撰写期实测 `com.fuyun.iot.service.impl` 已在名单（父 POM
   :271）无需增行，仅新增 ward 行；包不存在时规则零包平凡通过，首个 impl 落码即生效。
+- ⑤ **迁移号勘误（先记再改）**：全局乱序守卫（基线最大已应用 V1003）拒止 iot V404–V413 与 nursing
+  V809——改通用段续号 V1004–V1013/V1014（billing V1001–V1003 先例），ward V1100–V1102 维持；后续 PR
+  各模块固定段已低于全局最大者，增量一律走通用段续号。
 
 ## 2026-09-26 · 宪法修订：web C.7 谋建琢三段律按体系模板内置条款补强
 
