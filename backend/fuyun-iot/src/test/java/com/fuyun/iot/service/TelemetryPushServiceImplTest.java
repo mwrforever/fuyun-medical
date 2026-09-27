@@ -291,7 +291,7 @@ class TelemetryPushServiceImplTest {
         return entity;
     }
 
-    /** 可推进固定时区时钟（窗口边界注入载体；生产装配为 IotWebSocketConfig iotPushClock） */
+    /** 可推进固定时区时钟（窗口边界注入载体；生产装配为 IotWebSocketConfig 装配点显式构造 UTC 时钟） */
     private static final class SteppingClock extends Clock {
 
         private volatile Instant current;
