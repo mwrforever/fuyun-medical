@@ -3,8 +3,10 @@ package com.fuyun.iot.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.fuyun.iot.entity.IotBindingEntity;
 import com.fuyun.iot.enums.BindingStatus;
+import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 /**
@@ -41,4 +43,16 @@ public interface IotBindingMapper extends BaseMapper<IotBindingEntity> {
     @Update("UPDATE iot.iot_binding SET status = 'UNBOUND', unbind_reason = #{unbindReason}, unbound_at = now() "
             + "WHERE device_id = #{deviceId} AND status = 'UNBINDING' AND deleted = 0")
     int casMarkUnbound(@Param("deviceId") String deviceId, @Param("unbindReason") String unbindReason);
+
+    /**
+     * 患者维度时序查询的设备历史展开（FU-M14-06，P2 PR-2 Task 10）：绑定历史只增不解绑覆盖，
+     * 任一状态（含 UNBOUND）行均承载"该患者曾用过该设备"的历史归属——连续聚合无患者列，患者
+     * 维度聚合查询须先经本展开获得设备集合（distinct 去重，跨就诊复用设备不重复出现）。
+     * deleted = 0 显式补齐（注解 SQL 不继承 {@code @TableLogic}）。
+     *
+     * @param patientId 患者主索引（服务层已 resolve 归一）；来源：查询请求
+     * @return 设备标识去重清单，非空；无历史绑定为空清单
+     */
+    @Select("SELECT DISTINCT device_id FROM iot.iot_binding " + "WHERE patient_id = #{patientId} AND deleted = 0")
+    List<String> selectDeviceIdsByPatientId(@Param("patientId") Long patientId);
 }

@@ -46,4 +46,11 @@ public class IotMetricDictEntity {
 
     /** 默认告警级别：INFO/WARNING/CRITICAL（与 iot_alarm_rule.level 同词表），可空 */
     private String defaultLevel;
+
+    /**
+     * 标称采集频率（次/分钟，V1012 增列，FU-M14-11）：断流判定（在线但超标称周期 N 倍时长无
+     * 数据）与缺数统计（expected_count = 标称频率 × 在线分钟数）的推算基准；NULL = 未登记，
+     * 不参与缺数推算（缺数率按 0 记防误报）。
+     */
+    private BigDecimal nominalFreqPerMin;
 }

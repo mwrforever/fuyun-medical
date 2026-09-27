@@ -9,11 +9,15 @@ import com.fuyun.iot.controller.AlarmController;
 import com.fuyun.iot.controller.AlarmRuleController;
 import com.fuyun.iot.controller.BindingController;
 import com.fuyun.iot.controller.CommandController;
+import com.fuyun.iot.controller.ConsumeErrorController;
 import com.fuyun.iot.controller.DeviceController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
 import com.fuyun.iot.controller.LinkageRuleController;
 import com.fuyun.iot.controller.MetricDictController;
+import com.fuyun.iot.controller.MonitorController;
 import com.fuyun.iot.controller.ProductController;
+import com.fuyun.iot.controller.QualityController;
+import com.fuyun.iot.controller.TelemetryQueryController;
 import com.fuyun.iot.internal.CommandDispatcher;
 import com.fuyun.iot.internal.IotAlarmEventListener;
 import com.fuyun.iot.internal.IotDeviceCommandListener;
@@ -36,8 +40,10 @@ import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
 import com.fuyun.iot.service.impl.LinkageRuleServiceImpl;
 import com.fuyun.iot.service.impl.MetricDictServiceImpl;
 import com.fuyun.iot.service.impl.ProductServiceImpl;
+import com.fuyun.iot.service.impl.QualityServiceImpl;
 import com.fuyun.iot.service.impl.TelemetryIngestServiceImpl;
 import com.fuyun.iot.service.impl.TelemetryPushServiceImpl;
+import com.fuyun.iot.service.impl.TelemetryQueryServiceImpl;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -72,7 +78,11 @@ import org.springframework.context.annotation.Import;
  * 触发→动作编排与失败重试单点/联动规则服务——规则 CRUD 与 FAILED 人工重推/规则与日志六端点/
  * 告警触发自事件监听器——联动触发源主入口，q.iot.iot.alarm.triggered 队列声明随
  * {@link IotMessagingConfig} 生效）——执行器依赖发号器/推送服务等既有装配链，TransactionTemplate
- * 由 Boot 事务自动配置供给（联动留痕落行与事件发布同事务承载）。
+ * 由 Boot 事务自动配置供给（联动留痕落行与事件发布同事务承载）；P2 PR-2 Task 10 追加时序查询
+ * 与质量监控域六件（遥测查询服务——三档查询路由 + ward 消费端口 IotTelemetryQueryPort 实现/
+ * 质量监控服务——质量日统计惰性重算、遥测断流判定发布与消费积压快照采样/遥测两端点/质量两端点/
+ * 积压监控端点/消费错误三端点——重放与放弃为 V401 P0 只写遗留的端点义务补齐，消费错误服务
+ * 扩展处置面后既有装配行继续承载）。
  */
 @Configuration
 @EnableConfigurationProperties({
@@ -121,6 +131,16 @@ import org.springframework.context.annotation.Import;
     LinkageExecutor.class,
     LinkageRuleServiceImpl.class,
     LinkageRuleController.class,
-    IotAlarmEventListener.class
+    IotAlarmEventListener.class,
+    // P2 PR-2 Task 10 时序查询与质量监控域六件（FU-M14-06/FU-M14-11）：遥测查询服务（三档路由，
+    // 兼 ward 消费端口 IotTelemetryQueryPort 实现）/质量监控服务（统计惰性重算+断流判定+积压快照）/
+    // 四端点（时序两端点/质量两端点/积压监控/消费错误三端点——消费错误重放放弃为 V401 P0 遗留
+    // 端点义务补齐，随 ConsumeErrorLogServiceImpl 扩展处置面）
+    TelemetryQueryServiceImpl.class,
+    TelemetryQueryController.class,
+    QualityServiceImpl.class,
+    QualityController.class,
+    MonitorController.class,
+    ConsumeErrorController.class
 })
 public class IotConfig {}

@@ -206,4 +206,67 @@ class IotMigrationIT {
                 .as("自事件订阅已落地（治理队列声明自动补登记）")
                 .contains("iot");
     }
+
+    /**
+     * 断言⑥：V1011 两级连续聚合真实落位且刷新策略作业各一（P2 PR-2 Task 10 实测证据持久化）。
+     *
+     * <p>V1011 探针结论（2026-09-26，timescale/timescaledb:2.29.2-pg16 探针容器）的实库回归锚：
+     * add_continuous_aggregate_policy 在 2.29.2 为 SELECT 函数（prokind=f）照 add_retention_policy
+     * 同款调用；cagg 视图经 timescaledb_information.continuous_aggregates 断言注册、刷新作业经
+     * jobs 视图按 proc_name + hypertable_name（=cagg 视图名，探针实测回填形态）定位且均处调度态
+     * ——防止"本机实测后人走茶凉"（T-R3-2 同款姿态）。WITH NO DATA 下视图空但注册行在，断言不依赖数据。
+     */
+    @Test
+    @Order(6)
+    @DisplayName("连续聚合断言：cagg_1min/cagg_1h 已注册且刷新策略作业各一均为调度状态")
+    void continuousAggregatesAndRefreshPoliciesAreScheduled() {
+        List<Map<String, Object>> caggs =
+                jdbcTemplate.queryForList("SELECT view_name FROM timescaledb_information.continuous_aggregates"
+                        + " WHERE view_schema = 'iot' AND view_name IN ('cagg_1min', 'cagg_1h') ORDER BY view_name");
+        assertThat(caggs)
+                .as("V1011 两级连续聚合必须已注册（1 分钟/1 小时）")
+                .extracting(row -> row.get("view_name"))
+                .containsExactly("cagg_1h", "cagg_1min");
+
+        List<Map<String, Object>> jobs =
+                jdbcTemplate.queryForList("SELECT hypertable_name, scheduled FROM timescaledb_information.jobs"
+                        + " WHERE proc_name = 'policy_refresh_continuous_aggregate'"
+                        + " AND hypertable_schema = 'iot' AND hypertable_name IN ('cagg_1min', 'cagg_1h')"
+                        + " ORDER BY hypertable_name");
+        assertThat(jobs).as("V1011 必须为两连续聚合各登记一个刷新策略作业").hasSize(2);
+        assertThat(jobs).allSatisfy(row -> assertThat(row.get("scheduled")).isEqualTo(true));
+    }
+
+    /**
+     * 断言⑦：V1012 质量监控两表落位且 MDC 字典标称频率列与种子回填在位（P2 PR-2 Task 10）。
+     *
+     * <p>iot_data_quality_stat/iot_consumer_stat 承载 FU-M14-11 统计主体与积压观测面；
+     * nominal_freq_per_min 为断流判定/缺数推算基准（V1012 内幂等 ALTER + 种子 UPDATE），断言
+     * 种子两行（心率/血氧）标称频率已回填非空。
+     */
+    @Test
+    @Order(7)
+    @DisplayName("质量监控断言：统计两表落位，字典标称频率列在位且种子两行已回填")
+    void qualityStatTablesAndNominalFreqColumnExist() {
+        Integer tableCount = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'iot'"
+                        + " AND table_name IN ('iot_data_quality_stat', 'iot_consumer_stat')",
+                Integer.class);
+        assertThat(tableCount).as("V1012 两张质量监控表必须全部落位").isEqualTo(2);
+
+        Integer freqColumnCount = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'iot'"
+                        + " AND table_name = 'iot_metric_dict' AND column_name = 'nominal_freq_per_min'",
+                Integer.class);
+        assertThat(freqColumnCount)
+                .as("iot_metric_dict.nominal_freq_per_min 增列必须存在")
+                .isEqualTo(1);
+
+        Integer seeded = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM iot.iot_metric_dict "
+                        + "WHERE metric_code IN ('MDC_ECG_HEART_RATE', 'MDC_PULSE_OXIM_SPO2') "
+                        + "AND nominal_freq_per_min IS NOT NULL",
+                Integer.class);
+        assertThat(seeded).as("V1012 种子两行标称频率必须已回填").isEqualTo(2);
+    }
 }

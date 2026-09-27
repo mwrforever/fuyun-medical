@@ -60,6 +60,14 @@ public final class IotMessagingConstants {
     /** 本模块自事件消费队列：告警触发（q.iot.iot.alarm.triggered，P2 PR-2 Task 9 联动触发源主入口） */
     public static final String QUEUE_ALARM_TRIGGERED = "q.iot.iot.alarm.triggered";
 
+    /** 本地攒批消费链固定消费组标识（iot_consumer_stat.consumer_group 落值：AMQP 消费链单攒批器单组，
+     * 真实 IoTDA 消费组名随联调对齐） */
+    public static final String LOCAL_CONSUMER_GROUP = "iot-amqp";
+
+    /** 遥测断流异常类型：STREAM_GAP 断流（在线但超标称周期 N 倍时长无数据，TelemetryAnomalyPayload
+     * anomalyType 词表首项，质量异常分类扩充随后续任务顺延） */
+    public static final String ANOMALY_TYPE_STREAM_GAP = "STREAM_GAP";
+
     /** MDC traceId 键名：与 fuyun.trace.mdc-key 配置默认值一致（发布点从 MDC 取当前值进信封，
      * AMQP 消费线程无 HTTP 上下文时取值为 null，信封契约允许） */
     public static final String TRACE_ID_MDC_KEY = "traceId";
