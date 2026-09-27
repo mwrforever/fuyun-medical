@@ -2,7 +2,6 @@ package com.fuyun.iot.dto;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.Pattern;
 import java.time.LocalDate;
 
 /**
@@ -10,7 +9,10 @@ import java.time.LocalDate;
  * page 0 基；FU-M14-11）。
  *
  * <p>statDate 缺省 = 当日（UTC 日切）；deviceId 缺省 = 不过滤仅列表（惰性重算只对显式指定的
- * 单设备触发，避免无指定查询触发全院重算风暴）。
+ * 单设备触发，避免无指定查询触发全院重算风暴）。statDate 为 {@link LocalDate} 强类型绑定——
+ * 非 ISO 日期入参在 Spring 参数绑定阶段即 400（ConversionFailedException 渲染），不设 @Pattern
+ * （@Pattern 仅支持 CharSequence，误用于日期类型会在校验期抛 HV000030 致端点 500，
+ * AdmissionCreateRequest LocalDate 先例同款无该注解）。
  *
  * @param page     页码（0 基，≥0），可空缺省 0
  * @param size     单页条数（1-200），可空缺省 20
@@ -24,6 +26,4 @@ public record QualityStatQueryRequest(
         Integer size,
 
         String deviceId,
-
-        @Pattern(regexp = "\\d{4}-\\d{2}-\\d{2}", message = "statDate 须为 ISO 日期（yyyy-MM-dd）")
         LocalDate statDate) {}

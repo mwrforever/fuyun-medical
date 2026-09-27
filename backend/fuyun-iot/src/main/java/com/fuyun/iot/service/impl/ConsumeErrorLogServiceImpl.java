@@ -28,6 +28,7 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 消费错误日志服务实现（iot.iot_consume_error_log 写入口与处置面，BRIEF-PR4-01 §3 service 行，
@@ -44,9 +45,11 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>处置状态机（V401 头申报）：PENDING → REPLAYED / ABANDONED。重放 = CAS 认领（PENDING/
  * REPLAYED → REPLAYED，replay_count 累加）后按 {@link ParsedFrame} sealed 五形态重新入解析管道
  * （{@link TelemetryFrameParser#parse} → 遥测帧批量入库/状态帧即时处理/告警帧透传评估/命令结果
- * 回推终态，与 IotAmqpTelemetryConsumer 消费分派同构）；重放处理失败不回滚认领（记录已如实标记
- * REPLAYED 供追溯），异常借承 IOT-1021 翻译上抛（AlarmServiceImpl 借承申报先例）。放弃 = 仅
- * PENDING 行 CAS 迁移 ABANDONED 终态，原因追加承载于 error_msg（无独立原因列，500 截断防线）。
+ * 回推终态，与 IotAmqpTelemetryConsumer 消费分派同构）。认领经 {@link TransactionTemplate} 独立
+ * 提交单元（round 1 Important-2 修复：方法级事务会在管道异常时默认回滚认领，与「记录已标记
+ * REPLAYED 供追溯」契约相悖——提交单元切分后管道失败不回滚已提交认领，异常借承 IOT-1021 翻译
+ * 上抛，AlarmServiceImpl 借承申报先例）。放弃 = 仅 PENDING 行 CAS 迁移 ABANDONED 终态，原因
+ * 追加承载于 error_msg（无独立原因列，500 截断防线）。
  *
  * <p>装配归 IotConfig @Import；JaCoCo 核心包（com.fuyun.iot.service.impl）LINE=1.00 成员。
  */
@@ -75,6 +78,12 @@ public class ConsumeErrorLogServiceImpl implements IConsumeErrorLogService {
     private final IotDeviceCommandListener commandResultListener;
 
     /**
+     * 事务模板：重放 CAS 认领的独立提交单元载体（Boot 事务自动配置供给，CommandDispatcher/
+     * LinkageExecutor 同款注入形态）——认领提交即生效，管道失败不回滚（Important-2 修复）。
+     */
+    private final TransactionTemplate transactions;
+
+    /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1）。
      *
      * @param consumeErrorLogMapper   消费错误日志 mapper，非空；来源：同模块 mapper 包
@@ -82,18 +91,21 @@ public class ConsumeErrorLogServiceImpl implements IConsumeErrorLogService {
      * @param deviceStatusService     设备状态服务，非空；来源：IotConfig 装配链
      * @param alarmEngine             告警引擎，非空；来源：IotConfig 装配链
      * @param commandResultListener   命令域监听器，非空；来源：IotConfig 装配链
+     * @param transactions            事务模板，非空；来源：Boot 事务自动配置（重放认领独立提交单元）
      */
     public ConsumeErrorLogServiceImpl(
             IotConsumeErrorLogMapper consumeErrorLogMapper,
             ITelemetryIngestService telemetryIngestService,
             IDeviceStatusService deviceStatusService,
             AlarmEngine alarmEngine,
-            IotDeviceCommandListener commandResultListener) {
+            IotDeviceCommandListener commandResultListener,
+            TransactionTemplate transactions) {
         this.consumeErrorLogMapper = consumeErrorLogMapper;
         this.telemetryIngestService = telemetryIngestService;
         this.deviceStatusService = deviceStatusService;
         this.alarmEngine = alarmEngine;
         this.commandResultListener = commandResultListener;
+        this.transactions = transactions;
     }
 
     @Override
@@ -148,7 +160,6 @@ public class ConsumeErrorLogServiceImpl implements IConsumeErrorLogService {
     }
 
     @Override
-    @Transactional
     public ConsumeErrorVO replay(Long errorId) {
         IotConsumeErrorLogEntity row = requireErrorLog(errorId);
         if (row.getStatus() == ConsumeErrorStatus.ABANDONED) {
@@ -160,18 +171,25 @@ public class ConsumeErrorLogServiceImpl implements IConsumeErrorLogService {
             throw stateNotAllowed("载荷引用缺失，无法重放：" + errorId);
         }
         String operator = currentOperator();
-        // 数据库写操作：CAS 认领（PENDING/REPLAYED → REPLAYED + 计数累加；并发重放/放弃落败拒绝）
-        if (consumeErrorLogMapper.casMarkReplayed(errorId, operator) != 1) {
+        // 数据库写操作：CAS 认领独立提交单元（PENDING/REPLAYED → REPLAYED + 计数累加）——
+        // TransactionTemplate 提交即生效（CommandDispatcher 终态 CAS 先例），后续管道失败的
+        // RuntimeException（含翻译后的 BizException）不再回滚已提交认领，「记录已标记 REPLAYED
+        // 供追溯」契约由此真实成立；方法级 @Transactional 反而令管道异常默认回滚认领（round 1
+        // Important-2 修复）
+        Boolean claimed =
+                transactions.execute(txStatus -> consumeErrorLogMapper.casMarkReplayed(errorId, operator) == 1);
+        if (!Boolean.TRUE.equals(claimed)) {
             log.warn("重放 CAS 落败（并发竞争或状态已迁移）：errorId={}", errorId);
             throw stateNotAllowed("重放失败：记录已被并发处置或状态不允许：" + errorId);
         }
-        // 重新入解析管道：parse → sealed 五形态分派（与消费者 dispatchSafely 同构，无 JMS 确认语义）
+        // 重新入解析管道：parse → sealed 五形态分派（与消费者 dispatchSafely 同构，无 JMS 确认语义；
+        // 遥测入库/状态处理/告警评估各自独立事务，不在本方法事务边界内）
         try {
             ParsedFrame frame = TelemetryFrameParser.parse(row.getRawPayload().getBytes(StandardCharsets.UTF_8));
             dispatchFrame(frame);
         } catch (RuntimeException e) {
-            // 重放处理失败不回滚认领（记录已如实标记 REPLAYED 供追溯），异常借承 IOT-1021 翻译上抛
-            // （AlarmServiceImpl 借承申报先例：消息显式区分"已标记 REPLAYED"场景）
+            // 管道失败时认领已提交不可回滚：记录保持 REPLAYED 标记与累加后的 replay_count 供追溯，
+            // 异常借承 IOT-1021 翻译上抛（AlarmServiceImpl 借承申报先例：消息显式区分"已标记 REPLAYED"场景）
             log.error(
                     "重放处理失败（记录已标记 REPLAYED 供追溯）：errorId={}，stage={}，原因={}",
                     errorId,

@@ -32,7 +32,10 @@ import com.fuyun.iot.vo.ConsumeErrorVO;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.HexFormat;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +46,8 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 消费错误日志服务单元测试（BRIEF-PR4-01 §3 单测清单：摘要/截断/PENDING、落库失败吞并告警；
@@ -51,6 +56,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
  *
  * <p>毒丸隔离优先于留痕是本服务核心契约：落库失败必须全吞不向消费循环上抛（否则毒丸帧无法
  * 被确认抛弃，IoTDA 重推无限循环）；测试载荷为无意义合成文本与公开样例帧，与任何真实报文无关。
+ * 重放认领经真实 {@link TransactionTemplate} + {@link DataSourceTransactionManager}（mock
+ * DataSource/Connection，AlarmEventReachabilityTest 同款最小事务基建）承载——独立提交单元语义
+ * 以真实提交/回滚行为验证（round 1 Important-2 修复锚）。
  */
 @ExtendWith(MockitoExtension.class)
 class ConsumeErrorLogServiceImplTest {
@@ -112,7 +120,28 @@ class ConsumeErrorLogServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new ConsumeErrorLogServiceImpl(
-                consumeErrorLogMapper, telemetryIngestService, deviceStatusService, alarmEngine, commandResultListener);
+                consumeErrorLogMapper,
+                telemetryIngestService,
+                deviceStatusService,
+                alarmEngine,
+                commandResultListener,
+                newTestTransactions());
+    }
+
+    /**
+     * 最小真实事务基建（AlarmEventReachabilityTest 同款形态）：真实 TransactionTemplate +
+     * DataSourceTransactionManager，DataSource/Connection 为 mock 免 DB——链路内 SQL 经 mock
+     * mapper，事务提交/回滚语义不依赖数据库方言。连接桩 lenient（不经事务的用例不触发连接获取，
+     * 严格桩会误报 UnnecessaryStubbing）。
+     */
+    private static TransactionTemplate newTestTransactions() {
+        try {
+            DataSource dataSource = Mockito.mock(DataSource.class);
+            Mockito.lenient().when(dataSource.getConnection()).thenReturn(Mockito.mock(Connection.class));
+            return new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+        } catch (SQLException e) {
+            throw new IllegalStateException("事务基建装配失败", e);
+        }
     }
 
     // ---------------------------------------------------------------- 留痕写路径（P0 既有契约）
@@ -307,6 +336,39 @@ class ConsumeErrorLogServiceImplTest {
     }
 
     @Test
+    @DisplayName("Important-2 锚：管道失败后认领事务仍真实提交（独立提交单元，commit 发生且零 rollback）")
+    void replayPipelineFailureLeavesClaimTransactionCommitted() {
+        // 真实事务基建 + 本用例私有 Connection mock：提交/回滚行为可断言（AlarmEventReachabilityTest 形态）
+        try {
+            Connection connection = Mockito.mock(Connection.class);
+            DataSource dataSource = Mockito.mock(DataSource.class);
+            Mockito.when(dataSource.getConnection()).thenReturn(connection);
+            ConsumeErrorLogServiceImpl isolated = new ConsumeErrorLogServiceImpl(
+                    consumeErrorLogMapper,
+                    telemetryIngestService,
+                    deviceStatusService,
+                    alarmEngine,
+                    commandResultListener,
+                    new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
+            when(consumeErrorLogMapper.selectById(8L)).thenReturn(pendingRow(8L, "not-a-json-frame", "MSG"));
+            when(consumeErrorLogMapper.casMarkReplayed(eq(8L), anyString())).thenReturn(1);
+
+            assertThatThrownBy(() -> isolated.replay(8L))
+                    .isInstanceOf(BizException.class)
+                    .hasMessageContaining("已标记 REPLAYED");
+
+            // 认领写入发生在独立事务单元内且该单元已提交：管道抛出的 RuntimeException（含翻译后的
+            // BizException）未触发任何回滚——「记录已标记 REPLAYED 供追溯、replay_count 已累加」
+            // 契约的生产语义由此锚定（修复前方法级事务下 rollback 必被调用、commit 缺席）
+            verify(consumeErrorLogMapper).casMarkReplayed(eq(8L), anyString());
+            verify(connection).commit();
+            verify(connection, never()).rollback();
+        } catch (SQLException e) {
+            throw new IllegalStateException("事务基建装配失败", e);
+        }
+    }
+
+    @Test
     @DisplayName("重放入库管道业务失败（入库异常）：同样翻译 IOT-1021 且不回滚认领")
     void replayIngestFailureTranslatesToIot1021() {
         when(consumeErrorLogMapper.selectById(9L)).thenReturn(pendingRow(9L, TELEMETRY_FRAME, "MSG"));
@@ -319,6 +381,8 @@ class ConsumeErrorLogServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(IotErrorCode.CONSUME_ERROR_STATE_NOT_ALLOWED))
                 .hasMessageContaining("db down");
+        // 认领在管道失败前已独立提交（同锚语义：mock 层验证认领调用发生）
+        verify(consumeErrorLogMapper).casMarkReplayed(eq(9L), anyString());
     }
 
     // ---------------------------------------------------------------- 放弃（终态处置）

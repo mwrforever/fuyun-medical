@@ -41,7 +41,8 @@ public interface IConsumeErrorLogService {
     /**
      * 重放（重新入解析管道）：CAS 认领（PENDING/REPLAYED → REPLAYED，replay_count 累加）后按
      * sealed 五形态分派回既有消费链（遥测帧入批量入库、状态帧即时处理、告警帧透传评估、命令
-     * 结果回推终态）。重放处理失败不回滚认领（记录已如实标记 REPLAYED 供追溯），异常翻译上抛。
+     * 结果回推终态）。认领为独立提交单元（TransactionTemplate，提交即生效）——管道处理失败不
+     * 回滚认领（记录保持 REPLAYED 标记与累加计数供追溯），异常翻译上抛。
      *
      * @param errorId 错误行 ID，非空；来源：管理端点路径变量
      * @return 重放后的错误日志视图，非空
