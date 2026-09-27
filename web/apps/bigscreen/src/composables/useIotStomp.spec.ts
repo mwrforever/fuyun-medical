@@ -265,4 +265,109 @@ describe('STOMP 单例封装（web B.3-3）', () => {
       infoSpy.mockRestore();
     }
   });
+
+  it('subscribeIotTopic 待订阅登记后 onConnect 转正，主题路径与载荷管线逐帧触达', () => {
+    stomp.connect({ token: 'token-a', wardId: '1001' });
+    const onFrame = vi.fn();
+    stomp.subscribeIotTopic<{ v: number }>(
+      stomp.DASHBOARD_GLOBAL_TOPIC,
+      (raw) => {
+        if (typeof raw !== 'object' || raw === null) {
+          return null;
+        }
+        const candidate = raw as Record<string, unknown>;
+        return typeof candidate['v'] === 'number' ? { v: candidate['v'] } : null;
+      },
+      onFrame,
+    );
+    expect(h.subscriptions).toHaveLength(0);
+    (lastConfig()['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(1);
+    expect(h.subscriptions[0]?.destination).toBe('/topic/iot/dashboard/global');
+    // 合法帧：deliver 闭包收窄后触达 onFrame（泛型管线闭合）
+    h.subscriptions[0]?.callback({ body: JSON.stringify({ v: 7 }) });
+    expect(onFrame).toHaveBeenCalledWith({ v: 7 });
+  });
+
+  it('subscribeIotTopic 已连接态立即落地；同主题重复订阅先退订旧句柄再替换', () => {
+    stomp.connect({ token: 'token-a', wardId: '1001' });
+    lastClient().connected = true;
+    stomp.subscribeIotTopic(
+      '/topic/iot/alarm/1001',
+      (raw) => raw,
+      () => {},
+    );
+    expect(h.subscriptions).toHaveLength(1);
+    // 同主题重复订阅（换病区重订阅语义同源）：旧句柄先退订（1 次）再落地新订阅
+    stomp.subscribeIotTopic(
+      '/topic/iot/alarm/1002',
+      (raw) => raw,
+      () => {},
+    );
+    expect(h.unsubscribeCalls).toBe(0); // destination 不同：两主题并存不互退
+    stomp.subscribeIotTopic(
+      '/topic/iot/alarm/1002',
+      (raw) => raw,
+      () => {},
+    );
+    expect(h.unsubscribeCalls).toBe(1);
+    expect(h.subscriptions).toHaveLength(3);
+    expect(h.subscriptions.at(-1)?.destination).toBe('/topic/iot/alarm/1002');
+  });
+
+  it('subscribeIotTopic 毒帧（非法 JSON 与收窄失败）仅 warn 留痕不触达回调、不中断订阅', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    stomp.connect({ token: 'token-a', wardId: '1001' });
+    const onFrame = vi.fn();
+    stomp.subscribeIotTopic(
+      stomp.DASHBOARD_GLOBAL_TOPIC,
+      () => null, // 恒收窄失败：模拟残缺载荷
+      onFrame,
+    );
+    (lastConfig()['onConnect'] as () => void)();
+    const callback = h.subscriptions[0]?.callback;
+    expect(callback).toBeDefined();
+    // 非法 JSON 毒帧：不抛异常、帧回调不触达
+    expect(() => callback?.({ body: 'not-json{{' })).not.toThrow();
+    // 收窄失败（载荷不合法）：同样防御
+    expect(() => callback?.({ body: JSON.stringify({ broken: true }) })).not.toThrow();
+    expect(onFrame).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('断线作废后 onConnect 全量重订阅通用主题注册表；disconnect 先全量退订再 deactivate', async () => {
+    stomp.connect({ token: 'token-a', wardId: '1001' });
+    stomp.subscribeIotTopic(
+      stomp.DASHBOARD_GLOBAL_TOPIC,
+      (raw) => raw,
+      () => {},
+    );
+    stomp.subscribeIotTopic(
+      '/topic/iot/alarm/1001',
+      (raw) => raw,
+      () => {},
+    );
+    const config = lastConfig();
+    (config['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(2);
+    // 模拟断线：全部句柄作废（置 null）
+    (config['onWebSocketClose'] as () => void)();
+    // 重连 onConnect：注册表内两主题全量重订阅（禁零帧假连接）
+    (config['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(4);
+    const destinations = h.subscriptions.slice(-2).map((sub) => sub.destination);
+    expect(destinations).toContain('/topic/iot/dashboard/global');
+    expect(destinations).toContain('/topic/iot/alarm/1001');
+    // 显式断开：先全量退订（2 次）再 deactivate（1 次）
+    await stomp.disconnect();
+    expect(h.unsubscribeCalls).toBe(2);
+    expect(h.deactivateCalls).toBe(1);
+    expect(stomp.connectionState.value).toBe('disconnected');
+  });
+
+  it('alarmTopicPath 与 DASHBOARD_GLOBAL_TOPIC 与后端 IotMessagingConstants 契约逐字对齐', () => {
+    expect(stomp.alarmTopicPath('1001')).toBe('/topic/iot/alarm/1001');
+    expect(stomp.DASHBOARD_GLOBAL_TOPIC).toBe('/topic/iot/dashboard/global');
+  });
 });

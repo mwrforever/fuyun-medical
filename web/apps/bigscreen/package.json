@@ -12,6 +12,7 @@
     "@fuyun/shared": "workspace:*",
     "@stomp/stompjs": "7.3.0",
     "axios": "catalog:",
+    "echarts": "6.1.0",
     "pinia": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:"

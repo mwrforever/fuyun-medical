@@ -28,3 +28,34 @@ export interface TelemetrySummary {
   /** 明细列表（deviceId+metricCode 二元组，后端上限 100 条；防御口径允许空数组） */
   items: TelemetrySummaryItem[];
 }
+
+/**
+ * 告警触发帧载荷手写后备类型（web A.3-3 手写条款的 STOMP 延伸，与遥测摘要同先例）：
+ * 字段与后端 record 逐字对齐——backend/fuyun-iot api/payload/AlarmTriggeredPayload
+ * （iot.alarm.triggered V1004 id 74 冻结契约），经 /topic/iot/alarm/{wardId} 推送；
+ * STOMP 载荷无 openapi 生成来源，手写为唯一路径（漂移依赖后端测试与前端类型同步维护）。
+ * Long 字段（patientId/wardId/ruleId）后端经 Jackson 全局字符串化（backend A.3-8），
+ * 前端一律 string 承载（web A.3-6）；occurredAt 为 Instant 的 ISO-8601 字符串原样展示。
+ */
+export interface IotAlarmFrame {
+  /** 告警业务号，非空；来源：告警引擎告警生成域签发 */
+  alarmNo: string;
+  /** IoTDA 设备标识，非空；来源：触发规则的遥测/状态帧来源设备 */
+  deviceId: string;
+  /** 患者主索引，可空（公共区域设备无患者关联）；字符串化 Long */
+  patientId: string | null;
+  /** 住院就诊号（CF-3 I 型 visit_id），可空（设备未绑定在院患者） */
+  visitId: string | null;
+  /** 病区 ID（告警按病区路由），字符串化 Long */
+  wardId: string;
+  /** 告警级别，值域 INFO/WARNING/CRITICAL */
+  alarmLevel: string;
+  /** 指标编码（MDC 术语，如 MDC_ECG_HEART_RATE），非空 */
+  metricCode: string;
+  /** 触发值文本（保留原始形态，数值语义由消费方按 metricCode 解释），非空 */
+  triggerValue: string;
+  /** 命中规则 ID，字符串化 Long */
+  ruleId: string;
+  /** 业务发生时刻（UTC，ISO-8601 字符串原样承载），非空 */
+  occurredAt: string;
+}

@@ -3,7 +3,12 @@
  * unknown 逐字段收窄守卫，替代脏载荷直投类型断言（web A.1-4 禁 any 口径）——任一字段不合法
  * 返回 null，由调用方 warn 留痕不中断订阅。
  */
+import type { components } from '@fuyun/shared/api';
+import type { IotAlarmFrame } from '@/types/iot';
 import type { TelemetrySummary, TelemetrySummaryItem } from '@/types/iot';
+
+/** 全院摘要帧契约类型（与 REST DashboardSummaryVO 同构同源，生成物唯一来源 A.3-3） */
+type DashboardSummaryVO = components['schemas']['DashboardSummaryVO'];
 
 /**
  * 解析遥测摘要载荷：逐字段收窄校验（count 正整数、occurredAtUpperBound 非空字符串、items 为
@@ -59,4 +64,100 @@ function isSummaryItem(value: unknown): value is TelemetrySummaryItem {
   }
   const item = value as Record<string, unknown>;
   return isNonEmptyString(item['deviceId']) && isNonEmptyString(item['metricCode']);
+}
+
+/**
+ * 解析告警触发帧载荷（/topic/iot/alarm/{wardId}，后端 AlarmTriggeredPayload 同构）：逐字段
+ * 收窄校验——alarmNo/deviceId/wardId/alarmLevel/metricCode/triggerValue/ruleId/occurredAt 均
+ * 非空字符串，patientId/visitId 放宽为 string|null（公共区域设备无患者关联，后端即 null）。
+ *
+ * @param raw STOMP 帧体 JSON.parse 产物（unknown，来源不可信：网络帧可被篡改/截断）
+ * @return 结构合法的 IotAlarmFrame；任一必填字段不合法返回 null（调用方 warn 留痕并忽略本帧）
+ */
+export function parseIotAlarmFrame(raw: unknown): IotAlarmFrame | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const candidate = raw as Record<string, unknown>;
+  const {
+    alarmNo,
+    deviceId,
+    patientId,
+    visitId,
+    wardId,
+    alarmLevel,
+    metricCode,
+    triggerValue,
+    ruleId,
+    occurredAt,
+  } = candidate;
+  if (
+    !isNonEmptyString(alarmNo) ||
+    !isNonEmptyString(deviceId) ||
+    !isNonEmptyString(wardId) ||
+    !isNonEmptyString(alarmLevel) ||
+    !isNonEmptyString(metricCode) ||
+    !isNonEmptyString(triggerValue) ||
+    !isNonEmptyString(ruleId) ||
+    !isNonEmptyString(occurredAt)
+  ) {
+    return null;
+  }
+  return {
+    alarmNo,
+    deviceId,
+    // 可空字段放宽：字符串原样收窄，缺失/非字符串形态（后端 null 序列化缺省）归一为 null
+    patientId: typeof patientId === 'string' ? patientId : null,
+    visitId: typeof visitId === 'string' ? visitId : null,
+    wardId,
+    alarmLevel,
+    metricCode,
+    triggerValue,
+    ruleId,
+    occurredAt,
+  };
+}
+
+/**
+ * 解析全院摘要帧载荷（/topic/iot/dashboard/global，与 REST DashboardSummaryVO 同构契约）：
+ * 逐字段收窄校验——四项计数为非空数字字符串（后端 long 经 Jackson 字符串化，backend A.3-8）、
+ * stormActive 为布尔、backlogEstimate/qualityScore 为数值。
+ *
+ * @param raw STOMP 帧体 JSON.parse 产物（unknown，来源不可信：网络帧可被篡改/截断）
+ * @return 结构合法的 DashboardSummaryVO；任一字段不合法返回 null（调用方 warn 留痕并忽略本帧）
+ */
+export function parseDashboardSummary(raw: unknown): DashboardSummaryVO | null {
+  if (typeof raw !== 'object' || raw === null) {
+    return null;
+  }
+  const candidate = raw as Record<string, unknown>;
+  const {
+    deviceTotal,
+    onlineCount,
+    offlineCount,
+    activeAlarmCount,
+    stormActive,
+    backlogEstimate,
+    qualityScore,
+  } = candidate;
+  if (
+    !isNonEmptyString(deviceTotal) ||
+    !isNonEmptyString(onlineCount) ||
+    !isNonEmptyString(offlineCount) ||
+    !isNonEmptyString(activeAlarmCount) ||
+    typeof stormActive !== 'boolean' ||
+    typeof backlogEstimate !== 'number' ||
+    typeof qualityScore !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    deviceTotal,
+    onlineCount,
+    offlineCount,
+    activeAlarmCount,
+    stormActive,
+    backlogEstimate,
+    qualityScore,
+  };
 }
