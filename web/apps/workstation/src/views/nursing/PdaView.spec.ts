@@ -231,7 +231,9 @@ describe('PDA 移动护理页', () => {
       .find((b) => b.text() === '提交体征')
       ?.trigger('click');
     await flushPromises();
-    expect(vi.mocked(vitalSigns.record).mock.calls[1]?.[0].clientMsgId).not.toBe(firstPayload.clientMsgId);
+    expect(vi.mocked(vitalSigns.record).mock.calls[1]?.[0].clientMsgId).not.toBe(
+      firstPayload.clientMsgId,
+    );
     wrapper.unmount();
   });
 
@@ -248,7 +250,9 @@ describe('PDA 移动护理页', () => {
     await flushPromises();
     // 失败：错误提示透出且表单保留（重试数据不丢）
     expect(vi.mocked(ElMessage.error)).toHaveBeenCalledWith('网络超时');
-    expect((wrapper.find('input[placeholder="36.5"]').element as HTMLInputElement).value).toBe('36.5');
+    expect((wrapper.find('input[placeholder="36.5"]').element as HTMLInputElement).value).toBe(
+      '36.5',
+    );
     // D-22 核心：重试复用同一键——服务端按 client_msg_id 重放返回原记录，补传零重复落卡
     await submitButton()?.trigger('click');
     await flushPromises();

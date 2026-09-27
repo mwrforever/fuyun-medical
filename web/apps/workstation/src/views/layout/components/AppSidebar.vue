@@ -36,6 +36,11 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/inpatient/transfer', label: '转抄工作台', abbr: '抄', group: '住院管理' },
   { index: '/inpatient/discharge', label: '出院管理', abbr: '出', group: '住院管理' },
   { index: '/pharmacy/review', label: '住院审方台', abbr: '审', group: '药房管理' },
+  // IoT 管理分组（M14 管理台第一批四项；第二批三路由随后续任务增补）
+  { index: '/iot/products', label: '产品与物模型', abbr: '物', group: 'IoT 管理' },
+  { index: '/iot/devices', label: '设备管理', abbr: '备', group: 'IoT 管理' },
+  { index: '/iot/bindings', label: '设备绑定', abbr: '绑', group: 'IoT 管理' },
+  { index: '/iot/alarm-rules', label: '告警规则', abbr: '警', group: 'IoT 管理' },
 ];
 
 /** 顶层菜单项（group 空串），渲染在各分组之前 */

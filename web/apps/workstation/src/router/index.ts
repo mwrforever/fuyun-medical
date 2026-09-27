@@ -153,6 +153,31 @@ export const router = createRouter({
           component: () => import('@/views/pharmacy/ReviewTaskView.vue'),
           meta: { permission: 'pharmacy:review:audit' },
         },
+        {
+          // IoT 管理七路由第一批四条（第二批三路由归 M14 后续任务登记）
+          path: 'iot/products',
+          name: 'iot-products',
+          component: () => import('@/views/iot/ProductManageView.vue'),
+          meta: { permission: 'iot:product:manage' },
+        },
+        {
+          path: 'iot/devices',
+          name: 'iot-devices',
+          component: () => import('@/views/iot/DeviceManageView.vue'),
+          meta: { permission: 'iot:device:manage' },
+        },
+        {
+          path: 'iot/bindings',
+          name: 'iot-bindings',
+          component: () => import('@/views/iot/BindingManageView.vue'),
+          meta: { permission: 'iot:binding:manage' },
+        },
+        {
+          path: 'iot/alarm-rules',
+          name: 'iot-alarm-rules',
+          component: () => import('@/views/iot/AlarmRuleView.vue'),
+          meta: { permission: 'iot:alarm-rule:manage' },
+        },
       ],
     },
     {
