@@ -305,15 +305,16 @@ class MessagingGovernanceIT {
         //   + V800 nursing 域二十四条（id 41–64，含 CF-6 冻结载体十五行与 M05 发布面九行）
         //   （id 23/25/31 系 V605/V702 占位行经 V204 UPDATE 冻结，不增行）
         //   + V901 inpatient 域八条（id 65–72）+ V1002 billing 一条（id 73 billing.arrears.approved）
-        //   + V1004 iot 域八条（id 74–81，CF-7 事件族；V1004 +8；V1102 ward 一条 +1 归 Task 12）
+        //   + V1004 iot 域八条（id 74–81，CF-7 事件族）+ V1102 ward 一条（id 82
+        //   ward.cold-chain.alert-archived，P2 PR-2 Task 12 种子与断言同任务先例）
         Integer totalRows =
                 jdbcTemplate.queryForObject("SELECT count(*) FROM integration.event_registry", Integer.class);
-        assertThat(totalRows).isEqualTo(81);
+        assertThat(totalRows).isEqualTo(82);
         Integer activeRows = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM integration.event_registry WHERE status = ?",
                 Integer.class,
                 MessagingConstants.REGISTRY_STATUS_ACTIVE);
-        assertThat(activeRows).isEqualTo(81);
+        assertThat(activeRows).isEqualTo(82);
         String producer = jdbcTemplate.queryForObject(
                 "SELECT producer_module FROM integration.event_registry WHERE event_type = ?",
                 String.class,

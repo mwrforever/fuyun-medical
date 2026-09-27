@@ -2,6 +2,17 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-26 · P2 PR-2 Task 12 装配面增量：ward pom 依赖增补 + iot api.payload NamedInterface 暴露
+
+- ① **fuyun-ward pom 增补 fuyun-iot 依赖**（仅消费其 api NamedInterface 面）：Task 1 pom 注释
+  「iot↔ward 零模块依赖」先于 Task 10 端口演进——`IotTelemetryQueryPort` javadoc 明示「ward 依赖
+  iot api 包 = Modulith verify 把关的 api 面」（冷链温度曲线/输液看板消费面），Task 12 实装按端口
+  契约增补；事件链零模块依赖语义不变（消费走 RabbitMQ 队列，Modulith 边界仅放行 api 包引用）。
+- ② **iot/api/payload 子包 NamedInterface 暴露**（新增 package-info.java）：Modulith 1.4 子包默认
+  不继承父包 NamedInterface——ward 消费 `AlarmTriggeredPayload`/`TelemetryAnomalyPayload`
+  （V1004 id 74/78 冻结契约）触发「depends on non-exposed type」红灯；载荷 record 本就是跨模块
+  消费契约（V1004 种子三方一致红线），`@NamedInterface("api")` 显式声明即设计意图落纸。
+
 ## 2026-09-26 · P2 PR-2 前置：ward 号段登记（V1100 段）+ 事件 id 74–82 排定 + 表外依赖申报 + JaCoCo 扩名单
 
 - ① ward 固定百位段 **V1100–V1199** 登记（`scripts/check-migration-governance.py` `_SEGMENTS` 增行
