@@ -13,8 +13,8 @@ import java.util.Optional;
 
 /**
  * 设备患者绑定管理服务（iot.iot_binding 唯一写入口，M14 绑定五元组管理域）：绑定/解绑生命周期、
- * 管理端分页与病区/设备维度的生效绑定查询。遥测入库富化经 {@link #findActiveByDevice} 复用同一
- * 绑定视图（单点口径，禁旁路快照查询）。
+ * 管理端分页与病区/设备维度的生效绑定查询。遥测入库富化经 {@link #listActiveByDevices} 批量
+ * 通道复用同一绑定视图（{@link #findActiveByDevice} 委托同渠道取单元素；单点口径，禁旁路快照查询）。
  *
  * <p>写路径语义：bind 校验链（设备存在且非 DISABLED[IOT-1006/1007]→无生效绑定[IOT-1010]→患者
  * 归一非冻结/合并中且存在在途就诊——OngoingVisitQuery 集合任一实现命中即在途[IOT-1011]）→
@@ -74,8 +74,8 @@ public interface IBindingService extends IService<IotBindingEntity> {
      * 按设备集合批量查当前生效（BOUND）绑定：遥测入库富化的唯一快照通道（单次 IN 查询，
      * 宪法 A.4.3-14 拒循环内单查；uk_iot_binding_device_bound 保证每设备至多一条活跃绑定）。
      *
-     * @param deviceIds 设备标识集合（调用方先 distinct 去重），非空；空集合直接返回空清单不触库
-     *                  （防空 IN 列表非法 SQL）；来源：遥测批内 distinct 设备号
+     * @param deviceIds 设备标识集合（调用方先 distinct 去重），可空；null 或空集合均直接返回空清单
+     *                  不触库（防空 IN 列表非法 SQL，与实现短路分支一致）；来源：遥测批内 distinct 设备号
      * @return 生效绑定视图清单（id 升序），非空；无命中为空清单
      */
     List<BindingVO> listActiveByDevices(Collection<String> deviceIds);

@@ -10,8 +10,8 @@ import jakarta.validation.constraints.Size;
  * ALARM_HANDLE 必填 alarm_ref+second_operator（服务层校验，WD-1005）。
  *
  * @param recordType     记录类型，非空；来源：请求体
- * @param alarmRef       关联告警号（ALARM_HANDLE 必填，其余类型忽略置空），可空；来源：请求体
- * @param secondOperator 双人核对第二人（ALARM_HANDLE 必填，其余类型忽略置空），可空；来源：请求体
+ * @param alarmRef       关联告警号（ALARM_HANDLE 必填；其余类型不校验不置空、按请求原样落库），可空；来源：请求体
+ * @param secondOperator 双人核对第二人（ALARM_HANDLE 必填；其余类型不校验不置空、按请求原样落库），可空；来源：请求体
  * @param content        记录内容 JSON 文本（巡检读数/处置措施/偏差描述），可空；来源：请求体
  */
 public record RegisterColdChainRecordRequest(

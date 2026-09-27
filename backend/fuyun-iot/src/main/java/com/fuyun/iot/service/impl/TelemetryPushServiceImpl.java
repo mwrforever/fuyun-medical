@@ -43,7 +43,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 @Slf4j
 public class TelemetryPushServiceImpl implements ITelemetryPushService, SmartLifecycle {
 
-    /** 尾帧兜底排空轮询周期（毫秒）：窗口 2s 内两轮轮询，尾帧出帧延迟 ≤ 窗口+周期 */
+    /** 尾帧兜底排空轮询周期（毫秒）：窗口 2s 内恰四轮轮询（2000/500），尾帧出帧延迟 ≤ 窗口+周期 */
     private static final long FLUSH_POLL_MILLIS = 500L;
 
     /** STOMP 发送模板：SimpleBroker 通道唯一发送口（来源：@EnableWebSocketMessageBroker 基础设施） */
@@ -181,6 +181,10 @@ public class TelemetryPushServiceImpl implements ITelemetryPushService, SmartLif
     /**
      * 构造告警主题帧载荷（pushAlarm/pushLinkageNotify 共用）：与 iot.alarm.triggered 事件契约
      * record 同构，字段一一对应告警行快照。
+     *
+     * <p>occurredAt 漂移口径：取告警行 last_triggered_at 快照（非推送时刻）——新发行即触发时刻；
+     * 重复触发经 IotAlarmMapper 计数 UPDATE 原地刷新 last_triggered_at，风暴补推/联动强化重推时
+     * 该值晚于 MQ triggered 事件的首次 occurredAt（展示面容忍漂移，冻结载荷契约不改）。
      *
      * @param alarm 已落库告警实体，非空
      * @return triggered 契约载荷，非空

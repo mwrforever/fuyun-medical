@@ -176,5 +176,6 @@ fuyun:                         # 业务配置统一 fuyun.* 前缀（backend 宪
       # 波形白名单病区清单：逗号分隔病区 ID（如 1001,1002）；空串 env 绑定为空清单 = 全部拒绝
       # （安全默认：未显式授权病区不收波形，防高体量波形数据灌库）
       waveform-whitelist-ward-ids: ${FUYUN_IOT_TELEMETRY_WAVEFORM_WHITELIST_WARD_IDS:}
-      # 波形日配额（条/天，预留参数）：强制执行随 P1 波形查询通道一并交付（见 TelemetryValidationProperties javadoc）
+      # TODO(wave-quota): 波形日配额（条/天，预留参数）——强制执行随 P1 波形查询通道一并交付，
+      # 计划于 P1 版本引入（见 TelemetryValidationProperties javadoc）
       waveform-daily-quota: ${FUYUN_IOT_TELEMETRY_WAVEFORM_DAILY_QUOTA:1000000}

@@ -36,10 +36,10 @@ public class ColdChainRecordEntity {
     /** 记录类型：INSPECTION/ALARM_HANDLE/DEVIATION */
     private ColdChainRecordType recordType;
 
-    /** 关联告警号（ALARM_HANDLE 必填，其余类型为空），可空 */
+    /** 关联告警号（ALARM_HANDLE 必填；其余类型服务层不置空、调用方不传即空），可空 */
     private String alarmRef;
 
-    /** 双人核对第二人（ALARM_HANDLE 必填，其余类型为空），可空 */
+    /** 双人核对第二人（ALARM_HANDLE 必填；其余类型服务层不置空、调用方不传即空），可空 */
     private String secondOperator;
 
     /** 记录内容（JSON 载体：巡检读数/处置措施/偏差描述），可空 */

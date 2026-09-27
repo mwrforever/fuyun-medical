@@ -18,7 +18,8 @@ import java.time.OffsetDateTime;
  * @param description      产品描述，可空
  * @param modelDefinition  物模型 JSON 快照（服务能力数组形态），可空
  * @param syncStatus       同步状态机：SYNCING/SYNCED/MISMATCH，非空
- * @param createdAt        创建时刻（数据库维护），非空
+ * @param createdAt        创建时刻（库端 DEFAULT now() 维护）；POST /products 上架响应直接映射
+ *                         插入实体未经回查为 null，分页/详情查询面非空
  */
 public record ProductVO(
         String productId,

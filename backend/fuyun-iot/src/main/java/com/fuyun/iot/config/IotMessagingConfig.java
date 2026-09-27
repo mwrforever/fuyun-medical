@@ -25,10 +25,10 @@ import org.springframework.context.annotation.Import;
  * 后订阅：事件已在 V403/V1004 种子登记）；交换机全集仍由 integration MessagingGovernanceConfig
  * 声明，本配置不重复（禁私建交换机 A.5-4）。
  *
- * <p>P2 PR-2 Task 2 增量：iotEventSender/iotConsumerSupport 模板 Bean（GC7 跨模块多实例
+ * <p>P2 PR-2 Task 2 增量：iotEventSender/iotConsumerSupport 模板 Bean（GC6 跨模块多实例
  * @Qualifier 定绑锚）与 IotDomainPublisher 注册——CF-7 八事件（V1004 id 74–81）经
  * 「事务内 publishEvent → AFTER_COMMIT → iotEventSender fy.topic 直发」出 MQ（照住院域形态；
- * 事务内禁 MQ 发送红线），发布器不注册 Confirm/Returns 回调（GC8）；P0 设备状态自事件队列声明
+ * 事务内禁 MQ 发送红线），发布器不注册 Confirm/Returns 回调（GC7）；P0 设备状态自事件队列声明
  * 与既有扇出链（IotEventPublisher/IotFanoutListener）零改动。新事件的消费队列归消费方模块
  * （M05/M16）按先登记后订阅红线自行声明，本配置不代声明。
  *
@@ -41,8 +41,8 @@ import org.springframework.context.annotation.Import;
 public class IotMessagingConfig {
 
     /**
-     * IoT 域发送模板 Bean（GC7 多实例 @Qualifier 定绑锚：IotDomainPublisher 构造器按名取用；
-     * 单槽位回调红线见 DomainEventSender javadoc / GC8 不注册回调）。
+     * IoT 域发送模板 Bean（GC6 多实例 @Qualifier 定绑锚：IotDomainPublisher 构造器按名取用；
+     * 单槽位回调红线见 DomainEventSender javadoc / GC7 不注册回调）。
      *
      * @param rabbitTemplate Boot 自动装配模板，非空
      * @param codec          信封编解码器（MessagingGovernanceConfig 装配），非空
@@ -54,7 +54,7 @@ public class IotMessagingConfig {
     }
 
     /**
-     * IoT 域消费模板 Bean（GC7 多实例 @Qualifier 定绑锚：后续消费任务按名取用；
+     * IoT 域消费模板 Bean（GC6 多实例 @Qualifier 定绑锚：后续消费任务按名取用；
      * 标准三段式单一实现，消费者模块标识=iot）。
      *
      * @param idempotencyService 幂等构件（common 接口 / integration 实现），非空

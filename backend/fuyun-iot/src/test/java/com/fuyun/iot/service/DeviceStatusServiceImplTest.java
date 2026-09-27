@@ -232,7 +232,7 @@ class DeviceStatusServiceImplTest {
         return updateCaptor.getValue().getSqlSet();
     }
 
-    /** 构造档案存在性查询命中行（device_id + 旧 status + ward_id 三列投影） */
+    /** 构造档案存在性查询命中行（device_id/status/ward_id/last_online_at 四列投影；夹具仅置断言所需三列） */
     private static IotDeviceEntity existingDevice(DeviceStatus currentStatus) {
         IotDeviceEntity device = new IotDeviceEntity();
         device.setDeviceId(DEVICE_ID);

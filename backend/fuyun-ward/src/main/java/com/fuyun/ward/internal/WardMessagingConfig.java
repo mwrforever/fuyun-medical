@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Import;
  *
  * <p>com.fuyun.ward 包不在 @SpringBootApplication 扫描范围（com.fuyun.app.*）内，本配置经
  * fuyun-app WardConfig @Import 生效（不放宽扫描）。队列声明走 MessagingGovernance 构件（先登记
- * 后订阅：三个订阅事件已分别在 V1004 id 74/78 与 V800 id 63 种子登记）；交换机全集仍由
+ * 后订阅：四个订阅事件已分别在 V1004 id 74/78/81 与 V800 id 63 种子登记）；交换机全集仍由
  * integration MessagingGovernanceConfig 声明，本配置不重复（禁私建交换机 A.5-4）。
  *
  * <p>GC7 跨模块多实例定绑锚：wardEventSender/wardConsumerSupport 两模板 Bean（common 基类

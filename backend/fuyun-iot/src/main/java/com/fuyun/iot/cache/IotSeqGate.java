@@ -10,7 +10,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
  *
  * <p>号键 {@code fy:iot:seq:{AL|CMD|LG}:{yyyyMMdd}}（A.5-1 命名），Redis INCR 原子自增取号后格式化为
  * {@code 前缀 + yyyyMMdd + %05d}（例 AL2026092600001）；每次自增后对当日键续 48h TTL——次日自然
- * 换键归零，48h 覆盖跨日重叠请求窗口。INCR 与 EXPIRE 均为单命令原子操作（计划 GC15），无需 Lua
+ * 换键归零，48h 覆盖跨日重叠请求窗口。INCR 与 EXPIRE 均为单命令原子操作（计划 GC13），无需 Lua
  * 脚本；多实例并发取号由 Redis 单线程命令串行保证不重号。StringRedisTemplate 承载（禁 JDK
  * 序列化）；无状态单例（装配归 IotConfig，告警链 Task 7 消费 nextAlarmNo、命令链 Task 8 消费
  * nextCommandNo、联动链 Task 9 消费 nextLinkageNo）。
@@ -83,7 +83,7 @@ public class IotSeqGate {
         // 日期段单次采样：键与单号共用同一天，规避跨零点窗口键/号日期错位
         String day = LocalDate.now().format(DAY);
         String key = KEY_PREFIX + type + ":" + day;
-        // Redis INCR 原子自增取号：多实例并发不重号（单命令原子，禁 Lua/额外锁——计划 GC15）
+        // Redis INCR 原子自增取号：多实例并发不重号（单命令原子，禁 Lua/额外锁——计划 GC13）
         Long seq = redisTemplate.opsForValue().increment(key);
         // 每次自增后对当日键续 48h TTL：单命令原子，键生命周期完全由发号路径维护
         redisTemplate.expire(key, KEY_TTL);

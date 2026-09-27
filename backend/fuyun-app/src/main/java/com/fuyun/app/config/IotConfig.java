@@ -72,9 +72,9 @@ import org.springframework.context.annotation.Import;
  * 生效——该配置类带 enabled 开关条件装配，默认 {@code fuyun.iot.amqp.enabled=false} 下零连接
  * 尝试（存量 IT 回归零行为差异的保障）；MQ 事件总线域（fy.topic 状态事件发布器 + 自事件幂等
  * 消费者 + 治理队列声明）经 {@link IotMessagingConfig} 生效（无条件装配，与 AMQP 开关解耦）；
- * /ws/iot STOMP 端点与 HTTP 兜底端点无条件装配（B4.3 任务 B）；P2 PR-2 Task 7 追加告警域七件
- * （告警引擎/风暴抑制器/离线探测器、规则与告警双服务、规则与告警双端点）与告警引擎配置属性
- * （fuyun.iot.alarm.*）——引擎/服务依赖绑定快照、发号器与推送服务等既有装配链零新增外部依赖；
+ * /ws/iot STOMP 端点与 HTTP 兜底端点无条件装配（B4.3 任务 B）；P2 PR-2 Task 7 追加告警域八件
+ * （告警引擎/风暴抑制器/离线探测器、规则与告警双服务、规则与告警双端点，及告警引擎配置属性
+ * fuyun.iot.alarm.*）——引擎/服务依赖绑定快照、发号器与推送服务等既有装配链零新增外部依赖；
  * P2 PR-2 Task 8 追加命令域四件（命令下发编排器——五步下发实装单点/命令服务/命令四端点/命令
  * 结果帧监听器——AMQP 命令状态帧回推终态）与命令配置属性（fuyun.iot.command.*：同步等待超时
  * 与治疗级豁免开关）——编排器依赖白名单与发号器等既有装配链，TransactionTemplate 由 Boot 事务

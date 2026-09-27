@@ -521,6 +521,8 @@ public class CommandDispatcher {
         // 实测 spring-data-redis 3.5.11 与 redis:8.10.1 双侧支持）
         String json = redisTemplate.opsForValue().getAndDelete(CHALLENGE_KEY_PREFIX + challengeId);
         if (json == null || json.isBlank()) {
+            // 敏感豁免注记（终审批准）：challengeId 明文入日志不掩码——凭证 GETDEL 已一次性失效
+            // （重放不可用）+ TTL 120s 自限暴露窗口 + 仅失效路径打印，不构成可利用泄露面
             log.warn("二次确认凭证无效（缺失/过期/已用）：challengeId={}", challengeId);
             throw new BizException(
                     IotErrorCode.COMMAND_CONFIRM_INVALID, HttpStatus.BAD_REQUEST, "二次确认凭证无效（缺失/过期/已用）：" + challengeId);
@@ -528,6 +530,7 @@ public class CommandDispatcher {
         try {
             return objectMapper.readValue(json, ChallengePayload.class);
         } catch (Exception e) {
+            // 豁免注记同上（GETDEL 已失效 + TTL 120s + 仅失效路径打印）：challengeId 明文不掩码
             log.warn("二次确认凭证载荷损坏：challengeId={}，原因={}", challengeId, e.getMessage());
             throw new BizException(
                     IotErrorCode.COMMAND_CONFIRM_INVALID, HttpStatus.BAD_REQUEST, "二次确认凭证无效（载荷损坏）：" + challengeId);

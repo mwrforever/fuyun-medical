@@ -173,7 +173,7 @@ async function openMapping(row: ProductVO): Promise<void> {
   try {
     metricOptions.value = await metrics.list({});
   } catch {
-    // 字典加载失败弹错归拦截器；编码退化为手工录入
+    // 字典加载失败弹错归拦截器；选项列表置空——指标编码下拉无选项，映射行无法补全（重开弹窗重试）
     metricOptions.value = [];
   }
 }
