@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,6 +15,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.iot.api.payload.AlarmTriggeredPayload;
+import com.fuyun.iot.api.payload.CallTriggeredPayload;
 import com.fuyun.iot.api.payload.LinkageExecutedPayload;
 import com.fuyun.iot.cache.IotSeqGate;
 import com.fuyun.iot.constants.IotMessagingConstants;
@@ -52,9 +54,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 联动执行器单测（P2 PR-2 Task 9 Step 2 TDD）：触发条件匹配（三键词表/空对象全命中）、五类动作
- * 分派逐项语义（NOTIFY 推送/M01_NOTIFY 降级/CALL_TRANSFER·WARD_BROADCAST·NURSING_TASK 暂存
- * PENDING）、失败同步快速重试（恢复/耗尽 FAILED）、error_msg 列宽防线、人工重推路径复用既有
- * 联动号、iot.linkage.executed 事件发布（载荷契约逐字段）。
+ * 分派逐项语义（NOTIFY 推送/M01_NOTIFY 降级/CALL_TRANSFER 回接发布 iot.call.triggered[Task 12
+ * 回接]/WARD_BROADCAST·NURSING_TASK 暂存 PENDING）、失败同步快速重试（恢复/耗尽 FAILED）、
+ * error_msg 列宽防线、人工重推路径复用既有联动号、iot.linkage.executed 事件发布（载荷契约逐字段）。
  *
  * <p>真实 SQL 行为归 IT 回归；事务模板以无资源事务管理器最小实现承载（真实事务同步链语义，
  * TelemetryIngestServiceImplTest 同款形态）。
@@ -284,19 +286,54 @@ class LinkageExecutorTest {
     }
 
     @Test
-    @DisplayName("动作分派 CALL_TRANSFER：ward 呼叫域未上线暂存 PENDING（WardUnavailable 注记，Task 12 回接）")
-    void callTransferDefersAsPendingWithWardUnavailableNote() {
+    @DisplayName("动作分派 CALL_TRANSFER：发布 iot.call.triggered 扇出 ward（Task 12 回接闭合，回执 SUCCESS）")
+    void callTransferPublishesCallTriggeredAndSucceeds() {
         when(ruleMapper.selectList(any()))
                 .thenReturn(List.of(rule(900016L, LinkageActionType.CALL_TRANSFER, CONDITION_INFUSION)));
         when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        // 告警行定位（绑定快照 deviceId/wardId 字段来源）
+        when(alarmMapper.selectOne(any())).thenReturn(alarm());
+
+        executor.onAlarmTriggered(PAYLOAD);
+
+        // 事件扇出断言（call.triggered 与 executed 两次发布并存，按 eventType 过滤本动作帧）
+        verify(events, times(2)).publishEvent(eventCaptor.capture());
+        IotDomainEvent event = eventCaptor.getAllValues().stream()
+                .filter(e -> IotMessagingConstants.EVENT_CALL_TRIGGERED.equals(e.eventType()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("未发布 iot.call.triggered 事件"));
+        assertThat(event.eventType()).isEqualTo(IotMessagingConstants.EVENT_CALL_TRIGGERED);
+        CallTriggeredPayload payload = (CallTriggeredPayload) event.payload();
+        assertThat(payload.callNo()).as("callNo=触发引用（联动执行号，语义申报见 transferCall）").isEqualTo(LINKAGE_NO);
+        assertThat(payload.deviceId()).isEqualTo(DEVICE_ID);
+        assertThat(payload.callType()).isEqualTo("EMERGENCY");
+        assertThat(payload.bedId()).as("iot_alarm 无床位锚（ward 侧可空偏差已裁定）").isNull();
+        assertThat(payload.wardId()).isEqualTo(WARD_ID);
+        // 留痕断言：回执 SUCCESS（动作=事件已发布）且无暂存注记
+        verify(logMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getActionResult()).isEqualTo(LinkageActionResult.SUCCESS);
+        assertThat(logCaptor.getValue().getErrorMsg()).isNull();
+        verifyNoInteractions(pushService);
+    }
+
+    @Test
+    @DisplayName("动作分派 CALL_TRANSFER：告警行定位失败进重试耗尽落 FAILED（重投域语义）")
+    void callTransferFailsWhenAlarmRowMissing() {
+        when(ruleMapper.selectList(any()))
+                .thenReturn(List.of(rule(900016L, LinkageActionType.CALL_TRANSFER, CONDITION_INFUSION)));
+        when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        when(alarmMapper.selectOne(any())).thenReturn(null);
 
         executor.onAlarmTriggered(PAYLOAD);
 
         verify(logMapper).insert(logCaptor.capture());
-        IotLinkageLogEntity inserted = logCaptor.getValue();
-        assertThat(inserted.getActionResult()).isEqualTo(LinkageActionResult.PENDING);
-        assertThat(inserted.getErrorMsg()).contains("WardUnavailable");
-        verifyNoInteractions(pushService);
+        assertThat(logCaptor.getValue().getActionResult()).isEqualTo(LinkageActionResult.FAILED);
+        assertThat(logCaptor.getValue().getErrorMsg()).contains("定位告警行失败");
+        // 发布断言（executed 与 call.triggered 两型并存）：重试耗尽后零 call.triggered 帧
+        verify(events, atLeastOnce()).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues())
+                .as("告警行定位失败不得发布任何呼叫触发帧")
+                .noneMatch(e -> IotMessagingConstants.EVENT_CALL_TRIGGERED.equals(e.eventType()));
     }
 
     @Test

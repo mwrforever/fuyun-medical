@@ -20,9 +20,10 @@ import org.springframework.context.annotation.Import;
  * 台账服务（档案 CRUD + 三类型记录登记 + 归档事件发布 + 巡检 overdue 读时惰性判定）、输液看板
  * 服务（余量/滴速聚合 + 三档映射 + 历史追溯）、体征看板服务（anomaly 注记视图）与九/七/二/一
  * 四端点控制器。订阅监听器与发送模板归 {@link WardMessagingConfig}（消息装配集中点）；
- * {@link IotAlarmEventListener}（输液告急落行）与 {@link NursingInfusionCompletedListener}
- * （拔针复位）/ {@link TelemetryAnomalyEventListener}（体征质量注记）一并注册于本清单（消费
- * 入口非消息装配面——IotConfig 先例：IotAlarmEventListener 经 IotConfig @Import 注册）。
+ * {@link IotAlarmEventListener}（输液告急落行）/ {@link CallTriggeredEventListener}（设备源
+ * 呼叫落行）/ {@link NursingInfusionCompletedListener}（拔针复位）/
+ * {@link TelemetryAnomalyEventListener}（体征质量注记）一并注册于本清单（消费入口非消息装配面
+ * ——IotConfig 先例：IotAlarmEventListener 经 IotConfig @Import 注册）。
  */
 @Configuration
 @Import({
@@ -36,6 +37,7 @@ import org.springframework.context.annotation.Import;
     InfusionBoardController.class,
     VitalSignBoardController.class,
     IotAlarmEventListener.class,
+    CallTriggeredEventListener.class,
     NursingInfusionCompletedListener.class,
     TelemetryAnomalyEventListener.class
 })

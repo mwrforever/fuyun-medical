@@ -230,8 +230,18 @@ public class WardCallServiceImpl implements IWardCallService {
         return WardCallVO.from(requireCall(callNo));
     }
 
+    /**
+     * 呼叫分页（读时惰性升级判定承载面：当前页超时未升级行 CAS 递增 escalation_count 后回读实态）。
+     *
+     * <p><b>写事务承载（Task 12 审查 Critical-1 回正）</b>：读路径内嵌升级 CAS 写操作，禁标
+     * readOnly（Spring read-only 事务下 PG 拒绝 UPDATE——任何非空页必 500）；照 inpatient
+     * ConsultationServiceImpl.list 先例「列表读路径为写事务」口径用裸 {@code @Transactional}。
+     *
+     * @param request 分页查询请求，非空
+     * @return 分页出参（0 基页码）
+     */
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public PageResult<WardCallVO> page(WardCallQueryRequest request) {
         int page = request.page() == null ? 0 : request.page();
         int size = request.size() == null ? 20 : request.size();

@@ -35,6 +35,13 @@ public final class WardMessagingConstants {
     /** 订阅事件：拔针/输注结束（V800 id 63 登记；ward 侧输液呼叫复位消费源——q.ward.nursing.infusion.completed） */
     public static final String EVENT_NURSING_INFUSION_COMPLETED = "nursing.infusion.completed";
 
+    /**
+     * 订阅事件：设备呼叫触发（V1004 id 81 登记；M16 呼叫域入口——设备源呼叫落行消费源，
+     * q.ward.iot.call.triggered；Task 12 审查 Important-1 回接：iot 侧 CALL_TRANSFER 联动动作
+     * 经本事件扇出至 ward 呼叫域，Task 9 联调债自此闭合）。
+     */
+    public static final String EVENT_IOT_CALL_TRIGGERED = "iot.call.triggered";
+
     /** 本模块消费队列：告警触发（q.ward.iot.alarm.triggered，输液告急落呼叫行——每消费者一队列先例，与 q.iot.iot.alarm.triggered 分立互不竞争） */
     public static final String QUEUE_IOT_ALARM_TRIGGERED = QUEUE_PREFIX + EVENT_IOT_ALARM_TRIGGERED;
 
@@ -43,6 +50,9 @@ public final class WardMessagingConstants {
 
     /** 本模块消费队列：拔针/输注结束（q.ward.nursing.infusion.completed，输液呼叫复位——PR-3 nursing 发布后生效） */
     public static final String QUEUE_NURSING_INFUSION_COMPLETED = QUEUE_PREFIX + EVENT_NURSING_INFUSION_COMPLETED;
+
+    /** 本模块消费队列：设备呼叫触发（q.ward.iot.call.triggered，设备源呼叫落行——M16-01 呼叫域入口） */
+    public static final String QUEUE_IOT_CALL_TRIGGERED = QUEUE_PREFIX + EVENT_IOT_CALL_TRIGGERED;
 
     /** 发号键段与单号前缀：呼叫 CALL（CALL{yyyyMMdd}{%05d}） */
     public static final String SEQ_TYPE_CALL = "CALL";

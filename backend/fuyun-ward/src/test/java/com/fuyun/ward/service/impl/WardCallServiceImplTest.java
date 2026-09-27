@@ -38,6 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 呼叫状态机服务单测（P2 PR-2 Task 12 Step 3，TDD 先红后绿）：六态合法迁移表全量、非法迁移
@@ -331,6 +332,21 @@ class WardCallServiceImplTest {
         assertThat(captor.getValue().getCallNo()).isEqualTo(CALL_NO);
         assertThat(captor.getValue().getStatus()).isEqualTo(CallStatus.CREATED);
         assertThat(vo.callNo()).isEqualTo(CALL_NO);
+    }
+
+    @Test
+    @DisplayName("Critical-1 注解锁：page 写事务承载（读路径内嵌升级 CAS，禁 readOnly）")
+    void pageDeclaresWriteTransactionForLazyEscalation() throws Exception {
+        Transactional transactional = WardCallServiceImpl.class
+                .getMethod("page", WardCallQueryRequest.class)
+                .getAnnotation(Transactional.class);
+
+        assertThat(transactional)
+                .as("page 必须显式声明 @Transactional（升级 CAS 写操作的事务承载前提）")
+                .isNotNull();
+        assertThat(transactional.readOnly())
+                .as("read-only 事务下 PG 拒绝 UPDATE——读路径升级 CAS 将使任何非空页 500")
+                .isFalse();
     }
 
     @Test

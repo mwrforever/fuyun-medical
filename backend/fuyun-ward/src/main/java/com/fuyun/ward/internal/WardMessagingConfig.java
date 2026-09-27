@@ -23,9 +23,9 @@ import org.springframework.context.annotation.Import;
  *
  * <p>GC7 跨模块多实例定绑锚：wardEventSender/wardConsumerSupport 两模板 Bean（common 基类
  * 跨模块多实例，fuyun-app 上下文多候选必须 @Qualifier 按名定绑，禁赌回退链）；发布器
- * {@link WardEventPublisher} 注册于本配置 @Import。ward 侧三消费者（输液告急落行/拔针复位/
- * 体征质量注记）消费事件各异，「每消费者一队列」形态落三队列（q.ward.*），幂等域统一
- * consumer_module=ward（同事件仅单队列消费，无 iot-fanout 类跨域拆分需求）。
+ * {@link WardEventPublisher} 注册于本配置 @Import。ward 侧四消费者（输液告急落行/设备源呼叫
+ * 落行/拔针复位/体征质量注记）消费事件各异，「每消费者一队列」形态落四队列（q.ward.*），幂等域
+ * 统一 consumer_module=ward（同事件仅单队列消费，无 iot-fanout 类跨域拆分需求）。
  */
 @Configuration
 @Import(WardEventPublisher.class)
@@ -45,7 +45,7 @@ public class WardMessagingConfig {
     }
 
     /**
-     * 病房域消费模板 Bean（GC7 多实例 @Qualifier 定绑锚：三消费者构造器按名取用；
+     * 病房域消费模板 Bean（GC7 多实例 @Qualifier 定绑锚：四消费者构造器按名取用；
      * 标准三段式单一实现，消费者模块标识=ward）。
      *
      * @param idempotencyService 幂等构件（common 接口 / integration 实现），非空
@@ -100,5 +100,20 @@ public class WardMessagingConfig {
     public Declarables wardInfusionCompletedConsumerQueue(MessagingGovernance governance) {
         return governance.declareConsumerQueue(new ConsumerQueueSpec(
                 WardMessagingConstants.MODULE, WardMessagingConstants.EVENT_NURSING_INFUSION_COMPLETED));
+    }
+
+    /**
+     * 声明 ward 模块的设备呼叫触发消费队列并绑定 fy.topic（事件 V1004 id 81 已登记；
+     * q.ward.iot.call.triggered，消费者 CallTriggeredEventListener——M16-01 呼叫信令面的设备源
+     * 落行链；iot 侧 CALL_TRANSFER 联动动作经本事件扇出至 ward，Task 9 联调债随 Task 12 审查
+     * Important-1 回接闭合）。
+     *
+     * @param governance 消息治理构件，非空；来源：integration MessagingGovernanceConfig 装配
+     * @return 声明集合（quorum 队列 + 绑定）；由 RabbitAdmin 随连接建立幂等声明
+     */
+    @Bean
+    public Declarables wardCallTriggeredConsumerQueue(MessagingGovernance governance) {
+        return governance.declareConsumerQueue(
+                new ConsumerQueueSpec(WardMessagingConstants.MODULE, WardMessagingConstants.EVENT_IOT_CALL_TRIGGERED));
     }
 }

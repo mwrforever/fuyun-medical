@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.iot.api.payload.AlarmTriggeredPayload;
+import com.fuyun.iot.api.payload.CallTriggeredPayload;
 import com.fuyun.iot.api.payload.LinkageExecutedPayload;
 import com.fuyun.iot.cache.IotSeqGate;
 import com.fuyun.iot.constants.IotMessagingConstants;
@@ -41,15 +42,17 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p><b>五类动作语义（P2 面）</b>：NOTIFY=WS 告警主题重复强化（alarm 帧重推一次，linkageNo 经
  * STOMP 头携带作联动标记）+留痕；M01_NOTIFY=M01 通知中心缺位降级为留痕+warn（GC17①）；
- * CALL_TRANSFER=ward 呼叫域回接点（Task 12 落地前暂存 PENDING，见
- * {@link #deferToTargetDomain}）；NURSING_TASK=M05 护理任务创建（PR-3 回接，暂存 PENDING）；
- * WARD_BROADCAST=M16 病区播报（域缺位暂存 PENDING）。
+ * CALL_TRANSFER=发布 iot.call.triggered 扇出至 ward 呼叫域落 ward_call 行（Task 12 审查
+ * Important-1 回接闭合——动作=事件已发布，回执 SUCCESS；Task 9 联调债正式闭合）；
+ * NURSING_TASK=M05 护理任务创建（PR-3 回接，暂存 PENDING）；WARD_BROADCAST=M16 病区播报
+ * （域缺位暂存 PENDING）。
  *
  * <p><b>重试形态（实测申报）</b>：P2 全部动作皆本地快操作（NOTIFY=内存 SimpleBroker 进程内
  * 分发；其余为本地留痕/暂存），无慢外呼依赖——按 brief 允许形态采用<b>同步三次内快速重试</b>
  * （首试+至多 3 次重试，重试间零等待）；brief 的 1s/2s/4s 指数退避为慢外呼恢复等待设计，对
  * 进程内 broker 无恢复意义且禁 Thread.sleep 阻塞消费线程（Task 9 控制面裁决），故不引入退避
- * 等待；动作形态升级为真实外呼（回接 Task 12/PR-3）时一并引入异步重试形态。耗尽落 FAILED 终态，
+ * 等待；CALL_TRANSFER 已随 Task 12 回接为事件扇出（发布失败仍走重试），WARD_BROADCAST/NURSING_TASK
+ * 回接（PR-3）时一并引入异步重试形态。耗尽落 FAILED 终态，
  * 人工重推走 POST /linkage-logs/{no}/retry（服务层 CAS 承载）。
  *
  * <p><b>事务边界</b>：动作执行在事务外（推送禁入事务，宪法 A.4.2-7）；「日志落行+事件发布」经
@@ -66,6 +69,12 @@ public class LinkageExecutor {
 
     /** 动作失败自动重试次数上限（brief 冻结「三次」；retry_count 列承载已耗次数） */
     static final int MAX_RETRIES = 3;
+
+    /**
+     * CALL_TRANSFER 扇出呼叫的固定类型：EMERGENCY（告警驱动的转接呼叫固定紧急档——ward 域
+     * CallType 词表 V1100 冻结值，iot 侧以字面量承载防跨模块 enum 耦合，B.2-2）。
+     */
+    private static final String CALL_TRANSFER_CALL_TYPE = "EMERGENCY";
 
     /** 错误消息截断上限：error_msg 列宽 VARCHAR(500)（列宽防线，防摘要超长致落库失败） */
     private static final int ERROR_MSG_MAX_LENGTH = 500;
@@ -270,8 +279,10 @@ public class LinkageExecutor {
                         triggerRef);
                 yield succeeded(attempt);
             }
-            // ward 呼叫/病区播报与 M05 护理任务域缺位：暂存 PENDING（回接点见 deferToTargetDomain）
-            case CALL_TRANSFER, WARD_BROADCAST, NURSING_TASK -> deferToTargetDomain(rule, linkageNo, attempt);
+            // ward 病区播报与 M05 护理任务域缺位：暂存 PENDING（回接点见 deferToTargetDomain）；
+            // CALL_TRANSFER 已回接（Task 12）：发布 iot.call.triggered 扇出至 ward 呼叫域
+            case CALL_TRANSFER -> transferCall(rule, triggerRef, linkageNo, attempt);
+            case WARD_BROADCAST, NURSING_TASK -> deferToTargetDomain(rule, linkageNo, attempt);
         };
     }
 
@@ -296,8 +307,6 @@ public class LinkageExecutor {
      * 【回接点】目标业务域未上线动作的暂存承接（P2 面，联调债登记）：
      *
      * <ul>
-     *   <li><b>CALL_TRANSFER → Task 12 回接</b>：ward 呼叫域落 ward_call 创建端口后，本分支改为
-     *       调用端口落呼叫行并按回执置 SUCCESS/FAILED（暂存注记 WardUnavailable 消除）；</li>
      *   <li><b>WARD_BROADCAST → M16 病区播报域回接</b>：播报通道落地后同款改写（暂存注记
      *       WardBroadcastUnavailable）；</li>
      *   <li><b>NURSING_TASK → PR-3 回接</b>：M05 护理任务创建端口落地后同款改写（暂存注记
@@ -306,7 +315,8 @@ public class LinkageExecutor {
      *
      * <p>回接前本方法确定性返回 PENDING + 域缺位注记（error_msg 承载，日志行为暂存行）；
      * PENDING 行不入自动重试面（非失败语义），人工重推亦被服务层以「仅 FAILED 可重推」拒绝，
-     * 收口唯一路径为回接方落域行。
+     * 收口唯一路径为回接方落域行。CALL_TRANSFER 原为本方法承接项，Task 12 审查 Important-1
+     * 已回接（{@link #transferCall}），暂存注记 WardUnavailable 消除。
      *
      * @param rule      命中联动规则，非空
      * @param linkageNo 联动执行业务号，非空
@@ -316,7 +326,6 @@ public class LinkageExecutor {
     private ActionExecution deferToTargetDomain(IotLinkageRuleEntity rule, String linkageNo, int attempt) {
         String note =
                 switch (rule.getActionType()) {
-                    case CALL_TRANSFER -> "WardUnavailable：ward 呼叫域未上线（Task 12 回接 ward_call 落行）";
                     case WARD_BROADCAST -> "WardBroadcastUnavailable：M16 病区播报域未上线（回接方收口）";
                     case NURSING_TASK -> "NursingUnavailable：M05 护理任务创建未上线（PR-3 回接）";
                     default -> throw new IllegalStateException("暂存分派不承接的动作类型：" + rule.getActionType());
@@ -328,6 +337,52 @@ public class LinkageExecutor {
                 rule.getActionType(),
                 note);
         return new ActionExecution(LinkageActionResult.PENDING, attempt, note, Instant.now());
+    }
+
+    /**
+     * CALL_TRANSFER 动作执行（Task 12 审查 Important-1 回接，Task 9 联调债闭合）：按触发引用
+     * （告警号）定位告警行取绑定快照（deviceId/wardId），小事务内发布 iot.call.triggered
+     * （V1004 id 81，IotDomainPublisher AFTER_COMMIT 出 MQ——事务内禁直发红线），由 ward 呼叫域
+     * 消费落 ward_call 行（q.ward.iot.call.triggered 队列，幂等域 ward）。
+     *
+     * <p>动作语义=事件已发布（event 扇出给 ward），发布成功即回执 SUCCESS；发布事务失败异常上抛
+     * 进 execute 同步重试路径（发布本身无回执——ward 消费侧幂等域承接 at-least-once 语义）。
+     *
+     * <p><b>载荷组件语义申报（GC4 冻结组件名不变）</b>：callNo=触发引用/预留——联动触发无呼叫域
+     * 业务号（ward 呼叫号由 ward 侧 WardSeqGate 签发），本路径填联动执行号 linkageNo 作触发链
+     * 唯一引用，ward 侧 source_ref 落行留痕对账；callType=EMERGENCY（告警驱动的转接呼叫固定
+     * 紧急档，ward 域 CallType 词表 V1100 冻结值）；bedId=null（iot_alarm 无床位锚，ward 侧
+     * 可空偏差已裁定成立）。
+     *
+     * @param rule      命中联动规则，非空
+     * @param triggerRef 触发来源引用（告警号），非空
+     * @param linkageNo 联动执行业务号，非空
+     * @param attempt   当前为第几次执行（0=首试），非负
+     * @return SUCCESS（事件已发布；发布失败异常上抛走重试）
+     * @throws IllegalStateException 告警行定位失败（trigger_ref 无命中——重试耗尽后落 FAILED 留痕）
+     */
+    private ActionExecution transferCall(IotLinkageRuleEntity rule, String triggerRef, String linkageNo, int attempt) {
+        // 数据库读操作：自然键 alarm_no 单查（@TableLogic 自动携带 deleted=0）——绑定快照字段来源
+        IotAlarmEntity alarm = alarmMapper.selectOne(
+                Wrappers.<IotAlarmEntity>lambdaQuery().eq(IotAlarmEntity::getAlarmNo, triggerRef));
+        if (alarm == null) {
+            throw new IllegalStateException("联动 CALL_TRANSFER 动作定位告警行失败（trigger_ref 无命中）：" + triggerRef);
+        }
+        Instant triggeredAt = Instant.now();
+        // 消息发送：小事务内发布呼叫触发事件（AFTER_COMMIT 出 MQ；发布失败事务回滚且不发布）
+        transactions.executeWithoutResult(status -> events.publishEvent(new IotDomainEvent(
+                IotMessagingConstants.EVENT_CALL_TRIGGERED,
+                new CallTriggeredPayload(
+                        linkageNo, alarm.getDeviceId(), CALL_TRANSFER_CALL_TYPE, null, alarm.getWardId(), triggeredAt),
+                triggeredAt,
+                currentTraceId())));
+        log.info(
+                "联动 CALL_TRANSFER 已回接（事件扇出 ward 呼叫域）：linkageNo={}，ruleId={}，alarmNo={}，wardId={}",
+                linkageNo,
+                rule.getId(),
+                triggerRef,
+                alarm.getWardId());
+        return new ActionExecution(LinkageActionResult.SUCCESS, attempt, null, triggeredAt);
     }
 
     /** 首试/重试成功的执行结果（retryCount 承载已耗重试次数）。 */
