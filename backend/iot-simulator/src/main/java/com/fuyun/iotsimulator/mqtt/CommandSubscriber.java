@@ -32,7 +32,9 @@ import org.slf4j.LoggerFactory;
  * <p><b>异常口径</b>：命令帧畸形/缺 command_name/剧本拒绝 → 回执 result_code=1（可定位回执
  * 主题时尽力闭合命令，平台归 FAILED 而非无限等待）；request_id 缺失（主题非命令形态）→ 无法
  * 定位回执主题，仅记录日志（平台侧按超时归 TIMEOUT/EXPIRED 终态）；回调线程零外抛
- * （外抛即 Paho 断开连接）。
+ * （外抛即 Paho 断开连接）。另有<b>自回投防护</b>：回执主题形态帧直接忽略——标准 broker
+ * 会把本机回执回投自身订阅（MQTT 3.1.1 无 no-local 语义），不过滤即"回执→判不支持→再回执"
+ * 无界循环（本地明文 tcp:// 联调路径可达；IoTDA 主路径 response 主题由平台接管不受影响）。
  */
 public class CommandSubscriber {
 
@@ -45,6 +47,14 @@ public class CommandSubscriber {
 
     /** 命令帧主题内请求标识前缀（request_id={id} 段提取锚） */
     private static final String REQUEST_ID_PREFIX = "request_id=";
+
+    /**
+     * 回执主题判别段：订阅过滤器 {@code commands/#} 同样匹配本机发布的回执主题，MQTT 3.1.1
+     * 无 no-local 语义——标准 broker（明文 tcp:// 本地联调路径）会把本机回执原样回投自身订阅，
+     * 回执帧无 command_name 判为不支持后再发失败回执即成无界循环；命中本段的帧一律忽略
+     * （IoTDA 主路径 response 主题由平台接管，本分支仅联调路径可达）。
+     */
+    private static final String RESPONSE_TOPIC_SEGMENT = "/commands/response/";
 
     /** 命令帧 JSON 键：命令名（产品物模型命令定义名） */
     private static final String KEY_COMMAND_NAME = "command_name";
@@ -137,6 +147,12 @@ public class CommandSubscriber {
      * @param message 命令帧报文，非空；UTF-8 载荷
      */
     private void handleCommand(String topic, MqttMessage message) {
+        if (topic.contains(RESPONSE_TOPIC_SEGMENT)) {
+            // 自回投防护：本机回执经标准 broker 原样回投自身订阅（MQTT 3.1.1 无 no-local 语义），
+            // 直接忽略——不回执不回调，否则"回执→判不支持→再回执"无界循环刷爆联调 broker
+            log.debug("忽略回执主题自回投帧：deviceId={}，topic={}", deviceId, topic);
+            return;
+        }
         String requestId = extractRequestId(topic);
         if (requestId == null || requestId.isBlank()) {
             // 主题无 request_id 段：无法定位回执主题，仅留痕（平台按超时归 TIMEOUT/EXPIRED 终态）

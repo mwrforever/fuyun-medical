@@ -165,4 +165,24 @@ class CommandSubscriberTest {
         verify(mqttClient, timeout(2000).times(0)).publishTo(anyString(), anyString());
         assertThat(receivedCommands).as("无法归属请求的命令不挂剧本回调").isEmpty();
     }
+
+    @Test
+    @DisplayName("回执主题自回投防护：response 形态主题帧直接忽略——零回执零剧本回调（本地联调死循环防线）")
+    void ignoresSelfEchoedResponseTopicFrames() throws Exception {
+        subscriber.subscribe();
+        verify(mqttClient).subscribe(anyString(), anyInt(), listenerCaptor.capture());
+
+        assertThatCode(() -> listenerCaptor
+                        .getValue()
+                        .messageArrived(
+                                "$oc/devices/dev-001/sys/commands/response/request_id=5f4d-9a2c-11ef",
+                                new MqttMessage("{\"result_code\":0,\"result_msg\":\"success\"}"
+                                        .getBytes(StandardCharsets.UTF_8))))
+                .as("自回投帧不得向 Paho 回调线程外抛")
+                .doesNotThrowAnyException();
+
+        // 防线断言：自回投帧若被当命令处理会向同一 response 主题再发回执 → 无界循环刷爆联调 broker
+        verify(mqttClient, timeout(2000).times(0)).publishTo(anyString(), anyString());
+        assertThat(receivedCommands).as("自回投帧不挂剧本回调").isEmpty();
+    }
 }
