@@ -1,7 +1,8 @@
 // 告警规则页单测（/iot/alarm-rules，M14 FU-M14-08 告警引擎前端面）：规则列表加载与三类
 // 源徽标渲染（fuy-rule-tag--{type} 机器判据）、THRESHOLD 规则缺持续时长/恢复带零出网
-// 显式校验、THRESHOLD 完整提交出网携阈值参数并刷新、模拟回放出网并在弹窗展示扫描行数
-// 与触发清单、活跃告警等级徽标渲染与确认出网、关闭缺原因零出网拦截与携原因出网。
+// 显式校验、THRESHOLD 完整提交出网携阈值参数并刷新、模拟回放动态近一日默认窗出网并在
+// 弹窗展示扫描行数与触发清单、活跃告警等级徽标渲染与确认出网、关闭缺原因零出网拦截与
+// 携原因出网（后端 casClose 实况允许 ACTIVE/ACKNOWLEDGED 关闭）。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -240,7 +241,7 @@ describe('告警规则页', () => {
     expect(alarmRules.list).toHaveBeenCalledTimes(2);
   });
 
-  it('模拟回放提交出网并在弹窗展示扫描行数与触发清单', async () => {
+  it('模拟回放默认动态近一日窗口提交出网并展示扫描行数与触发清单', async () => {
     vi.mocked(alarmRules.list).mockResolvedValue(threeTypeRules());
     vi.mocked(alarmRules.simulate).mockResolvedValue({
       scannedRows: '1200',
@@ -258,14 +259,19 @@ describe('告警规则页', () => {
     await flushPromises();
     await clickRowButton(wrapper, '心率超阈告警', '模拟回放');
     await flushPromises();
-    await wrapper.find('input[aria-label="回放起始"]').setValue('2026-09-25T00:00');
-    await wrapper.find('input[aria-label="回放截止"]').setValue('2026-09-25T23:59');
+    // 默认窗已预填（动态近一日，不落固定日期字面量）——零改动直接开始回放
+    const fromInput = wrapper.find('input[aria-label="回放起始"]').element as HTMLInputElement;
+    expect(fromInput.value).not.toBe('');
     await clickButton(wrapper, '开始回放');
     await flushPromises();
-    expect(alarmRules.simulate).toHaveBeenCalledWith('rule-2', {
-      from: '2026-09-25T00:00',
-      to: '2026-09-25T23:59',
-    });
+    // 出网载荷为合法近一日窗（from<to、跨度恰 24h、截止≈当前时刻——按业务结果断言不绑定字面量）
+    expect(alarmRules.simulate).toHaveBeenCalledTimes(1);
+    const [ruleId, payload] = vi.mocked(alarmRules.simulate).mock.calls[0];
+    expect(ruleId).toBe('rule-2');
+    const fromMs = new Date(payload.from).getTime();
+    const toMs = new Date(payload.to).getTime();
+    expect(toMs - fromMs).toBe(24 * 3600 * 1000);
+    expect(Date.now() - toMs).toBeLessThan(60_000);
     // 回放结果弹窗展示扫描行数与命中触发清单
     const text = wrapper.text();
     expect(text).toContain('1200');

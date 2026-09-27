@@ -290,11 +290,23 @@ const simulateTarget = ref<AlarmRuleVO | null>(null);
 const simulateForm = ref({ from: '', to: '' });
 const simulateResult = ref<SimulateResultVO | null>(null);
 
-/** 打开模拟回放弹窗（默认回放近一日窗口） */
+/** datetime-local 控件原生展示串（本地时区 YYYY-MM-DDTHH:mm；native Date 计算与
+ * DischargeManageView datetime-local 先例同款口径） */
+function toDatetimeLocal(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** 打开模拟回放弹窗（默认动态近一日窗口：截止=当前时刻、起始=前推 24 小时——
+ * 逐次打开按当下重算，不落固定日期字面量，防默认窗过期致回放恒未命中） */
 function openSimulate(row: AlarmRuleVO): void {
   simulateTarget.value = row;
   simulateResult.value = null;
-  simulateForm.value = { from: '2026-09-25T00:00', to: '2026-09-25T23:59' };
+  const now = new Date();
+  simulateForm.value = {
+    from: toDatetimeLocal(new Date(now.getTime() - 24 * 3600 * 1000)),
+    to: toDatetimeLocal(now),
+  };
   simulateVisible.value = true;
 }
 
@@ -426,7 +438,9 @@ onMounted(() => {
     <!-- 页头：标题 + 提示 + 刷新 -->
     <header class="rule-toolbar fuy-toolbar" :style="{ '--fuy-stagger-index': 0 }">
       <h2 class="rule-title">告警规则</h2>
-      <span class="rule-hint">三类规则源 · 模拟回放验证后再上线 · 告警闭环：确认→关闭</span>
+      <span class="rule-hint"
+        >三类规则源 · 模拟回放验证后再上线 · 告警闭环：确认/关闭（活跃或已确认均可关）</span
+      >
       <el-button :loading="rulesLoading" @click="loadRules">刷新</el-button>
     </header>
 

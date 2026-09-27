@@ -264,7 +264,9 @@ export const alarms = {
     const resp = await http.post<AlarmVO>(`/v1/iot/alarms/${alarmNo}/acknowledge`);
     return resp.data;
   },
-  /** 告警关闭（ACKNOWLEDGED→CLOSED；原因强制由后端把守，前端表单显式校验）。 */
+  /** 告警关闭（ACTIVE/ACKNOWLEDGED→CLOSED——后端 AlarmServiceImpl casClose CAS
+   * status IN ('ACTIVE','ACKNOWLEDGED') 实况口径，终态已关闭拒绝；原因强制由后端把守，
+   * 前端表单显式校验）。 */
   close: async (alarmNo: string, payload: CloseAlarmRequest): Promise<AlarmVO> => {
     const resp = await http.post<AlarmVO>(`/v1/iot/alarms/${alarmNo}/close`, payload);
     return resp.data;
