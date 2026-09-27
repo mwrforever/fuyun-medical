@@ -10,7 +10,9 @@ import com.fuyun.iot.controller.AlarmRuleController;
 import com.fuyun.iot.controller.BindingController;
 import com.fuyun.iot.controller.CommandController;
 import com.fuyun.iot.controller.ConsumeErrorController;
+import com.fuyun.iot.controller.DashboardController;
 import com.fuyun.iot.controller.DeviceController;
+import com.fuyun.iot.controller.GatewayController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
 import com.fuyun.iot.controller.LinkageRuleController;
 import com.fuyun.iot.controller.MetricDictController;
@@ -23,6 +25,7 @@ import com.fuyun.iot.internal.IotAlarmEventListener;
 import com.fuyun.iot.internal.IotDeviceCommandListener;
 import com.fuyun.iot.internal.IotFallbackAuthService;
 import com.fuyun.iot.internal.LinkageExecutor;
+import com.fuyun.iot.internal.TelemetrySummaryAggregator;
 import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.internal.alarm.OfflineDetector;
 import com.fuyun.iot.internal.alarm.StormGuard;
@@ -35,8 +38,10 @@ import com.fuyun.iot.service.impl.AlarmServiceImpl;
 import com.fuyun.iot.service.impl.BindingServiceImpl;
 import com.fuyun.iot.service.impl.CommandServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
+import com.fuyun.iot.service.impl.DashboardServiceImpl;
 import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
+import com.fuyun.iot.service.impl.GatewayServiceImpl;
 import com.fuyun.iot.service.impl.LinkageRuleServiceImpl;
 import com.fuyun.iot.service.impl.MetricDictServiceImpl;
 import com.fuyun.iot.service.impl.ProductServiceImpl;
@@ -82,7 +87,12 @@ import org.springframework.context.annotation.Import;
  * 与质量监控域六件（遥测查询服务——三档查询路由 + ward 消费端口 IotTelemetryQueryPort 实现/
  * 质量监控服务——质量日统计惰性重算、遥测断流判定发布与消费积压快照采样/遥测两端点/质量两端点/
  * 积压监控端点/消费错误三端点——重放与放弃为 V401 P0 只写遗留的端点义务补齐，消费错误服务
- * 扩展处置面后既有装配行继续承载）。
+ * 扩展处置面后既有装配行继续承载）；P2 PR-2 Task 11 追加 WS 四主题完整化与网关及大屏数据面
+ * 五件（遥测摘要 2s 窗口聚合器——时钟注入 iotPushClock 定绑、窗口到期由推送服务 SmartLifecycle
+ * 兜底线程排空/网关档案服务——CRUD+standby 校验单点/网关四端点/大屏数据面服务——summary 六项
+ * 聚合+Redis 快照 TTL 5s+病区状态墙+变更触发推送/大屏两端点）——推送服务与扇出监听器经各自
+ * 既有装配行扩展（dashboard/global 推送与节流面；告警关闭自事件订阅，队列声明归
+ * {@link IotMessagingConfig}）。
  */
 @Configuration
 @EnableConfigurationProperties({
@@ -141,6 +151,15 @@ import org.springframework.context.annotation.Import;
     QualityServiceImpl.class,
     QualityController.class,
     MonitorController.class,
-    ConsumeErrorController.class
+    ConsumeErrorController.class,
+    // P2 PR-2 Task 11 WS 四主题完整化与网关及大屏数据面（FU-M14-07/FU-M14-12/FU-M14-13）：
+    // 摘要 2s 窗口聚合器（时钟注入，iotPushClock 定绑）/网关档案域两件（服务+四端点）/大屏数据
+    // 面两件（服务+两端点）；推送服务扩 dashboard/global 推送与节流面、扇出监听器扩告警关闭
+    // 订阅（队列声明归 IotMessagingConfig），既有装配行继续承载
+    TelemetrySummaryAggregator.class,
+    GatewayServiceImpl.class,
+    GatewayController.class,
+    DashboardServiceImpl.class,
+    DashboardController.class
 })
 public class IotConfig {}

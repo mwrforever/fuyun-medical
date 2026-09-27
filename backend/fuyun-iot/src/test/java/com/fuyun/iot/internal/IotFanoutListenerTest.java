@@ -18,8 +18,10 @@ import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.iot.api.DeviceStatusEvent;
+import com.fuyun.iot.api.payload.AlarmClosedPayload;
 import com.fuyun.iot.constants.IotMessagingConstants;
 import com.fuyun.iot.enums.DeviceStatus;
+import com.fuyun.iot.service.IDashboardService;
 import com.fuyun.iot.service.ITelemetryPushService;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -35,15 +37,16 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 
 /**
- * 设备状态自事件消费者单元测试（标准幂等范式三分支与不合规信封处置，BRIEF-PR4-01 §1.5，
- * DictPublishedListenerTest 同构）。
+ * IoT 自事件扇出消费者单元测试（标准幂等范式三分支与不合规信封处置，BRIEF-PR4-01 §1.5 +
+ * P2 PR-2 Task 11 扩订阅，DictPublishedListenerTest 同构）。
  *
  * <p>覆盖：重复投递（tryAcquire=false，D-7 回查仅认 PROCESSED 行）跳过即 AUTO 确认、成功消费落
  * received_event 登记（信封五要素完整，consumerModule=iot）、业务失败 settleFailure 失败收尾
  * （释放前置键 + FAILED 留痕）后原样重抛（交容器有界重试）、不合规信封上抛（不触达幂等构件）、
  * 载荷契约不符按消费失败处置、B4.3-b 接线——载荷含 wardId 推 STOMP 设备状态主题、wardId null
- * 跳过推送、推送失败按业务失败收尾重抛。真实 broker 链路（含幂等重投与 STOMP 收帧）归
- * IotTelemetryPipelineIT 步骤 5/6。
+ * 跳过推送、推送失败按业务失败收尾重抛、Task 11 扩订阅——设备状态/告警关闭消费后大屏摘要变更
+ * 检测推送（refreshAndPushIfChanged）与其失败处置。真实 broker 链路（含幂等重投与 STOMP 收帧）
+ * 归 IotTelemetryPipelineIT 步骤 5/6。
  */
 @ExtendWith(MockitoExtension.class)
 class IotFanoutListenerTest {
@@ -67,6 +70,9 @@ class IotFanoutListenerTest {
     @Mock
     private ITelemetryPushService pushService;
 
+    @Mock
+    private IDashboardService dashboardService;
+
     @Captor
     private ArgumentCaptor<ReceivedEventRecord> recordCaptor;
 
@@ -78,7 +84,7 @@ class IotFanoutListenerTest {
     void setUp() {
         objectMapper = testObjectMapper();
         listener = new IotFanoutListener(
-                idempotencyService, new EventEnvelopeCodec(objectMapper), objectMapper, pushService);
+                idempotencyService, new EventEnvelopeCodec(objectMapper), objectMapper, pushService, dashboardService);
     }
 
     @Test
@@ -205,6 +211,87 @@ class IotFanoutListenerTest {
         assertThat(thrown).isInstanceOf(IllegalStateException.class);
         verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq((RuntimeException) thrown));
         verify(idempotencyService, never()).recordProcessed(any());
+    }
+
+    @Test
+    @DisplayName("Task 11 扩订阅·设备状态消费后大屏摘要刷新：成功消费触发 refreshAndPushIfChanged（登记前执行）")
+    void triggersDashboardRefreshAfterDeviceStatusConsumption() {
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
+                .thenReturn(true);
+
+        listener.onDeviceStatusChanged(message(toJson(compliantEnvelope())));
+
+        verify(dashboardService).refreshAndPushIfChanged();
+        verify(idempotencyService).recordProcessed(any());
+    }
+
+    @Test
+    @DisplayName("Task 11 扩订阅·告警关闭消费：载荷解析留痕后触发大屏摘要刷新并登记 PROCESSED（eventType=iot.alarm.closed）")
+    void consumesAlarmClosedAndTriggersDashboardRefresh() {
+        AlarmClosedPayload payload =
+                new AlarmClosedPayload("AL2026091000001", "it-dev-001", WARD_ID, "E1001", OCCURRED_AT, "患者出院");
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
+                .thenReturn(true);
+        EventEnvelope envelope = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_ALARM_CLOSED,
+                "1",
+                null,
+                objectMapper.valueToTree(payload));
+
+        listener.onAlarmClosed(message(toJson(envelope)));
+
+        verify(idempotencyService).recordProcessed(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().eventType()).isEqualTo(IotMessagingConstants.EVENT_ALARM_CLOSED);
+        verify(dashboardService).refreshAndPushIfChanged();
+        verifyNoInteractions(pushService);
+    }
+
+    @Test
+    @DisplayName("Task 11 扩订阅·告警关闭摘要刷新失败按业务失败处置：settleFailure 收尾重抛，不落 PROCESSED")
+    void settlesFailureAndRethrowsWhenDashboardRefreshFailsOnAlarmClosed() {
+        AlarmClosedPayload payload =
+                new AlarmClosedPayload("AL2026091000001", "it-dev-001", WARD_ID, "E1001", OCCURRED_AT, "患者出院");
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
+                .thenReturn(true);
+        IllegalStateException failure = new IllegalStateException("大屏摘要刷新失败");
+        doThrow(failure).when(dashboardService).refreshAndPushIfChanged();
+        EventEnvelope envelope = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_ALARM_CLOSED,
+                "1",
+                null,
+                objectMapper.valueToTree(payload));
+
+        assertThatThrownBy(() -> listener.onAlarmClosed(message(toJson(envelope))))
+                .isSameAs(failure);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq(failure));
+        verify(idempotencyService, never()).recordProcessed(any());
+    }
+
+    @Test
+    @DisplayName("Task 11 扩订阅·告警关闭载荷契约不符：按消费失败处置（失败收尾留痕后重抛走死信）")
+    void settlesFailureAndRethrowsWhenAlarmClosedPayloadViolatesContract() {
+        EventEnvelope violating = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_ALARM_CLOSED,
+                "1",
+                null,
+                objectMapper.valueToTree("scalar-payload"));
+
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.MODULE))
+                .thenReturn(true);
+
+        Throwable thrown = catchThrowable(() -> listener.onAlarmClosed(message(toJson(violating))));
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        verify(dashboardService, never()).refreshAndPushIfChanged();
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq((RuntimeException) thrown));
     }
 
     /** 构造合规信封：五要素齐全 + DeviceStatusEvent 契约载荷（codec 合规校验通过） */

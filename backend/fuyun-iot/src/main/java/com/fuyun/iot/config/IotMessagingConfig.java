@@ -91,4 +91,17 @@ public class IotMessagingConfig {
         return governance.declareConsumerQueue(
                 new ConsumerQueueSpec(IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_ALARM_TRIGGERED));
     }
+
+    /**
+     * 声明 iot 模块的告警关闭自事件消费队列并绑定 fy.topic（P2 PR-2 Task 11 扇出扩订阅，事件
+     * V1004 id 76 已登记；q.iot.iot.alarm.closed，消费者 IotFanoutListener——大屏摘要变更触发源）。
+     *
+     * @param governance 消息治理构件，非空；来源：integration MessagingGovernanceConfig 装配
+     * @return 声明集合（quorum 队列 + 绑定）；由 RabbitAdmin 随连接建立幂等声明
+     */
+    @Bean
+    public Declarables alarmClosedConsumerQueue(MessagingGovernance governance) {
+        return governance.declareConsumerQueue(
+                new ConsumerQueueSpec(IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_ALARM_CLOSED));
+    }
 }

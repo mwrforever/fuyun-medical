@@ -1,6 +1,8 @@
 package com.fuyun.iot.config;
 
 import com.fuyun.iot.internal.StompConnectAuthInterceptor;
+import java.time.Clock;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -61,5 +63,19 @@ public class IotWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void configureMessageBroker(MessageBrokerRegistry registry) {
         registry.enableSimpleBroker("/topic");
+    }
+
+    /**
+     * 推送面时钟 Bean（GC7 同类型多实例 @Qualifier 定绑锚，P2 PR-2 Task 11）：遥测摘要 2s
+     * 窗口聚合器的窗口边界时钟（TelemetrySummaryAggregator 构造器 @Qualifier("iotPushClock")
+     * 取用），生产恒为系统 UTC。不注册全局无标识 Clock Bean——与 IotAmqpConfig 条件装配的
+     * iotAmqpClock（fuyun.iot.amqp.enabled=true 时存在）同类型并存，无标识注入将歧义失败
+     * （BillingWebConfig 同款规避先例）。
+     *
+     * @return 系统 UTC 时钟，singleton 无状态
+     */
+    @Bean("iotPushClock")
+    public Clock iotPushClock() {
+        return Clock.systemUTC();
     }
 }

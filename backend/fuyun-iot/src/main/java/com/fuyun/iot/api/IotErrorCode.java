@@ -59,7 +59,13 @@ public enum IotErrorCode implements ErrorCode {
     /** 消费错误状态不允许该操作（409；状态机违例） */
     CONSUME_ERROR_STATE_NOT_ALLOWED("IOT-1021"),
     /** 注册中心不可用（503；IoTDA 管理面不可达） */
-    REGISTRY_UNAVAILABLE("IOT-1022");
+    REGISTRY_UNAVAILABLE("IOT-1022"),
+    /** 网关不存在（404；gateway_id 无命中，P2 PR-2 Task 11 顺延） */
+    GATEWAY_NOT_FOUND("IOT-1023"),
+    /** 网关已存在（409；gateway_id 重复登记） */
+    GATEWAY_ALREADY_EXISTS("IOT-1024"),
+    /** 网关热备对端校验不通过（409；对端不存在/自引用/成环/被删除守卫拦截，P2 PR-2 Task 11） */
+    GATEWAY_STANDBY_INVALID("IOT-1025");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

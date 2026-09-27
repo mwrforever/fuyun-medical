@@ -60,6 +60,9 @@ public final class IotMessagingConstants {
     /** 本模块自事件消费队列：告警触发（q.iot.iot.alarm.triggered，P2 PR-2 Task 9 联动触发源主入口） */
     public static final String QUEUE_ALARM_TRIGGERED = "q.iot.iot.alarm.triggered";
 
+    /** 本模块自事件消费队列：告警关闭（q.iot.iot.alarm.closed，P2 PR-2 Task 11 扇出扩订阅——大屏摘要变更触发源） */
+    public static final String QUEUE_ALARM_CLOSED = "q.iot.iot.alarm.closed";
+
     /** 本地攒批消费链固定消费组标识（iot_consumer_stat.consumer_group 落值：AMQP 消费链单攒批器单组，
      * 真实 IoTDA 消费组名随联调对齐） */
     public static final String LOCAL_CONSUMER_GROUP = "iot-amqp";
@@ -189,6 +192,9 @@ public final class IotMessagingConstants {
 
     /** STOMP 告警主题前缀：/topic/iot/alarm/{wardId}（FU-M14-08 分级通知面，P2 PR-2 Task 7） */
     public static final String TOPIC_ALARM_PREFIX = "/topic/iot/alarm/";
+
+    /** STOMP 全院运营摘要主题：/topic/iot/dashboard/global（FU-M14-13 四主题完整化，P2 PR-2 Task 11） */
+    public static final String TOPIC_DASHBOARD_GLOBAL = "/topic/iot/dashboard/global";
 
     /** 错误留痕摘要算法：SHA-256，十六进制摘要 64 位与 raw_digest 列宽一致（DeadLetterListener 同口径） */
     public static final String DIGEST_ALGORITHM_SHA256 = "SHA-256";

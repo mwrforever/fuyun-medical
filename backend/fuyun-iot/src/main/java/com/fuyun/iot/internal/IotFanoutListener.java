@@ -7,7 +7,9 @@ import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.iot.api.DeviceStatusEvent;
+import com.fuyun.iot.api.payload.AlarmClosedPayload;
 import com.fuyun.iot.constants.IotMessagingConstants;
+import com.fuyun.iot.service.IDashboardService;
 import com.fuyun.iot.service.ITelemetryPushService;
 import java.nio.charset.StandardCharsets;
 import lombok.extern.slf4j.Slf4j;
@@ -15,25 +17,30 @@ import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 
 /**
- * 设备状态自事件消费者（B4.3 消费侧，BRIEF-PR4-01 §1.5）：q.iot.iot.device.status-changed
- * 的标准范式消费执行点（本模块自事件——发布→自消费全链，P0 唯一 iot 订阅，演示治理链）。
+ * IoT 自事件扇出消费者（B4.3 消费侧 + P2 PR-2 Task 11 扩订阅）：q.iot.iot.device.status-changed
+ * 与 q.iot.iot.alarm.closed 的标准范式消费执行点（本模块自事件——发布→自消费全链；多实例扇出
+ * 经 RabbitMQ 队列，照既有扇出形态）。
  *
  * <p><b>确认机制（红线 4，锁定决策 6）</b>：本监听器走 RabbitMQ 容器 <b>AUTO 确认</b>
  * （宪法 A.5-5：监听方法成功返回即由容器确认，失败有界重试耗尽进 fy.dlx）；iot AMQP 主链路
  * （IotAmqpTelemetryConsumer）走 Qpid JMS 客户端确认——两套机制互不相干。幂等分域（红线 9）：
  * 本监听器属 MQ 事件总线域，走 {@link MessageIdempotencyService} 标准范式（Redis NX 前置 +
  * received_event 唯一索引兜底）；AMQP 主链路明细幂等由 iot_telemetry 唯一约束 ON CONFLICT DO
- * NOTHING 承担，两域不得混用。
+ * NOTHING 承担，两域不得混用。标准幂等范式（含 D-7 回查语义与失败链留痕）：tryAcquire false
+ * → return 跳过即 AUTO 确认；业务执行 + recordProcessed 成功登记；业务失败 settleFailure
+ * 失败收尾后重抛（交容器有界重试，耗尽进 fy.dlx）。
  *
- * <p>标准幂等范式（含 D-7 回查语义与失败链留痕，MessageIdempotencyService javadoc）：tryAcquire
- * false（回查仅认 PROCESSED 行）→ return 跳过即 AUTO 确认；业务执行 + recordProcessed 成功登记；
- * 业务失败 settleFailure 失败收尾（释放前置键 + FAILED 留痕，双保留不遮蔽）后重抛（交容器有界
- * 重试，耗尽进 fy.dlx）。DictPublishedListener 同构先例。
- *
- * <p>消费后动作（P0，B4.3-b 已接线）：载荷契约解析 + info 日志留痕（deviceId/status/wardId）
- * + <b>STOMP 设备状态主题推送</b>（经 {@link ITelemetryPushService#pushDeviceStatus} 推
- * /topic/iot/device-status/{wardId}，载荷 wardId 为空时推送静默降级）——推送失败按业务失败
- * 处置（settleFailure 失败收尾重抛走有界重试），推送成功后才登记 PROCESSED。
+ * <p><b>消费后动作（P2 PR-2 Task 11 扩展）</b>：
+ * <ul>
+ *   <li>设备状态事件：载荷契约解析 + 留痕 + STOMP 设备状态主题推送（经
+ *       {@link ITelemetryPushService#pushDeviceStatus}）+ <b>大屏摘要变更检测推送</b>（经
+ *       {@link IDashboardService#refreshAndPushIfChanged}——在线/离线计数变化的触发源）；</li>
+ *   <li>告警关闭事件（Task 11 新订阅）：载荷契约解析 + 留痕 + 大屏摘要变更检测推送（活跃告警
+ *       计数变化的触发源）。告警触发事件不在此扩订阅——q.iot.iot.alarm.triggered 队列已被联动
+ *       监听器（IotAlarmEventListener）独占，同队列多消费者竞争将撕裂联动语义；触发行的摘要
+ *       刷新由引擎进程内直推链路与后续事件补齐（大屏 REST 快照兜底恒为最新值）。</li>
+ * </ul>
+ * 推送/刷新失败按业务失败处置（settleFailure 失败收尾重抛走有界重试），成功后才登记 PROCESSED。
  *
  * <p>归 internal/ 包：容器驱动的模块内入口，禁止外部引用（backend 宪法 B.1）；Bean 注册点
  * 为 IotMessagingConfig @Import。
@@ -50,6 +57,9 @@ public class IotFanoutListener {
     /** STOMP 推送服务：消费后设备状态主题推送的唯一出口（/topic/iot/device-status/{wardId}） */
     private final ITelemetryPushService pushService;
 
+    /** 运营大屏数据面服务：摘要变更检测推送出口（/topic/iot/dashboard/global，变更触发形态） */
+    private final IDashboardService dashboardService;
+
     /**
      * 全参构造器（装配归 IotMessagingConfig @Import，backend 宪法 B.1）。
      *
@@ -58,16 +68,20 @@ public class IotFanoutListener {
      * @param codec              信封编解码器，非空；来源：MessagingGovernanceConfig 装配
      * @param objectMapper       JSON 转换器，非空；载荷契约 record 反序列化（全局定制实例）
      * @param pushService        STOMP 推送服务，非空；来源：fuyun-app IotConfig 装配链
+     * @param dashboardService   运营大屏数据面服务，非空；来源：fuyun-app IotConfig 装配链
+     *                           （P2 PR-2 Task 11 扩订阅追加依赖）
      */
     public IotFanoutListener(
             MessageIdempotencyService idempotencyService,
             EventEnvelopeCodec codec,
             ObjectMapper objectMapper,
-            ITelemetryPushService pushService) {
+            ITelemetryPushService pushService,
+            IDashboardService dashboardService) {
         this.idempotencyService = idempotencyService;
         this.codec = codec;
         this.objectMapper = objectMapper;
         this.pushService = pushService;
+        this.dashboardService = dashboardService;
     }
 
     /**
@@ -79,6 +93,31 @@ public class IotFanoutListener {
     public void onDeviceStatusChanged(Message message) {
         // 原文进 codec：__TypeId__ 头不作消费依据（CF-1 冻结约定）；不合规信封上抛交有界重试转死信
         EventEnvelope envelope = codec.fromJson(new String(message.getBody(), StandardCharsets.UTF_8));
+        consumeWithIdempotency(envelope, this::handleDeviceStatusChanged);
+    }
+
+    /**
+     * 告警关闭事件消费入口（Task 11 扩订阅）：解析信封 → 幂等范式 → 大屏摘要变更检测推送 +
+     * 成功登记。队列声明归 IotMessagingConfig（治理构件 declareConsumerQueue，事件 V1004 id 76
+     * 已登记）。
+     *
+     * @param message 原始消息帧，非空；来源：fy.topic 路由至本模块消费队列的信封线格式
+     */
+    @RabbitListener(queues = IotMessagingConstants.QUEUE_ALARM_CLOSED)
+    public void onAlarmClosed(Message message) {
+        EventEnvelope envelope = codec.fromJson(new String(message.getBody(), StandardCharsets.UTF_8));
+        consumeWithIdempotency(envelope, this::handleAlarmClosed);
+    }
+
+    /**
+     * 标准幂等范式骨架（两消费入口共用）：重复投递跳过即 AUTO 确认；业务执行成功登记
+     * PROCESSED；业务失败 settleFailure 失败收尾（释放前置键 + FAILED 留痕，双保留不遮蔽）
+     * 后重抛交有界重试。
+     *
+     * @param envelope   已解析的合规信封，非空
+     * @param business   消费业务体（载荷解析与推送/刷新动作），非空
+     */
+    private void consumeWithIdempotency(EventEnvelope envelope, java.util.function.Consumer<EventEnvelope> business) {
         // 标准范式①：重复投递（NX 失败且回查确认已处理）直接返回跳过，即 AUTO 确认
         if (!idempotencyService.tryAcquire(envelope.eventId(), IotMessagingConstants.MODULE)) {
             log.info(
@@ -96,7 +135,7 @@ public class IotFanoutListener {
                 envelope.occurredAt(),
                 IotMessagingConstants.MODULE);
         try {
-            doBusiness(envelope);
+            business.accept(envelope);
             // 标准范式②：成功登记 received_event（唯一索引兜底并发，前次失败行升级为已处理）
             idempotencyService.recordProcessed(record);
         } catch (RuntimeException e) {
@@ -107,19 +146,18 @@ public class IotFanoutListener {
     }
 
     /**
-     * 消费业务（P0，B4.3-b 已接线）：载荷契约解析 + 结构化日志留痕 + STOMP 设备状态主题推送。
+     * 设备状态消费业务：载荷契约解析 + 结构化日志留痕 + STOMP 设备状态主题推送 + 大屏摘要
+     * 变更检测推送。
      *
-     * <p>推送语义：经 {@link ITelemetryPushService#pushDeviceStatus} 推
-     * /topic/iot/device-status/{wardId}——载荷 wardId 为空时推送静默降级（简报 §1.5"wardId
-     * 空则 info 跳过推送"，P0 状态帧契约不含 wardId 属预期场景）；推送失败按业务失败处置
-     * （异常上抛由范式③失败收尾 FAILED 留痕后重抛交有界重试），推送成功后才执行 recordProcessed
-     * 登记。
+     * <p>推送语义：载荷 wardId 为空时设备状态帧推送静默降级（简报 §1.5，P0 状态帧契约不含
+     * wardId 属预期场景）；大屏摘要刷新与 wardId 无关（全院计数面）恒执行。推送/刷新失败按
+     * 业务失败处置（异常上抛由范式③失败收尾 FAILED 留痕后重抛交有界重试）。
      *
      * @param envelope 已解析的合规信封，非空
      * @throws IllegalStateException 载荷与 DeviceStatusEvent 契约不符（字段缺失或类型错误）——
-     *                               按消费失败处置（settleFailure 失败收尾后重抛走死信），禁止静默吞错
+     *                               按消费失败处置，禁止静默吞错
      */
-    private void doBusiness(EventEnvelope envelope) {
+    private void handleDeviceStatusChanged(EventEnvelope envelope) {
         DeviceStatusEvent event;
         try {
             event = objectMapper.treeToValue(envelope.payload(), DeviceStatusEvent.class);
@@ -136,5 +174,36 @@ public class IotFanoutListener {
                 envelope.traceId());
         // STOMP 设备状态主题推送（wardId 空由推送服务静默降级；失败上抛走释放重推，范式③承接）
         pushService.pushDeviceStatus(event);
+        // 大屏摘要变更检测推送（在线/离线计数变化触发源；变更判定与缓存回写在服务内闭环）
+        dashboardService.refreshAndPushIfChanged();
+    }
+
+    /**
+     * 告警关闭消费业务：载荷契约解析 + 结构化日志留痕 + 大屏摘要变更检测推送（活跃告警计数
+     * 变化触发源）。
+     *
+     * <p>不推告警主题帧：关闭面（M05/M16 复位与统计）按事件契约消费方各自承接，本监听器只
+     * 承载大屏摘要变更触发（四主题中告警主题的关闭帧推送无冻结契约，不臆造载荷）。
+     *
+     * @param envelope 已解析的合规信封，非空
+     * @throws IllegalStateException 载荷与 AlarmClosedPayload 契约不符（字段缺失或类型错误）——
+     *                               按消费失败处置，禁止静默吞错
+     */
+    private void handleAlarmClosed(EventEnvelope envelope) {
+        AlarmClosedPayload payload;
+        try {
+            payload = objectMapper.treeToValue(envelope.payload(), AlarmClosedPayload.class);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("告警关闭事件载荷与契约不符：event_id=" + envelope.eventId(), e);
+        }
+        log.info(
+                "告警关闭自事件消费完成：alarmNo={}，deviceId={}，wardId={}，event_id={}，traceId={}",
+                payload.alarmNo(),
+                payload.deviceId(),
+                payload.wardId(),
+                envelope.eventId(),
+                envelope.traceId());
+        // 大屏摘要变更检测推送（活跃告警计数变化触发源）
+        dashboardService.refreshAndPushIfChanged();
     }
 }
