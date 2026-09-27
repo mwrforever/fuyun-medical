@@ -1,6 +1,7 @@
 package com.fuyun.iot.config;
 
 import com.fuyun.iot.internal.StompConnectAuthInterceptor;
+import com.fuyun.iot.internal.TelemetrySummaryAggregator;
 import java.time.Clock;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -66,16 +67,19 @@ public class IotWebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     /**
-     * 推送面时钟 Bean（GC7 同类型多实例 @Qualifier 定绑锚，P2 PR-2 Task 11）：遥测摘要 2s
-     * 窗口聚合器的窗口边界时钟（TelemetrySummaryAggregator 构造器 @Qualifier("iotPushClock")
-     * 取用），生产恒为系统 UTC。不注册全局无标识 Clock Bean——与 IotAmqpConfig 条件装配的
-     * iotAmqpClock（fuyun.iot.amqp.enabled=true 时存在）同类型并存，无标识注入将歧义失败
-     * （BillingWebConfig 同款规避先例）。
+     * 遥测摘要 2s 窗口聚合器 Bean（Task 18 探针 D1 修复，2026-09-27）：推送节流面时钟在装配点
+     * 显式构造注入 {@code Clock.systemUTC()}（BillingWebConfig 取价时钟同款先例）——<b>不注册全局
+     * Clock Bean</b>。原形态 {@code @Bean("iotPushClock")} 与 IotAmqpConfig 条件装配的 iotAmqpClock
+     * （fuyun.iot.amqp.enabled=true 时存在）同类型并存，Spring Modulith 事件注册表工厂方法按类型
+     * 无标识解析 Clock（{@code ObjectProvider<Clock>} 注入，库内注入点挂不上 @Qualifier）即二义
+     * 失败阻断启动（EventOpsJob 依赖链实锚）；命名不豁免候选集——删除后 enabled 两态下按类型
+     * 候选均 ≤1（true=iotAmqpClock 单候选，false=零候选走注册表内置 UTC 默认），AMQP 凭证时钟
+     * 与推送节流时钟语义各自不变（推送时钟生产恒为系统 UTC，单测经构造器注入固定时钟）。
      *
-     * @return 系统 UTC 时钟，singleton 无状态
+     * @return 窗口聚合器实例，singleton 无状态（时钟源只读）
      */
-    @Bean("iotPushClock")
-    public Clock iotPushClock() {
-        return Clock.systemUTC();
+    @Bean
+    public TelemetrySummaryAggregator telemetrySummaryAggregator() {
+        return new TelemetrySummaryAggregator(Clock.systemUTC());
     }
 }

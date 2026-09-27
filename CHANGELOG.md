@@ -2,6 +2,32 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-27 · Task 18 真栈探针修复环 round 2：D1 AMQP 启用态 Clock 二义启动失败修复（D2/D3 配置面零代码闭合）
+
+- ① **D1（阻断级）根因与修法**：`fuyun.iot.amqp.enabled=true` 时 `IotAmqpConfig.iotAmqpClock` 与
+  `IotWebSocketConfig.iotPushClock` 双 `Clock` Bean 并存，Spring Modulith 事件注册表工厂方法
+  （`EventPublicationAutoConfiguration#eventPublicationRegistry`）经 `ObjectProvider<Clock>` 按
+  类型无标识解析（库内注入点挂不上 @Qualifier）二义失败，经 EventOpsJob 依赖链阻断启动——
+  全量门禁 IT 恰有 @Primary 测试时钟（IotTelemetryPipelineIT/IotAmqpReconnectIT）遮蔽，CI 绿而
+  真栈红。修复取 BillingWebConfig 取价时钟同款先例（非纯 @Qualifier 形态的裁决依据：库内注入点
+  不可限定，且任一生产 Clock 加 @Primary 会与既有两 IT 的 @Primary 测试时钟双 primary 冲突）：
+  删除 `iotPushClock` 全局 Bean，推送节流时钟改 `IotWebSocketConfig` 装配点显式构造
+  `Clock.systemUTC()`；`TelemetrySummaryAggregator` 构造器摘除 @Qualifier；enabled 两态按类型
+  候选均 ≤1（true=iotAmqpClock 单候选，false=零候选走注册表内置 UTC 默认），AMQP 凭证时钟与
+  推送节流时钟语义各自不变（推送时钟生产恒系统 UTC，单测构造器注入固定时钟不变）。
+- ② **D1 回归锚**：新增 `IotAmqpClockAmbiguityTest`（fuyun-app，ApplicationContextRunner 走真实
+  Modulith 自动配置，无容器 CI 可跑）两面——缺陷机理面：双无主 Clock 候选下上下文启动失败且
+  报告点名 `iotAmqpClock/iotPushClock/eventPublicationRegistry`（与真栈错误同形，防再引入第二
+  全局 Clock Bean）；修复面：真实 `IotAmqpConfig`（enabled=true + 连接四要素）与
+  `IotWebSocketConfig` 同上下文装配成功、Clock 候选恰一、注册表解析成功、聚合器 Bean 在位。
+- ③ **D2/D3 定性与零代码闭合**：D2 实为映射管理面（PUT metric-mappings）字典存在性校验
+  （IOT-1004）拒绝 `INFUSION_SHORTAGE`——ingest 两面（HTTP 兜底/AMQP）词表外直通本就同构无差异；
+  词表缺口走既有运行时登记端点 `POST /api/v1/iot/metrics`（字典自管设计内面，ward 侧
+  WardMessagingConstants「词表缺位申报」预告的对齐路径）闭合，不改 V1007 种子、不新增迁移号、
+  ward 侧 metricCode 精确相等语义不动；D3 经核 `deploy/.env.example:86` 占位键与
+  `docker-compose.yml:111` 接线在 HEAD 已齐备，缺口仅在本地真实 `.env`（红线禁动，演示经进程
+  环境变量注入）。
+
 ## 2026-09-27 · P2 PR-2 收口：M14/M16 七条验收锚点 IT 全绿与文档收口（Task 18 批次 D）
 
 - ① **事件与号段收口**：**事件 id 74–82 落地**（74–81 iot 八事件落 V1004、82 ward.cold-chain.alert-archived 落 V1102，三方一致契约锚 IotMessagingContractTest/WardMessagingContractTest）；**迁移号勘误申报**（乱序守卫裁定出处=本文件 2026-09-26「P2 PR-2 前置」条目⑤ + 台账 `docs/migrations/flyway-version-registry.md` 同日行）：iot 原排 V404–V413 与 nursing 原排 V809 低于基线全局最大已应用 V1003 被乱序守卫拒止，改通用段续号 **V1004–V1013/V1014**（billing V1001–V1003 先例），ward **V1100–V1102 维持**（全新 schema 享号段初始化豁免且 V1100>V1003 双保险）。

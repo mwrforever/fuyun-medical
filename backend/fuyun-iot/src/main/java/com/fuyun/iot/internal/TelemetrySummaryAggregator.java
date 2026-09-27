@@ -24,12 +24,14 @@ import lombok.extern.slf4j.Slf4j;
  * 已排空窗口不重复产帧（幂等）。
  *
  * <p><b>可测性（brief「时钟注入或窗口边界注入」）</b>：时钟经构造器注入（单测 SteppingClock
- * 推进窗口边界；生产装配 Clock.systemUTC()，经 IotWebSocketConfig iotPushClock Bean——同类型
- * 多 Clock Bean 场景以 @Qualifier 定绑，IotAmqpConfig iotAmqpClock 条件装配不冲突）。
+ * 推进窗口边界；生产装配 Clock.systemUTC()，由 IotWebSocketConfig @Bean 显式构造（BillingWebConfig
+ * 取价时钟同款先例）——不注册全局 Clock Bean：原 iotPushClock Bean 与 IotAmqpConfig 条件装配
+ * iotAmqpClock 并存时，Spring Modulith 事件注册表按类型无标识解析 Clock（ObjectProvider 注入，
+ * 挂不上 @Qualifier）即二义失败（Task 18 探针 D1，2026-09-27 修复）。
  *
  * <p>线程安全：offer/drainExpired 同一把内部锁串行化（窗口状态全在这两入口变更），推送失败
  * 由调用方处置，本类不感知 STOMP 基础设施。归 internal/ 包（模块内机制件，宪法 B.1）；装配归
- * fuyun-app IotConfig @Import。
+ * IotWebSocketConfig @Bean 显式构造。
  */
 @Slf4j
 public class TelemetrySummaryAggregator {
@@ -44,14 +46,13 @@ public class TelemetrySummaryAggregator {
     private final Map<Long, WindowBuffer> buffers = new HashMap<>();
 
     /**
-     * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1；时钟按名定绑——上下文存在
-     * iotPushClock/iotAmqpClock 同类型多 Bean，GC7 多实例 @Qualifier 定绑红线）。
+     * 全参构造器（装配归 IotWebSocketConfig @Bean 显式构造，backend 宪法 B.1——时钟不注册全局
+     * Bean，Modulith 按类型解析面只留 iotAmqpClock 单候选，D1 修复形态）。
      *
-     * @param clock 窗口边界时钟，非空；来源：IotWebSocketConfig iotPushClock（生产
-     *              Clock.systemUTC()）或单测固定/可推进时钟
+     * @param clock 窗口边界时钟，非空；来源：IotWebSocketConfig 装配点（生产 Clock.systemUTC()）
+     *              或单测固定/可推进时钟
      */
-    public TelemetrySummaryAggregator(
-            @org.springframework.beans.factory.annotation.Qualifier("iotPushClock") Clock clock) {
+    public TelemetrySummaryAggregator(Clock clock) {
         this.clock = clock;
     }
 
