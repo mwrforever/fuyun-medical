@@ -167,3 +167,13 @@
   --fuy-color-rule-threshold: var(--fuy-color-brand); /* 规则源：平台阈值 */
   --fuy-color-rule-offline: var(--fuy-color-info-text); /* 规则源：离线 */
 }
+
+/* ===== M16 病区视图模块增量（输液告急三档着色，2026-09-26）=====
+   三层纪律沿 M14 先例：全部为 semantic 层语义别名、零新色值（一律指向既有 token）；
+   三档映射沿后端 InfusionBoardDeviceVO.mapAlertLevel 口径：YELLOW ≤15ml 黄/ORANGE ≤10ml 橙/
+   RED ≤5ml 红；床卡描边与关键数字同档取色，对比度沿源 token 达标值。 */
+:root {
+  --fuy-color-infusion-yellow: var(--fuy-color-warning-text); /* 黄档预警（≤15ml） */
+  --fuy-color-infusion-orange: var(--fuy-palette-orange-700); /* 橙档告急（≤10ml） */
+  --fuy-color-infusion-red: var(--fuy-color-danger-text); /* 红档危急（≤5ml） */
+}

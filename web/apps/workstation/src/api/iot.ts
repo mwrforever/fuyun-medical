@@ -1,10 +1,12 @@
 /**
- * 物联网域 API（M14 前端面，一域一文件）：产品与物模型（分页/上架/物模型同步/术语映射/
+ * 物联网域 API（M14/M16 前端面，一域一文件）：产品与物模型（分页/上架/物模型同步/术语映射/
  * 命令安全等级登记）+ 指标字典（分页/新增）+ 设备（分页/注册/影子/停用/凭证重置）+
  * 设备患者绑定（分页/绑定/解绑）+ 告警规则（列表/新建/修改/删除/模拟回放）+ 告警
- * （分页/确认/关闭）。路径前缀 /v1/iot/**（baseURL 已含 /api）；雪花 id 与 long 后端经
+ * （分页/确认/关闭）+ 命令（挑战确认/下发/日志分页）+ 联动规则与执行日志（CRUD/重试）+
+ * 数据质量（统计/利用率）+ 消费监控（积压）+ 消费错误（分页/重放/放弃）+ 遥测曲线（series）。
+ * 路径前缀 /v1/iot/**（baseURL 已含 /api）；雪花 id 与 long 后端经
  * Jackson 全局以字符串输出（backend A.3-8），前端类型一律 string 承载（web A.3-6）。
- * REST 面为后端 Task 2-7 冻结契约（生成物唯一来源）；函数按资源分组导出（spec mock 面）。
+ * REST 面为后端 Task 2-11 冻结契约（生成物唯一来源）；函数按资源分组导出（spec mock 面）。
  */
 import { http } from './http';
 import type { components } from '@fuyun/shared/api';
@@ -37,6 +39,27 @@ export type MetricMappingVO = components['schemas']['MetricMappingVO'];
 /** 命令登记行（safetyLevel 安全级/治疗级——FU-M14-09 白名单数据源） */
 export type CommandItem = components['schemas']['CommandItem'];
 export type CommandVO = components['schemas']['CommandVO'];
+/** 命令下发/挑战两步（P2 PR-2 Task 8 冻结契约：confirm-challenge 签发 challengeId 后凭其下发） */
+export type ConfirmChallengeRequest = components['schemas']['ConfirmChallengeRequest'];
+export type ConfirmChallengeVO = components['schemas']['ConfirmChallengeVO'];
+export type IssueCommandRequest = components['schemas']['IssueCommandRequest'];
+export type CommandLogVO = components['schemas']['CommandLogVO'];
+export type CommandQueryRequest = components['schemas']['CommandQueryRequest'];
+/** 联动规则与执行日志（P2 PR-2 Task 9/10 冻结契约） */
+export type SaveLinkageRuleRequest = components['schemas']['SaveLinkageRuleRequest'];
+export type LinkageRuleVO = components['schemas']['LinkageRuleVO'];
+export type LinkageLogVO = components['schemas']['LinkageLogVO'];
+export type LinkageLogQueryRequest = components['schemas']['LinkageLogQueryRequest'];
+/** 数据质量统计（质量/利用率共用查询入参）与消费积压、消费错误（P2 PR-2 Task 10/12 契约） */
+export type QualityStatQueryRequest = components['schemas']['QualityStatQueryRequest'];
+export type DataQualityStatVO = components['schemas']['DataQualityStatVO'];
+export type ConsumerStatVO = components['schemas']['ConsumerStatVO'];
+export type ConsumeErrorVO = components['schemas']['ConsumeErrorVO'];
+export type ConsumeErrorQueryRequest = components['schemas']['ConsumeErrorQueryRequest'];
+export type AbandonConsumeErrorRequest = components['schemas']['AbandonConsumeErrorRequest'];
+/** 遥测曲线查询（冷链温度曲线轻量渲染消费；scope=device/patient/ward 三维度路由） */
+export type TelemetrySeriesRequest = components['schemas']['TelemetrySeriesRequest'];
+export type TelemetryPoint = components['schemas']['TelemetryPoint'];
 
 /** 产品分页出参（common PageResult 单泛型生成物：content/page/size/total） */
 export type ProductPage = components['schemas']['PageResultProductVO'];
@@ -46,6 +69,14 @@ export type DevicePage = components['schemas']['PageResultDeviceVO'];
 export type BindingPage = components['schemas']['PageResultBindingVO'];
 /** 告警分页出参 */
 export type AlarmPage = components['schemas']['PageResultAlarmVO'];
+/** 命令日志分页出参 */
+export type CommandLogPage = components['schemas']['PageResultCommandLogVO'];
+/** 联动执行日志分页出参 */
+export type LinkageLogPage = components['schemas']['PageResultLinkageLogVO'];
+/** 数据质量统计分页出参（质量统计表与设备利用率共用出参形态） */
+export type QualityStatPage = components['schemas']['PageResultDataQualityStatVO'];
+/** 消费错误分页出参 */
+export type ConsumeErrorPage = components['schemas']['PageResultConsumeErrorVO'];
 /** 物模型同步状态三值词表（SYNCING 同步中/SYNCED 已同步/MISMATCH 失配） */
 export type ProductSyncStatus = ProductVO['syncStatus'];
 
@@ -97,6 +128,55 @@ export const ALARM_STATUS_LABELS: Record<string, string> = {
   ACTIVE: '活跃',
   ACKNOWLEDGED: '已确认',
   CLOSED: '已关闭',
+};
+
+/** 命令下发状态五值中文词表（ISSUED 已下发/DELIVERED 已送达/SUCCESS 成功/FAILED 失败/
+ * TIMEOUT 超时——命令日志状态徽标共用） */
+export const COMMAND_STATUS_LABELS: Record<string, string> = {
+  ISSUED: '已下发',
+  DELIVERED: '已送达',
+  SUCCESS: '成功',
+  FAILED: '失败',
+  TIMEOUT: '超时',
+};
+
+/** 联动触发源三值中文词表（ALARM_TRIGGERED 告警触发/TELEMETRY_ANOMALY 遥测异常/
+ * DEVICE_STATUS 设备状态——规则 CRUD 与执行日志筛选共用） */
+export const TRIGGER_SOURCE_LABELS: Record<string, string> = {
+  ALARM_TRIGGERED: '告警触发',
+  TELEMETRY_ANOMALY: '遥测异常',
+  DEVICE_STATUS: '设备状态',
+};
+
+/** 联动动作类型五值中文词表（NOTIFY 站内通知/M01_NOTIFY M01 通知/CALL_TRANSFER 呼叫转接/
+ * NURSING_TASK 护理任务/WARD_BROADCAST 病区播报） */
+export const ACTION_TYPE_LABELS: Record<string, string> = {
+  NOTIFY: '站内通知',
+  M01_NOTIFY: 'M01 通知',
+  CALL_TRANSFER: '呼叫转接',
+  NURSING_TASK: '护理任务',
+  WARD_BROADCAST: '病区播报',
+};
+
+/** 联动执行结果三值中文词表（SUCCESS 成功/FAILED 失败/PENDING 待执行——执行日志徽标） */
+export const LINKAGE_RESULT_LABELS: Record<string, string> = {
+  SUCCESS: '成功',
+  FAILED: '失败',
+  PENDING: '待执行',
+};
+
+/** 消费错误环节三值中文词表（PARSE 解析/VALIDATE 校验/PERSIST 落库——错误列表环节列） */
+export const CONSUME_ERROR_STAGE_LABELS: Record<string, string> = {
+  PARSE: '解析',
+  VALIDATE: '校验',
+  PERSIST: '落库',
+};
+
+/** 消费错误状态三值中文词表（PENDING 待处置/REPLAYED 已重放/ABANDONED 已放弃） */
+export const CONSUME_ERROR_STATUS_LABELS: Record<string, string> = {
+  PENDING: '待处置',
+  REPLAYED: '已重放',
+  ABANDONED: '已放弃',
 };
 
 /** 指标类别四值中文词表（指标字典列表与新增下拉共用） */
@@ -269,6 +349,122 @@ export const alarms = {
    * 前端表单显式校验）。 */
   close: async (alarmNo: string, payload: CloseAlarmRequest): Promise<AlarmVO> => {
     const resp = await http.post<AlarmVO>(`/v1/iot/alarms/${alarmNo}/close`, payload);
+    return resp.data;
+  },
+};
+
+/** 命令资源组：挑战确认 / 下发 / 日志分页（challenge 两步安全门：第一步 confirm-challenge
+ * 签发 challengeId，第二步凭 challengeId 下发；治疗级命令白名单校验由后端在两步把守）。 */
+export const commands = {
+  /** 第一步·挑战确认（设备/命令/参数预检，返回一次性 challengeId 与有效期；FU-M14-09 安全门）。 */
+  confirmChallenge: async (payload: ConfirmChallengeRequest): Promise<ConfirmChallengeVO> => {
+    const resp = await http.post<ConfirmChallengeVO>('/v1/iot/commands/confirm-challenge', payload);
+    return resp.data;
+  },
+  /** 第二步·下发（携 challengeId 幂等锚下发；返回命令日志行，状态从 ISSUED 起流转）。 */
+  issue: async (payload: IssueCommandRequest): Promise<CommandLogVO> => {
+    const resp = await http.post<CommandLogVO>('/v1/iot/commands', payload);
+    return resp.data;
+  },
+  /** 命令日志分页（status 空=全部五态；deviceId 可空不过滤）。 */
+  page: async (params: CommandQueryRequest): Promise<CommandLogPage> => {
+    const resp = await http.get<CommandLogPage>('/v1/iot/commands', { params });
+    return resp.data;
+  },
+};
+
+/** 联动规则资源组：列表 / 新建 / 修改 / 删除（触发条件与动作配置为 JSON 对象，前端显式
+ * JSON 校验禁裸 parse）。 */
+export const linkageRules = {
+  /** 规则全量列表（量小全量直出，无分页）。 */
+  list: async (): Promise<LinkageRuleVO[]> => {
+    const resp = await http.get<LinkageRuleVO[]>('/v1/iot/linkage-rules');
+    return resp.data;
+  },
+  /** 规则新建（enabled 缺省由后端承载）。 */
+  create: async (payload: SaveLinkageRuleRequest): Promise<LinkageRuleVO> => {
+    const resp = await http.post<LinkageRuleVO>('/v1/iot/linkage-rules', payload);
+    return resp.data;
+  },
+  /** 规则修改（整单替换语义，SaveLinkageRuleRequest 同新建）。 */
+  update: async (id: string, payload: SaveLinkageRuleRequest): Promise<LinkageRuleVO> => {
+    const resp = await http.put<LinkageRuleVO>(`/v1/iot/linkage-rules/${id}`, payload);
+    return resp.data;
+  },
+  /** 规则删除（204 无返回体）。 */
+  remove: async (id: string): Promise<void> => {
+    await http.delete(`/v1/iot/linkage-rules/${id}`);
+  },
+};
+
+/** 联动执行日志资源组：分页 / 重试（FAILED 行可重试，重试计数由后端累加）。 */
+export const linkageLogs = {
+  /** 执行日志分页（ruleId/triggerSource/actionResult 可空不过滤）。 */
+  page: async (params: LinkageLogQueryRequest): Promise<LinkageLogPage> => {
+    const resp = await http.get<LinkageLogPage>('/v1/iot/linkage-logs', { params });
+    return resp.data;
+  },
+  /** 失败重试（按 linkageNo 重投动作；返回重试后日志行）。 */
+  retry: async (linkageNo: string): Promise<LinkageLogVO> => {
+    const resp = await http.post<LinkageLogVO>(`/v1/iot/linkage-logs/${linkageNo}/retry`);
+    return resp.data;
+  },
+};
+
+/** 数据质量资源组：质量统计分页 / 设备利用率分页（TopN 由前端按 usageRate 降序截取）。 */
+export const quality = {
+  /** 质量统计分页（deviceId/statDate 可空不过滤；missingRate 缺测率、anomalyCount 异常数）。 */
+  stats: async (params: QualityStatQueryRequest): Promise<QualityStatPage> => {
+    const resp = await http.get<QualityStatPage>('/v1/iot/quality/stats', { params });
+    return resp.data;
+  },
+  /** 设备利用率分页（usageRate 利用率；TopN 形态由前端排序承载）。 */
+  deviceUsage: async (params: QualityStatQueryRequest): Promise<QualityStatPage> => {
+    const resp = await http.get<QualityStatPage>('/v1/iot/quality/device-usage', { params });
+    return resp.data;
+  },
+};
+
+/** 消费监控资源组：消费组积压快照（消费速率/到达速率/积压估计/最老消息年龄）。 */
+export const monitor = {
+  /** 消费组积压全量（量小全量直出；backlogEstimate 积压水位核心字段）。 */
+  consumerLag: async (): Promise<ConsumerStatVO[]> => {
+    const resp = await http.get<ConsumerStatVO[]>('/v1/iot/monitor/consumer-lag');
+    return resp.data;
+  },
+};
+
+/** 消费错误资源组：分页 / 重放 / 放弃（死信治理面：重放重投原消息，放弃须留原因）。 */
+export const consumeErrors = {
+  /** 错误分页（status 空=全部三态；queueName 可空不过滤）。 */
+  page: async (params: ConsumeErrorQueryRequest): Promise<ConsumeErrorPage> => {
+    const resp = await http.get<ConsumeErrorPage>('/v1/iot/consume-errors', { params });
+    return resp.data;
+  },
+  /** 重放（原消息重投消费链路；返回重放后错误行——replayCount 累加）。 */
+  replay: async (errorId: string): Promise<ConsumeErrorVO> => {
+    const resp = await http.post<ConsumeErrorVO>(`/v1/iot/consume-errors/${errorId}/replay`);
+    return resp.data;
+  },
+  /** 放弃（原因强制：前端显式校验+后端兜底；放弃后不再重投，留痕由后端承载）。 */
+  abandon: async (
+    errorId: string,
+    payload: AbandonConsumeErrorRequest,
+  ): Promise<ConsumeErrorVO> => {
+    const resp = await http.post<ConsumeErrorVO>(
+      `/v1/iot/consume-errors/${errorId}/abandon`,
+      payload,
+    );
+    return resp.data;
+  },
+};
+
+/** 遥测查询资源组：曲线 series（scope=device/patient/ward 三维度路由，冷链温度曲线轻量
+ * 渲染消费——不引 echarts）。 */
+export const telemetry = {
+  /** 遥测曲线查询（返回聚合点列：time/min/max/avg/first/last/sampleCount）。 */
+  series: async (params: TelemetrySeriesRequest): Promise<TelemetryPoint[]> => {
+    const resp = await http.get<TelemetryPoint[]>('/v1/iot/telemetry/series', { params });
     return resp.data;
   },
 };
