@@ -34,6 +34,13 @@ class CommandSubscriberTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * 回执断言轮询等待上限：命令处理经单线程执行器异步执行，5s 容忍 CI 负载下执行器调度抖动
+     * （终审分诊 T14①：原 2s 窗口在 CI runner 高负载下偶发不足致回执断言失败，取值复用同模块
+     * IotSimulatorApplicationTest 既有 5000ms 字面量；Mockito timeout 轮询命中即返，不加长通过路径耗时）
+     */
+    private static final long AWAIT_MILLIS = 5000L;
+
     /** 命令下行主题样例（平台下发，request_id 由平台生成） */
     private static final String COMMAND_TOPIC = "$oc/devices/dev-001/sys/commands/request_id=5f4d-9a2c-11ef";
 
@@ -87,7 +94,7 @@ class CommandSubscriberTest {
                                 .getBytes(StandardCharsets.UTF_8)));
 
         assertThat(receivedCommands).as("剧本回调挂接：命令名原值透传").contains("PAUSE_INFUSION");
-        verify(mqttClient, timeout(2000)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
+        verify(mqttClient, timeout(AWAIT_MILLIS)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
         JsonNode receipt = MAPPER.readTree(payloadCaptor.getValue());
         assertThat(receipt.path("result_code").asInt())
                 .as("执行成功回执 result_code=0（平台归 SUCCESS 终态）")
@@ -108,7 +115,7 @@ class CommandSubscriberTest {
                         new MqttMessage("{\"command_name\":\"SHUTDOWN_DEVICE\",\"paras\":{}}"
                                 .getBytes(StandardCharsets.UTF_8)));
 
-        verify(mqttClient, timeout(2000)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
+        verify(mqttClient, timeout(AWAIT_MILLIS)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
         assertThat(MAPPER.readTree(payloadCaptor.getValue()).path("result_code").asInt())
                 .as("执行失败回执 result_code=1（非 0 即失败，平台归 FAILED 终态）")
                 .isEqualTo(1);
@@ -125,7 +132,7 @@ class CommandSubscriberTest {
                 .messageArrived(COMMAND_TOPIC, new MqttMessage("{\"paras\":{}}".getBytes(StandardCharsets.UTF_8)));
 
         assertThat(receivedCommands).as("无命令名不挂剧本回调").isEmpty();
-        verify(mqttClient, timeout(2000)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
+        verify(mqttClient, timeout(AWAIT_MILLIS)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
         assertThat(MAPPER.readTree(payloadCaptor.getValue()).path("result_code").asInt())
                 .isEqualTo(1);
     }
@@ -143,7 +150,7 @@ class CommandSubscriberTest {
                 .doesNotThrowAnyException();
 
         assertThat(receivedCommands).as("畸形帧不挂剧本回调").isEmpty();
-        verify(mqttClient, timeout(2000)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
+        verify(mqttClient, timeout(AWAIT_MILLIS)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
         assertThat(MAPPER.readTree(payloadCaptor.getValue()).path("result_code").asInt())
                 .isEqualTo(1);
     }
@@ -162,7 +169,7 @@ class CommandSubscriberTest {
                                         "{\"command_name\":\"PAUSE_INFUSION\"}".getBytes(StandardCharsets.UTF_8))))
                 .doesNotThrowAnyException();
 
-        verify(mqttClient, timeout(2000).times(0)).publishTo(anyString(), anyString());
+        verify(mqttClient, timeout(AWAIT_MILLIS).times(0)).publishTo(anyString(), anyString());
         assertThat(receivedCommands).as("无法归属请求的命令不挂剧本回调").isEmpty();
     }
 
@@ -182,7 +189,7 @@ class CommandSubscriberTest {
                 .doesNotThrowAnyException();
 
         // 防线断言：自回投帧若被当命令处理会向同一 response 主题再发回执 → 无界循环刷爆联调 broker
-        verify(mqttClient, timeout(2000).times(0)).publishTo(anyString(), anyString());
+        verify(mqttClient, timeout(AWAIT_MILLIS).times(0)).publishTo(anyString(), anyString());
         assertThat(receivedCommands).as("自回投帧不挂剧本回调").isEmpty();
     }
 }

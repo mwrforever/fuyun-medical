@@ -2,6 +2,13 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-27 · simulator 命令回执断言竞态窗口加宽（CI 稳定化）
+
+- CI runner 唯一失败用例 CommandSubscriberTest#respondsSuccessReceiptForSupportedCommand（run 36346561581，
+  本地历轮全绿）：回执断言 2s 轮询窗口在 CI 高负载下偶发不足（异步回执未达断言窗口）。修复提常量
+  AWAIT_MILLIS=5000（复用同模块既有字面量，fuyun-iot 同名惯例）加宽窗口，类内同型六处 timeout 统一替换，
+  断言内容与生产码零变更——终审分诊工单 W-52 CI 稳定性张（T10②/T14①/T15⑦）之 **T14① 顺带核销**，余项仍挂。
+
 ## 2026-09-27 · 终审收尾双提交：comment fixup（必修四条+搭车十二条）与终审分诊工单登记 W-49~W-59（Ready to merge 后零生产逻辑变更）
 
 - ① **件一 comment fixup（commit 6341cef，15 文件纯注释/文案修正，零逻辑零断言变更）**：必修四条——
