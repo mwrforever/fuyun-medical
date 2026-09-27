@@ -3,6 +3,7 @@ package com.fuyun.app;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.EventEnvelope;
@@ -388,7 +389,10 @@ class IotTelemetryPipelineIT {
     /**
      * 步骤③：STOMP 摘要断言——先订阅 /topic/iot/telemetry/1001（等订阅收据回执确保生效），再发
      * 1 帧新遥测（新唯一键），断言收到摘要帧且含 deviceId/metricCode（落库成功后按病区推送，
-     * BRIEF-PR4-01 §6.2 步骤 3）。
+     * BRIEF-PR4-01 §6.2 步骤 3）。Task 11 起（WS 四主题推送完整化）摘要从逐批直推改为 2s 窗口
+     * 节流：步骤②批次落在窗口内，其摘要帧排空时点（兜底排空线程周期或本批 offer 前置排空触发）
+     * 晚于本步订阅建立——会话先收到上一窗口的滞后摘要帧，故按 items 含本批 metricCode 取本批帧
+     * 进断言（滞后帧跳过），count=1 等断言契约保持原样。
      */
     @Test
     @Order(3)
@@ -400,7 +404,7 @@ class IotTelemetryPipelineIT {
 
             // 新唯一键帧（不与步骤②重复）：消费→落库→按绑定快照 ward 推摘要全链
             sendFrames(List.of(telemetryJson(DEVICE_ID, "vital.respiration", "18", "2026-09-10T02:30:00Z")));
-            String frame = frames.poll(PIPELINE_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+            String frame = pollBatchSummaryFrame(frames, "vital.respiration");
             assertThat(frame).as("批落库后摘要帧到达订阅会话").isNotNull();
             JsonNode summary = objectMapper.readTree(frame);
             assertThat(summary.path("count").asInt()).as("摘要条数 = 本批 1 帧").isEqualTo(1);
@@ -706,6 +710,36 @@ class IotTelemetryPipelineIT {
         session.subscribe(subscribeHeaders, summaryFrameHandler(frames));
         Thread.sleep(500);
         return frames;
+    }
+
+    /**
+     * 轮询等待本批遥测对应的摘要帧（Task 11 起 2s 窗口节流的时序适配，断言契约不变）：步骤②
+     * 批次落在 2s 窗口内，其摘要帧排空时点晚于订阅建立，会话会先收到上一窗口的滞后摘要帧（条数
+     * 为步骤②批真实累计值）——按 items 含本批 metricCode 识别本批帧，滞后帧跳过不进断言。
+     *
+     * @param frames     摘要帧队列，非空；来源：{@link #subscribeForFrames(StompSession, String)}
+     * @param metricCode 本批遥测指标编码，非空；来源：本步发送的遥测帧
+     * @return 本批对应的摘要帧 JSON 原文；等待窗口耗尽仍未命中返回 null（由调用方到帧断言兜底）
+     * @throws InterruptedException 轮询等待被中断（测试进程被强制关闭等场景，向上透传交由 JUnit 处置）
+     * @throws JsonProcessingException 摘要帧非法 JSON（正路径不应发生，服务端 Jackson 串行化契约）
+     */
+    private String pollBatchSummaryFrame(BlockingQueue<String> frames, String metricCode)
+            throws InterruptedException, JsonProcessingException {
+        long deadline = System.currentTimeMillis() + PIPELINE_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            String frame = frames.poll(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+            if (frame == null) {
+                // 等待窗口耗尽仍未收到任何帧：交由调用方"批落库后摘要帧到达订阅会话"断言兜底
+                return null;
+            }
+            JsonNode summary = objectMapper.readTree(frame);
+            for (JsonNode item : summary.path("items")) {
+                if (metricCode.equals(item.path("metricCode").asText())) {
+                    return frame;
+                }
+            }
+        }
+        return null;
     }
 
     /** 帧处理器：STOMP 载荷按字节收取（服务端 Jackson JSON 串行化），UTF-8 解码入队供轮询断言 */
