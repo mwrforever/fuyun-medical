@@ -238,3 +238,19 @@
 - **R1-13**：全部发布事件走 outbox + 发布确认声明补齐。
 - **R1-15**：telemetry source 枚举改为 `IOTDA`（AMQP 主链路，含模式 A/B/C）/`HL7`（模式 D 辅链路）。
 - **R1-16**：`system.dict.published` 订阅用途澄清（国标字典引用刷新；MDC 指标术语字典为本模块自管 iot_metric_dict，不经 M01）。
+
+## 13. P2 PR-2 落地注记（2026-09-27，feat/p2-pr2-m14-m16）
+
+> 本节为 P2 PR-2（M14 完整 + M16 核心）交付面相对本 Spec 的界定、降级与裁决声明，执行依据 `docs/superpowers/plans/2026-09-25-p2-pr2-m14-m16.md`（GC29 收口硬门槛、GC17 缺位降级清单）；P2 PR-2 口径以本节为准，Spec 正文不回改。
+
+1. **W-7 数据面形态（V1005，锚 `IotNonNumericIngestIT`）**：非数值遥测不再丢弃（skip_non_numeric 口径退役），`iot_telemetry` 增 `raw_value TEXT` 承载列——非数值标量以原文承载、对象/数组以紧凑 JSON 文本承载（应用层 Jackson 树规整标准输出）；`value` NUMERIC 列仅数值定型行填写（非数值行 NULL，禁回填哨兵值防污染生理统计，D-9 裁决）；非数值行 quality 强制 BAD（语义=非数值定型标注），标注不阻断入库（锚 V1005 迁移头红线 + `TelemetryIngestServiceImpl.toEntity` 质量优先级：非数值 BAD > 生理越界 BAD > 时间偏差 SUSPECT > GOOD）。
+2. **W-10 类型改造（V1006，锚 `IotBindingMigrationIT`）**：`iot_binding` / `iot_telemetry` 两表 visit_id 由 BIGINT 改 `VARCHAR(14)`（CF-3 定长 14 位字符串 `<O|I>+8 位日期+5 位流水`）；迁移三步顺序不可调换——删演示夹具行 → USING NULL 同批改列 → 重插夹具行（id=900001，visit_id 改 `I2026090100001` 字符串形态），夹具重插与遥测绑定快照断言联动。
+3. **事件 id 74–81 排定（V1004 event_registry 八行）**：74 `iot.alarm.triggered` / 75 `iot.alarm.escalated` / 76 `iot.alarm.closed` / 77 `iot.binding.changed` / 78 `iot.telemetry.anomaly` / 79 `iot.command.completed` / 80 `iot.linkage.executed` / 81 `iot.call.triggered`，三方一致红线（迁移 desc ↔ 事件常量 ↔ api/payload 载荷组件名，契约锚 `IotMessagingContractTest`）；id 82 `ward.cold-chain.alert-archived`（producer=ward）在 ward V1102 登记，注记见 `16-ward.md` §13。
+4. **Registry 双实现切换口径**：`fuyun.iot.admin.enabled=false`（缺省）走 `SimulatedRegistry`（本地模拟，dev/test/CI/单测/IT 恒此形态，零云依赖）；`=true` 走 `HuaweiIotdaRegistry`（华为云 IoTDA 管理 SDK 3.1.218 出网，凭证缺失装配期 fail-fast、client 惰性构建）；注册中心调用失败统一转 `RegistryException` → 错误码 IOT-1022（HTTP 503 注册中心不可用）。
+5. **GC17① 降级注记（M01 通知承载缺位）**：联动动作「M01 通知」与分级通知 WARNING/CRITICAL 的 PDA/手环/短信承载全部缺位（M01 通知中心 P4 阶段未交付）→ 本 PR 降级承载=`iot_linkage_log` 执行留痕 + `/topic/iot/alarm/{wardId}` WS 推送 + 告警列表可见（INFO/WARNING/CRITICAL 全量入库+推送；M01_NOTIFY 动作降级为留痕+warn）。PENDING 降级动作归后续回接：NURSING_TASK / WARD_BROADCAST 动作落 PENDING 留痕（fail_reason=NursingUnavailable / WardBroadcastUnavailable，`LinkageExecutor` 五类动作分派），回接 PR-3 M05 护理任务与 M16 播报域；M01_NOTIFY 待 M01 通知中心落地（后续安全/通知收敛包）。
+6. **GC17③ 降级注记（AMQP 凭证热更新边界）**：接入凭证 AK/SK **本体变更需重启**（配置项装配期绑定）；断链重建 supervisor 每次重建按新 13 位毫秒时间戳重建凭证为现形态（IoTDA「透明重连不刷新时间戳」语义对策，`IotAmqpTelemetryConsumer`）；管理台面热更新仅覆盖设备级 `credential_ref` 重置（凭证重置端点换发新 secret + 本地档案引用轮换，`DeviceManageServiceImpl`）。
+7. **GC17⑥ 降级注记（测量队列）**：测量队列/待测清单生成（FU-M16-02 依赖 M05 护理级别频次参数）归 PR-3 M05；本期体征采集编排以**质量视图与断流提示**承载（`iot_data_quality_stat` 按日缺数/异常统计 + `iot.telemetry.anomaly`（id 78）断流事件，ward 侧消费注记见 `16-ward.md` §13）。
+8. **OTA 与波形查询端点顺延声明**：FU-M14-12 网关程序 OTA 维持 Spec 定位「预留接口位，本期不实现」（IoTDA 软固件升级能力接口位）；`GET /telemetry/waveform` 波形查询端点本 PR 顺延不提供——本 PR 落**波形白名单通道**（category=波形且病区非白名单 → 丢弃+计数聚合 warn，FU-M14-05 配额语义），查询端点随抢救/麻醉白名单场景按需期引入。
+9. **iot_metric_dict 自管面声明**：MDC 指标术语字典为本模块自管专业字典（V1007 `iot_metric_dict`/`iot_metric_mapping` 两表；REST `GET/POST /metrics`、`PUT /products/{id}/metric-mappings` 自管词表，不经 M01 字典体系，§8「与 M01 的关系」既定）；物模型属性缺映射按 `RAW_PASSTHROUGH` 原生属性名直通入库（metric_code 记原生属性名，不静默丢弃，FU-M14-02 红线；每设备×属性首见一次 warn，Redis 键 TTL 1h 防刷屏）；字典未登记编码跳过生理极限校验（不误伤直通行），quality 按管道口径重算（数值+新鲜即 GOOD）——「词表外 ⇒ SUSPECT」仅为上报报文侧 quality 字段缺省语义，不构成平台落库口径（task-18 批次 IT 实证）。
+10. **告警关闭实况收口（主控裁定：后端实况为准）**：实况 `casClose` 允许 **ACTIVE/ACKNOWLEDGED 两态直关**（`IotAlarmMapper` :74-76 CAS `WHERE status IN ('ACTIVE','ACKNOWLEDGED')`），与本文 §5 状态机（:125 附近线性生命周期「确认后才可关」的 TRIGGERED→…→ACKNOWLEDGED→…→CLOSED 描述）的矛盾以本注记收口为准；非两态拒绝关闭，前端已三方收敛实况（api 注释/视图暴露/测试用例，Task 15 裁定分支 1）。状态机其余语义（升级=动作非状态、CLOSED 终态必填处理记录）不变。
+11. **WS 尾帧语义注记（Task 11 遗留）**：遥测摘要主题 2 秒节流窗口（每病区独立）+ 500ms 兜底排空线程双路出帧下，单批尾帧出帧延迟上界 ≈ 窗口 2s + 排空轮询 500ms ≈ **2.5s 量级**（轮询+节流组合上界）；断连补齐窗口的「≤2s 大屏刷新」严格语义由重连后 REST 增量拉取承载（FU-M14-07 既定），WS 窗口尾帧不承诺严格 ≤2s。

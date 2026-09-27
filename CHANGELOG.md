@@ -2,6 +2,16 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-27 · P2 PR-2 收口：M14/M16 七条验收锚点 IT 全绿与文档收口（Task 18 批次 D）
+
+- ① **事件与号段收口**：**事件 id 74–82 落地**（74–81 iot 八事件落 V1004、82 ward.cold-chain.alert-archived 落 V1102，三方一致契约锚 IotMessagingContractTest/WardMessagingContractTest）；**迁移号勘误申报**（乱序守卫裁定出处=本文件 2026-09-26「P2 PR-2 前置」条目⑤ + 台账 `docs/migrations/flyway-version-registry.md` 同日行）：iot 原排 V404–V413 与 nursing 原排 V809 低于基线全局最大已应用 V1003 被乱序守卫拒止，改通用段续号 **V1004–V1013/V1014**（billing V1001–V1003 先例），ward **V1100–V1102 维持**（全新 schema 享号段初始化豁免且 V1100>V1003 双保险）。
+- ② **D-21 断言现代化留痕（主控义务①）**：Task 6 对 `IotTelemetryPipelineIT` 步骤⑨ quality 断言 **GOOD→SUSPECT 单点等严修订**——取证报文为固定历史时点（真实取证原文不改），时间合理性新契约下精确值即 SUSPECT，行数断言（恰 2 行）续守「标注不丢弃」语义；四边界齐：**逐次批准**（用户 2026-09-22 批复 D-21 破例制度化，根 AGENTS.md §7 回归红线出口）/ **严格度不降**（`isEqualTo` 全量精确匹配，未放宽为部分匹配）/ **原子交付**（断言修订+实现变更+回归锚同 PR）/ **留痕**（task-6-report 申报 + 本条）。
+- ③ **IOT-1023~1025 词表扩容申报（Task 11 主控裁定接受，借用先例延续）**：网关 CRUD 域计划无冻结码位（计划缺口），沿 Task 4 确立的「IOT-1023 起接续顺延」先例借增 GATEWAY_NOT_FOUND(404)/GATEWAY_ALREADY_EXISTS(409)/GATEWAY_STANDBY_INVALID(409)；`IotErrorCodeTest` 冻结全集 22→25 逐位连续 + HTTP 映射全量精确匹配（严格度不降）。
+- ④ **交付面落地**：Registry 双实现（`fuyun.iot.admin.enabled` 条件装配——false 缺省 SimulatedRegistry（CI/单测/IT 恒此形态），true 走 HuaweiIotdaRegistry 出网华为 SDK 3.1.218（表外申报先例），调用失败统一 RegistryException→IOT-1022(503)）；**iot-simulator 生产级升级**（Task 14 @ d11a2d8：输液场景剧本/临床值域多指标/设备状态帧/命令下行订阅）；W-7 数据面（V1005 raw_value）与 W-10 类型改造（V1006 CF-3 VARCHAR(14)+夹具重插）随验收锚 IT 落地；**七条验收锚点 IT 全绿入库**（679dc3f：IotNonNumericIngestIT/IotBindingMigrationIT/IotTelemetryQueryIT/IotAlarmClosedLoopIT/IotCommandFlowIT/IotLinkageFlowIT/WardCallColdChainIT，全量门禁通过）。
+- ⑤ **casClose 实况收口（与 14-iot.md §13 第 10 条注记同源）**：告警关闭 CAS 实况允许 ACTIVE/ACKNOWLEDGED 两态直关（`IotAlarmMapper`:74-76），与 Spec §5 线性生命周期描述的矛盾以收口注记收口——主控裁定后端实况为准，前端已三方收敛（api 注释/视图暴露/测试用例，Task 15）。
+- ⑥ **批次 A/B/C 生产代码修复申报面**：七条 IT 验证报告（A：IotNonNumericIngestIT+IotBindingMigrationIT / B：IotTelemetryQueryIT+IotAlarmClosedLoopIT / C：IotCommandFlowIT+IotLinkageFlowIT / ward：WardCallColdChainIT）**生产代码改动均为零**。测试侧修复申报：A 批次 IotNonNumericIngestIT 两处（兜底 token 动态属性注入缺失致 401、非法 JSON 输入改 `{bad}` 精确命中树规整失败兜底分支）、B1 批次 IotTelemetryQueryIT +16 行（动态属性/CALL 形态回刷/注释校正）；B2/C1/C2 一次通过零改动；ward 批次首跑即绿，contracts 三处事实修正（LT 越限示例、操作者取登录 id、complete 空白 400 出处）仅测试侧锚定，spotless 顺带归一四个姊妹 IT 文件格式（零逻辑变更，已在收口提交面）。
+- ⑦ **文档收口（GC29/GC30）**：`docs/specs/modules/14-iot.md` 追加「§13 P2 PR-2 落地注记」11 条（W-7/W-10 数据面形态、事件 id 74–81、Registry 双实现切换口径、GC17①③⑥ 降级、OTA 与波形查询端点顺延、iot_metric_dict 自管面（词表外直通行质量按管道重算，「词表外 SUSPECT」仅报文侧缺省语义）、casClose 实况、WS 尾帧 ≤2.5s 量级注记）；`docs/specs/modules/16-ward.md` 追加「§13 P2 PR-2 落地注记」6 条（ward 号段 V1100–V1102 零迁移豁免段/事件 id 82、GC17②④⑤ 降级、nursing.infusion.completed 消费骨架 PR-3 接线声明、route 任务转换 PENDING）；TASK.md 销项——**W-7 删除**（V1005+IotNonNumericIngestIT 闭合）、**W-10 删除**（V1006+IotBindingMigrationIT 闭合）、**D-22 删除**（V1014+Task 13 幂等键链闭合）、**W-48 保留**（Task 1 排查结论已在位：三排查点无可确定性收敛缺陷、@ServiceConnection/latch/future.get(60s) 均非固定 sleep，失败形态 Docker 闪断，不改码留单继续观察）、**T-R3-5 回填闭环**（官方页 1MB 实测 + Task 14 帧体 147B/74B/40B 双证据，无需分片）；其余工单行不动（W-27/W-34/W-37~W-41/W-47/D-25 归 PR-3/PR-4）。
+
 ## 2026-09-27 · P2 PR-2 Task 13：D-22 PDA 弱网补传幂等键收敛（nursing V1014 + 重放语义 + PdaView 幂等键）
 
 - ① **V1014 迁移落盘**（nursing 段，`V1014__add_vital_sign_client_msg_id.sql`）：vital_sign_record 增
