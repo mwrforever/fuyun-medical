@@ -2,6 +2,37 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-27 · 终审收尾双提交：comment fixup（必修四条+搭车十二条）与终审分诊工单登记 W-49~W-59（Ready to merge 后零生产逻辑变更）
+
+- ① **件一 comment fixup（commit 6341cef，15 文件纯注释/文案修正，零逻辑零断言变更）**：必修四条——
+  IotSeqGate「计划 GC15」实为 GC13（禁 Lua 条款，类注释与 next 行注两处）；IotMessagingConfig 定绑锚
+  GC7→GC6、不注册回调 GC8→GC7（Progress Task 2 审查 deferred-① 编号错位收口，javadoc 三处）；
+  MessagingGovernanceIT DisplayName「八十一条」→「八十二条（id 74–82）」与 totalRows=82 断言一致；
+  CommandDispatcher challengeId 明文 warn 补终审豁免注记（GETDEL 一次性消费+TTL 120s+仅失效路径
+  打印，不做掩码改码）。搭车十二条：IBindingService 类注释遥测富化通道改批量面（listActiveByDevices）
+  且 listActiveByDevices 参数措辞对齐 null 短路实现；ProductVO createdAt 注明 POST /products 上架响应
+  未经回查为 null；IotDeviceRegistry 类注释「五面」补删除/注销面；DeviceStatusServiceImplTest 存在性
+  查询 helper「三列投影」→「四列投影」（投影含 last_online_at）；application.yml 波形日配额预留参数补
+  TODO(wave-quota) 格式；TelemetryPushServiceImpl「两轮轮询」→「四轮」（2000/500）+ buildAlarmPayload
+  补 occurredAt 漂移口径注记（last_triggered_at 经计数 UPDATE 原地刷新，补推/强化重推晚于 MQ 首发值）；
+  IotConfig Task 7 告警域件数七→八（含 AlarmProperties，与 @Import 行注八件对齐）；冷链请求 DTO 与实体
+  「其余类型忽略置空/为空」→「不校验不置空、按请求原样落库」（registerRecord 实况）；WardMessagingConfig
+  订阅事件三→四（V1004 id 74/78/81 与 V800 id 63）；ProductManageView 映射弹窗「编码退化为手工录入」→
+  「指标编码下拉无选项（映射行无法补全）」（空 select 实况）。
+- ② **件二工单登记（本提交）**：终审分诊表「立工单」清单按域归并 11 张（W-49~W-59，每张注明来源条目号
+  与一句修法指引）——W-49 SeqGate 原子性（T3⑥/T12④）/ W-50 Wrapper 条件断言（T5②，建议下一 PR 首项）/
+  W-51 输入校验面（T4③/T4④/T13①）/ W-52 CI 稳定性（T10②/T14①/T15⑦）/ W-53 性能面（T7①/T10①/T11①）/
+  W-54 临床与运维可见性（T12⑥ 输液停报 NONE 掩盖红档 + T15⑤ 分页截断提示 + T17① 趋势图冻结）/
+  W-55 契约防重（T12⑧）/ W-56 命令与设备域轻量项（T8② 注记已搭车存档掩码选项、T7④/T5③/T5④/T8③/T4②）/
+  W-57 消费链与推送域轻量项（T10③/T11③/T11⑤/T6③/T7⑤/T14③/T12②）/ W-58 前端轻量项（T15②/T15③）/
+  W-59 消息域 GC 编号引用错位残余（WardSeqGate「计划 GC15」与 ward/iot 消息域 GC7/GC8 旧引用——必修②
+  同类扩展，非终审清单项；PR-1 产物各自计划语境引用不动）。
+- ③ **验证与跳过清单**：`python scripts/check-encoding.py` 通过；`mvn -pl fuyun-iot,fuyun-app -am
+  test-compile` BUILD SUCCESS（编译零破坏）。跳过条目：T15⑥「注册缺项用例计数笔误」——现场核对四页
+  spec 头部/用例计数（6+6+5+6=23 与 Task 15 报告一致）、注册缺项用例题面四必填字段（设备ID/产品ID/名称/
+  类型）与注册表单实况、SimulatedRegistryTest 七用例/HuaweiIotdaRegistryTest 三用例均名实相符，未定位到
+  笔误，按「禁猜」原则跳过（明细见 .superpowers/sdd/2026-09-25-p2-pr2-m14-m16/task-18-final-fixup-report.md）。
+
 ## 2026-09-27 · Task 18 真栈探针修复环 round 2：D1 AMQP 启用态 Clock 二义启动失败修复（D2/D3 配置面零代码闭合）
 
 - ① **D1（阻断级）根因与修法**：`fuyun.iot.amqp.enabled=true` 时 `IotAmqpConfig.iotAmqpClock` 与
