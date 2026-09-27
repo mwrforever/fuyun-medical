@@ -1,7 +1,8 @@
 // 联动规则页单测（/iot/linkage-rules，M16 联动规则 CRUD + 执行日志重试面前端面）：规则列表
 // 加载与触发源/动作类型词表徽标（fuy-rule-tag--{source} 机器判据）、新建触发条件 JSON 非法
-// 零出网、新建合法出网携词表值并刷新、编辑预填回显并出网 update、删除出网并刷新、执行日志
-// 渲染结果三态徽标（fuy-linkage-tag--{result}）与 FAILED 行重试出网并刷新。
+// 零出网、新建合法出网携词表值并刷新、编辑预填回显并出网 update、删除出网并刷新（含删除在途
+// 守卫双击仅一次出网）、执行日志渲染结果三态徽标（fuy-linkage-tag--{result}）与 FAILED 行
+// 重试出网并刷新（含重试在途守卫双击仅一次出网——防重复投递联动动作）。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -264,5 +265,44 @@ describe('联动规则页', () => {
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
     // 日志重载（page 第二次调用）
     expect(linkageLogs.page).toHaveBeenCalledTimes(2);
+  });
+
+  it('删除在途守卫：双击窗口内重复点击仅一次出网（防重复提交删除）', async () => {
+    vi.mocked(linkageRules.list).mockResolvedValue([ruleMock()]);
+    vi.mocked(linkageRules.remove).mockResolvedValue(undefined);
+    const wrapper = mount(LinkageRuleView);
+    await flushPromises();
+    const deleteButton = findRow(wrapper, '危急告警转呼叫')
+      ?.findAll('button')
+      .find((b) => b.text() === '删除');
+    expect(deleteButton).toBeDefined();
+    // 双击（第二次点击落在首次出网在途窗口内，未 flush）
+    await deleteButton?.trigger('click');
+    await deleteButton?.trigger('click');
+    await flushPromises();
+    expect(linkageRules.remove).toHaveBeenCalledTimes(1);
+    expect(linkageRules.remove).toHaveBeenCalledWith('701');
+  });
+
+  it('重试在途守卫：双击窗口内重复点击仅一次出网（防重复投递联动动作与 retryCount 双计）', async () => {
+    vi.mocked(linkageLogs.page).mockResolvedValue({
+      content: [logMock({ actionResult: 'FAILED' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    vi.mocked(linkageLogs.retry).mockResolvedValue(logMock({ actionResult: 'SUCCESS' }));
+    const wrapper = mount(LinkageRuleView);
+    await flushPromises();
+    const retryButton = findRow(wrapper, 'LK20260926001')
+      ?.findAll('button')
+      .find((b) => b.text() === '重试');
+    expect(retryButton).toBeDefined();
+    // 双击（第二次点击落在首次重投在途窗口内，未 flush）
+    await retryButton?.trigger('click');
+    await retryButton?.trigger('click');
+    await flushPromises();
+    expect(linkageLogs.retry).toHaveBeenCalledTimes(1);
+    expect(linkageLogs.retry).toHaveBeenCalledWith('LK20260926001');
   });
 });

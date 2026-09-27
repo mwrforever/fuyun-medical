@@ -146,17 +146,28 @@ async function loadErrors(): Promise<void> {
   }
 }
 
-/** 重放消费错误（原消息重投消费链路；replayCount 累加由后端承载） */
+/** 重放在途行锚点（null=无在途；行级守卫防双击窗口内重复重投消费消息） */
+const replayingId = ref<string | null>(null);
+
+/**
+ * 重放消费错误（原消息重投消费链路；replayCount 累加由后端承载）：行级在途守卫（进入即判/
+ * finally 复位）防双击窗口内重复重投。
+ *
+ * @param row 重放目标错误行
+ */
 async function onReplay(row: ConsumeErrorVO): Promise<void> {
-  if (row.errorId === undefined) {
+  if (row.errorId === undefined || replayingId.value !== null) {
     return;
   }
+  replayingId.value = row.errorId;
   try {
     await consumeErrors.replay(row.errorId);
     void ElMessage.success(`错误已重放：${row.errorId}`);
     await loadErrors();
   } catch (error) {
     surfaceBizError(error);
+  } finally {
+    replayingId.value = null;
   }
 }
 
@@ -430,6 +441,8 @@ onMounted(() => {
                     link
                     type="primary"
                     size="small"
+                    :loading="replayingId === row.errorId"
+                    :disabled="replayingId !== null"
                     @click="onReplay(row)"
                     >重放</el-button
                   >

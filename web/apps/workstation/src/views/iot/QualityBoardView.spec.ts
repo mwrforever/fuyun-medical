@@ -1,7 +1,8 @@
 // 质量看板页单测（/iot/quality，M16 数据质量治理面前端面）：质量统计表渲染与 deviceId 筛选
 // 出网携参、设备利用率 TopN 按 usageRate 降序截取渲染、消费积压水位渲染、消费错误列表默认
 // 待处置筛选出网携 status=PENDING 与环节/状态徽标（fuy-cerr-tag--{status} 机器判据）、重放
-// 出网携 errorId 并刷新、放弃弹窗空原因零出网与携原因出网 abandon。
+// 出网携 errorId 并刷新（含重放在途守卫双击仅一次出网——防重复重投消费消息）、放弃弹窗空
+// 原因零出网与携原因出网 abandon。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -250,5 +251,27 @@ describe('质量看板页', () => {
     expect(consumeErrors.abandon).toHaveBeenCalledWith('501', { reason: '脏数据确认不重放' });
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
     expect(consumeErrors.page).toHaveBeenCalledTimes(2);
+  });
+
+  it('重放在途守卫：双击窗口内重复点击仅一次出网（防重复重投消费消息）', async () => {
+    vi.mocked(consumeErrors.page).mockResolvedValue({
+      content: [errorMock()],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    vi.mocked(consumeErrors.replay).mockResolvedValue(errorMock({ status: 'REPLAYED' }));
+    const wrapper = mount(QualityBoardView);
+    await flushPromises();
+    const replayButton = findRow(wrapper, '501')
+      ?.findAll('button')
+      .find((b) => b.text() === '重放');
+    expect(replayButton).toBeDefined();
+    // 双击（第二次点击落在首次重投在途窗口内，未 flush）
+    await replayButton?.trigger('click');
+    await replayButton?.trigger('click');
+    await flushPromises();
+    expect(consumeErrors.replay).toHaveBeenCalledTimes(1);
+    expect(consumeErrors.replay).toHaveBeenCalledWith('501');
   });
 });

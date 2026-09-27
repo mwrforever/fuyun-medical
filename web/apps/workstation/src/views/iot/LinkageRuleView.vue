@@ -200,21 +200,28 @@ async function onSave(): Promise<void> {
   }
 }
 
+/** 删除在途行锚点（null=无在途；行级守卫防双击重复提交删除） */
+const removingId = ref<string | null>(null);
+
 /**
- * 删除规则（规则删除后不再命中；历史执行日志保留由后端承载）。
+ * 删除规则（规则删除后不再命中；历史执行日志保留由后端承载）：行级在途守卫（进入即判/
+ * finally 复位）防双击窗口内重复出网。
  *
  * @param row 删除目标规则行
  */
 async function onRemove(row: LinkageRuleVO): Promise<void> {
-  if (row.id === undefined) {
+  if (row.id === undefined || removingId.value !== null) {
     return;
   }
+  removingId.value = row.id;
   try {
     await linkageRules.remove(row.id);
     void ElMessage.success(`规则已删除：${row.ruleName ?? row.id}`);
     await loadList();
   } catch (error) {
     surfaceBizError(error);
+  } finally {
+    removingId.value = null;
   }
 }
 
@@ -244,17 +251,29 @@ async function loadLogs(): Promise<void> {
   }
 }
 
-/** 重试失败联动（按 linkageNo 重投动作；重试计数累加由后端承载） */
+/** 重试在途行锚点（null=无在途；行级守卫防双击窗口内重复投递联动动作——病区播报/护理任务
+ * 类副作用真实发生、retryCount 双计） */
+const retryingNo = ref<string | null>(null);
+
+/**
+ * 重试失败联动（按 linkageNo 重投动作；重试计数累加由后端承载）：行级在途守卫（进入即判/
+ * finally 复位）防双击窗口内重复投递。
+ *
+ * @param row 重试目标日志行
+ */
 async function onRetry(row: LinkageLogVO): Promise<void> {
-  if (row.linkageNo === undefined) {
+  if (row.linkageNo === undefined || retryingNo.value !== null) {
     return;
   }
+  retryingNo.value = row.linkageNo;
   try {
     await linkageLogs.retry(row.linkageNo);
     void ElMessage.success(`联动已重试：${row.linkageNo}`);
     await loadLogs();
   } catch (error) {
     surfaceBizError(error);
+  } finally {
+    retryingNo.value = null;
   }
 }
 
@@ -323,7 +342,15 @@ onMounted(() => {
                   <el-button link type="primary" size="small" @click="openEdit(row)"
                     >编辑</el-button
                   >
-                  <el-button link type="danger" size="small" @click="onRemove(row)">删除</el-button>
+                  <el-button
+                    link
+                    type="danger"
+                    size="small"
+                    :loading="removingId === row.id"
+                    :disabled="removingId !== null"
+                    @click="onRemove(row)"
+                    >删除</el-button
+                  >
                 </template>
               </el-table-column>
             </el-table>
@@ -393,6 +420,8 @@ onMounted(() => {
                     link
                     type="primary"
                     size="small"
+                    :loading="retryingNo === row.linkageNo"
+                    :disabled="retryingNo !== null"
                     @click="onRetry(row)"
                     >重试</el-button
                   >
