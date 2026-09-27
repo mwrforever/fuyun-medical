@@ -104,4 +104,21 @@ public class IotMessagingConfig {
         return governance.declareConsumerQueue(
                 new ConsumerQueueSpec(IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_ALARM_CLOSED));
     }
+
+    /**
+     * 声明 iot 模块扇出链的告警触发自事件消费队列并绑定 fy.topic（P2 PR-2 Task 11 R1 修复，事件
+     * V1004 id 74 已登记；q.iot-fanout.iot.alarm.triggered，消费者 IotFanoutListener——大屏摘要
+     * 变更触发源）。「每消费者一队列」形态（同路由键多队列绑定）：联动链队列
+     * q.iot.iot.alarm.triggered（IotAlarmEventListener）与本扇出队列各自独立消费互不竞争；
+     * 消费者域标识 iot-fanout（{@link IotMessagingConstants#FANOUT_CONSUMER_MODULE}）同时派生
+     * 独立幂等域，防联动链 PROCESSED 行经回查抑制本链消费。
+     *
+     * @param governance 消息治理构件，非空；来源：integration MessagingGovernanceConfig 装配
+     * @return 声明集合（quorum 队列 + 绑定）；由 RabbitAdmin 随连接建立幂等声明
+     */
+    @Bean
+    public Declarables alarmTriggeredFanoutConsumerQueue(MessagingGovernance governance) {
+        return governance.declareConsumerQueue(new ConsumerQueueSpec(
+                IotMessagingConstants.FANOUT_CONSUMER_MODULE, IotMessagingConstants.EVENT_ALARM_TRIGGERED));
+    }
 }

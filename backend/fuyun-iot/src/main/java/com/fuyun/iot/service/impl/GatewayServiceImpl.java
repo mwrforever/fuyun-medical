@@ -14,6 +14,7 @@ import com.fuyun.iot.vo.GatewayVO;
 import java.util.HashSet;
 import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -70,7 +71,7 @@ public class GatewayServiceImpl implements IGatewayService {
     @Override
     @Transactional
     public GatewayVO create(SaveGatewayRequest request) {
-        // 数据库读操作：自然键唯一性应用层前置（PK 竞态由主键约束兜底，重复插入报错回滚）
+        // 数据库读操作：自然键唯一性应用层前置（@TableLogic 过滤已删行——软删网关重登记不受此预检拦截）
         if (gatewayMapper.selectById(request.gatewayId()) != null) {
             throw new BizException(
                     IotErrorCode.GATEWAY_ALREADY_EXISTS, HttpStatus.CONFLICT, "网关已存在：" + request.gatewayId());
@@ -78,8 +79,17 @@ public class GatewayServiceImpl implements IGatewayService {
         IotGatewayEntity entity = new IotGatewayEntity();
         applyRequest(entity, request);
         validateStandby(entity);
-        // 数据库写操作：网关档案落行（自然键直写，@TableId(INPUT)）
-        gatewayMapper.insert(entity);
+        try {
+            // 数据库写操作：网关档案落行（自然键直写，@TableId(INPUT)；PK 约束兜底并发与软删占位）
+            gatewayMapper.insert(entity);
+        } catch (DataIntegrityViolationException e) {
+            // PK 冲突翻译 IOT-1024 409：①软删行仍占物理 PK（唯一性预检按逻辑删过滤，探测不到）；
+            // ②并发重复登记竞态。软删网关重登记须先恢复原行（运维处置），不做静默物理复活
+            throw new BizException(
+                    IotErrorCode.GATEWAY_ALREADY_EXISTS,
+                    HttpStatus.CONFLICT,
+                    "网关标识已存在（含已删除档案占位），如为软删网关须先恢复原行：" + request.gatewayId());
+        }
         log.info(
                 "边缘网关已登记：gatewayId={}，name={}，mode={}，wardId={}，standbyOf={}",
                 entity.getGatewayId(),

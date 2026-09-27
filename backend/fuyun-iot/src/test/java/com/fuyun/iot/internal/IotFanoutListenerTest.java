@@ -19,6 +19,7 @@ import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.api.payload.AlarmClosedPayload;
+import com.fuyun.iot.api.payload.AlarmTriggeredPayload;
 import com.fuyun.iot.constants.IotMessagingConstants;
 import com.fuyun.iot.enums.DeviceStatus;
 import com.fuyun.iot.service.IDashboardService;
@@ -292,6 +293,97 @@ class IotFanoutListenerTest {
         assertThat(thrown).isInstanceOf(IllegalStateException.class);
         verify(dashboardService, never()).refreshAndPushIfChanged();
         verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq((RuntimeException) thrown));
+    }
+
+    @Test
+    @DisplayName("Task 11 R1·告警触发扇出消费：独立队列触发大屏摘要刷新，幂等域/登记行用 iot-fanout（与联动链分域）")
+    void consumesAlarmTriggeredFanoutAndTriggersDashboardRefresh() {
+        AlarmTriggeredPayload payload = new AlarmTriggeredPayload(
+                "AL2026091000002",
+                "it-dev-001",
+                5L,
+                "I2026090100001",
+                WARD_ID,
+                "CRITICAL",
+                "MDC_ECG_HEART_RATE",
+                "170",
+                900001L,
+                OCCURRED_AT);
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.FANOUT_CONSUMER_MODULE))
+                .thenReturn(true);
+        EventEnvelope envelope = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_ALARM_TRIGGERED,
+                "1",
+                null,
+                objectMapper.valueToTree(payload));
+
+        listener.onAlarmTriggeredFanout(message(toJson(envelope)));
+
+        verify(idempotencyService).tryAcquire(EVENT_ID, IotMessagingConstants.FANOUT_CONSUMER_MODULE);
+        verify(idempotencyService).recordProcessed(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().eventType()).isEqualTo(IotMessagingConstants.EVENT_ALARM_TRIGGERED);
+        assertThat(recordCaptor.getValue().consumerModule())
+                .as("扇出链独立幂等域（防联动链 PROCESSED 行回查抑制）")
+                .isEqualTo(IotMessagingConstants.FANOUT_CONSUMER_MODULE);
+        verify(dashboardService).refreshAndPushIfChanged();
+        verifyNoInteractions(pushService);
+    }
+
+    @Test
+    @DisplayName("Task 11 R1·告警触发扇出载荷契约不符：按消费失败处置（失败收尾留痕后重抛走死信）")
+    void settlesFailureAndRethrowsWhenAlarmTriggeredFanoutPayloadViolatesContract() {
+        EventEnvelope violating = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_ALARM_TRIGGERED,
+                "1",
+                null,
+                objectMapper.valueToTree("scalar-payload"));
+
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.FANOUT_CONSUMER_MODULE))
+                .thenReturn(true);
+
+        Throwable thrown = catchThrowable(() -> listener.onAlarmTriggeredFanout(message(toJson(violating))));
+        assertThat(thrown).isInstanceOf(IllegalStateException.class);
+        verify(dashboardService, never()).refreshAndPushIfChanged();
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq((RuntimeException) thrown));
+    }
+
+    @Test
+    @DisplayName("Task 11 R1·告警触发扇出摘要刷新失败：按业务失败处置（settleFailure 收尾重抛，不落 PROCESSED）")
+    void settlesFailureAndRethrowsWhenDashboardRefreshFailsOnAlarmTriggeredFanout() {
+        AlarmTriggeredPayload payload = new AlarmTriggeredPayload(
+                "AL2026091000002",
+                "it-dev-001",
+                5L,
+                "I2026090100001",
+                WARD_ID,
+                "CRITICAL",
+                "MDC_ECG_HEART_RATE",
+                "170",
+                900001L,
+                OCCURRED_AT);
+        when(idempotencyService.tryAcquire(EVENT_ID, IotMessagingConstants.FANOUT_CONSUMER_MODULE))
+                .thenReturn(true);
+        IllegalStateException failure = new IllegalStateException("大屏摘要刷新失败");
+        doThrow(failure).when(dashboardService).refreshAndPushIfChanged();
+        EventEnvelope envelope = new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                IotMessagingConstants.MODULE,
+                IotMessagingConstants.EVENT_ALARM_TRIGGERED,
+                "1",
+                null,
+                objectMapper.valueToTree(payload));
+
+        assertThatThrownBy(() -> listener.onAlarmTriggeredFanout(message(toJson(envelope))))
+                .isSameAs(failure);
+        verify(idempotencyService).settleFailure(any(ReceivedEventRecord.class), eq(failure));
+        verify(idempotencyService, never()).recordProcessed(any());
     }
 
     /** 构造合规信封：五要素齐全 + DeviceStatusEvent 契约载荷（codec 合规校验通过） */

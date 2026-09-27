@@ -31,6 +31,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 
 /**
@@ -108,6 +109,21 @@ class GatewayServiceImplTest {
                     assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
         verify(gatewayMapper, never()).insert(any(IotGatewayEntity.class));
+    }
+
+    @Test
+    @DisplayName("登记拒绝：PK 冲突翻译 IOT-1024（409）——软删行占物理 PK/并发竞态 insert 兜底，不裸 500")
+    void createTranslatesPrimaryKeyViolationToBizException() {
+        // 唯一性预检探测不到软删行（@TableLogic 过滤）：insert 撞物理 PK 抛 DIVE → 服务层转 IOT-1024
+        when(gatewayMapper.selectById(GATEWAY_ID)).thenReturn(null);
+        when(gatewayMapper.insert(any(IotGatewayEntity.class)))
+                .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
+
+        assertThatThrownBy(() -> service.create(request(GATEWAY_ID, null, null)))
+                .isInstanceOfSatisfying(BizException.class, ex -> {
+                    assertThat(ex.getErrorCode()).isEqualTo(IotErrorCode.GATEWAY_ALREADY_EXISTS);
+                    assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
     }
 
     @Test

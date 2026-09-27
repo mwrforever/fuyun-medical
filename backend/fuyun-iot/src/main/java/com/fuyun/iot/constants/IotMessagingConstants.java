@@ -63,6 +63,17 @@ public final class IotMessagingConstants {
     /** 本模块自事件消费队列：告警关闭（q.iot.iot.alarm.closed，P2 PR-2 Task 11 扇出扩订阅——大屏摘要变更触发源） */
     public static final String QUEUE_ALARM_CLOSED = "q.iot.iot.alarm.closed";
 
+    /**
+     * 扇出消费者域标识（P2 PR-2 Task 11 R1 修复）：与 {@link #MODULE} 同为 iot 模块内的独立
+     * 消费者域——同事件多消费者按「每消费者一队列」形态分队列（治理队列命名与幂等键第二要素
+     * 均由本域派生），防联动链消费的 received_event PROCESSED 行（consumer_module=iot）经幂等
+     * 回查抑制扇出链消费。
+     */
+    public static final String FANOUT_CONSUMER_MODULE = "iot-fanout";
+
+    /** 本模块扇出消费队列：告警触发（q.iot-fanout.iot.alarm.triggered，P2 PR-2 Task 11 R1 修复——大屏摘要变更触发源独立队列） */
+    public static final String QUEUE_ALARM_TRIGGERED_FANOUT = "q.iot-fanout.iot.alarm.triggered";
+
     /** 本地攒批消费链固定消费组标识（iot_consumer_stat.consumer_group 落值：AMQP 消费链单攒批器单组，
      * 真实 IoTDA 消费组名随联调对齐） */
     public static final String LOCAL_CONSUMER_GROUP = "iot-amqp";
