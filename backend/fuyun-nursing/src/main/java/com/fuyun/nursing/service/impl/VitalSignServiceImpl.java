@@ -34,15 +34,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 生命体征域服务实现（V803 vital_sign_record 业务面）。record 七步链（Task 11 IT 断言口径）：
- * 极限拒收闸门 → 在区校验 → insert（唯一冲突幂等拒绝）→ abnormal 判定 → 观察行归集 →
- * 体温单 VITAL 条目写入 → 事件发布（事务内发布 AFTER_COMMIT 出站，GC8）；confirm/reject 走
- * @Update CAS（GC26）。测量时点/业务时间一律服务器时间（GC25）；patient_id/ward_id 由在区行
- * 服务端装配（不信客户端）；iot_quality/conflict_ref 列 P1 无写入方（GC17-① IoT 降级，P2 填）。
- * 线程安全：无状态 singleton；写操作 @Transactional 收口。
+ * 极限拒收闸门 → 在区校验 → insert（唯一冲突幂等拒绝；携带 clientMsgId 时按键重放，D-22）→
+ * abnormal 判定 → 观察行归集 → 体温单 VITAL 条目写入 → 事件发布（事务内发布 AFTER_COMMIT 出站，
+ * GC8）；confirm/reject 走 @Update CAS（GC26）。测量时点/业务时间一律服务器时间（GC25）；
+ * patient_id/ward_id 由在区行服务端装配（不信客户端）；iot_quality/conflict_ref 列 P1 无写入方
+ * （GC17-① IoT 降级，P2 填）。线程安全：无状态 singleton（replayLookupTx 为不可变模板）；
+ * 写操作 @Transactional 收口。
  */
 @Slf4j
 public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, VitalSignRecord>
@@ -50,6 +54,13 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
 
     /** 系统链路等无登录上下文场景的操作者回退值（与 V803 审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
+
+    /**
+     * 重放回查专用事务载体（D-22，REQUIRES_NEW 只读模板）：PostgreSQL 下唯一索引冲突即中止当前
+     * 事务（25P02 aborted-transaction 态），同事务内再发 SELECT 必失败——故按键回查必须挂起已死
+     * 事务、以独立新事务承载；只读单行点查（uk_vital_sign_client_msg 稀疏唯一索引保证至多一行）。
+     */
+    private final TransactionTemplate replayLookupTx;
 
     private final IWardMetaService wardMetaService;
 
@@ -68,36 +79,54 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
      * @param temperatureChartService 体温单服务，非空；VITAL 条目写入（Task 4 冻结面）
      * @param events                Spring 应用事件发布器，非空；事务内发布经 NursingEventPublisher
      *                              AFTER_COMMIT 出 MQ（GC8 红线，OutpatientEventPublisher 同款进程内桥）
+     * @param transactionManager    平台事务管理器，非空；仅用于构建重放回查的 REQUIRES_NEW 模板
+     *                              （D-22：唯一冲突中止当前事务后，按键回查须独立新事务承载）
      */
     public VitalSignServiceImpl(
             VitalSignRecordMapper vitalSignMapper,
             IWardMetaService wardMetaService,
             INursingRecordService nursingRecordService,
             ITemperatureChartService temperatureChartService,
-            ApplicationEventPublisher events) {
+            ApplicationEventPublisher events,
+            PlatformTransactionManager transactionManager) {
         this.wardMetaService = wardMetaService;
         this.nursingRecordService = nursingRecordService;
         this.temperatureChartService = temperatureChartService;
         this.events = events;
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        // 重放回查必须脱离（已被唯一冲突中止的）当前事务：REQUIRES_NEW 挂起死事务开新连接
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        template.setReadOnly(true);
+        this.replayLookupTx = template;
     }
 
     /**
      * 体征录入（手工/PDA 点测，录入即 CONFIRMED）七步链：①生理极限拒收闸门（越界 NS-1005，400）
      * → ②在区校验（查无在区行定性 NS-1004 患者不在区）→ ③insert（(visit_id, measured_at,
-     * site_key) 唯一冲突转 NS-1016 幂等拒绝，不覆盖首值）→ ④abnormal 判定（NursingVitalThresholds
-     * 阈值快照随行落库）→ ⑤观察行归集（全项正常合并 abnormal=false / 任一越界独立落行
-     * abnormal=true）→ ⑥体温单 VITAL 条目写入（失败上抛不吞——事务整体回滚）→ ⑦发布
-     * nursing.vital-sign.recorded（事务内发布，AFTER_COMMIT 出站，GC8）。测量时点一律服务器
-     * 时间（GC25）；source 空缺省 MANUAL，IOT 源 P1 无处理路径显式拒收。
+     * site_key) 唯一冲突转 NS-1016 幂等拒绝，不覆盖首值；携带 clientMsgId 的请求转按键重放，
+     * D-22）→ ④abnormal 判定（NursingVitalThresholds 阈值快照随行落库）→ ⑤观察行归集（全项
+     * 正常合并 abnormal=false / 任一越界独立落行 abnormal=true）→ ⑥体温单 VITAL 条目写入
+     * （失败上抛不吞——事务整体回滚）→ ⑦发布 nursing.vital-sign.recorded（事务内发布，
+     * AFTER_COMMIT 出站，GC8）。测量时点一律服务器时间（GC25）；source 空缺省 MANUAL，IOT 源
+     * P1 无处理路径显式拒收。
+     *
+     * <p>D-22 PDA 弱网补传幂等语义（GC16 方案 B 冻结口径）：请求携带 clientMsgId 时，insert 唯一
+     * 冲突 → 按 client_msg_id 回查首值（REQUIRES_NEW 独立事务，唯一冲突已中止当前事务）→ 命中即
+     * 重放返回原 VO（HTTP 200，非 409），观察行/体温单条目/事件零重复；回查未命中（极端并发下
+     * 唯一索引冲突但首值行已被逻辑删，键位已让出）→ 维持 NS-1016。clientMsgId 空/空白（工作站
+     * 面向后兼容）→ 既有路径全不变，键位归一为 NULL 落库（稀疏唯一索引不收退化空串）。
      *
      * @param req 录入入参，非空；来源：操作者工作站表单/PDA 上传
-     * @return 体征记录出参，非空
+     * @return 体征记录出参，非空（重放场景返回首值行出参）
      * @throws BizException NS-1005（400 超生理极限拒收）/ NS-1004（409 患者不在区）/
-     *                      NS-1016（409 同刻同部位重复录入，幂等拒绝）/ NS-1019（400 source/tempSite code 非法）
+     *                      NS-1016（409 同刻同部位重复录入，幂等拒绝；含按键回查未命中的兜底）/
+     *                      NS-1019（400 source/tempSite code 非法）
      */
     @Override
     @Transactional
     public VitalSignVO record(VitalSignRecordRequest req) {
+        // D-22：客户端幂等键归一（空白等同未携带——存量工作站调用方零感知，键位不落退化空串）
+        String clientMsgId = req.clientMsgId() == null || req.clientMsgId().isBlank() ? null : req.clientMsgId();
         // 守卫链⓪：体温部位/数据源 code 显式格式校验（禁裸值入库，W-22⑦ 先例）
         TempSite tempSite = null;
         if (req.tempSite() != null) {
@@ -156,13 +185,34 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
         row.setReviewedBy(operator);
         row.setReviewedAt(measuredAt);
         row.setAbnormalFlag(abnormal);
+        row.setClientMsgId(clientMsgId);
         row.setCreatedBy(operator);
         row.setUpdatedBy(operator);
         try {
-            // 数据库写操作：体征记录落库（uk_vital_sign_visit_time_site 部分唯一索引兜底防双写）
+            // 数据库写操作：体征记录落库（uk_vital_sign_visit_time_site / uk_vital_sign_client_msg
+            // 部分唯一索引兜底防双写，V1014）
             baseMapper.insert(row);
         } catch (DuplicateKeyException e) {
-            // 同 (visit_id, measured_at, 部位) 已有首值：幂等拒绝，不覆盖（Spec :108 防双写红线）
+            if (clientMsgId != null) {
+                // D-22 PDA 弱网重试重放：唯一冲突（client_msg 键或同刻同部位）后按客户端幂等键
+                // 回查首值——REQUIRES_NEW 独立事务承载（唯一冲突已中止当前事务，同事务 SELECT 必
+                // 25P02 失败，见 replayLookupTx 注记）
+                VitalSignRecord replayed = replayLookupTx.execute(status -> baseMapper.selectOne(
+                        Wrappers.<VitalSignRecord>lambdaQuery().eq(VitalSignRecord::getClientMsgId, clientMsgId)));
+                if (replayed != null) {
+                    // 重放返回原 VO（HTTP 200，非 409）：归集/条目/事件不再执行，重试零二次副作用
+                    log.info(
+                            "体征录入幂等重放（D-22 弱网补传收敛）：visitId={}，clientMsgId={}，复用原行 id={}，measuredAt={}",
+                            req.visitId(),
+                            clientMsgId,
+                            replayed.getId(),
+                            replayed.getMeasuredAt());
+                    return VitalSignVO.from(replayed);
+                }
+                // 回查未命中：极端并发下唯一索引冲突但首值行已被逻辑删（键位已让出），无首值可重放
+            }
+            // 同 (visit_id, measured_at, 部位) 已有首值（或按键回查未命中兜底）：幂等拒绝，不覆盖
+            // （Spec :108 防双写红线，NS-1016 既有语义保持）
             throw new BizException(
                     NursingErrorCode.CONFLICT,
                     HttpStatus.CONFLICT,

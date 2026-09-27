@@ -1,6 +1,7 @@
 package com.fuyun.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
@@ -17,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -506,6 +508,43 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
         assertThat(latest.measuredAt()).isEqualTo(legacyTail.measuredAt());
         // 对照②（tie 确定化）：同刻两行收敛取 id 最大（最新落卡）行，消除旧路径 DB 返回顺序漂移
         assertThat(latest.id()).isEqualTo(TIE_LAST_ID);
+    }
+
+    @Test
+    @Order(11)
+    @DisplayName("D-22 PDA 弱网重试重放：同 clientMsgId 二次提交重放返回原行（200 同 id 同时点），行数/条目/观察行零新增")
+    void step11_clientMsgIdRetryReplaysOriginalRow() {
+        int vitalBefore = vitalCount();
+        int chartBefore = chartVitalCount();
+        int observationBefore = observationRowCount();
+        String clientMsgId = "it-d22-retry-0001";
+        ObjectNode first = vitalBody("36.9", "ORAL");
+        first.put("clientMsgId", clientMsgId);
+        ResponseEntity<String> firstResp = postForEntity("/api/v1/nursing/vital-signs", token, first);
+        assertThat(firstResp.getStatusCode().value())
+                .as("首提应 200，实况：%s", firstResp.getBody())
+                .isEqualTo(200);
+        long firstId = toNode(firstResp.getBody()).path("id").asLong();
+        String firstMeasuredAt = toNode(firstResp.getBody()).path("measuredAt").asText();
+        // 弱网重试形态：同键再提交（measured_at 服务端时间必然异刻，唯一撞的是 uk_vital_sign_client_msg）
+        ObjectNode retry = vitalBody("36.9", "ORAL");
+        retry.put("clientMsgId", clientMsgId);
+        ResponseEntity<String> retryResp = postForEntity("/api/v1/nursing/vital-signs", token, retry);
+        assertThat(retryResp.getStatusCode().value())
+                .as("同键重试应重放 200 而非 409，实况：%s", retryResp.getBody())
+                .isEqualTo(200);
+        assertThat(toNode(retryResp.getBody()).path("id").asLong())
+                .as("重放应返回原行 id（非新落卡行）")
+                .isEqualTo(firstId);
+        // 重放返回首值测量时点（原行本体）：DB 回读以 µs 精度/UTC 偏移渲染同一时刻，
+        // 字符串全等会误判偏移形态——毫秒内对齐即证「原时点」而非新测量
+        assertThat(Instant.parse(toNode(retryResp.getBody()).path("measuredAt").asText()))
+                .as("重放返回首值测量时点（原行本体）")
+                .isCloseTo(Instant.parse(firstMeasuredAt), within(1, ChronoUnit.MILLIS));
+        // 重试零二次副作用：体征行/体温单条目恰 +1（首提），观察行零新增（重放短路归集）
+        assertThat(vitalCount()).as("重试不得新增体征行").isEqualTo(vitalBefore + 1);
+        assertThat(chartVitalCount()).as("重试不得新增体温单条目").isEqualTo(chartBefore + 1);
+        assertThat(observationRowCount()).as("重试不得新增观察行").isEqualTo(observationBefore);
     }
 
     /**

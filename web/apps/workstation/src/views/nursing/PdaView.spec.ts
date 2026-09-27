@@ -205,4 +205,58 @@ describe('PDA 移动护理页', () => {
     expect(wrapper.text()).toContain('巡视打卡');
     wrapper.unmount();
   });
+
+  it('体征提交载荷携带幂等键，成功后清空表单并轮换键（D-22）', async () => {
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    vi.mocked(vitalSigns.record).mockResolvedValue({});
+    const wrapper = mount(PdaView);
+    await identify(wrapper);
+    await wrapper.find('input[placeholder="36.5"]').setValue('36.5');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '提交体征')
+      ?.trigger('click');
+    await flushPromises();
+    expect(vi.mocked(vitalSigns.record)).toHaveBeenCalledTimes(1);
+    const firstPayload = vi.mocked(vitalSigns.record).mock.calls[0]?.[0];
+    // 载荷锚：幂等键随提交出网，source=PDA、数值转换不变形
+    expect(typeof firstPayload.clientMsgId).toBe('string');
+    expect(firstPayload.source).toBe('PDA');
+    expect(firstPayload.temperature).toBe(36.5);
+    // 成功后清表单 + 幂等键轮换：下次提交为新幂等单元（不与本次同键）
+    expect((wrapper.find('input[placeholder="36.5"]').element as HTMLInputElement).value).toBe('');
+    await wrapper.find('input[placeholder="36.5"]').setValue('36.8');
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === '提交体征')
+      ?.trigger('click');
+    await flushPromises();
+    expect(vi.mocked(vitalSigns.record).mock.calls[1]?.[0].clientMsgId).not.toBe(firstPayload.clientMsgId);
+    wrapper.unmount();
+  });
+
+  it('弱网失败重试复用同一幂等键，成功才清表单（D-22）', async () => {
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    vi.mocked(vitalSigns.record)
+      .mockRejectedValueOnce(Object.assign(new Error('mock'), { detail: '网络超时' }))
+      .mockResolvedValueOnce({});
+    const wrapper = mount(PdaView);
+    await identify(wrapper);
+    await wrapper.find('input[placeholder="36.5"]').setValue('36.5');
+    const submitButton = () => wrapper.findAll('button').find((b) => b.text() === '提交体征');
+    await submitButton()?.trigger('click');
+    await flushPromises();
+    // 失败：错误提示透出且表单保留（重试数据不丢）
+    expect(vi.mocked(ElMessage.error)).toHaveBeenCalledWith('网络超时');
+    expect((wrapper.find('input[placeholder="36.5"]').element as HTMLInputElement).value).toBe('36.5');
+    // D-22 核心：重试复用同一键——服务端按 client_msg_id 重放返回原记录，补传零重复落卡
+    await submitButton()?.trigger('click');
+    await flushPromises();
+    const calls = vi.mocked(vitalSigns.record).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[0].clientMsgId).toBe(calls[1]?.[0].clientMsgId);
+    // 成功后清表单
+    expect((wrapper.find('input[placeholder="36.5"]').element as HTMLInputElement).value).toBe('');
+    wrapper.unmount();
+  });
 });

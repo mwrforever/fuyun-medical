@@ -2,6 +2,31 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-27 · P2 PR-2 Task 13：D-22 PDA 弱网补传幂等键收敛（nursing V1014 + 重放语义 + PdaView 幂等键）
+
+- ① **V1014 迁移落盘**（nursing 段，`V1014__add_vital_sign_client_msg_id.sql`）：vital_sign_record 增
+  可空 client_msg_id VARCHAR(64) 列 + 稀疏部分唯一索引 uk_vital_sign_client_msg（WHERE
+  client_msg_id IS NOT NULL AND deleted = 0）——DB 层最终兜底，与 NS-1016 应用层语义构成两层幂等
+  （A.5-6 同构）；号段依 2026-09-26 条目⑤勘误走通用段（registry 台账 V1014 行 Task 1.5 已登记，
+  本次核验一致零微调）；V803 禁改红线不变（新文件 ALTER，零触碰既有迁移）。
+- ② **后端重放语义（GC16 方案 B 冻结口径）**：VitalSignRecordRequest 增可空 clientMsgId（向后兼
+  容，空白归一 NULL 不占稀疏键位）；record() insert 捕获 DuplicateKeyException 后按 client_msg_id
+  回查——命中重放返回原 VO（HTTP 200 非 409，观察行/体温单条目/事件零重复），未命中（极端并
+  发下行已逻辑删）维持 NS-1016，无键请求既有路径全不变；measuredAt 服务器时间红线不动（GC25）。
+  **实现注记**：回查经构造器注入 PlatformTransactionManager 构建只读 REQUIRES_NEW 事务模板承载
+  （replayLookupTx）——PostgreSQL 唯一冲突即中止当前事务（25P02），同事务内 SELECT 必失败，须
+  挂起死事务以独立新事务回查（IT 真栈实证：同键重试 200 返回原行 id，无 25P02/无 409）。
+- ③ **前端 PdaView 幂等键**：vitalClientMsgId 生成后保持，成功落卡或换患者识别才轮换（弱网在途
+  失败重试复用同一键，服务端按键重放收敛补传）；键置于 await 之前捕获；payload 增 clientMsgId。
+  **实现注记**：newIdempotencyKey() 带非安全上下文回退（crypto.randomUUID 仅 HTTPS/localhost 可用，
+  院内 PDA 经 nginx :80 HTTP 访问该 API 缺位会 setup 即崩）——回退自拼 v4 形态，仍为 ≤64 位标准串。
+- ④ **测试**：VitalSignServiceImplTest 扩四组用例（同键重放返回原 VO/无键 409 保持+零回查锚/异键
+  新行/空键兼容）+ 回查未命中兜底例，TDD 先红后绿；NursingVitalSignFlowIT 扩 step11 重试重放真栈
+  用例（200 同 id 同刻，行数/条目/观察行零新增）；前端 PdaView.spec 扩键随载荷+成功轮换与失败重
+  试复用同键两例。api.d.ts 经 pnpm gen:api 全量重生成（临时导出 IT 等价 curl /v3/api-docs 管道，
+  用后即删）：+78 schema/+54 path 全为 PR-2 Tasks 2–12 iot/ward 契约首次入库，零 schema/路径删除
+  （−行均为 operation id 改号噪声），nursing 面净增 clientMsgId 一行。
+
 ## 2026-09-26 · P2 PR-2 Task 12 装配面增量：ward pom 依赖增补 + iot api.payload NamedInterface 暴露
 
 - ① **fuyun-ward pom 增补 fuyun-iot 依赖**（仅消费其 api NamedInterface 面）：Task 1 pom 注释

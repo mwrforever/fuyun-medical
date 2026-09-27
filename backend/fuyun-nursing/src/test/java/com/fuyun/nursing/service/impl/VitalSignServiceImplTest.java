@@ -10,6 +10,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -60,6 +62,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 /**
  * 生命体征域服务单测（Task 5 冻结用例集 + 补充锚）：点测落卡直 CONFIRMED、生理极限拒收
@@ -125,7 +129,11 @@ class VitalSignServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new VitalSignServiceImpl(vitalMapper, wardMetaService, recordService, chartService, events);
+        // D-22 管道件：重放回查走 REQUIRES_NEW 事务模板，getTransaction 桩仅 catch 分支用例触达（故 lenient）
+        PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
+        lenient().when(txManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+        service =
+                new VitalSignServiceImpl(vitalMapper, wardMetaService, recordService, chartService, events, txManager);
         ReflectionTestUtils.setField(service, "baseMapper", vitalMapper);
         OperatorContextHolder.set("nurse-01");
     }
@@ -173,7 +181,7 @@ class VitalSignServiceImplTest {
     @DisplayName("生理极限拒收：体温 44.0 越极限拒 NS-1005（消息含「生理极限」），守卫链第一步、insert 未被调")
     void recordRejectsValueBeyondPhysiologicalLimit() {
         VitalSignRecordRequest req = new VitalSignRecordRequest(
-                VISIT, null, new BigDecimal("44.0"), "AXILLARY", null, null, null, null, null, null, null, null);
+                VISIT, null, new BigDecimal("44.0"), "AXILLARY", null, null, null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.record(req)).isInstanceOfSatisfying(BizException.class, e -> {
             assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.VITAL_OUT_OF_RANGE);
@@ -199,6 +207,91 @@ class VitalSignServiceImplTest {
         });
         // 幂等拒绝发生在 insert（守卫链③）：归集/条目/事件全程未触达（首值权威，无覆盖写）
         verifyNoInteractions(recordService, chartService, events);
+        // D-22 重放门控锚：无键请求不触发按键回查（重放语义仅限携带 clientMsgId 的请求）
+        verify(vitalMapper, never()).selectOne(any());
+    }
+
+    @Test
+    @DisplayName("D-22 重试重放：同 clientMsgId 二次录入唯一冲突 → 按键回查命中重放返回原 VO（HTTP 200 语义，无二次观察行/条目/事件）")
+    void recordReplaysOriginalVoWhenSameClientMsgIdConflicts() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(vitalMapper.insert(any(VitalSignRecord.class)))
+                .thenThrow(new DuplicateKeyException("uk_vital_sign_client_msg"));
+        // 按键回查替身：首值行（id=302，T1000 测量时点）已在前次请求落卡
+        VitalSignRecord original = vitalRow(302L, T1000);
+        when(vitalMapper.selectOne(any())).thenReturn(original);
+
+        VitalSignVO vo = service.record(keyedRequest("pda-msg-0001"));
+
+        // 重放返回首值行本体（原 id/原测量时点），非新落卡行——PDA 弱网补传收敛的对外可观察行为
+        assertThat(vo.id()).isEqualTo(302L);
+        assertThat(vo.measuredAt()).isEqualTo(T1000);
+        // 重放零二次副作用：归集/条目/事件不重复执行（首值权威）
+        verifyNoInteractions(recordService, chartService, events);
+        verify(vitalMapper, times(1)).insert(any(VitalSignRecord.class));
+        // 回查谓词锚：按 client_msg_id 精确过滤（REQUIRES_NEW 独立事务承载在 IT 真栈实证）
+        verify(vitalMapper).selectOne(queryCaptor.capture());
+        LambdaQueryWrapper<VitalSignRecord> wrapper = rendered(queryCaptor.getValue());
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("pda-msg-0001");
+        assertThat(wrapper.getSqlSegment()).contains("client_msg_id");
+    }
+
+    @Test
+    @DisplayName("D-22 键不同新行：异 clientMsgId 的两次录入互不重放，各自走完整落卡链且键随行落库")
+    void recordCreatesIndependentRowsForDifferentClientMsgIds() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        AtomicLong ids = new AtomicLong(ROW_ID);
+        when(vitalMapper.insert(any(VitalSignRecord.class))).thenAnswer(inv -> {
+            inv.getArgument(0, VitalSignRecord.class).setId(ids.getAndIncrement());
+            return 1;
+        });
+
+        service.record(keyedRequest("pda-msg-A"));
+        service.record(keyedRequest("pda-msg-B"));
+
+        verify(vitalMapper, times(2)).insert(rowCaptor.capture());
+        List<VitalSignRecord> rows = rowCaptor.getAllValues();
+        assertThat(rows).extracting(VitalSignRecord::getClientMsgId).containsExactly("pda-msg-A", "pda-msg-B");
+        // 两键互不相干：均走完整落卡链（无重放短路、无按键回查），副作用各一次
+        verify(recordService, times(2)).appendObservation(eq(VISIT), anyString(), eq(false), eq("nurse-01"));
+        verify(chartService, times(2)).appendVitalEntry(eq(VISIT), any(Instant.class), anyLong(), eq("AXILLARY"));
+        verify(events, times(2)).publishEvent(any(NursingDomainEvent.class));
+        verify(vitalMapper, never()).selectOne(any());
+    }
+
+    @Test
+    @DisplayName("D-22 空键兼容：clientMsgId 空白归一为未携带——既有落卡链全不变且键位不落退化空串")
+    void recordTreatsBlankClientMsgIdAsAbsent() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(vitalMapper.insert(any(VitalSignRecord.class))).thenAnswer(insertWithId(ROW_ID));
+
+        service.record(keyedRequest(""));
+
+        verify(vitalMapper).insert(rowCaptor.capture());
+        // 空白键归一为 NULL：稀疏部分唯一索引（WHERE client_msg_id IS NOT NULL）不收退化空串
+        assertThat(rowCaptor.getValue().getClientMsgId()).isNull();
+        // 既有路径全不变：归集/条目/事件完整执行（工作站面零行为变化）
+        verify(recordService, times(1)).appendObservation(eq(VISIT), anyString(), eq(false), eq("nurse-01"));
+        verify(events, times(1)).publishEvent(any(NursingDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("D-22 回查未命中兜底：键冲突但首值行已被逻辑删（极端并发）→ 维持 NS-1016，不伪造重放")
+    void recordFallsBackToNs1016WhenReplayLookupMisses() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(vitalMapper.insert(any(VitalSignRecord.class)))
+                .thenThrow(new DuplicateKeyException("uk_vital_sign_client_msg"));
+        // 极端并发替身：唯一冲突后首值行已被逻辑删（@TableLogic 过滤），按键回查未命中
+        when(vitalMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.record(keyedRequest("pda-msg-del")))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.CONFLICT);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1016");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        // 回查未命中无重放：归集/条目/事件零触达（同无键冲突语义）
+        verifyNoInteractions(recordService, chartService, events);
     }
 
     @Test
@@ -211,9 +304,9 @@ class VitalSignServiceImplTest {
             return 1;
         });
         VitalSignRecordRequest axillary = new VitalSignRecordRequest(
-                VISIT, null, new BigDecimal("38.6"), "AXILLARY", null, null, null, null, null, null, null, null);
+                VISIT, null, new BigDecimal("38.6"), "AXILLARY", null, null, null, null, null, null, null, null, null);
         VitalSignRecordRequest oral = new VitalSignRecordRequest(
-                VISIT, null, new BigDecimal("36.5"), "ORAL", null, null, null, null, null, null, null, null);
+                VISIT, null, new BigDecimal("36.5"), "ORAL", null, null, null, null, null, null, null, null, null);
 
         service.record(axillary);
         service.record(oral);
@@ -237,7 +330,7 @@ class VitalSignServiceImplTest {
         when(vitalMapper.insert(any(VitalSignRecord.class))).thenAnswer(insertWithId(ROW_ID));
 
         service.record(new VitalSignRecordRequest(
-                VISIT, null, new BigDecimal("36.5"), "AXILLARY", 80, 18, 120, 80, 98, null, null, null));
+                VISIT, null, new BigDecimal("36.5"), "AXILLARY", 80, 18, 120, 80, 98, null, null, null, null));
 
         // 归集口径锚（Task 11 IT 断言依据）：全部指标正常 → 合并分支 abnormal=false，调用恰 1 次
         ArgumentCaptor<String> contentCaptor = ArgumentCaptor.forClass(String.class);
@@ -264,7 +357,7 @@ class VitalSignServiceImplTest {
         when(vitalMapper.insert(any(VitalSignRecord.class))).thenAnswer(insertWithId(ROW_ID));
 
         service.record(new VitalSignRecordRequest(
-                VISIT, null, new BigDecimal("38.6"), "AXILLARY", null, null, null, null, null, null, null, null));
+                VISIT, null, new BigDecimal("38.6"), "AXILLARY", null, null, null, null, null, null, null, null, null));
 
         ArgumentCaptor<String> contentCaptor = ArgumentCaptor.forClass(String.class);
         verify(recordService, times(1)).appendObservation(eq(VISIT), contentCaptor.capture(), eq(true), eq("nurse-01"));
@@ -514,9 +607,9 @@ class VitalSignServiceImplTest {
     @DisplayName("P1 双源边界：source=IOT 拒 NS-1019（IoT 归 P2 无处理路径）、tempSite code 非法拒 NS-1019，不落库")
     void recordRejectsIotSourceAndUnknownTempSiteInP1() {
         VitalSignRecordRequest iot = new VitalSignRecordRequest(
-                VISIT, "IOT", new BigDecimal("36.5"), "AXILLARY", null, null, null, null, null, null, null, null);
+                VISIT, "IOT", new BigDecimal("36.5"), "AXILLARY", null, null, null, null, null, null, null, null, null);
         VitalSignRecordRequest badSite = new VitalSignRecordRequest(
-                VISIT, null, new BigDecimal("36.5"), "EAR", null, null, null, null, null, null, null, null);
+                VISIT, null, new BigDecimal("36.5"), "EAR", null, null, null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> service.record(iot)).isInstanceOfSatisfying(BizException.class, e -> {
             assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
@@ -564,9 +657,9 @@ class VitalSignServiceImplTest {
         when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
         when(vitalMapper.insert(any(VitalSignRecord.class))).thenAnswer(insertWithId(ROW_ID));
         VitalSignRecordRequest systolicOnly =
-                new VitalSignRecordRequest(VISIT, null, null, null, null, null, 120, null, null, null, null, 2);
+                new VitalSignRecordRequest(VISIT, null, null, null, null, null, 120, null, null, null, null, 2, null);
         VitalSignRecordRequest diastolicOnly =
-                new VitalSignRecordRequest(VISIT, null, null, null, null, null, null, 80, null, null, null, null);
+                new VitalSignRecordRequest(VISIT, null, null, null, null, null, null, 80, null, null, null, null, null);
 
         service.record(systolicOnly);
         service.record(diastolicOnly);
@@ -613,7 +706,13 @@ class VitalSignServiceImplTest {
     /** 全项正常录入请求（体温 36.5 腋温 + 脉搏/呼吸/血压/血氧全正常；source 可指定）。 */
     private VitalSignRecordRequest normalRequest(String source) {
         return new VitalSignRecordRequest(
-                VISIT, source, new BigDecimal("36.5"), "AXILLARY", 80, 18, 120, 80, 98, null, null, null);
+                VISIT, source, new BigDecimal("36.5"), "AXILLARY", 80, 18, 120, 80, 98, null, null, null, null);
+    }
+
+    /** 携带客户端幂等键的 PDA 录入请求（D-22 弱网补传场景载体，source=PDA）。 */
+    private VitalSignRecordRequest keyedRequest(String clientMsgId) {
+        return new VitalSignRecordRequest(
+                VISIT, "PDA", new BigDecimal("36.5"), "AXILLARY", 80, 18, 120, 80, 98, null, null, null, clientMsgId);
     }
 
     /** 在区详情卡替身（W01/床 01/患者 7；IWardMetaService.detail 的归一数据源）。 */

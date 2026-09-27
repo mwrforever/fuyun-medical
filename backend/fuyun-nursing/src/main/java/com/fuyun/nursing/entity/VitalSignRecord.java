@@ -89,6 +89,9 @@ public class VitalSignRecord {
     /** 同窗冲突对参照记录（P2 写入方，P1 恒空） */
     private Long conflictRef;
 
+    /** 客户端幂等键（V1014，D-22：PDA 弱网补传同键重放依据；稀疏部分唯一索引兜底，未携带为空） */
+    private String clientMsgId;
+
     /** 备注（驳回原因等） */
     private String remark;
 
