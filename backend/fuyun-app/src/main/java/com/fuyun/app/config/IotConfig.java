@@ -11,11 +11,14 @@ import com.fuyun.iot.controller.BindingController;
 import com.fuyun.iot.controller.CommandController;
 import com.fuyun.iot.controller.DeviceController;
 import com.fuyun.iot.controller.IotFallbackIngestController;
+import com.fuyun.iot.controller.LinkageRuleController;
 import com.fuyun.iot.controller.MetricDictController;
 import com.fuyun.iot.controller.ProductController;
 import com.fuyun.iot.internal.CommandDispatcher;
+import com.fuyun.iot.internal.IotAlarmEventListener;
 import com.fuyun.iot.internal.IotDeviceCommandListener;
 import com.fuyun.iot.internal.IotFallbackAuthService;
+import com.fuyun.iot.internal.LinkageExecutor;
 import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.internal.alarm.OfflineDetector;
 import com.fuyun.iot.internal.alarm.StormGuard;
@@ -30,6 +33,7 @@ import com.fuyun.iot.service.impl.CommandServiceImpl;
 import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
+import com.fuyun.iot.service.impl.LinkageRuleServiceImpl;
 import com.fuyun.iot.service.impl.MetricDictServiceImpl;
 import com.fuyun.iot.service.impl.ProductServiceImpl;
 import com.fuyun.iot.service.impl.TelemetryIngestServiceImpl;
@@ -64,7 +68,11 @@ import org.springframework.context.annotation.Import;
  * P2 PR-2 Task 8 追加命令域四件（命令下发编排器——五步下发实装单点/命令服务/命令四端点/命令
  * 结果帧监听器——AMQP 命令状态帧回推终态）与命令配置属性（fuyun.iot.command.*：同步等待超时
  * 与治疗级豁免开关）——编排器依赖白名单与发号器等既有装配链，TransactionTemplate 由 Boot 事务
- * 自动配置供给（终态 CAS 与事件发布同事务承载）。
+ * 自动配置供给（终态 CAS 与事件发布同事务承载）；P2 PR-2 Task 9 追加联动域四件（联动执行器——
+ * 触发→动作编排与失败重试单点/联动规则服务——规则 CRUD 与 FAILED 人工重推/规则与日志六端点/
+ * 告警触发自事件监听器——联动触发源主入口，q.iot.iot.alarm.triggered 队列声明随
+ * {@link IotMessagingConfig} 生效）——执行器依赖发号器/推送服务等既有装配链，TransactionTemplate
+ * 由 Boot 事务自动配置供给（联动留痕落行与事件发布同事务承载）。
  */
 @Configuration
 @EnableConfigurationProperties({
@@ -107,6 +115,12 @@ import org.springframework.context.annotation.Import;
     CommandDispatcher.class,
     IotDeviceCommandListener.class,
     CommandServiceImpl.class,
-    CommandController.class
+    CommandController.class,
+    // P2 PR-2 Task 9 联动域四件（FU-M14-10）：联动执行器（触发→动作编排）/规则服务/六端点/
+    // 告警触发自事件监听器（联动触发源主入口；消费队列声明归 IotMessagingConfig）
+    LinkageExecutor.class,
+    LinkageRuleServiceImpl.class,
+    LinkageRuleController.class,
+    IotAlarmEventListener.class
 })
 public class IotConfig {}

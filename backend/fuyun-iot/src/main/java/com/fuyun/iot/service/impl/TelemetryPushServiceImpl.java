@@ -90,8 +90,46 @@ public class TelemetryPushServiceImpl implements ITelemetryPushService {
             log.info("告警帧推送跳过（告警行无病区归属）：alarmNo={}", alarm.getAlarmNo());
             return;
         }
-        // 载荷 = triggered 事件契约 record（订阅方与 MQ 消费方同构消费，字段一一对应告警行快照）
-        AlarmTriggeredPayload payload = new AlarmTriggeredPayload(
+        messagingTemplate.convertAndSend(
+                IotMessagingConstants.TOPIC_ALARM_PREFIX + alarm.getWardId(), buildAlarmPayload(alarm));
+        log.info(
+                "告警帧已推送：topic={}{}，alarmNo={}，level={}，deviceId={}",
+                IotMessagingConstants.TOPIC_ALARM_PREFIX,
+                alarm.getWardId(),
+                alarm.getAlarmNo(),
+                alarm.getAlarmLevel(),
+                alarm.getDeviceId());
+    }
+
+    @Override
+    public void pushLinkageNotify(IotAlarmEntity alarm, String linkageNo) {
+        // 跳过分支：wardId 为空无法定推告警主题（与 pushAlarm 同口径 info 留痕，联动侧按回执裁决）
+        if (alarm.getWardId() == null) {
+            log.info("联动强提醒推送跳过（告警行无病区归属）：alarmNo={}，linkageNo={}", alarm.getAlarmNo(), linkageNo);
+            return;
+        }
+        // 载荷与告警帧同构（重复强化语义），linkageNo 经 STOMP 头携带作联动标记（不改冻结载荷契约）
+        messagingTemplate.convertAndSend(
+                IotMessagingConstants.TOPIC_ALARM_PREFIX + alarm.getWardId(),
+                buildAlarmPayload(alarm),
+                java.util.Map.of("linkageNo", linkageNo));
+        log.info(
+                "联动强提醒帧已推送（带 linkage 标记头）：topic={}{}，alarmNo={}，linkageNo={}",
+                IotMessagingConstants.TOPIC_ALARM_PREFIX,
+                alarm.getWardId(),
+                alarm.getAlarmNo(),
+                linkageNo);
+    }
+
+    /**
+     * 构造告警主题帧载荷（pushAlarm/pushLinkageNotify 共用）：与 iot.alarm.triggered 事件契约
+     * record 同构，字段一一对应告警行快照。
+     *
+     * @param alarm 已落库告警实体，非空
+     * @return triggered 契约载荷，非空
+     */
+    private static AlarmTriggeredPayload buildAlarmPayload(IotAlarmEntity alarm) {
+        return new AlarmTriggeredPayload(
                 alarm.getAlarmNo(),
                 alarm.getDeviceId(),
                 alarm.getPatientId(),
@@ -102,13 +140,5 @@ public class TelemetryPushServiceImpl implements ITelemetryPushService {
                 alarm.getTriggerValue(),
                 alarm.getRuleId(),
                 alarm.getLastTriggeredAt().toInstant());
-        messagingTemplate.convertAndSend(IotMessagingConstants.TOPIC_ALARM_PREFIX + alarm.getWardId(), payload);
-        log.info(
-                "告警帧已推送：topic={}{}，alarmNo={}，level={}，deviceId={}",
-                IotMessagingConstants.TOPIC_ALARM_PREFIX,
-                alarm.getWardId(),
-                alarm.getAlarmNo(),
-                alarm.getAlarmLevel(),
-                alarm.getDeviceId());
     }
 }

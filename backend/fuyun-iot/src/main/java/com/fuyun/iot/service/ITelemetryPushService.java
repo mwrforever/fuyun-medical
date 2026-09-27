@@ -72,6 +72,20 @@ public interface ITelemetryPushService {
     void pushAlarm(IotAlarmEntity alarm);
 
     /**
+     * 联动 NOTIFY 动作的 WS 告警主题重复强化推送（FU-M14-10，P2 PR-2 Task 9）：与告警帧同题
+     * 重推一次至 /topic/iot/alarm/{wardId}——「重复强化」语义即同载荷帧再推一次（订阅方同构
+     * 消费，AlarmTriggeredPayload 契约不变），linkageNo 经 STOMP 消息头（linkageNo 头）携带作
+     * 联动标记，不改 V1004 冻结载荷契约。
+     *
+     * <p>调用时点约束同 {@link #pushAlarm}（宪法 A.4.2-7：事务提交后或无事务上下文）；推送失败
+     * 原样抛出，由联动执行器按失败重试语义承接。
+     *
+     * @param alarm     已落库告警实体，非空；来源：联动执行器按 trigger_ref（告警号）定位
+     * @param linkageNo 联动执行业务号，非空；来源：IotSeqGate.nextLinkageNo（人工重推沿既有号）
+     */
+    void pushLinkageNotify(IotAlarmEntity alarm, String linkageNo);
+
+    /**
      * 遥测摘要帧载荷（轻量 record，防大消息）。
      *
      * @param count                本批实体条数（真实批大小，不随 items 截断减少）

@@ -172,6 +172,40 @@ class TelemetryPushServiceImplTest {
         verifyNoInteractions(messagingTemplate);
     }
 
+    @Test
+    @DisplayName("联动强提醒推送（Task 9）：载荷与告警帧同构且 linkageNo 经 STOMP 头携带（带 linkage 标记）")
+    void pushLinkageNotifySendsTriggeredPayloadWithLinkageHeader() {
+        com.fuyun.iot.entity.IotAlarmEntity alarm = alarmEntity();
+        Instant occurredAt = Instant.parse("2026-09-26T08:00:00Z");
+        alarm.setLastTriggeredAt(OffsetDateTime.ofInstant(occurredAt, ZoneOffset.UTC));
+
+        service.pushLinkageNotify(alarm, "LG2026092600001");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<java.util.Map<String, Object>> headersCaptor = ArgumentCaptor.forClass(java.util.Map.class);
+        verify(messagingTemplate)
+                .convertAndSend(eq("/topic/iot/alarm/" + WARD_ID), payloadCaptor.capture(), headersCaptor.capture());
+        com.fuyun.iot.api.payload.AlarmTriggeredPayload payload =
+                (com.fuyun.iot.api.payload.AlarmTriggeredPayload) payloadCaptor.getValue();
+        // 载荷与告警帧同构（重复强化语义，冻结契约不变）
+        assertThat(payload.alarmNo()).isEqualTo("AL2026092600001");
+        assertThat(payload.wardId()).isEqualTo(WARD_ID);
+        assertThat(payload.occurredAt()).isEqualTo(occurredAt);
+        // 联动标记经 STOMP 消息头携带
+        assertThat(headersCaptor.getValue()).containsEntry("linkageNo", "LG2026092600001");
+    }
+
+    @Test
+    @DisplayName("联动强提醒推送：wardId 为 null 跳过（与告警帧同口径，执行器按回执裁决）")
+    void pushLinkageNotifySkipsWhenWardMissing() {
+        com.fuyun.iot.entity.IotAlarmEntity alarm = alarmEntity();
+        alarm.setWardId(null);
+
+        service.pushLinkageNotify(alarm, "LG2026092600001");
+
+        verifyNoInteractions(messagingTemplate);
+    }
+
     /** 告警行夹具（心率危急告警，绑定快照五元组冗余） */
     private static com.fuyun.iot.entity.IotAlarmEntity alarmEntity() {
         com.fuyun.iot.entity.IotAlarmEntity entity = new com.fuyun.iot.entity.IotAlarmEntity();

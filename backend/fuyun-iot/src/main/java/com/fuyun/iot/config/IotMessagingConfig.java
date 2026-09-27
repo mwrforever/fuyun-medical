@@ -78,4 +78,17 @@ public class IotMessagingConfig {
         return governance.declareConsumerQueue(
                 new ConsumerQueueSpec(IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_DEVICE_STATUS));
     }
+
+    /**
+     * 声明 iot 模块的告警触发自事件消费队列并绑定 fy.topic（P2 PR-2 Task 9 联动触发源主入口，
+     * 事件 V1004 id 74 已登记；q.iot.iot.alarm.triggered，消费者 IotAlarmEventListener）。
+     *
+     * @param governance 消息治理构件，非空；来源：integration MessagingGovernanceConfig 装配
+     * @return 声明集合（quorum 队列 + 绑定）；由 RabbitAdmin 随连接建立幂等声明
+     */
+    @Bean
+    public Declarables alarmTriggeredConsumerQueue(MessagingGovernance governance) {
+        return governance.declareConsumerQueue(
+                new ConsumerQueueSpec(IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_ALARM_TRIGGERED));
+    }
 }

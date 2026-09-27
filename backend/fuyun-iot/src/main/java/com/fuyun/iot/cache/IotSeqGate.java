@@ -6,14 +6,14 @@ import java.time.format.DateTimeFormatter;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * IoT 业务号发号器（告警号 AL 与命令号 CMD 的统一取号出口，形态照 InpatientSeqGate）。
+ * IoT 业务号发号器（告警号 AL、命令号 CMD 与联动号 LG 的统一取号出口，形态照 InpatientSeqGate）。
  *
- * <p>号键 {@code fy:iot:seq:{AL|CMD}:{yyyyMMdd}}（A.5-1 命名），Redis INCR 原子自增取号后格式化为
+ * <p>号键 {@code fy:iot:seq:{AL|CMD|LG}:{yyyyMMdd}}（A.5-1 命名），Redis INCR 原子自增取号后格式化为
  * {@code 前缀 + yyyyMMdd + %05d}（例 AL2026092600001）；每次自增后对当日键续 48h TTL——次日自然
  * 换键归零，48h 覆盖跨日重叠请求窗口。INCR 与 EXPIRE 均为单命令原子操作（计划 GC15），无需 Lua
  * 脚本；多实例并发取号由 Redis 单线程命令串行保证不重号。StringRedisTemplate 承载（禁 JDK
  * 序列化）；无状态单例（装配归 IotConfig，告警链 Task 7 消费 nextAlarmNo、命令链 Task 8 消费
- * nextCommandNo）。
+ * nextCommandNo、联动链 Task 9 消费 nextLinkageNo）。
  */
 public class IotSeqGate {
 
@@ -25,6 +25,9 @@ public class IotSeqGate {
 
     /** 命令号键段与单号前缀：CMD */
     private static final String COMMAND_TYPE = "CMD";
+
+    /** 联动执行号键段与单号前缀：LG（P2 PR-2 Task 9 同款形态扩展） */
+    private static final String LINKAGE_TYPE = "LG";
 
     /** 日期段格式：yyyyMMdd（BasicIsoDate） */
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
@@ -59,6 +62,15 @@ public class IotSeqGate {
      */
     public String nextCommandNo() {
         return next(COMMAND_TYPE);
+    }
+
+    /**
+     * 取下一联动执行号（Task 9 联动执行链消费，单号前缀 LG 同款形态扩展）。
+     *
+     * @return 形如 LG2026092600001 的联动号，非空；日内序号超 99999 时自然进位不截断
+     */
+    public String nextLinkageNo() {
+        return next(LINKAGE_TYPE);
     }
 
     /**

@@ -57,6 +57,9 @@ public final class IotMessagingConstants {
     /** 本模块自事件消费队列：q.&lt;消费者模块&gt;.&lt;事件类型&gt;（治理构件声明用） */
     public static final String QUEUE_DEVICE_STATUS = "q.iot.iot.device.status-changed";
 
+    /** 本模块自事件消费队列：告警触发（q.iot.iot.alarm.triggered，P2 PR-2 Task 9 联动触发源主入口） */
+    public static final String QUEUE_ALARM_TRIGGERED = "q.iot.iot.alarm.triggered";
+
     /** MDC traceId 键名：与 fuyun.trace.mdc-key 配置默认值一致（发布点从 MDC 取当前值进信封，
      * AMQP 消费线程无 HTTP 上下文时取值为 null，信封契约允许） */
     public static final String TRACE_ID_MDC_KEY = "traceId";
