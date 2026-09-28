@@ -9,6 +9,7 @@ import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.api.ScheduleStoppedPayload;
 import com.fuyun.outpatient.cache.PoolRedisGate;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.ScheduleConverter;
 import com.fuyun.outpatient.dto.ScheduleGenerateRequest;
 import com.fuyun.outpatient.dto.SchedulePageQuery;
 import com.fuyun.outpatient.dto.ScheduleTemplateSaveRequest;
@@ -149,7 +150,7 @@ public class ScheduleServiceImpl implements IScheduleService {
                     template.getDeptCode(),
                     template.getDoctorId());
         }
-        return toTemplateVO(template);
+        return ScheduleConverter.INSTANCE.toTemplateVO(template);
     }
 
     @Override
@@ -160,7 +161,12 @@ public class ScheduleServiceImpl implements IScheduleService {
                 new Page<>(page + 1L, size),
                 Wrappers.<ScheduleTemplate>lambdaQuery().orderByAsc(ScheduleTemplate::getId));
         return PageResult.of(
-                result.getRecords().stream().map(this::toTemplateVO).toList(), page, size, result.getTotal());
+                result.getRecords().stream()
+                        .map(ScheduleConverter.INSTANCE::toTemplateVO)
+                        .toList(),
+                page,
+                size,
+                result.getTotal());
     }
 
     @Override
@@ -263,7 +269,9 @@ public class ScheduleServiceImpl implements IScheduleService {
                         .orderByAsc(Schedule::getSchedDate)
                         .orderByAsc(Schedule::getId));
         return PageResult.of(
-                result.getRecords().stream().map(this::toScheduleVO).toList(),
+                result.getRecords().stream()
+                        .map(ScheduleConverter.INSTANCE::toScheduleVO)
+                        .toList(),
                 query.page(),
                 query.size(),
                 result.getTotal());
@@ -434,52 +442,5 @@ public class ScheduleServiceImpl implements IScheduleService {
      */
     private Duration poolKeyTtl(LocalDate schedDate) {
         return Duration.between(LocalDateTime.now(), schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
-    }
-
-    /**
-     * 实体 → 模板出参投影。
-     *
-     * @param template 排班模板实体，非空
-     * @return 模板出参，非空
-     */
-    private ScheduleTemplateVO toTemplateVO(ScheduleTemplate template) {
-        return new ScheduleTemplateVO(
-                template.getId(),
-                template.getDeptCode(),
-                template.getDoctorId(),
-                template.getEffFrom(),
-                template.getEffTo(),
-                template.getWeekPattern(),
-                template.getSession(),
-                template.getApptType(),
-                template.getSlotStart(),
-                template.getSlotEnd(),
-                template.getSlotQuota(),
-                template.getRoom(),
-                template.getReleaseDays(),
-                template.getReleaseTime(),
-                template.getStatus());
-    }
-
-    /**
-     * 实体 → 排班出参投影。
-     *
-     * @param schedule 排班日历实体，非空
-     * @return 排班出参，非空
-     */
-    private ScheduleVO toScheduleVO(Schedule schedule) {
-        return new ScheduleVO(
-                schedule.getId(),
-                schedule.getTemplateId(),
-                schedule.getSchedDate(),
-                schedule.getSession(),
-                schedule.getDeptCode(),
-                schedule.getDoctorId(),
-                schedule.getApptType(),
-                schedule.getTotalQuota(),
-                schedule.getUsedQuota(),
-                schedule.getRoom(),
-                schedule.getStatus(),
-                schedule.getStopReason());
     }
 }
