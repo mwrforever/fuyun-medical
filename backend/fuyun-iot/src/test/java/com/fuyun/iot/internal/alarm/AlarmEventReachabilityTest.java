@@ -294,7 +294,8 @@ class AlarmEventReachabilityTest {
                 StormGuard stormGuard,
                 OfflineDetector offlineDetector,
                 StringRedisTemplate redisTemplate,
-                AlarmProperties properties) {
+                AlarmProperties properties,
+                PlatformTransactionManager transactionManager) {
             return new AlarmEngine(
                     ruleMapper,
                     alarmMapper,
@@ -306,7 +307,8 @@ class AlarmEventReachabilityTest {
                     stormGuard,
                     offlineDetector,
                     redisTemplate,
-                    properties);
+                    properties,
+                    transactionManager);
         }
 
         @Bean

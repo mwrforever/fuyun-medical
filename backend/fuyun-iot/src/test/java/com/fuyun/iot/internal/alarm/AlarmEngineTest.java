@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -54,9 +55,11 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * 告警引擎单元测试（FU-M14-08，P2 PR-2 Task 7 Step 2）：三类规则源逐项触发与五项风暴抑制逐项——
@@ -125,6 +128,9 @@ class AlarmEngineTest {
     @Mock
     private ListOperations<String, String> listOperations;
 
+    @Mock
+    private PlatformTransactionManager transactionManager;
+
     @Captor
     private ArgumentCaptor<IotAlarmEntity> alarmCaptor;
 
@@ -157,7 +163,9 @@ class AlarmEngineTest {
                 new StormGuard(alarmMapper, ruleMapper, redisTemplate, PROPERTIES),
                 offlineDetector,
                 redisTemplate,
-                PROPERTIES);
+                PROPERTIES,
+                // mock 事务管理器：perAlarmTx 回调直通执行（无同步上下文，推送直推同既有用例口径）
+                transactionManager);
     }
 
     @Test
@@ -452,6 +460,81 @@ class AlarmEngineTest {
     }
 
     @Test
+    @DisplayName("并发兜底：单条落行唯一冲突幂等跳过不污染批事务——同批其余规则×设备告警、离线评估与升级扫描照常")
+    void duplicateKeyOnOneAlarmSkipsOnlyThatAlarmAndKeepsBatchEvaluating() {
+        // 规则×设备独立命中面（ruleA 仅命中 dev-001 心率行、ruleB 仅命中 dev-002 血氧行）：
+        // 首条 dev-001 落行并发命中 uk_iot_alarm_active，次条 dev-002 正常落行
+        IotAlarmRuleEntity ruleB = rule(900002L, AlarmRuleType.THRESHOLD, AlarmLevel.WARNING);
+        ruleB.setMetricCode("MDC_SPO2");
+        ruleB.setCompareOp(ThresholdOp.LT);
+        ruleB.setThresholdValue(new BigDecimal("90"));
+        ruleB.setDurationSecs(30);
+        ruleB.setRecoveryBand(new BigDecimal("5"));
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule(), ruleB));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 两设备越限回合均已起算 60s（≥ 持续时长 30s）：双双触发
+        when(valueOperations.get(anyString())).thenReturn(NOW.minusSeconds(60).toString());
+        when(deviceMapper.selectList(any()))
+                .thenReturn(List.of(device(1001L), device("dev-002", 1001L)));
+        when(seqGate.nextAlarmNo()).thenReturn("AL2026092600001", "AL2026092600002", "AL2026092600003");
+        // 首条落行并发唯一冲突（DB 兜底面），后续落行正常——模拟 PG 25P02 只应中止单条事务
+        when(alarmMapper.insert(any(IotAlarmEntity.class)))
+                .thenThrow(new DuplicateKeyException("uk_iot_alarm_active 冲突"))
+                .thenReturn(1);
+        // 离线源：dev-003 候选（病区经设备档案兜底路由）
+        IotAlarmRuleEntity offlineRule = rule(666L, AlarmRuleType.OFFLINE, AlarmLevel.WARNING);
+        offlineRule.setOfflineSecs(600);
+        IotDeviceEntity stalled = device("dev-003", 1002L);
+        stalled.setLastOnlineAt(OffsetDateTime.ofInstant(Instant.now().minusSeconds(700), ZoneOffset.UTC));
+        when(offlineDetector.detect()).thenReturn(List.of(new OfflineDetector.Candidate(offlineRule, stalled)));
+        // 升级扫描：既有危急告警越升级时限（锚点相对真实时钟，规避墙钟偏差）
+        IotAlarmEntity critical = new IotAlarmEntity();
+        critical.setId(1L);
+        critical.setAlarmNo("AL2026092500009");
+        critical.setRuleId(RULE_ID);
+        critical.setDeviceId(DEVICE_ID);
+        critical.setWardId(1001L);
+        critical.setAlarmLevel(AlarmLevel.CRITICAL);
+        critical.setStatus(AlarmStatus.ACTIVE);
+        critical.setEscalationCount(0);
+        critical.setCreatedAt(OffsetDateTime.ofInstant(Instant.now().minusSeconds(600), ZoneOffset.UTC));
+        when(alarmMapper.selectCriticalActive()).thenReturn(List.of(critical));
+        when(ruleMapper.selectBatchIds(anyCollection())).thenReturn(List.of(rule(), ruleB));
+        when(alarmMapper.casEscalate(eq(1L), eq(0), anyString())).thenReturn(1);
+
+        engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(
+                telemetryRow(DEVICE_ID, METRIC_CODE, "170", NOW),
+                telemetryRow("dev-002", "MDC_SPO2", "88", NOW))));
+
+        // 冲突单条（dev-001）仅消耗一次落行尝试；同批 dev-002 阈值告警与 dev-003 离线告警照常落行
+        verify(alarmMapper, times(3)).insert(alarmCaptor.capture());
+        List<IotAlarmEntity> insertedRows = alarmCaptor.getAllValues();
+        assertThat(insertedRows).extracting(IotAlarmEntity::getDeviceId)
+                .containsExactly(DEVICE_ID, "dev-002", "dev-003");
+        assertThat(insertedRows.get(1).getAlarmNo()).isEqualTo("AL2026092600002");
+        assertThat(insertedRows.get(1).getStatus()).isEqualTo(AlarmStatus.ACTIVE);
+        assertThat(insertedRows.get(1).getWardId()).isEqualTo(1001L);
+        assertThat(insertedRows.get(2).getMetricCode()).isEqualTo("DEVICE_OFFLINE");
+        assertThat(insertedRows.get(2).getWardId()).isEqualTo(1002L);
+        // 冲突单条零事件：triggered 仅 dev-002/dev-003 两条 + 升级 escalated 一条（顺序同评估链）
+        verify(events, times(3)).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getAllValues()).extracting(IotDomainEvent::eventType)
+                .containsExactly(
+                        IotMessagingConstants.EVENT_ALARM_TRIGGERED,
+                        IotMessagingConstants.EVENT_ALARM_TRIGGERED,
+                        IotMessagingConstants.EVENT_ALARM_ESCALATED);
+        assertThat(eventCaptor.getAllValues().stream()
+                .map(IotDomainEvent::payload)
+                .filter(AlarmTriggeredPayload.class::isInstance)
+                .map(AlarmTriggeredPayload.class::cast))
+                .extracting(AlarmTriggeredPayload::deviceId)
+                .containsExactly("dev-002", "dev-003");
+        verify(pushService, times(2)).pushAlarm(any(IotAlarmEntity.class));
+        // 升级扫描不受冲突影响：CAS 升级照常执行
+        verify(alarmMapper).casEscalate(eq(1L), eq(0), anyString());
+    }
+
+    @Test
     @DisplayName("最新值快照补写：数值行按 fy:iot:snapshot:latest:{deviceId}:{metricCode} 落值+时刻")
     void writesLatestValueSnapshot() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
@@ -492,9 +575,15 @@ class AlarmEngineTest {
     }
 
     private static IotTelemetryEntity telemetryRow(String value, Instant occurredAt) {
+        return telemetryRow(DEVICE_ID, METRIC_CODE, value, occurredAt);
+    }
+
+    /** 指定设备+指标的遥测行桩（B1 并发冲突用例：双设备双指标独立命中面） */
+    private static IotTelemetryEntity telemetryRow(
+            String deviceId, String metricCode, String value, Instant occurredAt) {
         IotTelemetryEntity entity = new IotTelemetryEntity();
-        entity.setDeviceId(DEVICE_ID);
-        entity.setMetricCode(METRIC_CODE);
+        entity.setDeviceId(deviceId);
+        entity.setMetricCode(metricCode);
         entity.setValue(new BigDecimal(value));
         entity.setOccurredAt(OffsetDateTime.ofInstant(occurredAt, ZoneOffset.UTC));
         return entity;
@@ -505,8 +594,13 @@ class AlarmEngineTest {
     }
 
     private static IotDeviceEntity device(long wardId) {
+        return device(DEVICE_ID, wardId);
+    }
+
+    /** 指定设备号的设备档案桩（B1 并发冲突用例：双设备病区兜底路由） */
+    private static IotDeviceEntity device(String deviceId, long wardId) {
         IotDeviceEntity entity = new IotDeviceEntity();
-        entity.setDeviceId(DEVICE_ID);
+        entity.setDeviceId(deviceId);
         entity.setWardId(wardId);
         entity.setStatus(DeviceStatus.ONLINE);
         return entity;

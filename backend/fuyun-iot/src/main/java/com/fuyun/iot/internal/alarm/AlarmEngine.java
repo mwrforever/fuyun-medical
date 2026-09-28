@@ -39,10 +39,13 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 告警引擎（FU-M14-08，P2 PR-2 Task 7）：三类规则源的进程内评估组件——旁路评估不阻塞遥测落库
@@ -69,7 +72,9 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * TransactionSynchronization#afterCommit javadoc 明文场景），故 evaluate 强制
  * {@link Propagation#REQUIRES_NEW}：挂起死事务、新建短事务承载落行与事件发布，新事务提交时
  * AFTER_COMMIT 监听与 WS 推送同步正常触发；evaluateDeviceAlarm 唯一入口为消费线程直入
- * （无激活事务），REQUIRED 语义不受传播选择影响，维持现状。
+ * （无激活事务），REQUIRED 语义不受传播选择影响，维持现状。单条落行再收进 perAlarmTx
+ * （REQUIRES_NEW）独立短事务：PG 下唯一索引冲突只中止单条事务，同批其余「规则×设备」评估
+ * 不连带回滚（25P02 隔离，VitalSign replayLookupTx 同款范式）。
  *
  * <p>Redis 降级语义：越限回合标记/最新值快照为辅助状态，Redis 异常降级为跳过该规则设备评估并
  * warn 留痕，不阻断评估链其余部分（与风暴抑制降级同口径）。
@@ -121,6 +126,16 @@ public class AlarmEngine {
     private final AlarmProperties properties;
 
     /**
+     * 单条告警独立事务载体（REQUIRES_NEW 写模板）：PostgreSQL 下唯一索引冲突即中止当前事务
+     * （25P02 aborted-transaction 态），同事务内再发语句必失败——批次评估（evaluate REQUIRES_NEW）
+     * 对同批其余「规则×设备」还要继续抑制 CAS 与升级扫描，若单条落行留在批事务内，一处并发冲突
+     * 将连带回滚整批告警。故每条告警的「落行 + 事务内事件发布 + afterCommit 推送/补推登记」收进
+     * 本模板独立短事务（挂起外层批事务），冲突只丢单条（幂等跳过），其余评估照常（VitalSign
+     * replayLookupTx 同款范式）。
+     */
+    private final TransactionTemplate perAlarmTx;
+
+    /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1；注入接口类型 B.2-2）。
      *
      * @param ruleMapper       告警规则 mapper，非空；三类规则装载通道
@@ -134,6 +149,8 @@ public class AlarmEngine {
      * @param offlineDetector  离线探测器，非空；离线规则源候选扫描
      * @param redisTemplate    String 模板（A.5-1），非空；越限回合标记与最新值快照通道
      * @param properties       告警引擎配置属性，非空；快照 TTL 等参数
+     * @param transactionManager 平台事务管理器，非空；仅用于构建单条告警落行的 REQUIRES_NEW
+     *                           独立事务模板（perAlarmTx，PG 25P02 冲突隔离——见字段注记）
      */
     public AlarmEngine(
             IotAlarmRuleMapper ruleMapper,
@@ -146,7 +163,8 @@ public class AlarmEngine {
             StormGuard stormGuard,
             OfflineDetector offlineDetector,
             StringRedisTemplate redisTemplate,
-            AlarmProperties properties) {
+            AlarmProperties properties,
+            PlatformTransactionManager transactionManager) {
         this.ruleMapper = ruleMapper;
         this.alarmMapper = alarmMapper;
         this.deviceMapper = deviceMapper;
@@ -158,6 +176,10 @@ public class AlarmEngine {
         this.offlineDetector = offlineDetector;
         this.redisTemplate = redisTemplate;
         this.properties = properties;
+        TransactionTemplate template = new TransactionTemplate(transactionManager);
+        // 单条落行须挂起外层批事务独立提交：PG 唯一冲突中止的是本条事务（25P02），不污染同批评估
+        template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.perAlarmTx = template;
     }
 
     /**
@@ -427,6 +449,8 @@ public class AlarmEngine {
 
     /**
      * 统一新发触发链（三类源共用）：抑制①③裁决 → 抑制④风暴计数 → 落行 → 事件发布 → 推送分派。
+     * 落行+事件发布+推送/补推登记收进单条 REQUIRES_NEW 独立事务（perAlarmTx）：并发唯一冲突
+     * （uk_iot_alarm_active 兜底）幂等跳过仅丢单条告警，不污染批事务致同批连带回滚。
      *
      * @param rule             命中规则，非空
      * @param deviceId         触发源设备号，非空
@@ -472,44 +496,50 @@ public class AlarmEngine {
         IotAlarmEntity entity =
                 buildAlarmEntity(rule, deviceId, binding, wardId, metricCode, triggerValue, occurredAt, alarmNo);
         try {
-            // 数据库写操作：告警落行（同事务发 triggered 事件——AFTER_COMMIT 出 MQ 由发布器承载）
-            alarmMapper.insert(entity);
+            // 单条告警独立短事务（perAlarmTx REQUIRES_NEW，挂起外层批事务）：落行 + 事务内发布
+            // triggered 事件 + 推送/补推登记收进同事务——PG 下唯一索引冲突即中止当前事务（25P02），
+            // 冲突经异常出栈仅回滚本条（catch 在模板外承接），同批其余「规则×设备」评估与升级扫描
+            // 不连带回滚
+            perAlarmTx.executeWithoutResult(txStatus -> {
+                // 数据库写操作：告警落行（同事务发 triggered 事件——AFTER_COMMIT 出 MQ 由发布器承载）
+                alarmMapper.insert(entity);
+                events.publishEvent(new IotDomainEvent(
+                        IotMessagingConstants.EVENT_ALARM_TRIGGERED,
+                        new AlarmTriggeredPayload(
+                                alarmNo,
+                                deviceId,
+                                entity.getPatientId(),
+                                entity.getVisitId(),
+                                wardId,
+                                rule.getAlarmLevel().getCode(),
+                                metricCode,
+                                entity.getTriggerValue(),
+                                rule.getId(),
+                                occurredAt),
+                        occurredAt,
+                        currentTraceId()));
+                log.info(
+                        "告警已落行并发布触发事件：alarmNo={}，ruleId={}，deviceId={}，wardId={}，level={}，metric={}，triggerValue={}，storm={}",
+                        alarmNo,
+                        rule.getId(),
+                        deviceId,
+                        wardId,
+                        rule.getAlarmLevel(),
+                        metricCode,
+                        entity.getTriggerValue(),
+                        storm);
+                if (storm && rule.getAlarmLevel() != AlarmLevel.CRITICAL) {
+                    // 抑制④：风暴期非危急只入库不推 WS，告警号入补推队列（解除后排空补推）
+                    stormGuard.queueDeferredPush(rule.getId(), alarmNo);
+                    return;
+                }
+                pushAfterCommit(entity);
+            });
         } catch (DuplicateKeyException e) {
             // 并发新发窗口命中部分唯一索引 uk_iot_alarm_active（抑制①的 DB 兜底）：幂等跳过
             log.warn("并发新发命中活跃唯一索引（uk_iot_alarm_active 兜底），按聚合计数语义幂等跳过：ruleId={}，deviceId={}", rule.getId(), deviceId);
             return;
         }
-        events.publishEvent(new IotDomainEvent(
-                IotMessagingConstants.EVENT_ALARM_TRIGGERED,
-                new AlarmTriggeredPayload(
-                        alarmNo,
-                        deviceId,
-                        entity.getPatientId(),
-                        entity.getVisitId(),
-                        wardId,
-                        rule.getAlarmLevel().getCode(),
-                        metricCode,
-                        entity.getTriggerValue(),
-                        rule.getId(),
-                        occurredAt),
-                occurredAt,
-                currentTraceId()));
-        log.info(
-                "告警已落行并发布触发事件：alarmNo={}，ruleId={}，deviceId={}，wardId={}，level={}，metric={}，triggerValue={}，storm={}",
-                alarmNo,
-                rule.getId(),
-                deviceId,
-                wardId,
-                rule.getAlarmLevel(),
-                metricCode,
-                entity.getTriggerValue(),
-                storm);
-        if (storm && rule.getAlarmLevel() != AlarmLevel.CRITICAL) {
-            // 抑制④：风暴期非危急只入库不推 WS，告警号入补推队列（解除后排空补推）
-            stormGuard.queueDeferredPush(rule.getId(), alarmNo);
-            return;
-        }
-        pushAfterCommit(entity);
     }
 
     /**
