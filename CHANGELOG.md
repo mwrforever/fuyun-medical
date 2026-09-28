@@ -2,6 +2,22 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 风险清单修复环分流：BUG-24 被 Maven 依赖环阻塞登记 D-28（裁决留痕）
+
+- **背景**：2026-09-28 全仓高风险问题清单 BUG-24（BE-C3-09，低危）要求 integration 模块四治理写端点
+  （DeadLetterController replay/close、MdmSubscriptionController register/unregister）补 @AuditLog
+  （Spec 20-integration.md:170「通道配置与死信处理操作全量审计」）。
+- **阻塞事实**：注解契约 AuditLog/AuditActionType 落 com.fuyun.system.api，而 fuyun-system 已编译依赖
+  fuyun-integration（消费消息治理 api，pom 注释明示「无反向依赖」）；integration 反向依赖 system 即
+  Maven 反应堆成环（实测 cyclic reference 构建拒绝，任意 scope 同样成环）。切面 pointcut 为直接
+  @annotation 绑定，元注解/自建副本均不可拦截，无小改合规出口。
+- **裁决**：执行派发边界内默认项「挂账暂缓」登记 TASK.md D-28 待决策（用户未响应 ask_question，
+  取推荐项，可推翻）；结构性解法二选一待裁：①审计注解契约下沉 fuyun-common（67 文件/11 模块
+  import 更新 + 宪法留痕 + 全仓 CI）②反转 system→integration 边（消息治理契约搬家，更大）。
+  挂账期间四端点 service impl 已有 log.info 应用日志留痕，缺统一审计台账（system.audit_log）。
+- **同环交付**：BUG-21（fuyun-patient VisitCardServiceImpl bind/replace 补 info 留痕）不受阻塞，
+  独立提交完成（288d2fb）。
+
 ## 2026-09-28 · PR #57 合并前修复环收口：四笔修复 + scoped 复审 + 五条分流登记（先记再改）
 
 - ① **四笔修复（用户 2026-09-28 决策派发合并前修复环，范围锁定 B1/B2/P1/C2/C3 五项不扩大）**：
