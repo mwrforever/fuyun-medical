@@ -18,6 +18,7 @@ import com.fuyun.outpatient.enums.TicketStatus;
 import com.fuyun.outpatient.enums.TicketType;
 import com.fuyun.outpatient.enums.TriageAction;
 import com.fuyun.outpatient.enums.VisitStatus;
+import com.fuyun.outpatient.internal.QueueCalledPushEvent;
 import com.fuyun.outpatient.mapper.QueueTicketMapper;
 import com.fuyun.outpatient.mapper.ScheduleMapper;
 import com.fuyun.outpatient.mapper.TriageRecordMapper;
@@ -40,16 +41,17 @@ import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 分诊台与候诊队列服务实现（M03 FU-M03-04，Task 7 写路径唯一入口）：报到（visit REGISTERED→
  * WAITING 状态机迁移+每迁必记 visit_status_log 红线 5+建票+ZSET 入队）、二次分诊/调级/跨队列
  * 转接（triage_record 全留痕；调级重排不改号 Spec :106）、叫号（惰性重建 Spec :210+Lua 原子出队
- * +票 CAS+双 topic WS 推送 ≤2s Spec :198）、过号降级重排与重呼、队列 REST 快照（脱敏出网）。
+ * +票 CAS+事务内发布推送事件、提交后双 topic WS 推送 ≤2s Spec :198——BUG-04 修复，A.4.2-7
+ * 事务内禁消息发送）、过号降级重排与重呼、队列 REST 快照（脱敏出网）。
  * 优先级分冻结公式（类别分取最高单项+老幼残跨类叠加+封顶 999，偏差⑨经 2026-09-20 用户裁决细化）；
  * 同分排序以 queue_time 库端时间戳为权威，禁应用服务器时钟（防多实例漂移）。Redis ZSET（fy:
  * outpatient:queue:{deptCode}）仅为加速视图，queue_ticket WAITING 行为权威（重启恢复面）。
@@ -96,12 +98,6 @@ public class TriageServiceImpl implements ITriageService {
     /** 队列序键 TTL 锚点时刻：当日末+2h=次日 02:00（与队列 ZSET 键 TTL 同锚，A.5-1 禁无 TTL 键） */
     private static final LocalTime QUEUE_KEY_TTL_ANCHOR = LocalTime.of(2, 0);
 
-    /** 诊区队列 topic 前缀（大屏/语音客户端订阅面，Spec :179） */
-    private static final String QUEUE_TOPIC_PREFIX = "/topic/outpatient/queue/";
-
-    /** 医生站 topic 前缀（医生站提醒订阅面，Spec :179） */
-    private static final String DOCTOR_TOPIC_PREFIX = "/topic/outpatient/doctor/";
-
     /** 非报到动作的分诊台缺省终端标识（triage_record.station_id NOT NULL；报到携真实终端标识） */
     private static final String DEFAULT_STATION_ID = "TRIAGE_DESK";
 
@@ -119,7 +115,7 @@ public class TriageServiceImpl implements ITriageService {
 
     private final StringRedisTemplate redisTemplate;
 
-    private final SimpMessagingTemplate messagingTemplate;
+    private final ApplicationEventPublisher events;
 
     private final PatientNameQuery patientNameQuery;
 
@@ -133,8 +129,8 @@ public class TriageServiceImpl implements ITriageService {
      * @param scheduleMapper         排班日历 mapper，非空；叫号推送 room 展示字段关联读
      * @param queueZsetStore         队列 ZSET 存储，非空；入队/原子出队/惰性重建
      * @param redisTemplate          Redis 字符串模板，非空；队列当日序 INCR 键
-     * @param messagingTemplate      STOMP 消息模板，非空；@EnableWebSocketMessageBroker 派生 Bean，
-     *                               双 topic 叫号推送
+     * @param events                 应用事件发布器，非空；叫号/重呼事务内发布推送事件，
+     *                               QueueCalledPushListener 提交后转 WS 双 topic 推送（BUG-04）
      * @param patientNameQuery       患者脱敏展示名查询（patient api 契约），非空；快照/推送姓名掩码
      *                               收口（patient 侧掩码，原文不出模块）
      */
@@ -146,7 +142,7 @@ public class TriageServiceImpl implements ITriageService {
             ScheduleMapper scheduleMapper,
             QueueZsetStore queueZsetStore,
             StringRedisTemplate redisTemplate,
-            SimpMessagingTemplate messagingTemplate,
+            ApplicationEventPublisher events,
             PatientNameQuery patientNameQuery) {
         this.visitMapper = visitMapper;
         this.visitStatusLogMapper = visitStatusLogMapper;
@@ -155,7 +151,7 @@ public class TriageServiceImpl implements ITriageService {
         this.scheduleMapper = scheduleMapper;
         this.queueZsetStore = queueZsetStore;
         this.redisTemplate = redisTemplate;
-        this.messagingTemplate = messagingTemplate;
+        this.events = events;
         this.patientNameQuery = patientNameQuery;
     }
 
@@ -335,11 +331,11 @@ public class TriageServiceImpl implements ITriageService {
     }
 
     /**
-     * 叫号（惰性重建→原子出队→CAS→推送）：前置按当日待重叫权威行（WAITING 候诊+PASSED 过号
-     * 再入——fix round 1 Important-2 裁决①，PASSED 票重启后不静默跌出队列）惰性重建 ZSET（键在位
-     * 零写，幂等禁回灌非在队票）；出队首个「未指派或指派一致」票后按票行当前态 CAS→CALLED
-     * （WAITING→CALLED 首叫与 PASSED→CALLED 队内重叫共用，called_count+1+call_time）并双 topic
-     * 推送。叫号≠接诊。
+     * 叫号（惰性重建→原子出队→CAS→事件化推送）：前置按当日待重叫权威行（WAITING 候诊+PASSED
+     * 过号再入——fix round 1 Important-2 裁决①，PASSED 票重启后不静默跌出队列）惰性重建 ZSET
+     * （键在位零写，幂等禁回灌非在队票）；出队首个「未指派或指派一致」票后按票行当前态 CAS→
+     * CALLED（WAITING→CALLED 首叫与 PASSED→CALLED 队内重叫共用，called_count+1+call_time）并
+     * 发布推送事件（提交后双 topic 推送，BUG-04）。叫号≠接诊。
      *
      * @param request 叫号请求，非空
      * @return 叫中票据出参；队列空返回 null（200 空语义）
@@ -383,9 +379,10 @@ public class TriageServiceImpl implements ITriageService {
         }
         ticket.setStatus(TicketStatus.CALLED);
         ticket.setCalledCount(ticket.getCalledCount() == null ? 1 : ticket.getCalledCount() + 1);
-        pushCalled(ticket, request.deptCode(), request.doctorId());
+        // 推送事件发布（事务内禁直发 WS，A.4.2-7）：载荷组装两跳读合法留在事务内，提交后推送
+        publishCalledEvent(ticket, request.deptCode(), request.doctorId());
         log.info(
-                "叫号完成：ticketNo={}，deptCode={}，doctorId={}，calledCount={}",
+                "叫号完成（WS 推送经提交后事件触发）：ticketNo={}，deptCode={}，doctorId={}，calledCount={}",
                 ticket.getTicketNo(),
                 request.deptCode(),
                 request.doctorId(),
@@ -441,8 +438,9 @@ public class TriageServiceImpl implements ITriageService {
     }
 
     /**
-     * 重呼（PASSED→CALLED 重复叫）：CAS 命中后 called_count 累加并重复双 topic 推送（大屏/医生站
-     * 再次播报）；医生 topic 归属=票指派医生，未指派回落操作者面板。
+     * 重呼（PASSED→CALLED 重复叫）：CAS 命中后 called_count 累加并重复发布推送事件（提交后
+     * 双 topic 推送，大屏/医生站再次播报——BUG-04 同款事务边界纪律）；医生 topic 归属=票指派
+     * 医生，未指派回落操作者面板。
      *
      * @param ticketId 票据主键，非空
      * @return 重呼票据出参（CALLED），非空
@@ -474,9 +472,10 @@ public class TriageServiceImpl implements ITriageService {
         ticket.setCalledCount(ticket.getCalledCount() == null ? 1 : ticket.getCalledCount() + 1);
         // 医生 topic 归属：票指派医生优先，未指派回落操作者（分诊台重呼未定医生票的提醒面板）
         String doctorId = ticket.getDoctorId() != null ? ticket.getDoctorId() : OperatorContextHolder.get();
-        pushCalled(ticket, ticket.getQueueId(), doctorId);
+        // 推送事件发布（事务内禁直发 WS，A.4.2-7）：提交后重播大屏/医生站
+        publishCalledEvent(ticket, ticket.getQueueId(), doctorId);
         log.info(
-                "重呼完成：ticketNo={}，queueId={}，calledCount={}",
+                "重呼完成（WS 推送经提交后事件触发）：ticketNo={}，queueId={}，calledCount={}",
                 ticket.getTicketNo(),
                 ticket.getQueueId(),
                 ticket.getCalledCount());
@@ -657,28 +656,24 @@ public class TriageServiceImpl implements ITriageService {
     }
 
     /**
-     * 叫号 WS 双 topic 推送（端到端 ≤2s，Spec :198）：诊区队列 topic（大屏/语音）+医生 topic（医生站
-     * 提醒）；载荷脱敏口径=ticketNo+姓名掩码，不带 visitId/patientId 原始标识。
+     * 叫号推送事件发布（BUG-04 修复：原事务内直推 WS 改为事务内发布应用事件，提交后由
+     * QueueCalledPushListener AFTER_COMMIT 双 topic 推送——A.4.2-7 事务内禁止消息发送）：
+     * 事务内仅组装脱敏载荷（两跳读合法）并发布事件，推送点后移出事务边界，杜绝「已推送
+     * 而库态回滚」的展示不一致；载荷脱敏口径=ticketNo+姓名掩码，不带 visitId/patientId 原始标识。
      *
      * @param ticket   已置 CALLED 票据，非空
      * @param deptCode 队列标识，非空
      * @param doctorId 叫号医生 id，非空
      */
-    private void pushCalled(QueueTicket ticket, String deptCode, String doctorId) {
+    private void publishCalledEvent(QueueTicket ticket, String deptCode, String doctorId) {
         QueueCalledNotice notice = new QueueCalledNotice(
                 "CALLED",
                 ticket.getTicketNo(),
                 maskedNameOf(ticket.getVisitId()),
                 doctorId,
                 roomOf(deptCode, doctorId));
-        // 消息发送：双 topic 推送（队列快照 REST 之外的实时通道）
-        messagingTemplate.convertAndSend(QUEUE_TOPIC_PREFIX + deptCode, notice);
-        messagingTemplate.convertAndSend(DOCTOR_TOPIC_PREFIX + doctorId, notice);
-        log.info(
-                "叫号 WS 推送完成：queueTopic={}，doctorTopic={}，ticketNo={}",
-                QUEUE_TOPIC_PREFIX + deptCode,
-                DOCTOR_TOPIC_PREFIX + doctorId,
-                ticket.getTicketNo());
+        // 消息发送（时机后移）：事务内仅发布事件，提交后监听器执行双 topic WS 推送
+        events.publishEvent(new QueueCalledPushEvent(notice, deptCode, doctorId));
     }
 
     /**
