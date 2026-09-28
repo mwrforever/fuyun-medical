@@ -525,8 +525,7 @@ class AlarmEngineTest {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         // 两设备越限回合均已起算 60s（≥ 持续时长 30s）：双双触发
         when(valueOperations.get(anyString())).thenReturn(NOW.minusSeconds(60).toString());
-        when(deviceMapper.selectList(any()))
-                .thenReturn(List.of(device(1001L), device("dev-002", 1001L)));
+        when(deviceMapper.selectList(any())).thenReturn(List.of(device(1001L), device("dev-002", 1001L)));
         when(seqGate.nextAlarmNo()).thenReturn("AL2026092600001", "AL2026092600002", "AL2026092600003");
         // 首条落行并发唯一冲突（DB 兜底面），后续落行正常——模拟 PG 25P02 只应中止单条事务
         when(alarmMapper.insert(any(IotAlarmEntity.class)))
@@ -554,13 +553,13 @@ class AlarmEngineTest {
         when(alarmMapper.casEscalate(eq(1L), eq(0), anyString())).thenReturn(1);
 
         engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(
-                telemetryRow(DEVICE_ID, METRIC_CODE, "170", NOW),
-                telemetryRow("dev-002", "MDC_SPO2", "88", NOW))));
+                telemetryRow(DEVICE_ID, METRIC_CODE, "170", NOW), telemetryRow("dev-002", "MDC_SPO2", "88", NOW))));
 
         // 冲突单条（dev-001）仅消耗一次落行尝试；同批 dev-002 阈值告警与 dev-003 离线告警照常落行
         verify(alarmMapper, times(3)).insert(alarmCaptor.capture());
         List<IotAlarmEntity> insertedRows = alarmCaptor.getAllValues();
-        assertThat(insertedRows).extracting(IotAlarmEntity::getDeviceId)
+        assertThat(insertedRows)
+                .extracting(IotAlarmEntity::getDeviceId)
                 .containsExactly(DEVICE_ID, "dev-002", "dev-003");
         assertThat(insertedRows.get(1).getAlarmNo()).isEqualTo("AL2026092600002");
         assertThat(insertedRows.get(1).getStatus()).isEqualTo(AlarmStatus.ACTIVE);
@@ -569,15 +568,16 @@ class AlarmEngineTest {
         assertThat(insertedRows.get(2).getWardId()).isEqualTo(1002L);
         // 冲突单条零事件：triggered 仅 dev-002/dev-003 两条 + 升级 escalated 一条（顺序同评估链）
         verify(events, times(3)).publishEvent(eventCaptor.capture());
-        assertThat(eventCaptor.getAllValues()).extracting(IotDomainEvent::eventType)
+        assertThat(eventCaptor.getAllValues())
+                .extracting(IotDomainEvent::eventType)
                 .containsExactly(
                         IotMessagingConstants.EVENT_ALARM_TRIGGERED,
                         IotMessagingConstants.EVENT_ALARM_TRIGGERED,
                         IotMessagingConstants.EVENT_ALARM_ESCALATED);
         assertThat(eventCaptor.getAllValues().stream()
-                .map(IotDomainEvent::payload)
-                .filter(AlarmTriggeredPayload.class::isInstance)
-                .map(AlarmTriggeredPayload.class::cast))
+                        .map(IotDomainEvent::payload)
+                        .filter(AlarmTriggeredPayload.class::isInstance)
+                        .map(AlarmTriggeredPayload.class::cast))
                 .extracting(AlarmTriggeredPayload::deviceId)
                 .containsExactly("dev-002", "dev-003");
         verify(pushService, times(2)).pushAlarm(any(IotAlarmEntity.class));
