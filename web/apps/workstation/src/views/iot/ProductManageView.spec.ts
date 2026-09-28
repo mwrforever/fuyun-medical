@@ -28,6 +28,7 @@ vi.mock('@/api/iot', () => ({
     syncModel: vi.fn(),
     updateMappings: vi.fn(),
     updateCommands: vi.fn(),
+    listMappings: vi.fn(),
   },
   metrics: { list: vi.fn(), create: vi.fn() },
 }));
@@ -102,6 +103,7 @@ describe('产品与物模型管理页', () => {
       products.syncModel,
       products.updateMappings,
       products.updateCommands,
+      products.listMappings,
       metrics.list,
       metrics.create,
     ]) {
@@ -110,8 +112,9 @@ describe('产品与物模型管理页', () => {
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.error).mockClear();
     vi.mocked(ElMessage.success).mockClear();
-    // 只读面兜底空：防未 stub 的 resolve 断链
+    // 只读面兜底空：防未 stub 的 resolve 断链（映射回显空=弹窗回落单空行）
     vi.mocked(products.list).mockResolvedValue(emptyPage());
+    vi.mocked(products.listMappings).mockResolvedValue([]);
     vi.mocked(metrics.list).mockResolvedValue([]);
   });
 
@@ -228,6 +231,61 @@ describe('产品与物模型管理页', () => {
     await flushPromises();
     expect(products.updateMappings).toHaveBeenCalledWith('prod-1', {
       mappings: [{ propertyName: 'heartRate', metricCode: 'MDC_ECG_HEART_RATE' }],
+    });
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+  });
+
+  it('术语映射弹窗回显：已配置两条再打开回显两行，直接保存 PUT 携全集不再清空（BUG-17）', async () => {
+    vi.mocked(products.list).mockResolvedValue({
+      content: threeStateProducts(),
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    vi.mocked(products.listMappings).mockResolvedValue([
+      {
+        id: '1',
+        productId: 'prod-1',
+        propertyName: 'heartRate',
+        metricCode: 'MDC_ECG_HEART_RATE',
+        mismatchStrategy: 'RAW_PASSTHROUGH',
+      },
+      {
+        id: '2',
+        productId: 'prod-1',
+        propertyName: 'spo2',
+        metricCode: 'MDC_PULSE_OXIM_SPO2',
+        mismatchStrategy: 'RAW_PASSTHROUGH',
+      },
+    ]);
+    vi.mocked(products.updateMappings).mockResolvedValue([]);
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    const row = findRow(wrapper, '监护仪');
+    const mapButton = row?.findAll('button').find((b) => b.text() === '术语映射');
+    await mapButton?.trigger('click');
+    await flushPromises();
+    // 打开弹窗即拉取既有映射全集（BUG-17 修复面）
+    expect(products.listMappings).toHaveBeenCalledWith('prod-1');
+    // 既有两条映射回填两行（属性名输入值回显）
+    const propInputs = wrapper.findAll(
+      'input[aria-label="物模型属性名"], input[aria-label="物模型属性名 2"]',
+    );
+    expect(propInputs).toHaveLength(2);
+    expect((propInputs[0].element as HTMLInputElement).value).toBe('heartRate');
+    expect((propInputs[1].element as HTMLInputElement).value).toBe('spo2');
+    // 未改动直接保存：PUT 携既有全集（不再仅携单行静默清空）
+    await clickButton(wrapper, '保存映射');
+    await flushPromises();
+    expect(products.updateMappings).toHaveBeenCalledWith('prod-1', {
+      mappings: [
+        {
+          propertyName: 'heartRate',
+          metricCode: 'MDC_ECG_HEART_RATE',
+          mismatchStrategy: 'RAW_PASSTHROUGH',
+        },
+        { propertyName: 'spo2', metricCode: 'MDC_PULSE_OXIM_SPO2', mismatchStrategy: 'RAW_PASSTHROUGH' },
+      ],
     });
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
   });

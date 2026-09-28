@@ -1,6 +1,6 @@
 /**
- * 物联网域 API（M14/M16 前端面，一域一文件）：产品与物模型（分页/上架/物模型同步/术语映射/
- * 命令安全等级登记）+ 指标字典（分页/新增）+ 设备（分页/注册/影子/停用/凭证重置）+
+ * 物联网域 API（M14/M16 前端面，一域一文件）：产品与物模型（分页/上架/物模型同步/术语映射
+ * 替换与回显/命令安全等级登记）+ 指标字典（分页/新增）+ 设备（分页/注册/影子/停用/凭证重置）+
  * 设备患者绑定（分页/绑定/解绑）+ 告警规则（列表/新建/修改/删除/模拟回放）+ 告警
  * （分页/确认/关闭）+ 命令（挑战确认/下发/日志分页）+ 联动规则与执行日志（CRUD/重试）+
  * 数据质量（统计/利用率）+ 消费监控（积压）+ 消费错误（分页/重放/放弃）+ 遥测曲线（series）。
@@ -224,6 +224,13 @@ export const products = {
     const resp = await http.put<MetricMappingVO[]>(
       `/v1/iot/products/${productId}/metric-mappings`,
       payload,
+    );
+    return resp.data;
+  },
+  /** 术语映射回显（整组替换的回读面：弹窗打开拉取既有全集回显，防仅携增量保存静默清空）。 */
+  listMappings: async (productId: string): Promise<MetricMappingVO[]> => {
+    const resp = await http.get<MetricMappingVO[]>(
+      `/v1/iot/products/${productId}/metric-mappings`,
     );
     return resp.data;
   },

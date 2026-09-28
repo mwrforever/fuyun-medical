@@ -165,11 +165,26 @@ const mappingRows = ref<
 /** 指标字典（弹窗打开预载，MDC 编码选项源） */
 const metricOptions = ref<MetricDictVO[]>([]);
 
-/** 打开术语映射弹窗（携空行快速录入）并预载指标字典 */
+/** 打开术语映射弹窗：拉取既有映射回显（PUT 整组替换语义下缺回显会使保存静默清空既有 N 条）
+ * 并预载指标字典；两路加载互不拖垮。 */
 async function openMapping(row: ProductVO): Promise<void> {
   mappingTarget.value = row;
   mappingRows.value = [{ propertyName: '', metricCode: '', mismatchStrategy: '' }];
   mappingVisible.value = true;
+  try {
+    // 既有映射全集回显（BUG-17 修复面）；空配置回落单空行快速录入
+    const existing = await products.listMappings(row.productId ?? '');
+    mappingRows.value =
+      existing.length > 0
+        ? existing.map((vo) => ({
+            propertyName: vo.propertyName ?? '',
+            metricCode: vo.metricCode ?? '',
+            mismatchStrategy: vo.mismatchStrategy ?? '',
+          }))
+        : [{ propertyName: '', metricCode: '', mismatchStrategy: '' }];
+  } catch {
+    // 回显失败弹错归拦截器；驻留空行（整组替换下保存有清空风险，重开弹窗重试回显）
+  }
   try {
     metricOptions.value = await metrics.list({});
   } catch {
