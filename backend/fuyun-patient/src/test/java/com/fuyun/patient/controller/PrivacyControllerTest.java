@@ -11,12 +11,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fuyun.common.context.RoleContextHolder;
+import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.GlobalExceptionHandler;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.service.IPrivacyAuthService;
 import com.fuyun.patient.service.PrivacyMaskService;
 import com.fuyun.patient.service.PrivacyService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
+import com.fuyun.patient.vo.PrivacyAuthVO;
 import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
@@ -38,7 +42,8 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 /**
  * 隐私端点薄层单测（M02 Spec §7）：unmask 缺 purpose 400 校验拒绝、unmask 200 值集委托直出与
  * 台账分页 200（controller 禁业务逻辑与事务，豁免/落痕归 service 单测；SENSITIVE_QUERY/WRITE
- * 审计落点由切面承载，standalone 骨架不加载）。
+ * 审计落点由切面承载，standalone 骨架不加载）；授权登记/清单端点委托 service 直出（实体组装/
+ * 时刻派生/落库/PAT-1023 解析守卫语义归 PrivacyAuthServiceImplTest）。
  *
  * <p>SEC-01 安全收口用例：脱敏规则维护写端点 ADMIN 门禁——非 ADMIN（含空角色）403 PAT-1024
  * 不触达服务、ADMIN 200 委托直出；读端点（规则清单）与 unmask 链路无 ADMIN 亦行为保持。
@@ -162,8 +167,65 @@ class PrivacyControllerTest {
     }
 
     @Test
-    @DisplayName("授权登记 signedAtIso 非 ISO 时刻：400 PAT-1023（D-15 收口，不走全局 500）")
-    void createAuthWithMalformedSignedAtIsoRejectedAsPat1023() throws Exception {
+    @DisplayName("授权清单端点：委托服务直出出参清单（200，派生状态已组装）")
+    void authsDelegatesAndReturnsAuthVos() throws Exception {
+        when(privacyAuthService.listAuthVosByPatient(5L))
+                .thenReturn(List.of(new PrivacyAuthVO(
+                        66L,
+                        5L,
+                        "SENSITIVE_USE",
+                        "凭据-001",
+                        "科研利用",
+                        OffsetDateTime.parse("2026-09-01T10:00:00+08:00"),
+                        OffsetDateTime.parse("2027-09-01T10:00:00+08:00"),
+                        "EFFECTIVE")));
+
+        String body = mockMvc.perform(get("/api/v1/patient/privacy-auths").param("patientId", "5"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("\"id\":66").contains("\"derivedStatus\":\"EFFECTIVE\"");
+        verify(privacyAuthService).listAuthVosByPatient(5L);
+    }
+
+    @Test
+    @DisplayName("授权登记端点：委托服务直出授权出参（201，薄层透传）")
+    void createAuthDelegatesAndReturnsAuthVo() throws Exception {
+        when(privacyAuthService.createAuth(any()))
+                .thenReturn(new PrivacyAuthVO(
+                        66L,
+                        5L,
+                        "SENSITIVE_USE",
+                        "凭据-001",
+                        "科研利用",
+                        OffsetDateTime.parse("2026-09-01T10:00:00+08:00"),
+                        OffsetDateTime.parse("2027-09-01T10:00:00+08:00"),
+                        "EFFECTIVE"));
+
+        String body = mockMvc.perform(post("/api/v1/patient/privacy-auths")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"patientId\":5,\"authType\":\"SENSITIVE_USE\",\"authBasis\":\"凭据-001\","
+                                + "\"signedAtIso\":\"2026-09-01T10:00:00+08:00\"}"))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("\"id\":66").contains("\"derivedStatus\":\"EFFECTIVE\"");
+        verify(privacyAuthService).createAuth(any());
+    }
+
+    @Test
+    @DisplayName("授权登记端点：服务侧 PAT-1023 守卫异常经全局渲染器出 400（D-15 契约保持，解析语义在 service）")
+    void createAuthRendersServiceSidePat1023As400() throws Exception {
+        when(privacyAuthService.createAuth(any()))
+                .thenThrow(new BizException(
+                        PatientErrorCode.PARAM_FORMAT_INVALID,
+                        HttpStatus.BAD_REQUEST,
+                        "signedAtIso 须为合法 ISO-8601 时刻（如 2026-09-17T10:15:00+08:00）"));
+
         String body = mockMvc.perform(post("/api/v1/patient/privacy-auths")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"patientId\":5,\"authType\":\"SENSITIVE_USE\",\"authBasis\":\"凭据-001\","
@@ -173,9 +235,9 @@ class PrivacyControllerTest {
                 .getResponse()
                 .getContentAsString(StandardCharsets.UTF_8);
 
-        // ProblemDetail 契约：errorCode 扩展属性承载业务错误码（与生产行为一致）
+        // ProblemDetail 契约：errorCode 扩展属性承载业务错误码（守卫已下沉 service，HTTP 错误契约不变）
         assertThat(body).contains("PAT-1023");
-        verifyNoInteractions(privacyAuthService);
+        verify(privacyAuthService).createAuth(any());
     }
 
     @Test
