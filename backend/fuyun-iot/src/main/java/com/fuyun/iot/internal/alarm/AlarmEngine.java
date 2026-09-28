@@ -193,8 +193,9 @@ public class AlarmEngine {
      * 遥测批次评估入口（阈值源 + 离线源 + 升级惰性扫描 + 快照补写 + 补推排空）。
      *
      * <p>执行流程：①最新值快照补写（实测 fy:iot:snapshot:latest 无写入方，自 ingest 链补齐，
-     * TTL ≥2×采集周期）→②阈值规则逐条评估（越限回合状态机 + 触发链）→③离线规则源惰性扫描
-     * →④抑制⑤升级惰性扫描→⑤风暴解除补推排空（随规则评估顺带执行）。全程独立短事务：
+     * TTL ≥2×采集周期）→②风暴解除补推统一排空（逐启用规则排空，覆盖三类规则源遗留队列）
+     * →③阈值规则逐条评估（越限回合状态机 + 触发链）→④离线规则源惰性扫描→⑤升级惰性扫描。
+     * 全程独立短事务：
      * 新告警落行与事件发布同事务，WS 推送挂事务 afterCommit。传播强制 REQUIRES_NEW：调用点
      * ingest afterCommit 阶段原事务已提交但同步上下文仍激活（Spring afterCommit javadoc 场景），
      * REQUIRED 会加入死事务致 AFTER_COMMIT 监听与推送同步双双失联——见类注释「事件与推送时机」。
@@ -211,6 +212,8 @@ public class AlarmEngine {
         List<IotTelemetryEntity> rows = batch.rows();
         Map<String, IotTelemetryEntity> latestRowByKey = latestRowByDeviceAndMetric(rows);
         writeLatestSnapshots(latestRowByKey);
+        // 抑制④解除补推：评估起点统一排空三类规则源遗留队列（风暴已解除时逐启用规则排空补推）
+        drainDeferredIfStormCleared();
         evaluateThresholdRules(latestRowByKey);
         evaluateOfflineSource();
         scanEscalations();
@@ -283,8 +286,6 @@ public class AlarmEngine {
         Map<String, IotDeviceEntity> deviceByDeviceId = loadDevices(deviceIds);
         Instant now = Instant.now();
         for (IotAlarmRuleEntity rule : rules) {
-            // 抑制④解除补推：每规则评估前顺带排空遗留队列（风暴已解除时）
-            pushDeferredIfStormCleared(rule);
             for (IotTelemetryEntity row : latestRowByKey.values()) {
                 if (!isRuleMatched(rule, row)) {
                     continue;
@@ -543,10 +544,24 @@ public class AlarmEngine {
     }
 
     /**
-     * 风暴解除补推排空：规则评估前顺带执行（风暴标记不在挂且补推队列有遗留时，按号取回告警行
-     * 逐条补推 WS）。
+     * 风暴解除补推统一排空（评估批次起点执行）：逐启用规则排空遗留补推队列——三类规则源入队面
+     * 共用 queueDeferredPush，排空面同理按启用规则全量覆盖（原仅 THRESHOLD 随规则循环排空，
+     * DEVICE_ALARM/OFFLINE 遗留队列无排空调用点、只能静默等 1h TTL 过期）。
+     */
+    private void drainDeferredIfStormCleared() {
+        // 数据库读操作：启用规则全量单查（无类型过滤——补推队列按规则键控，三类源统一覆盖）
+        List<IotAlarmRuleEntity> rules = ruleMapper.selectList(
+                Wrappers.<IotAlarmRuleEntity>lambdaQuery().eq(IotAlarmRuleEntity::getEnabled, true));
+        for (IotAlarmRuleEntity rule : rules) {
+            pushDeferredIfStormCleared(rule);
+        }
+    }
+
+    /**
+     * 风暴解除补推排空：随评估起点统一排空逐规则执行（风暴标记不在挂且补推队列有遗留时，按号
+     * 取回告警行逐条补推 WS）。
      *
-     * @param rule 待评估规则，非空
+     * @param rule 待排空规则，非空
      */
     private void pushDeferredIfStormCleared(IotAlarmRuleEntity rule) {
         List<String> pendingAlarmNos = stormGuard.drainDeferredIfStormCleared(rule.getId());

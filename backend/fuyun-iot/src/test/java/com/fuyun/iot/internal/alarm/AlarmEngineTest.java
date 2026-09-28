@@ -344,6 +344,57 @@ class AlarmEngineTest {
     }
 
     @Test
+    @DisplayName("抑制④：OFFLINE 规则风暴解除后随评估统一排空补推队列推送（离线源排空洞口补齐）")
+    void offlineRuleDrainsDeferredPushAfterStormCleared() {
+        IotAlarmRuleEntity offlineRule = rule(666L, AlarmRuleType.OFFLINE, AlarmLevel.WARNING);
+        when(ruleMapper.selectList(any())).thenReturn(List.of(offlineRule));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 风暴已解除、离线规则补推队列有遗留：统一排空面按启用规则覆盖离线源
+        when(redisTemplate.hasKey("fy:iot:alarm:storm:666")).thenReturn(false);
+        when(redisTemplate.opsForList()).thenReturn(listOperations);
+        when(listOperations.size("fy:iot:alarm:pending:666")).thenReturn(1L);
+        when(listOperations.leftPop("fy:iot:alarm:pending:666", 1L)).thenReturn(List.of("AL2026092600004"));
+        IotAlarmEntity deferred = new IotAlarmEntity();
+        deferred.setAlarmNo("AL2026092600004");
+        deferred.setWardId(1001L);
+        deferred.setAlarmLevel(AlarmLevel.WARNING);
+        when(alarmMapper.selectList(any())).thenReturn(List.of(deferred));
+        // 值未越限且无离线候选：本回合仅执行补推排空，不触发新告警
+
+        engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(telemetryRow("120", NOW))));
+
+        verify(pushService).pushAlarm(deferred);
+        verify(redisTemplate).delete("fy:iot:alarm:pending:666");
+        verify(alarmMapper, never()).insert(any(IotAlarmEntity.class));
+    }
+
+    @Test
+    @DisplayName("抑制④：DEVICE_ALARM 规则风暴解除后随评估统一排空补推队列推送（透传源排空洞口补齐）")
+    void deviceAlarmRuleDrainsDeferredPushAfterStormCleared() {
+        IotAlarmRuleEntity passthrough = rule(777L, AlarmRuleType.DEVICE_ALARM, AlarmLevel.WARNING);
+        passthrough.setMetricCode("deviceAlarmEvent");
+        when(ruleMapper.selectList(any())).thenReturn(List.of(passthrough));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // 风暴已解除、透传规则补推队列有遗留：统一排空面按启用规则覆盖透传源
+        when(redisTemplate.hasKey("fy:iot:alarm:storm:777")).thenReturn(false);
+        when(redisTemplate.opsForList()).thenReturn(listOperations);
+        when(listOperations.size("fy:iot:alarm:pending:777")).thenReturn(1L);
+        when(listOperations.leftPop("fy:iot:alarm:pending:777", 1L)).thenReturn(List.of("AL2026092600005"));
+        IotAlarmEntity deferred = new IotAlarmEntity();
+        deferred.setAlarmNo("AL2026092600005");
+        deferred.setWardId(1001L);
+        deferred.setAlarmLevel(AlarmLevel.WARNING);
+        when(alarmMapper.selectList(any())).thenReturn(List.of(deferred));
+        // 值未越限且无透传帧：本回合仅执行补推排空，不触发新告警
+
+        engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(telemetryRow("120", NOW))));
+
+        verify(pushService).pushAlarm(deferred);
+        verify(redisTemplate).delete("fy:iot:alarm:pending:777");
+        verify(alarmMapper, never()).insert(any(IotAlarmEntity.class));
+    }
+
+    @Test
     @DisplayName("抑制⑤：危急告警越升级时限未确认——CAS 升级并发布 escalated 事件（读时惰性）")
     void escalatesOverdueCriticalAlarm() {
         // 无阈值规则（selectList 缺省空清单）：本回合仅执行升级惰性扫描
