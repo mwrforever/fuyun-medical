@@ -347,9 +347,13 @@ async function loadWard(): Promise<void> {
   }
 }
 
-/** 卡墙选中：驱动 ③⑤⑥⑦ 患者上下文 */
+/** 卡墙选中：驱动 ③⑤⑥⑦ 患者上下文；换患者即复位体征/评估/出入量三处草稿——未提交
+ * 数据不得跨患者滞留，否则续提即归档到新患者名下（医疗差错级，口径同 PdaView.onIdentify） */
 function selectPatient(patient: WardPatientVO): void {
   selectedVisitId.value = patient.visitId ?? null;
+  resetVitalForm();
+  scaleAnswers.value = {};
+  ioForm.value = { ioType: 'INTAKE', itemCode: '', quantity: '', unit: 'ml' };
   void loadLatestVitals();
   void loadChart();
   void loadAssessmentHistory();
@@ -532,6 +536,22 @@ const vitalForm = ref({
 });
 const recording = ref(false);
 
+/** 体征表单复位（换患者上下文切换与提交成功后共用——草稿不跨患者滞留） */
+function resetVitalForm(): void {
+  vitalForm.value = {
+    temperature: '',
+    tempSite: 'AXILLARY',
+    pulse: '',
+    respiration: '',
+    systolicBp: '',
+    diastolicBp: '',
+    spo2: '',
+    weight: '',
+    height: '',
+    painScore: '',
+  };
+}
+
 /** 整数字段显式校验（纯数字正则 + 范围判定） */
 function isValidInt(raw: string, min: number, max: number): boolean {
   if (!/^\d+$/.test(raw)) {
@@ -651,18 +671,8 @@ async function onRecordVitals(): Promise<void> {
       painScore: toNumberOrNull(form.painScore),
     });
     void ElMessage.success('体征已录入');
-    vitalForm.value = {
-      temperature: '',
-      tempSite: 'AXILLARY',
-      pulse: '',
-      respiration: '',
-      systolicBp: '',
-      diastolicBp: '',
-      spo2: '',
-      weight: '',
-      height: '',
-      painScore: '',
-    };
+    // 提交成功后复位表单（与换患者复位同口径）
+    resetVitalForm();
     await loadChart();
     await loadLatestVitals();
   } catch (error) {

@@ -515,6 +515,66 @@ describe('护士工作站', () => {
     wrapper.unmount();
   });
 
+  it('切换患者复位体征/评估/出入量草稿，未提交数据不跨患者续提（FE-A2-01）', async () => {
+    // 双患者卡墙：01 床留草稿后切 02 床，三处草稿必须复位
+    vi.mocked(wardPatients.list).mockResolvedValue([
+      patientMock({ bedNo: '01', visitId: 'I20260923000000001' }),
+      patientMock({ bedNo: '02', visitId: 'I20260923000000002' }),
+    ]);
+    vi.mocked(assessments.scales).mockResolvedValue([
+      {
+        scaleType: 'BRADEN',
+        itemCodes: ['PERCEPTION', 'MOISTURE'],
+        itemLabels: ['知觉感受', '潮湿程度'],
+        choices: { PERCEPTION: [1, 2, 3, 4], MOISTURE: [1, 2, 3, 4] },
+        totalRule: 'SUM',
+      },
+    ]);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await wrapper.find('.ward-bed-card').trigger('click');
+    await flushPromises();
+    // 01 床患者：三处草稿各留数据（体征体温、出入量明细、量表逐条作答），均不提交
+    await wrapper.find('input[inputmode="decimal"]').setValue('36.5');
+    await clickButton(wrapper, '出入量快录');
+    await wrapper.find('input[placeholder="项目编码"]').setValue('FOOD-MILK');
+    await wrapper.find('input[placeholder="数量"]').setValue('150');
+    for (const group of wrapper.findAllComponents({ name: 'ElRadioGroup' })) {
+      await group.vm.$emit('update:modelValue', 3);
+    }
+    // 切换 02 床患者：草稿不得跨患者滞留（续提即归档他人名下——医疗差错级）
+    await wrapper.findAll('.ward-bed-card')[1].trigger('click');
+    await flushPromises();
+    // 体征草稿复位（体温值清空回初始态）
+    expect((wrapper.find('input[inputmode="decimal"]').element as HTMLInputElement).value).toBe('');
+    // 出入量草稿复位（项目编码清空）
+    expect((wrapper.find('input[placeholder="项目编码"]').element as HTMLInputElement).value).toBe(
+      '',
+    );
+    // 评估草稿复位（量表条目回到未作答态）
+    expect(
+      wrapper
+        .findAllComponents({ name: 'ElRadioGroup' })
+        .every((group) => !group.props('modelValue')),
+    ).toBe(true);
+    // 行为兜底：复位后空草稿提交均被显式校验拦截零出网（不给 02 床患者归档 01 床数据）
+    await clickButton(wrapper, '录入体征');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('请至少录入一项体征数据');
+    expect(vi.mocked(vitalSigns.record)).not.toHaveBeenCalled();
+    await clickButton(wrapper, '记录出入量');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('请填写项目编码');
+    expect(vi.mocked(ioRecords.create)).not.toHaveBeenCalled();
+    await clickButton(wrapper, '提交评估');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
+      '存在未作答条目，请完成全部条目后提交',
+    );
+    expect(vi.mocked(assessments.create)).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
   it('任务列表逾期标记渲染且完成出网一次（overdueFlag=true）', async () => {
     vi.mocked(wardPatients.list).mockResolvedValue([patientMock({ bedNo: '03-01' })]);
     vi.mocked(tasks.list).mockResolvedValue([
