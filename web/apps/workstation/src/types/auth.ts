@@ -4,6 +4,7 @@
  * ⚠️ openapi-typescript 生成物可用后由 packages/shared api.d.ts 承接并删除本文件
  * （T-R4-3 演练后启动生成链路，PR-3 P0 期间为本文件有效期）。
  * 字段名与后端契约逐字对齐：backend/fuyun-system 的 dto/LoginRequest、vo/LoginResponse、vo/UserVO；
+ * 唯一例外 user.permissions 为前端先行声明的可选字段（后端 P1 补齐，见 UserVO 注释）。
  * userId/orgId 为后端 Long，经全局 Long→String 以 JSON 字符串输出，前端一律 string 承载（web A.3-6）。
  */
 
@@ -27,6 +28,12 @@ export interface UserVO {
   orgId: string | null;
   /** 角色编码清单，非 null（无角色为空清单）；P1 鉴权拦截的数据来源 */
   roles: string[];
+  /**
+   * 权限点编码清单（角色展开后的授权点集），可缺省——P0 后端契约未返回本字段 =
+   * 权限点数据源缺失，守卫与侧栏按空集全放行/全量显示（BUG-14 骨架口径）；
+   * P1 鉴权拦截接入时后端补齐，前端收紧为「空集 = 无任何权限」
+   */
+  permissions?: string[];
 }
 
 /** 登录/刷新成功响应（POST /api/v1/system/auth/login 与 /refresh 双端点同构） */

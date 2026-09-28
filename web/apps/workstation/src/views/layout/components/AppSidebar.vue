@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // 侧边菜单（PR-3 B3.4 骨架，批次 1 菜单数据化 + 高亮修复，§9.3.1/§9.3.2）：品牌头 + 分组菜单。
 // 菜单源为组件内常量数组（一份常量承载分组渲染/折叠单字缩写/高亮计算三个消费面）；
-// 权限驱动动态菜单随 P1 交付（依据会话角色渲染），P0 不接角色接口。
+// 权限过滤（BUG-14 守卫骨架）与会话权限点集联动：权限点集为空（数据源缺失）全量显示，
+// 集非空时按路由登记的权限点过滤，角色驱动的细粒度菜单随 P1 鉴权接线演进。
 import { computed } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
 
 /** 侧栏菜单项元数据：index=路由路径（兼作 el-menu index）、label=展开态全称、
  * abbr=折叠态单字缩写、group=分组名（空串=顶层项不入组） */
@@ -50,21 +52,44 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/ward/cold-chain', label: '冷链台账', abbr: '冷', group: '病区视图' },
 ];
 
-/** 顶层菜单项（group 空串），渲染在各分组之前 */
-const ROOT_MENU_ITEMS = MENU_ITEMS.filter((item) => item.group === '');
-
-/** 分组菜单结构（按 MENU_ITEMS 中首次出现顺序）：分组名 → 组内菜单项列表 */
-const MENU_GROUPS = Array.from(
-  new Set(MENU_ITEMS.map((item) => item.group).filter((name) => name !== '')),
-).map((name) => ({
-  name,
-  items: MENU_ITEMS.filter((item) => item.group === name),
-}));
-
 /** 折叠态由父布局下行（§9.3.2 父子直连 props 下行/事件上行，不引 provide/store） */
 const { collapsed = false } = defineProps<{ collapsed?: boolean }>();
 
 const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
+
+/**
+ * 按菜单 index 反查路由权限点：路由 = 权限点清单（web B.3-2），权限语义只登记在路由
+ * meta（单一事实源），菜单不重复登记权限编码防两处漂移。
+ *
+ * @param index 菜单项路由路径（与路由表 path 一一对应）
+ * @return 路由登记的权限点编码；undefined = 该路由未登记权限语义（恒可见）
+ */
+function routePermissionOf(index: string): string | undefined {
+  return router.resolve(index).meta.permission;
+}
+
+/** 权限过滤（BUG-14 守卫骨架，与守卫共用 hasRoutePermission 口径）：权限点集为空
+ * （数据源缺失）全量显示；集非空时仅保留「未登记权限点」与「集内权限点」的菜单项 */
+const visibleMenuItems = computed(() =>
+  MENU_ITEMS.filter((item) => auth.hasRoutePermission(routePermissionOf(item.index))),
+);
+
+/** 顶层菜单项（group 空串），渲染在各分组之前 */
+const ROOT_MENU_ITEMS = computed(() => visibleMenuItems.value.filter((item) => item.group === ''));
+
+/** 分组菜单结构（按 MENU_ITEMS 中首次出现顺序）：分组名 → 组内可见菜单项列表；
+ * 过滤后组内清空的分组整组剔除（防空标题组残留） */
+const MENU_GROUPS = computed(() => {
+  const visible = visibleMenuItems.value;
+  return Array.from(new Set(visible.map((item) => item.group).filter((name) => name !== ''))).map(
+    (name) => ({
+      name,
+      items: visible.filter((item) => item.group === name),
+    }),
+  );
+});
 
 /** 当前高亮菜单 index（F-3 高亮修复）：路径与菜单 index 精确相等取之；否则取前缀最长
  * 匹配（如 /patients/P123 → /patients，患者详情不再整组失亮）；均无命中回落空串

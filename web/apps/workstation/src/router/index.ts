@@ -1,6 +1,7 @@
 /**
  * 路由 = 权限点清单（web B.3-2）：每条路由 meta 承载权限语义，路由组件全部懒加载；
- * beforeEach 只做认证判定（默认拒绝 + 防死循环），权限点校验随 P1 鉴权拦截接入。
+ * beforeEach 做认证判定（默认拒绝 + 防死循环）与权限点骨架判定（无权限重定向 403，
+ * 权限点集缺失=数据源未接线时全放行，P1 鉴权接线后收紧）。
  */
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -10,7 +11,7 @@ declare module 'vue-router' {
   interface RouteMeta {
     /** 免认证公开路由：true 无需登录即可访问；缺省（undefined）= 受保护 */
     public?: boolean;
-    /** 权限点语义（医疗系统"路由 = 权限点清单"审计形态；鉴权拦截随 P1 接入，先登记语义） */
+    /** 权限点语义（医疗系统"路由 = 权限点清单"审计形态；守卫骨架已消费，见下方 beforeEach） */
     permission?: string;
   }
 }
@@ -37,6 +38,13 @@ export const router = createRouter({
           name: 'home',
           component: () => import('@/views/home/HomeView.vue'),
           // meta 预留权限语义：P1 鉴权拦截接入后补 permission 权限点字段
+          meta: {},
+        },
+        {
+          // 403 无权限落点（BUG-14 守卫骨架）：本路由禁登记权限点，否则无权限重定向会自环
+          path: '403',
+          name: 'forbidden',
+          component: () => import('@/views/error/ForbiddenView.vue'),
           meta: {},
         },
         {
@@ -220,7 +228,7 @@ export const router = createRouter({
     },
     {
       // PDA 移动护理页：顶层自持布局（MainLayout 之外，照 login 路由形态）——床旁
-      // 单手操作面不载侧栏/顶栏；权限语义登记，403 接线随 P1 鉴权拦截接入（patient 三页先例）
+      // 单手操作面不载侧栏/顶栏；无权限时守卫重定向 403（回到主布局落点，可经侧栏离开）
       path: '/pda',
       name: 'pda',
       component: () => import('@/views/nursing/PdaView.vue'),
@@ -229,7 +237,7 @@ export const router = createRouter({
   ],
 });
 
-// 认证守卫（web B.3-2 分层：beforeEach 只做认证/权限；数据预取/埋点归后续分层钩子）
+// 认证+权限守卫（web B.3-2 分层：beforeEach 只做认证/权限；数据预取/埋点归后续分层钩子）
 router.beforeEach((to) => {
   const auth = useAuthStore();
   // 默认拒绝：非公开路由未登录一律重定向登录页，并携带回跳地址供登录成功后还原
@@ -239,5 +247,10 @@ router.beforeEach((to) => {
   // 已登录访问登录页回首页，防重定向死循环
   if (to.path === '/login' && auth.isLoggedIn) {
     return { path: '/' };
+  }
+  // 权限判定（BUG-14 守卫骨架）：路由登记了权限点且会话权限点集不含时重定向 403 页；
+  // 权限点集为空（数据源缺失）全放行，口径与接线 TODO 见 auth store hasRoutePermission
+  if (!auth.hasRoutePermission(to.meta.permission)) {
+    return { path: '/403' };
   }
 });

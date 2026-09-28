@@ -6,6 +6,9 @@
  * 均为运行时延迟调用，合规 web B.3-1。构造时完成两件事：从 sessionStorage 恢复会话、
  * 向 api/http 注册 401 未授权回调（清会话 + 回登录页，经回调解耦不反向依赖 router 之外
  * 的模块——router 为路由器单例非视图组件，不在 web B.2-3 禁令之列）。
+ *
+ * <p>权限点集（user.permissions 派生）与 hasRoutePermission 三态判定供路由守卫与侧栏
+ * 过滤共用（BUG-14 守卫骨架，单一口径防两处漂移）；数据源随 P1 鉴权接线补齐。
  */
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
@@ -25,6 +28,16 @@ interface AuthSnapshot {
 }
 
 /**
+ * 权限点清单结构守卫：纯字符串数组（逐项收窄）。
+ *
+ * @param value sessionStorage 快照 user.permissions 字段（unknown）
+ * @return 结构合法返回 true 并收窄类型
+ */
+function isPermissionList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+/**
  * 快照结构类型守卫：sessionStorage 属可被用户篡改的外部存储，读入前逐字段收窄，
  * 防脏数据污染会话 state（禁 any 口径下的 unknown 收窄样板）。
  *
@@ -37,12 +50,18 @@ function isAuthSnapshot(value: unknown): value is AuthSnapshot {
   }
   const candidate = value as Record<string, unknown>;
   const user = candidate['user'];
-  return (
-    typeof candidate['token'] === 'string' &&
-    typeof candidate['refreshToken'] === 'string' &&
-    typeof user === 'object' &&
-    user !== null
-  );
+  if (
+    typeof candidate['token'] !== 'string' ||
+    typeof candidate['refreshToken'] !== 'string' ||
+    typeof user !== 'object' ||
+    user === null
+  ) {
+    return false;
+  }
+  // permissions 为可选字段：存在时必须是纯字符串数组——非数组脏数据（如字符串）会让
+  // 权限判定退化成子串匹配，整份快照丢弃回未登录态（与损坏 JSON 同口径）
+  const permissions = (user as Record<string, unknown>)['permissions'];
+  return permissions === undefined || isPermissionList(permissions);
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -55,6 +74,33 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** 是否已登录：路由守卫默认拒绝与顶栏用户区共用的判定口径 */
   const isLoggedIn = computed(() => token.value !== null);
+
+  /**
+   * 权限点编码集合（user.permissions 派生，登录/恢复/清空随会话身份自动同步）：
+   * 空集 = 数据源缺失（P0 后端契约未返回 permissions），守卫与侧栏按骨架语义全放行/全量显示。
+   */
+  const permissions = computed<string[]>(() => user.value?.permissions ?? []);
+
+  /**
+   * 路由权限判定（路由守卫与侧栏过滤共用的三态口径，BUG-14 守卫骨架）：
+   * 1. 路由未登记权限点（permission 缺省，如首页/登录页）→ 放行；
+   * 2. 权限点集为空 → 全放行；
+   * 3. 权限点集非空且不含目标权限点 → 拒绝（守卫重定向 403，侧栏隐藏对应菜单项）。
+   *
+   * @param permission 目标路由 meta.permission 权限点编码；缺省 = 路由未登记权限语义
+   * @return true 放行；false 拒绝（仅「集非空且不含」一种形态）
+   */
+  function hasRoutePermission(permission: string | undefined): boolean {
+    if (permission === undefined) {
+      return true;
+    }
+    // TODO(P1-authz): 权限点数据源缺失（后端登录契约未返回 permissions）暂按全放行；
+    // P1 鉴权接线补齐数据源后，需收紧为「空集 = 无任何权限」的严格拒绝语义，计划于 P1 引入
+    if (permissions.value.length === 0) {
+      return true;
+    }
+    return permissions.value.includes(permission);
+  }
 
   /** 从 sessionStorage 恢复会话（标签页刷新后保活；损坏数据丢弃并清残留键） */
   function loadFromStorage(): void {
@@ -138,5 +184,15 @@ export const useAuthStore = defineStore('auth', () => {
   });
 
   // Setup Store 必须返回全部 state（web B.3-1），保证 storeToRefs 解构可用
-  return { token, refreshToken, user, isLoggedIn, login, logout, loadFromStorage };
+  return {
+    token,
+    refreshToken,
+    user,
+    isLoggedIn,
+    permissions,
+    hasRoutePermission,
+    login,
+    logout,
+    loadFromStorage,
+  };
 });
