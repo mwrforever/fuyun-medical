@@ -63,7 +63,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 免审/一级/二级）由 {@link ApprovalLevel} 单一判定承载：L2 单一级批后转待二级且不发事件、
  * 二级批终批才发事件；收费组长/财务/医保办角色硬校验随 PR-5 RBAC 接线。并发收口：apply 目标
  * 费用行集 SELECT FOR UPDATE 行锁（{@link FeeRecordMapper#lockByIds}）串行化并发申请，锁内
- * 重读聚合做超可退守卫，根除「双读 refundedFen 互不可见双双过守卫」的 TOCTOU。
+ * 重读聚合做超可退守卫，根除「双读 refundedFen 互不可见双双过守卫」的 TOCTOU。approve/reject
+ * 两入口以旧状态谓词 CAS 条件更新收口（BUG-10，{@link RefundRequestMapper#casEscalateFirstApproval}
+ * 等三支，与 D-13 条件更新收口裁决同源）：并发双一级审批恰一赢、firstApprover 不被后到者覆盖
+ * （BILL-1020 分权链并发面），已 EXECUTED 单驳回被 0 行拦下（资金动作与单据状态不背离）；
+ * CAS 0 行重读定性转 BizException，禁盲目重试或以过期快照覆写。
  */
 @Slf4j
 public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRequest> implements IRefundService {
@@ -299,11 +303,16 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * CF-4 `billing.refund.approved` 契约冻结）；待一级且级别 L1 或待二级 → 落终批审批人/时刻、置
      * APPROVED 并发事件（autoApproved 恒 false，载荷与免审区分不变）。
      *
+     * <p>并发收口（BUG-10）：两写点均先以旧状态谓词 CAS 条件更新抢锚（一级升批钉死
+     * PENDING_APPROVAL 单态、终批钉死读快照精确旧态）再回写——并发双一级审批恰一赢、
+     * firstApprover 不被后到者覆盖（BILL-1020 分权链并发面）；0 行重读定性拒，禁盲目重试。
+     *
      * <p>角色分权（收费组长一级 / 财务·医保办二级）属 PR-5 RBAC 面：本 PR 以「级别 × 双人链」近似，
      * 待 PR-5 权限点接线后叠加角色硬校验（注释显式声明，禁静默滞留）。
      *
      * @param id 退费申请 id；来源：审批列表选行
-     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态）/
+     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态，含读后被并发处理——
+     *                      他审批人先落/被驳回/被执行，CAS 0 行重读定性拒）/
      *                      BILL-1020（403 终批人=申请人，或二级终批人=一级审批人，等保分权）
      */
     @Override
@@ -337,10 +346,17 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         }
         if (refund.getStatus() == RefundStatus.PENDING_APPROVAL
                 && resolveApprovalLevel(refund.getRefundType(), refund.getAmount()) == ApprovalLevel.SECOND) {
-            // 一级审批（L2 单）：状态推进待二级 + 审批链一级留痕（连批守卫比对位）；不发事件（时点=终批）
+            // BUG-10 一级审批 CAS 抢锚（与 execute 的 casMarkExecuted 同款时序）：谓词钉死
+            //   PENDING_APPROVAL 单态——两一级审批人并发批同一 L2 单恰一赢，输家 0 行重读定性拒，
+            //   后提交者不得覆盖 firstApprover（覆盖会使原一级审批人获得连批二级机会，BILL-1020
+            //   分权链被破坏）；审批链两列随条件更新同 SET，抢锚后 updateById 全行回写通道保持
+            OffsetDateTime firstApprovedAt = OffsetDateTime.now();
+            if (baseMapper.casEscalateFirstApproval(id, approver, firstApprovedAt) != 1) {
+                throw concurrentApprovalConflict(id, "审批");
+            }
             refund.setStatus(RefundStatus.PENDING_SECOND_APPROVAL);
             refund.setFirstApprover(approver);
-            refund.setFirstApprovedAt(OffsetDateTime.now());
+            refund.setFirstApprovedAt(firstApprovedAt);
             updateById(refund);
             log.info(
                     "退费一级审批通过（升二级）：refundNo={}，firstApprover={}，金额={}分",
@@ -349,10 +365,19 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     refund.getAmount());
             return;
         }
-        // 终批（L1 一级即终批 / L2 二级终批）：APPROVED 迁移 + 审批人/时刻留痕 + 发事件（同事务）
+        // BUG-10 终批 CAS 抢锚：谓词携带读快照精确旧态（L1 一级即终批=PENDING_APPROVAL /
+        //   L2 二级终批=PENDING_SECOND_APPROVAL，禁放宽 IN 双态——宽谓词会使 L1 终批人在并发
+        //   升批后跳级终批，连批守卫基于读快照评估即被绕过）；与驳回/执行并发交错时 0 行拦截，
+        //   先落库者胜、后到者重读定性拒（禁以过期快照整行覆写先到者的终态迁移）
+        OffsetDateTime approvedAt = OffsetDateTime.now();
+        if (baseMapper.casFinalApprove(
+                        id, approver, approvedAt, refund.getStatus().getCode())
+                != 1) {
+            throw concurrentApprovalConflict(id, "审批");
+        }
         refund.setStatus(RefundStatus.APPROVED);
         refund.setApprover(approver);
-        refund.setApprovedAt(OffsetDateTime.now());
+        refund.setApprovedAt(approvedAt);
         updateById(refund);
         // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：AFTER_COMMIT 经 BillingEventPublisher 出 fy.topic
         events.publishEvent(new BillingDomainEvent(
@@ -371,10 +396,14 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     /**
      * 退费驳回（PENDING_APPROVAL/PENDING_SECOND_APPROVAL → REJECTED 终态，理由必填留痕）。
      *
+     * <p>并发收口（BUG-10）：终态迁移以旧状态谓词 CAS 条件更新抢锚（待审双态 → REJECTED）——
+     * 与审批/执行并发交错时 0 行拦截，已 EXECUTED 单（动卡退钱完成）不得被整行覆写回 REJECTED，
+     * 资金动作与单据状态不背离；0 行重读定性转 BizException，禁盲目重试。
+     *
      * @param id     退费申请 id；来源：审批列表选行
      * @param reason 驳回理由，非空白；来源：审批人录入（@NotBlank 边界已保，服务层不重复校验）
      * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态——已审批单
-     *                      走业务逆流程而非驳回）
+     *                      走业务逆流程而非驳回，含读后被并发处理 CAS 0 行重读定性拒）
      */
     @Override
     @Transactional
@@ -392,11 +421,44 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     HttpStatus.CONFLICT,
                     "退费申请状态不允许驳回，当前状态：" + refund.getStatus().getCode());
         }
+        // BUG-10 驳回 CAS 抢锚（与 casMarkExecuted 同款时序）：谓词 IN 待审双态——与审批/执行
+        //   并发交错时 0 行拦截，输家重读定性拒；驳回理由随条件更新同 SET 原子留痕，
+        //   抢锚后 updateById 全行回写通道保持
+        if (baseMapper.casReject(id, reason) != 1) {
+            throw concurrentApprovalConflict(id, "驳回");
+        }
         // 数据库写操作：终态迁移 + 驳回理由留痕（同事务）
         refund.setStatus(RefundStatus.REJECTED);
         refund.setRejectReason(reason);
         updateById(refund);
         log.info("退费申请驳回：refundNo={}，rejector={}，reason={}", refund.getRefundNo(), OperatorContextHolder.get(), reason);
+    }
+
+    /**
+     * 审批/驳回 CAS 0 行命中的重读定性（BUG-10，与 execute 的 W-16 输家分流同语义）：
+     * 重读最新行——行已消失归 404（BILL-1018，与入口查询语义一致禁漂移）；仍在表即状态已被
+     * 并发事务迁移（他审批人先落/驳回/执行），「已被并发处理」显式拒 BILL-1019——禁盲目重试，
+     * 更禁以过期快照整行覆写（分权绕过与账实背离的共根源）。
+     *
+     * @param id     退费申请 id
+     * @param action 冲突动作描述（审批/驳回），非空；来源：调用方入口名，仅用于异常文案与日志
+     * @return 待抛业务异常（404 缺单 / 409 并发冲突），非空；调用方恒 throw
+     */
+    private BizException concurrentApprovalConflict(long id, String action) {
+        // 数据库读操作：CAS 败北后重读最新行定性（不可重试——状态机单次迁移，重试无正确性收益）
+        RefundRequest latest = getById(id);
+        if (latest == null) {
+            return new BizException(BillingErrorCode.REFUND_NOT_FOUND, HttpStatus.NOT_FOUND, "退费申请不存在：" + id);
+        }
+        log.warn(
+                "退费审批/驳回并发冲突（CAS 0 行，已被并发处理）：refundId={}，当前状态={}，冲突动作={}",
+                id,
+                latest.getStatus().getCode(),
+                action);
+        return new BizException(
+                BillingErrorCode.REFUND_STATE_NOT_ALLOWED,
+                HttpStatus.CONFLICT,
+                "退费申请已被并发处理，当前状态不允许" + action + "：" + latest.getStatus().getCode());
     }
 
     /**

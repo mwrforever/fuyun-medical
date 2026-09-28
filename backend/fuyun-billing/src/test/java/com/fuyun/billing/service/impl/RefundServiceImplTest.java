@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -417,6 +418,9 @@ class RefundServiceImplTest {
         OperatorContextHolder.set(APPROVER);
         RefundRequest pending = refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 8000L);
         when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+        // BUG-10 后 approve 写点先 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍待审批→拒 BILL-1019
+        when(refundRequestMapper.casFinalApprove(eq(100L), eq(APPROVER), any(), eq("PENDING_APPROVAL")))
+                .thenReturn(1);
 
         service.approve(100L);
 
@@ -473,6 +477,8 @@ class RefundServiceImplTest {
         OperatorContextHolder.set(APPROVER);
         when(refundRequestMapper.selectById(100L))
                 .thenReturn(refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 3000L));
+        // BUG-10 后 reject 写点先 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍待审批→拒 BILL-1019
+        when(refundRequestMapper.casReject(100L, "凭证不符，退回补件")).thenReturn(1);
 
         service.reject(100L, "凭证不符，退回补件");
 
@@ -545,6 +551,9 @@ class RefundServiceImplTest {
         assertThat(row.getAutoApproved()).isFalse();
 
         when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        // BUG-10 后 approve 写点先 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍待审批→拒 BILL-1019
+        when(refundRequestMapper.casFinalApprove(eq(100L), eq(APPROVER), any(), eq("PENDING_APPROVAL")))
+                .thenReturn(1);
         OperatorContextHolder.set(APPROVER);
         service.approve(100L);
 
@@ -574,6 +583,9 @@ class RefundServiceImplTest {
         RefundRequest row = applyCaptor.getValue();
 
         when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        // BUG-10 后 approve 写点先 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍待审批→拒 BILL-1019
+        when(refundRequestMapper.casFinalApprove(eq(100L), eq(APPROVER), any(), eq("PENDING_APPROVAL")))
+                .thenReturn(1);
         OperatorContextHolder.set(APPROVER);
         service.approve(100L);
 
@@ -601,6 +613,9 @@ class RefundServiceImplTest {
         assertThat(row.getStatus()).isEqualTo(RefundStatus.PENDING_APPROVAL); // L2 亦从待一审起（级别在批时判定）
 
         when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        // BUG-10 后 approve 写点先 CAS 抢锚（一级升批）：缺此桩则 CAS 默认 0 行→重读仍待审批→拒 BILL-1019
+        when(refundRequestMapper.casEscalateFirstApproval(eq(100L), eq(APPROVER), any()))
+                .thenReturn(1);
         OperatorContextHolder.set(APPROVER);
         service.approve(100L);
 
@@ -637,6 +652,9 @@ class RefundServiceImplTest {
         assertThat(row.getAutoApproved()).isFalse();
 
         when(refundRequestMapper.selectById(100L)).thenReturn(row);
+        // BUG-10 后 approve 写点先 CAS 抢锚（一级升批）：缺此桩则 CAS 默认 0 行→重读仍待审批→拒 BILL-1019
+        when(refundRequestMapper.casEscalateFirstApproval(eq(100L), eq(APPROVER), any()))
+                .thenReturn(1);
         OperatorContextHolder.set(APPROVER);
         service.approve(100L);
 
@@ -655,6 +673,10 @@ class RefundServiceImplTest {
                 refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
         pending.setFirstApprover(APPROVER);
         when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+        // BUG-10 后 approve 写点先 CAS 抢锚（二级终批从 PENDING_SECOND_APPROVAL 迁移）：
+        // 缺此桩则 CAS 默认 0 行→重读仍待二级→拒 BILL-1019
+        when(refundRequestMapper.casFinalApprove(eq(100L), eq(SECOND_APPROVER), any(), eq("PENDING_SECOND_APPROVAL")))
+                .thenReturn(1);
 
         service.approve(100L);
 
@@ -702,6 +724,8 @@ class RefundServiceImplTest {
                 refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
         pending.setFirstApprover(APPROVER);
         when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+        // BUG-10 后 reject 写点先 CAS 抢锚：缺此桩则 CAS 默认 0 行→重读仍待二级→拒 BILL-1019
+        when(refundRequestMapper.casReject(100L, "大额退费凭证不符，整单退回")).thenReturn(1);
 
         service.reject(100L, "大额退费凭证不符，整单退回");
 
@@ -1234,6 +1258,115 @@ class RefundServiceImplTest {
                         new RefundApplyRequest(5L, List.of(new RefundLine(9L, BigDecimal.ONE)), "当日多收费更正")))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.FEE_STATE_NOT_ALLOWED));
+    }
+
+    // ===== BUG-10：approve/reject CAS 并发收口（旧状态谓词条件更新——分权与账实一致性） =====
+
+    @Test
+    @DisplayName("BUG-10 并发双一级审批：读后状态已被迁移 → 后提交者 CAS 0 行拒 BILL-1019，firstApprover 不被覆盖")
+    void concurrentFirstApprovalLoserRejectedAndFirstApproverNotOverwritten() {
+        // 场景构造：两一级审批人先后读同一 L2 单（双方守卫全过）并发提交，本事务读到的是抢先者
+        //   落库前的 PENDING_APPROVAL 过期快照；CAS 打桩 0 行=抢先者已迁移状态（行锁让位后
+        //   谓词对新行版本重评估不命中）
+        OperatorContextHolder.set("supervisor-2");
+        RefundRequest staleRead = refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        // 重读定性最新行：抢先一级审批人 supervisor-1 已升待二级，firstApprover 已落为其账号
+        RefundRequest escalated =
+                refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        escalated.setFirstApprover(APPROVER);
+        when(refundRequestMapper.selectById(100L)).thenReturn(staleRead, escalated);
+        when(refundRequestMapper.casEscalateFirstApproval(eq(100L), eq("supervisor-2"), any()))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> service.approve(100L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
+
+        // 输家零写库：firstApprover 不被后提交者覆盖（修复前 updateById 整行回写会把一级审批人
+        //   覆写为后到者，原一级审批人随后可再批二级，BILL-1020 分权链被破坏）
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("BUG-10 终批并发被抢：他终批人已 APPROVED → CAS 0 行拒 BILL-1019（409），零写库零事件")
+    void concurrentFinalApprovalLoserRejectedWhenAlreadyApproved() {
+        OperatorContextHolder.set("finance-2");
+        RefundRequest staleRead =
+                refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        staleRead.setFirstApprover(APPROVER);
+        // 重读定性最新行：另一财务终批人 finance-1 已终批 APPROVED
+        RefundRequest finalized = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        finalized.setFirstApprover(APPROVER);
+        finalized.setApprover(SECOND_APPROVER);
+        when(refundRequestMapper.selectById(100L)).thenReturn(staleRead, finalized);
+        when(refundRequestMapper.casFinalApprove(eq(100L), eq("finance-2"), any(), eq("PENDING_SECOND_APPROVAL")))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> service.approve(100L)).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("BUG-10 驳回与执行交错：已 EXECUTED 单驳回 CAS 0 行拒 BILL-1019（资金已动终态禁覆写回驳回）")
+    void rejectOnConcurrentlyExecutedRefundRejectedAsBill1019() {
+        OperatorContextHolder.set(SECOND_APPROVER);
+        RefundRequest staleRead =
+                refund(100L, RefundStatus.PENDING_SECOND_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        staleRead.setFirstApprover(APPROVER);
+        // 重读定性最新行：并发窗口内单据已被终批+执行（casMarkExecuted 抢锚、动卡退钱完成）
+        RefundRequest executed = refund(100L, RefundStatus.EXECUTED, APPLICANT, RefundType.CROSS_DAY, 200001L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(staleRead, executed);
+        when(refundRequestMapper.casReject(100L, "凭证不符")).thenReturn(0);
+
+        assertThatThrownBy(() -> service.reject(100L, "凭证不符"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_STATE_NOT_ALLOWED));
+
+        // 修复前 updateById 整行回写会把已执行单覆写成 REJECTED——资金动作与单据状态背离
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("BUG-10 CAS 后缺行：重读 null 归 BILL-1018（404 语义与入口查询一致，禁漂移 409）")
+    void approveConflictRereadMissingFallsBackToBill1018() {
+        OperatorContextHolder.set("supervisor-2");
+        when(refundRequestMapper.selectById(100L))
+                .thenReturn(
+                        refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 200001L), null);
+        when(refundRequestMapper.casEscalateFirstApproval(eq(100L), eq("supervisor-2"), any()))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> service.approve(100L))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(BillingErrorCode.REFUND_NOT_FOUND));
+
+        verify(refundRequestMapper, never()).updateById(any(RefundRequest.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("BUG-10 顺序审批链行为保持：CAS 抢锚携带读快照旧态参数，成功后 updateById 通道与事件照旧")
+    void sequentialApprovalChainUnchangedAfterCasWin() {
+        OperatorContextHolder.set(APPROVER);
+        RefundRequest pending = refund(100L, RefundStatus.PENDING_APPROVAL, APPLICANT, RefundType.CROSS_DAY, 8000L);
+        when(refundRequestMapper.selectById(100L)).thenReturn(pending);
+        when(refundRequestMapper.casFinalApprove(eq(100L), eq(APPROVER), any(), eq("PENDING_APPROVAL")))
+                .thenReturn(1);
+
+        service.approve(100L);
+
+        // CAS 谓词携带读快照精确旧态（L1 一级即终批从 PENDING_APPROVAL 迁移）；抢锚成功后既有
+        //   updateById 全行回写通道与事件发布照旧（行为保持：出入参、状态迁移与改造前一致）
+        verify(refundRequestMapper).casFinalApprove(eq(100L), eq(APPROVER), any(), eq("PENDING_APPROVAL"));
+        verify(refundRequestMapper).updateById(any(RefundRequest.class));
+        verify(events).publishEvent(any(BillingDomainEvent.class));
     }
 
     // ===== PERF-01：聚合下推批量守卫金额边界对照（结果与旧逐行 refundedFen/decidedRefundedFen 一致） =====

@@ -10,8 +10,9 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 结算/退费并发收口原子语句 SQL 守卫测试（2026-09-18 用户裁决修复轮；Task 8 wrapper SQL
- * 守卫先例的注解 SQL 同型形态）：三支 mapper 方法承载资金并发语义（CAS 谓词/行锁子句/锁序），
- * 语句子句一旦漂移即并发缺口复发——测试逐子句钉死，防后人「顺手优化」拆掉守卫。
+ * 守卫先例的注解 SQL 同型形态）：结算/退费执行侧三支 mapper 方法承载资金并发语义（CAS 谓词/
+ * 行锁子句/锁序），退费审批侧三支 CAS 条件更新承载分权与账实并发语义（BUG-10），语句子句一旦
+ * 漂移即并发缺口复发——测试逐子句钉死，防后人「顺手优化」拆掉守卫。
  */
 class BillingConcurrencySqlGuardTest {
 
@@ -76,5 +77,47 @@ class BillingConcurrencySqlGuardTest {
         assertThat(sql).contains("ORDER BY id");
         assertThat(sql).contains("deleted = 0");
         assertThat(sql).contains("<foreach");
+    }
+
+    @Test
+    @DisplayName("一级审批 CAS 守卫：casEscalateFirstApproval 谓词必须钉死 PENDING_APPROVAL 单态前置+审批链同 SET（BUG-10）")
+    void casEscalateFirstApprovalSqlPinsSinglePendingPredicateAndChainColumns() throws Exception {
+        String sql = sqlOf(RefundRequestMapper.class, "casEscalateFirstApproval");
+        assertThat(sql).contains("WHERE id = #{id}");
+        // 单态谓词禁放宽 IN 双态：两一级审批人并发批同一单，后提交者据此 0 行落败、不得覆盖 firstApprover
+        assertThat(sql).contains("status = 'PENDING_APPROVAL'");
+        assertThat(sql).contains("SET status = 'PENDING_SECOND_APPROVAL'");
+        // 一级审批链两列随状态迁移同语句原子落库（拆两条语句即留「升批已落而审批链未留痕」中间态）
+        assertThat(sql).contains("first_approver = #{firstApprover}");
+        assertThat(sql).contains("first_approved_at = #{firstApprovedAt}");
+        // 逻辑删守卫显式补齐（注解 SQL 不继承 @TableLogic，缺即误改已删行）
+        assertThat(sql).contains("deleted = 0");
+    }
+
+    @Test
+    @DisplayName("终批 CAS 守卫：casFinalApprove 谓词必须钉死读快照精确旧态参数+终批两列同 SET（BUG-10）")
+    void casFinalApproveSqlPinsExactFromStatusPredicateAndFinalColumns() throws Exception {
+        String sql = sqlOf(RefundRequestMapper.class, "casFinalApprove");
+        assertThat(sql).contains("WHERE id = #{id}");
+        // 精确旧态参数谓词（调用方传读快照 status code，随分支钉死）：禁放宽 IN 双态——L1 终批入口
+        //   借宽谓词可在并发一级升批后跳级终批，连批守卫基于读快照评估即被绕过（BILL-1020 并发面）
+        assertThat(sql).contains("status = #{fromStatus}");
+        assertThat(sql).contains("SET status = 'APPROVED'");
+        assertThat(sql).contains("approver = #{approver}");
+        assertThat(sql).contains("approved_at = #{approvedAt}");
+        assertThat(sql).contains("deleted = 0");
+    }
+
+    @Test
+    @DisplayName("驳回 CAS 守卫：casReject 谓词必须锁死待审双态前置+驳回理由同 SET（已执行单 0 行拦下，BUG-10）")
+    void casRejectSqlPinsPendingPredicateAndReasonColumn() throws Exception {
+        String sql = sqlOf(RefundRequestMapper.class, "casReject");
+        assertThat(sql).contains("WHERE id = #{id}");
+        // 待审双态均可驳回（二级驳回=一级已批后否决整单）；已 APPROVED/EXECUTED 单被谓词排除，
+        //   并发交错（他终批/执行先落）0 行命中——动卡退钱完成的单禁覆写回 REJECTED（账实一致）
+        assertThat(sql).contains("status IN ('PENDING_APPROVAL', 'PENDING_SECOND_APPROVAL')");
+        assertThat(sql).contains("SET status = 'REJECTED'");
+        assertThat(sql).contains("reject_reason = #{reason}");
+        assertThat(sql).contains("deleted = 0");
     }
 }
