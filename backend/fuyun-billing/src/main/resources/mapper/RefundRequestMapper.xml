@@ -4,7 +4,9 @@
   退费链可退余额聚合下推（PERF-01，宪法 A.4.3-15 连表/聚合 SQL 走 mapper+XML）：
   旧实现按 status 全量捞出退费单整行实体、仅取 id 后再对 link 逐费用求和——EXECUTED 终态单调
   无界增长使资金热路径随运营年限量级劣化。本 XML 把求和下推为 JOIN + SUM 的索引聚合
-  （refund_fee_link.fee_id 侧驱动），计算结果与旧两步内存求和完全等价（W-17 口径不变）：
+  （refund_fee_link.fee_id 侧驱动——V603 uk_refund_fee 前导列为 refund_id、fee_id 非前导，
+  fee_id IN 驱动路径的索引载体由 V1104 idx_refund_fee_link_fee 补齐），计算结果与旧两步
+  内存求和完全等价（W-17 口径不变）：
   已决支 = status IN (APPROVED, EXECUTED)（execute 判费用行终态唯一合法口径，在途两态绝不混入）；
   在途支 = status IN (PENDING_APPROVAL, PENDING_SECOND_APPROVAL) 且可按 excludeRefundId 排除
   自身在途单（防同单审批期自我占用误判，apply 侧调用传 null 不排斥）。

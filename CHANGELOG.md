@@ -2,6 +2,21 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-02：V1104 billing.refund_fee_link 退费聚合驱动侧补 fee_id 前导部分索引（性能，行为保持）
+
+- **根因（OPT-02，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：RefundRequestMapper.xml
+  两支可退余额聚合下推 SQL（PERF-01）以 `l.fee_id IN (...)` 驱动 JOIN refund_request，V603
+  uk_refund_fee (refund_id, fee_id) 前导列为 refund_id，fee_id 非前导不可用，聚合对
+  refund_fee_link 只能顺序扫描——退费 apply 超可退守卫为资金热路径，EXECUTED 终态 link 行
+  随运营年限单调增长。
+- **修复（行为保持）**：新增增量迁移 V1104 建 `idx_refund_fee_link_fee (fee_id)
+  WHERE deleted = 0`——驱动侧由顺序扫描 → 索引点查集；单列即足（JOIN 键与聚合列仍需回表，
+  扩列无 index-only 收益）；XML 内两支 SQL 语句零改动；同步修正 RefundRequestMapper.xml
+  头注释「索引聚合（fee_id 侧驱动）」与 V603 schema 的矛盾表述（改锚 V1104 索引实况，
+  RefundAggregateSqlGuardTest 逐子句守卫不受影响）；既有迁移 V603 未触碰（A.4.1-3 禁改
+  红线）；普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，V808/V900 同款取舍）。
+  注册表与 CHANGELOG 同 PR 先记再改。
+
 ## 2026-09-29 · 性能清单修复环 OPT-01：V1103 billing.fee_record 发药链 CAS 谓词补 source_ref 前导部分索引（性能，行为保持）
 
 - **根因（OPT-01，2026-09-28 全仓性能与代码质量优化清单，评分 90）**：`FeeRecordMapper`
