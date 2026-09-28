@@ -2,6 +2,21 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-01：V1103 billing.fee_record 发药链 CAS 谓词补 source_ref 前导部分索引（性能，行为保持）
+
+- **根因（OPT-01，2026-09-28 全仓性能与代码质量优化清单，评分 90）**：`FeeRecordMapper`
+  casMarkDispensed / casReleaseDispense 两支 CAS UPDATE 以 source_ref + trigger_point +
+  exec_occupy_status + deleted 谓词定位行（M06 dispense.completed / dispense.returned 事件
+  消费主路径，每张处方发药与全额退药各触发一次），V602 既有索引均不含 source_ref 前导列，
+  事件通道每次消费对 fee_record 全表顺序扫描，随费用明细量增长线性劣化。
+- **修复（行为保持）**：新增增量迁移 V1103 建 `idx_fee_source_ref_trigger (source_ref,
+  trigger_point) WHERE deleted = 0`——两支发药链 CAS 由顺序扫描 → 索引点查，O(全表) →
+  O(log n + 单据行数)；casConfirmByOrder / casCancelPendingByOrder 的 (visit_id, source_ref)
+  复合经评估不建（V602 idx_fee_visit_status 已对 visit_id + status 双等值前缀服务，第三条索引
+  纯冗余，本索引 source_ref 前导列另提供兜底路径）；SQL 谓词与 Java 代码零改动，既有迁移
+  V602 未触碰（A.4.1-3 禁改红线）；普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，
+  V808/V900 同款取舍）。注册表与 CHANGELOG 同 PR 先记再改。
+
 ## 2026-09-29 · 风险清单修复环分流：BUG-24 被 Maven 依赖环阻塞登记 D-28（裁决留痕）
 
 - **背景**：2026-09-28 全仓高风险问题清单 BUG-24（BE-C3-09，低危）要求 integration 模块四治理写端点

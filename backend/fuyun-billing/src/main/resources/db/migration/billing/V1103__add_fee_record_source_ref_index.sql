@@ -1,0 +1,23 @@
+-- V1103：fee_record CAS 谓词 source_ref 前导部分索引（性能修复 OPT-01，2026-09-28 全仓性能与
+-- 代码质量优化清单定稿）。业务意图：发药事件消费主路径的并发收口原子语句全表扫描根治——
+-- FeeRecordMapper.casMarkDispensed / casReleaseDispense 两支 CAS UPDATE 以
+-- source_ref = ? AND trigger_point = 'PRESCRIPTION_EFFECTIVE' AND deleted = 0 谓词定位行
+-- （M06 dispense.completed / dispense.returned 事件消费，每张处方发药与全额退药各触发一次），
+-- V602 既有索引（uk_fee_billing_key / idx_fee_visit_status / idx_fee_settlement / idx_fee_patient）
+-- 均不含 source_ref 前导列，事件通道消费只能全表顺序扫描；fee_record 为全院持续增长的费用
+-- 明细主表，随运营年限量级劣化。补 (source_ref, trigger_point) 部分索引后，两支发药链 CAS 由
+-- 顺序扫描 → 索引点查，O(全表) → O(log n + 单据行数)；trigger_point 入第二列服务两支语句的
+-- 等值第二谓词，两列全等值命中；查询代码零改动即受益（行为保持，不改既有迁移 V602——
+-- A.4.1-3 禁改红线）。
+-- 附带评估结论（清单 OPT-01 附带项）：casConfirmByOrder / casCancelPendingByOrder 两支
+-- source_ref + visit_id 谓词 CAS 不另建 (visit_id, source_ref) 复合索引——V602
+-- idx_fee_visit_status (visit_id, status) WHERE deleted = 0 已对 visit_id + status 双等值
+-- 前缀服务（两支语句 status = 'PENDING' 均为等值条件），同谓词人群再建第三条索引属纯冗余
+-- （写放大无收益）；本索引 source_ref 前导列对其亦提供兜底路径。
+-- 构建形态：普通 CREATE INDEX——Flyway 迁移在事务内执行，CREATE INDEX CONCURRENTLY 不可用于
+--   事务块内；P1 阶段表数据量有限，建索引锁表窗口可接受（V808/V900 同款取舍）。
+-- 号段：billing 后续迁移走 V500+ 通用段（注册表规则 4，V1001–V1003 先例），取 V1103——
+--   全局最大已应用版本 V1102 的下一号（outOfOrder=false 乱序守卫）；登记载体
+--   docs/migrations/flyway-version-registry.md 与 CHANGELOG.md 同步更新。
+
+CREATE INDEX idx_fee_source_ref_trigger ON billing.fee_record (source_ref, trigger_point) WHERE deleted = 0;
