@@ -104,6 +104,8 @@ public class VisitCardServiceImpl implements VisitCardService {
         card.setStatus("ACTIVE");
         identifierService.updateById(card);
         identifierService.publishChanged(request.patientId(), "VISIT_CARD", request.cardNo(), "BOUND");
+        // 卡号明文禁入日志：以 HMAC 摘要形态定位卡片（数据库写操作必须 info，对齐 loss/unbind 留痕）
+        log.info("就诊卡绑定：patientId={}，卡号摘要={}", request.patientId(), crypto.hash(request.cardNo()));
         return toVO(card);
     }
 
@@ -155,6 +157,12 @@ public class VisitCardServiceImpl implements VisitCardService {
         Long newId = identifierService.attach(
                 oldCard.getPatientId(), "VISIT_CARD", request.newCardNo(), request.newCardNo(), false);
         identifierService.publishChanged(oldCard.getPatientId(), "VISIT_CARD", request.newCardNo(), "REPLACED");
+        // 卡号明文禁入日志：新旧双卡各以 HMAC 摘要定位（数据库写操作必须 info，对齐 loss/unbind 留痕）
+        log.info(
+                "就诊卡补卡：patientId={}，旧卡号摘要={}，新卡号摘要={}",
+                oldCard.getPatientId(),
+                crypto.hash(request.cardNo()),
+                crypto.hash(request.newCardNo()));
         return toVO(identifierService.getById(newId));
     }
 

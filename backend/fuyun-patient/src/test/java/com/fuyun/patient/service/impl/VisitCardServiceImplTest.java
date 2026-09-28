@@ -12,6 +12,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.dto.CardBindRequest;
@@ -22,18 +26,22 @@ import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.ICardAccountService;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.vo.CardVO;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 
 /**
  * 就诊卡全生命周期实现单测（FU-M02-04 状态机）：发卡开户联动、绑定无主卡改挂、挂失账户联动
  * （账户未启用 PAT-1013 静默跳过）、补卡换号转移（余额零迁移）、解绑终态，以及各非法状态
- * 转移守卫与 identifier.changed 的 changeType 断言。
+ * 转移守卫与 identifier.changed 的 changeType 断言；绑定/补卡写库 info 留痕与卡号摘要
+ * 脱敏口径经 Logback ListAppender 断言（BUG-21，iot 模块同款先例）。
  */
 @ExtendWith(MockitoExtension.class)
 class VisitCardServiceImplTest {
@@ -52,10 +60,25 @@ class VisitCardServiceImplTest {
     /** 可变卡行夹具（ACTIVE 主卡）：findByCardNo 桩返回同一引用，供状态变更后断言 */
     private PatientIdentifier cardRow;
 
+    /** Logback 挂钩：捕获就诊卡服务日志，断言绑定/补卡写操作 info 留痕与卡号明文脱敏 */
+    private ListAppender<ILoggingEvent> logAppender;
+
+    private Logger cardLogger;
+
     @BeforeEach
     void setUp() {
         visitCardService = new VisitCardServiceImpl(identifierService, cardAccountService, crypto);
         cardRow = cardRow(11L, 5L, "C-0001", "ACTIVE");
+        // 挂 ListAppender 捕获服务日志（BUG-21 写操作留痕断言；tearDown 统一卸载防用例间串扰）
+        cardLogger = (Logger) LoggerFactory.getLogger(VisitCardServiceImpl.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        cardLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void tearDown() {
+        cardLogger.detachAppender(logAppender);
     }
 
     /** 卡行夹具构造（可变对象，供 stub 与状态断言共用同一引用） */
@@ -172,6 +195,28 @@ class VisitCardServiceImplTest {
     }
 
     @Test
+    @DisplayName("绑定成功留痕：恰一条 info 含患者 id 与卡号 HMAC 摘要，卡号明文禁入日志（BUG-21）")
+    void bindWritesSingleInfoLogWithCardDigest() {
+        PatientIdentifier orphan = cardRow(11L, null, "C-0001", "DISABLED");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(orphan);
+        // 摘要桩值不含卡号明文子串，保证下方"明文不入日志"断言可分辨摘要与原文
+        when(crypto.hash("C-0001")).thenReturn("hmac-d1");
+
+        visitCardService.bind(new CardBindRequest("C-0001", 5L));
+
+        // 写库留痕口径对齐同文件 loss/unbind：恰一条 info，业务标识为患者 id + 卡号摘要
+        List<ILoggingEvent> infoEvents = logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.INFO)
+                .toList();
+        assertThat(infoEvents).as("绑定写库恰一条 info 留痕").hasSize(1);
+        String message = infoEvents.get(0).getFormattedMessage();
+        assertThat(message).contains("patientId=5");
+        assertThat(message).contains("hmac-d1");
+        // 敏感红线（类 javadoc）：卡号明文禁入日志，仅 HMAC 摘要定位卡片
+        assertThat(message).doesNotContain("C-0001");
+    }
+
+    @Test
     @DisplayName("挂失成功：置 LOST 并落解绑时刻，联动冻结账户，发布 LOST 事件")
     void lossSetsLostAndFreezesAccount() {
         when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
@@ -266,6 +311,33 @@ class VisitCardServiceImplTest {
         assertThatThrownBy(() -> visitCardService.replace(new CardReplaceRequest("C-0001", "C-0002")))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.IDENTIFIER_ALREADY_BOUND));
+    }
+
+    @Test
+    @DisplayName("补卡成功留痕：恰一条 info 含患者 id 与新旧卡号双摘要，卡号明文禁入日志（BUG-21）")
+    void replaceWritesSingleInfoLogWithBothCardDigests() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow(11L, 5L, "C-0001", "LOST"));
+        when(identifierService.attach(5L, "VISIT_CARD", "C-0002", "C-0002", false))
+                .thenReturn(56L);
+        when(identifierService.getById(56L)).thenReturn(cardRow(56L, 5L, "C-0002", "ACTIVE"));
+        // 双摘要桩值不含任一卡号明文子串，保证"明文不入日志"断言可分辨
+        when(crypto.hash("C-0001")).thenReturn("hmac-d-old");
+        when(crypto.hash("C-0002")).thenReturn("hmac-d-new");
+
+        visitCardService.replace(new CardReplaceRequest("C-0001", "C-0002"));
+
+        // 旧卡终态 + 新卡发号同属一次补卡写事务：留痕一条 info 概括新旧双卡
+        List<ILoggingEvent> infoEvents = logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.INFO)
+                .toList();
+        assertThat(infoEvents).as("补卡写库恰一条 info 留痕").hasSize(1);
+        String message = infoEvents.get(0).getFormattedMessage();
+        assertThat(message).contains("patientId=5");
+        assertThat(message).contains("hmac-d-old");
+        assertThat(message).contains("hmac-d-new");
+        // 敏感红线（类 javadoc）：新旧卡号明文均禁入日志，仅 HMAC 摘要定位
+        assertThat(message).doesNotContain("C-0001");
+        assertThat(message).doesNotContain("C-0002");
     }
 
     @Test
