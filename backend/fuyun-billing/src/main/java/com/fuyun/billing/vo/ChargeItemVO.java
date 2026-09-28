@@ -1,6 +1,5 @@
 package com.fuyun.billing.vo;
 
-import com.fuyun.billing.entity.ChargeItem;
 import com.fuyun.billing.enums.ItemClass;
 import com.fuyun.billing.enums.ItemPriceFlag;
 import com.fuyun.billing.enums.ItemStatus;
@@ -10,6 +9,7 @@ import lombok.Setter;
 /**
  * 收费项目出参（FU-M13-01 管理面）：物价项目库查询/新建回显载体。
  * id 经 Long 包装出网（金额红线出参口径）；金额字段不落本 VO（单价走价格版本 VO，Task 10）。
+ * 实体→出参直映归 {@link com.fuyun.billing.convert.ChargeItemConverter}（BUG-23 迁入，禁实体直出）。
  */
 @Getter
 @Setter
@@ -44,25 +44,4 @@ public class ChargeItemVO {
 
     /** 状态 ACTIVE/INACTIVE */
     private ItemStatus status;
-
-    /**
-     * 实体 → 出参静态工厂（controller 出网边界专用，禁实体直出）。
-     *
-     * @param item 项目实体，非空；来源：service 事务内查询结果
-     * @return 出参 VO，非空
-     */
-    public static ChargeItemVO from(ChargeItem item) {
-        ChargeItemVO vo = new ChargeItemVO();
-        vo.setId(item.getId());
-        vo.setItemCode(item.getItemCode());
-        vo.setItemName(item.getItemName());
-        vo.setItemClass(item.getItemClass());
-        vo.setUnit(item.getUnit());
-        vo.setExecDeptId(item.getExecDeptId());
-        vo.setPriceFlag(item.getPriceFlag());
-        vo.setComboFlag(item.getComboFlag());
-        vo.setFeeCategory(item.getFeeCategory());
-        vo.setStatus(item.getStatus());
-        return vo;
-    }
 }
