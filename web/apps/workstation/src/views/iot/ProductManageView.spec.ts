@@ -29,6 +29,7 @@ vi.mock('@/api/iot', () => ({
     updateMappings: vi.fn(),
     updateCommands: vi.fn(),
     listMappings: vi.fn(),
+    listCommands: vi.fn(),
   },
   metrics: { list: vi.fn(), create: vi.fn() },
 }));
@@ -104,6 +105,7 @@ describe('产品与物模型管理页', () => {
       products.updateMappings,
       products.updateCommands,
       products.listMappings,
+      products.listCommands,
       metrics.list,
       metrics.create,
     ]) {
@@ -112,9 +114,10 @@ describe('产品与物模型管理页', () => {
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.error).mockClear();
     vi.mocked(ElMessage.success).mockClear();
-    // 只读面兜底空：防未 stub 的 resolve 断链（映射回显空=弹窗回落单空行）
+    // 只读面兜底空：防未 stub 的 resolve 断链（回显空=弹窗回落单空行）
     vi.mocked(products.list).mockResolvedValue(emptyPage());
     vi.mocked(products.listMappings).mockResolvedValue([]);
+    vi.mocked(products.listCommands).mockResolvedValue([]);
     vi.mocked(metrics.list).mockResolvedValue([]);
   });
 
@@ -313,6 +316,72 @@ describe('产品与物模型管理页', () => {
     await flushPromises();
     expect(products.updateCommands).toHaveBeenCalledWith('prod-1', {
       commands: [{ commandName: 'setAlarmLimit', safetyLevel: 'SAFETY', allowed: true }],
+    });
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+  });
+
+  it('命令登记弹窗回显：已配置两条再打开回显两行，直接保存 PUT 携全集不再清空（BUG-18）', async () => {
+    vi.mocked(products.list).mockResolvedValue({
+      content: threeStateProducts(),
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    vi.mocked(products.listCommands).mockResolvedValue([
+      {
+        id: '1',
+        productId: 'prod-1',
+        commandName: 'setWorkMode',
+        serviceId: 'vital',
+        safetyLevel: 'SAFETY',
+        allowed: true,
+      },
+      {
+        id: '2',
+        productId: 'prod-1',
+        commandName: 'defibrillate',
+        serviceId: 'treatment',
+        safetyLevel: 'TREATMENT',
+        allowed: false,
+      },
+    ]);
+    vi.mocked(products.updateCommands).mockResolvedValue([]);
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    const row = findRow(wrapper, '监护仪');
+    const cmdButton = row?.findAll('button').find((b) => b.text() === '命令登记');
+    await cmdButton?.trigger('click');
+    await flushPromises();
+    // 打开弹窗即拉取既有命令标注全集（BUG-18 修复面）
+    expect(products.listCommands).toHaveBeenCalledWith('prod-1');
+    // 既有两条命令回填两行（命令名/安全等级/放行状态回显）
+    const nameInputs = wrapper.findAll('input[aria-label="命令名称"], input[aria-label="命令名称 2"]');
+    expect(nameInputs).toHaveLength(2);
+    expect((nameInputs[0].element as HTMLInputElement).value).toBe('setWorkMode');
+    expect((nameInputs[1].element as HTMLInputElement).value).toBe('defibrillate');
+    const levelSelects = wrapper.findAll(
+      'select[aria-label="命令安全等级"], select[aria-label="命令安全等级 2"]',
+    );
+    expect((levelSelects[0].element as HTMLSelectElement).value).toBe('SAFETY');
+    expect((levelSelects[1].element as HTMLSelectElement).value).toBe('TREATMENT');
+    const allowedBoxes = wrapper.findAll(
+      'input[aria-label="白名单放行"], input[aria-label="白名单放行 2"]',
+    );
+    expect((allowedBoxes[0].element as HTMLInputElement).checked).toBe(true);
+    expect((allowedBoxes[1].element as HTMLInputElement).checked).toBe(false);
+    // 未改动直接保存：PUT 携既有全集含 serviceId 透传（不再仅携单行静默清空白名单）
+    await clickButton(wrapper, '保存命令');
+    await flushPromises();
+    expect(products.updateCommands).toHaveBeenCalledWith('prod-1', {
+      commands: [
+        { commandName: 'setWorkMode', serviceId: 'vital', safetyLevel: 'SAFETY', allowed: true },
+        {
+          commandName: 'defibrillate',
+          serviceId: 'treatment',
+          safetyLevel: 'TREATMENT',
+          allowed: false,
+        },
+      ],
     });
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
   });

@@ -244,11 +244,27 @@ const commandTarget = ref<ProductVO | null>(null);
 /** 命令行集合（safetyLevel 安全级/治疗级；allowed 白名单放行——治疗级默认禁用） */
 const commandRows = ref<CommandItem[]>([]);
 
-/** 打开命令登记弹窗（携空行快速录入） */
-function openCommand(row: ProductVO): void {
+/** 打开命令登记弹窗：拉取既有命令标注回显（PUT 整组替换语义下缺回显会使保存静默清空
+ * FU-M14-09 白名单数据源）；空配置回落单空行快速录入。 */
+async function openCommand(row: ProductVO): Promise<void> {
   commandTarget.value = row;
   commandRows.value = [{ commandName: '', safetyLevel: 'SAFETY', allowed: false }];
   commandVisible.value = true;
+  try {
+    // 既有命令标注全集回显（BUG-18 修复面；serviceId 随行透传防保存静默清空）
+    const existing = await products.listCommands(row.productId ?? '');
+    commandRows.value =
+      existing.length > 0
+        ? existing.map((vo) => ({
+            commandName: vo.commandName ?? '',
+            serviceId: vo.serviceId,
+            safetyLevel: vo.safetyLevel ?? 'SAFETY',
+            allowed: vo.allowed ?? false,
+          }))
+        : [{ commandName: '', safetyLevel: 'SAFETY', allowed: false }];
+  } catch {
+    // 回显失败弹错归拦截器；驻留空行（整组替换下保存有清空风险，重开弹窗重试回显）
+  }
 }
 
 /** 新增一条命令行 */
@@ -276,6 +292,7 @@ async function onSaveCommands(): Promise<void> {
   try {
     const commands: CommandItem[] = commandRows.value.map((item) => ({
       commandName: item.commandName.trim(),
+      serviceId: item.serviceId,
       safetyLevel: item.safetyLevel,
       allowed: item.allowed,
     }));

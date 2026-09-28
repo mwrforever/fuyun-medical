@@ -199,7 +199,7 @@ export const IOT_WARD_OPTIONS: ReadonlyArray<{ code: string; label: string }> = 
   { code: 'W01', label: 'W01 演示病区' },
 ];
 
-/** 产品资源组：分页 / 上架 / 物模型同步 / 术语映射整组替换 / 命令安全等级整组替换。 */
+/** 产品资源组：分页 / 上架 / 物模型同步 / 术语映射替换与回显 / 命令安全等级替换与回显。 */
 export const products = {
   /** 产品分页（IoTDA 产品本地镜像；syncStatus 空=全部状态）。 */
   list: async (params: ProductQueryRequest): Promise<ProductPage> => {
@@ -240,6 +240,11 @@ export const products = {
     payload: { commands: CommandItem[] },
   ): Promise<CommandVO[]> => {
     const resp = await http.put<CommandVO[]>(`/v1/iot/products/${productId}/commands`, payload);
+    return resp.data;
+  },
+  /** 命令安全等级回显（整组替换的回读面：弹窗打开拉取既有全集，防仅携增量保存静默清空白名单）。 */
+  listCommands: async (productId: string): Promise<CommandVO[]> => {
+    const resp = await http.get<CommandVO[]>(`/v1/iot/products/${productId}/commands`);
     return resp.data;
   },
 };
