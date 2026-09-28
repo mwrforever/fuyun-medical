@@ -16,6 +16,7 @@ import com.fuyun.outpatient.api.VisitCancelledPayload;
 import com.fuyun.outpatient.api.VisitRegisteredPayload;
 import com.fuyun.outpatient.cache.PoolRedisGate;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.AppointmentConverter;
 import com.fuyun.outpatient.dto.AppointmentCreateRequest;
 import com.fuyun.outpatient.dto.RescheduleRequest;
 import com.fuyun.outpatient.entity.Appointment;
@@ -354,7 +355,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         // ⑦ 渠道分流：PORTAL 占位登记；WINDOW/KIOSK 一步直达 TAKEN（同事务签发 visit）
         if (channel == ApptChannel.PORTAL) {
             holdPortalSlot(appointment, pool, schedule, redisHeld);
-            return toAppointmentVO(appointment);
+            return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
         }
         return registerVisitAndTake(appointment, pool, schedule, operator);
     }
@@ -386,7 +387,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                         "预约单已取号但就诊记录缺失（数据异常）：apptNo=" + apptNo);
             }
             log.info("预约取号幂等返回（已 TAKEN）：apptNo={}，visitId={}", apptNo, existing.getVisitId());
-            return toVisitVO(existing);
+            return AppointmentConverter.INSTANCE.toVisitVO(existing);
         }
         // 签发在前（casTake 同步回填 visit_id）；CAS 落败时流水号跳号，业务无副作用
         String visitId = visitIdIssuer.issue();
@@ -424,7 +425,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 visitId,
                 appointment.getPatientId(),
                 appointment.getDeptCode());
-        return toVisitVO(visit);
+        return AppointmentConverter.INSTANCE.toVisitVO(visit);
     }
 
     /**
@@ -668,7 +669,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 old.getPatientId(),
                 newPool.getId(),
                 newSchedule.getSchedDate());
-        return toAppointmentVO(fresh);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(fresh);
     }
 
     /**
@@ -780,7 +781,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                         .eq(ApptCreditRecord::getPatientId, patientId)
                         .orderByDesc(ApptCreditRecord::getId))
                 .stream()
-                .map(AppointmentServiceImpl::toCreditVO)
+                .map(AppointmentConverter.INSTANCE::toCreditVO)
                 .toList();
     }
 
@@ -819,7 +820,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 record.getPatientId(),
                 record.getRestrictTo(),
                 reason);
-        return toCreditVO(record);
+        return AppointmentConverter.INSTANCE.toCreditVO(record);
     }
 
     // ---------------------------------------------------------------- 私有辅助
@@ -948,7 +949,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 appointment.getPatientId(),
                 appointment.getDeptCode(),
                 appointment.getChannel().getCode());
-        return toAppointmentVO(appointment);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
     }
 
     /**
@@ -1181,7 +1182,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     "已报到/已接诊不可线上退号，请到窗口按「未诊即退」规则办理：apptNo=" + appointment.getApptNo());
         }
         triggerRegistrationRefund(appointment, reason);
-        return toAppointmentVO(appointment);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
     }
 
     /**
@@ -1196,7 +1197,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private AppointmentVO cancelReserved(Appointment appointment, String reason) {
         if (appointment.getFeeStatus() == FeeStatusType.PAID && appointment.getFeeSettlementId() != null) {
             triggerRegistrationRefund(appointment, reason);
-            return toAppointmentVO(appointment);
+            return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
         }
         // 分支 1：状态 CAS 幂等守卫（0 行=并发已迁移/已超时释放，info 跳过禁二次回池）
         int flipped = appointmentMapper.casStatus(
@@ -1207,7 +1208,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     "退号幂等跳过（当前态 {}）：apptNo={}",
                     current == null ? "UNKNOWN" : current.getStatus().getCode(),
                     appointment.getApptNo());
-            return toAppointmentVO(appointment);
+            return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
         }
         appointment.setStatus(ApptStatus.CANCELLED);
         releasePoolConditionally(appointment.getPoolId(), appointment.getApptNo());
@@ -1221,7 +1222,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 appointment.getPatientId(),
                 appointment.getPoolId(),
                 reason);
-        return toAppointmentVO(appointment);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
     }
 
     /**
@@ -1403,63 +1404,5 @@ public class AppointmentServiceImpl implements IAppointmentService {
             return;
         }
         releasePoolKeyQuietly(pool.getId(), pool.getTotalQuota(), schedule.getSchedDate(), apptNo);
-    }
-
-    /** 实体 → 信用记录出参投影（Task 6 管理面）。 */
-    private static ApptCreditVO toCreditVO(ApptCreditRecord record) {
-        return new ApptCreditVO(
-                record.getId(),
-                record.getPatientId(),
-                record.getAction(),
-                record.getOccurredAt(),
-                record.getWindowDays(),
-                record.getRestrictFrom(),
-                record.getRestrictTo(),
-                record.getReleaseReason());
-    }
-
-    /**
-     * 实体 → 预约单出参投影。
-     *
-     * @param appointment 预约单实体，非空
-     * @return 预约单出参，非空
-     */
-    private AppointmentVO toAppointmentVO(Appointment appointment) {
-        return new AppointmentVO(
-                appointment.getId(),
-                appointment.getApptNo(),
-                appointment.getPatientId(),
-                appointment.getScheduleId(),
-                appointment.getPoolId(),
-                appointment.getApptType(),
-                appointment.getSchedDate(),
-                appointment.getSlotStart(),
-                appointment.getSlotEnd(),
-                appointment.getChannel(),
-                appointment.getFeeStatus(),
-                appointment.getPayDeadline(),
-                appointment.getVisitId(),
-                appointment.getStatus());
-    }
-
-    /**
-     * 实体 → 就诊记录出参投影。
-     *
-     * @param visit 就诊实体，非空
-     * @return 就诊记录出参，非空
-     */
-    private VisitVO toVisitVO(Visit visit) {
-        return new VisitVO(
-                visit.getId(),
-                visit.getVisitId(),
-                visit.getPatientId(),
-                visit.getApptId(),
-                visit.getDeptCode(),
-                visit.getDoctorId(),
-                visit.getVisitType(),
-                visit.getIsRevisit(),
-                visit.getTriageLevel(),
-                visit.getStatus(),
-                visit.getRegisteredAt());
     }
 }
