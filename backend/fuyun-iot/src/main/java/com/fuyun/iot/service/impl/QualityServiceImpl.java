@@ -338,6 +338,8 @@ public class QualityServiceImpl implements IQualityService {
         // 数据库读操作：在线候选设备扫描（LIMIT 硬顶泄压，截断 warn 留痕）
         List<IotDeviceEntity> onlineDevices = deviceMapper.selectList(Wrappers.<IotDeviceEntity>lambdaQuery()
                 .eq(IotDeviceEntity::getStatus, com.fuyun.iot.enums.DeviceStatus.ONLINE)
+                // 排序兜底：last_online_at 升序——状态最久未刷新者优先处置
+                .orderByAsc(IotDeviceEntity::getLastOnlineAt)
                 .last("LIMIT " + ANOMALY_SCAN_LIMIT));
         if (onlineDevices.isEmpty()) {
             return 0;

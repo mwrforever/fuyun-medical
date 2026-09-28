@@ -69,6 +69,8 @@ public class OfflineDetector {
                     .eq(IotDeviceEntity::getStatus, DeviceStatus.ONLINE)
                     .lt(IotDeviceEntity::getLastOnlineAt, OffsetDateTime.ofInstant(cutoff, ZoneOffset.UTC))
                     .eq(rule.getDeviceId() != null, IotDeviceEntity::getDeviceId, rule.getDeviceId())
+                    // 排序兜底：last_online_at 升序——离线（断流）最久者优先处置
+                    .orderByAsc(IotDeviceEntity::getLastOnlineAt)
                     .last("LIMIT " + SCAN_LIMIT));
             if (devices.size() >= SCAN_LIMIT) {
                 // 候选截断留痕：大面积断流场景引擎仅处置上限内候选（泄压防告警风暴）
