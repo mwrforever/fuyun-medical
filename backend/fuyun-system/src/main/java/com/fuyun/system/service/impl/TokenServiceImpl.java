@@ -18,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.time.Clock;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.UUID;
 import javax.crypto.Mac;
@@ -84,41 +85,39 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
      */
     @Override
     public TokenPair issue(SessionUser user) {
-        String sid = UUID.randomUUID().toString();
         // 会话先行落库：保证令牌签出即可用（sid→会话键存在），避免"签发成功但会话缺失"的瞬时 401 窗口
-        SessionData session = new SessionData(
-                user.userId(), user.loginName(), user.displayName(), user.employeeId(), user.orgId(), user.roles());
-        String sessionJson;
-        try {
-            sessionJson = objectMapper.writeValueAsString(session);
-        } catch (JsonProcessingException e) {
-            log.error("会话 JSON 序列化失败：userId={}", user.userId(), e);
-            throw new IllegalStateException("登录会话序列化失败", e);
-        }
-        // 会话键必有 TTL（A.5-1 红线）：初值取 access TTL，此后随校验滑动续期
-        redisTemplate.opsForValue().set(sessionKey(sid), sessionJson, properties.accessTokenTtl());
-
-        // 短键 claims：uid/eid/oid 统一十进制字符串（Long 越界防线，JSON null 显式承载"无"语义）
-        TokenClaims accessClaims = new TokenClaims(
-                String.valueOf(user.userId()),
-                longToClaimsValue(user.employeeId()),
-                longToClaimsValue(user.orgId()),
-                sid,
-                SecurityConstants.TOKEN_TYPE_ACCESS,
-                clock.millis() + properties.accessTokenTtl().toMillis());
-        TokenClaims refreshClaims = new TokenClaims(
-                accessClaims.uid(),
-                accessClaims.eid(),
-                accessClaims.oid(),
-                sid,
-                SecurityConstants.TOKEN_TYPE_REFRESH,
-                clock.millis() + properties.refreshTokenTtl().toMillis());
+        String sid = writeSession(user, properties.accessTokenTtl());
+        TokenClaims accessClaims =
+                buildClaims(user, sid, SecurityConstants.TOKEN_TYPE_ACCESS, properties.accessTokenTtl());
+        TokenClaims refreshClaims =
+                buildClaims(user, sid, SecurityConstants.TOKEN_TYPE_REFRESH, properties.refreshTokenTtl());
         log.info(
                 "签发令牌对：userId={}，sid={}，accessTtl={}s",
                 user.userId(),
                 sid,
                 properties.accessTokenTtl().toSeconds());
         return new TokenPair(sign(accessClaims), sign(refreshClaims));
+    }
+
+    /**
+     * 签发短期单 access 令牌（BUG-19 大屏匿名订阅）：会话以入参 TTL 落 Redis，仅签 access 无 refresh。
+     *
+     * <p>令牌与登录 access 完全同构（typ=access + 同校验链），WS CONNECT 帧鉴权无差别放行；
+     * 会话键 TTL 与令牌 exp 同值——短期凭证的会话驻留不长于令牌本体（校验链滑动续期会把会话键
+     * 重置为配置 access TTL，但令牌 exp 不变，续期不构成凭证延寿，见契约 javadoc）。
+     *
+     * @param user      会话输入（匿名哨兵或认证身份），非空
+     * @param accessTtl 令牌与会话共用 TTL，正值；来源：调用方策略常量（AuthServiceImpl 大屏 5 分钟）
+     * @return access 令牌原文（typ=access），非空
+     * @throws IllegalStateException 会话 JSON 序列化失败（系统级故障，交全局渲染器兜底 500）
+     */
+    @Override
+    public String issueAccess(SessionUser user, Duration accessTtl) {
+        String sid = writeSession(user, accessTtl);
+        TokenClaims accessClaims = buildClaims(user, sid, SecurityConstants.TOKEN_TYPE_ACCESS, accessTtl);
+        // 匿名哨兵无 userId 语义，签发留痕以 loginName 承载（令牌值禁入日志，红线 6）
+        log.info("签发短期 access 令牌：loginName={}，sid={}，ttl={}s", user.loginName(), sid, accessTtl.toSeconds());
+        return sign(accessClaims);
     }
 
     /**
@@ -279,6 +278,52 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
     /** 拼接会话键：fy:system:session:{sid}（冒号分层，A.5-1 键规范） */
     private String sessionKey(String sid) {
         return SecurityConstants.SESSION_KEY_PREFIX + sid;
+    }
+
+    /**
+     * 会话先行落 Redis 并返回新 sid（issue/issueAccess 共用写路径）。
+     *
+     * <p>会话键必有 TTL（A.5-1 红线）：初值取调用方 TTL，此后随校验滑动续期；序列化失败时
+     * Redis 零写入（会话先行的失败侧闭环，故障注入测试冻结）。
+     *
+     * @param user 会话输入，非空
+     * @param ttl  会话键 TTL，正值；登录路径取 access TTL，短期签发路径与令牌 exp 同值
+     * @return 新生成的会话标识 sid，非空
+     * @throws IllegalStateException 会话 JSON 序列化失败（交全局渲染器兜底 500）
+     */
+    private String writeSession(SessionUser user, Duration ttl) {
+        String sid = UUID.randomUUID().toString();
+        SessionData session = new SessionData(
+                user.userId(), user.loginName(), user.displayName(), user.employeeId(), user.orgId(), user.roles());
+        String sessionJson;
+        try {
+            sessionJson = objectMapper.writeValueAsString(session);
+        } catch (JsonProcessingException e) {
+            log.error("会话 JSON 序列化失败：userId={}", user.userId(), e);
+            throw new IllegalStateException("登录会话序列化失败", e);
+        }
+        redisTemplate.opsForValue().set(sessionKey(sid), sessionJson, ttl);
+        return sid;
+    }
+
+    /**
+     * 组装令牌 claims（issue/issueAccess 共用）：短键 uid/eid/oid 统一十进制字符串
+     * （Long 越界防线，JSON null 显式承载"无"语义），exp=当前时刻+TTL。
+     *
+     * @param user 会话输入，非空
+     * @param sid  会话标识，非空（与 Redis 会话键同源）
+     * @param type 令牌类型（access/refresh），非空
+     * @param ttl  该令牌有效期，正值
+     * @return 令牌载荷，非空
+     */
+    private TokenClaims buildClaims(SessionUser user, String sid, String type, Duration ttl) {
+        return new TokenClaims(
+                String.valueOf(user.userId()),
+                longToClaimsValue(user.employeeId()),
+                longToClaimsValue(user.orgId()),
+                sid,
+                type,
+                clock.millis() + ttl.toMillis());
     }
 
     /** Long → claims 字符串值（null 透传为 JSON null，承载"无员工/无机构"语义） */

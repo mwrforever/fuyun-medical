@@ -24,6 +24,7 @@ import com.fuyun.system.record.SessionData;
 import com.fuyun.system.record.SessionUser;
 import com.fuyun.system.record.TokenPair;
 import com.fuyun.system.service.impl.AuthServiceImpl;
+import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -81,6 +82,10 @@ class AuthServiceImplTest {
 
     @Captor
     private ArgumentCaptor<SessionUser> sessionUserCaptor;
+
+    /** 大屏订阅令牌 TTL 捕获器（短期凭证策略断言） */
+    @Captor
+    private ArgumentCaptor<Duration> ttlCaptor;
 
     private AuthServiceImpl authService;
 
@@ -262,6 +267,31 @@ class AuthServiceImplTest {
         authService.logout(REFRESH_TOKEN);
 
         verify(tokenService).logout(REFRESH_TOKEN);
+    }
+
+    @Test
+    @DisplayName("大屏订阅令牌签发：哨兵匿名会话（零员工/零机构/零角色）+ 5 分钟短期 TTL + VO 组装（BUG-19）")
+    void issueBigscreenTokenIssuesShortLivedAccessForSentinelSession() {
+        when(tokenService.issueAccess(any(SessionUser.class), any(Duration.class)))
+                .thenReturn(ACCESS_TOKEN);
+
+        BigscreenTokenVO response = authService.issueBigscreenToken();
+
+        // 哨兵身份：loginName=bigscreen 会话标记（W-39 P2 匿名只读通道演进锚点），不查库零权限面
+        verify(tokenService).issueAccess(sessionUserCaptor.capture(), ttlCaptor.capture());
+        SessionUser sessionUser = sessionUserCaptor.getValue();
+        assertThat(sessionUser.userId()).isZero();
+        assertThat(sessionUser.loginName()).isEqualTo("bigscreen");
+        assertThat(sessionUser.displayName()).isEqualTo("候诊大屏");
+        assertThat(sessionUser.employeeId()).isNull();
+        assertThat(sessionUser.orgId()).isNull();
+        assertThat(sessionUser.roles()).isEmpty();
+        // 短期 TTL 冻结：5 分钟（W-39 过渡期「缩短 TTL」用户裁决口径）
+        assertThat(ttlCaptor.getValue()).isEqualTo(Duration.ofMinutes(5));
+        // VO 组装：令牌值透传 + Bearer 方案名 + 有效期秒数换算（不包装 envelope）
+        assertThat(response.accessToken()).isEqualTo(ACCESS_TOKEN);
+        assertThat(response.tokenType()).isEqualTo("Bearer");
+        assertThat(response.expiresIn()).isEqualTo(Duration.ofMinutes(5).toSeconds());
     }
 
     /** 构造 ACTIVE 状态的账号实体样本（含口令哈希与零失败计数） */

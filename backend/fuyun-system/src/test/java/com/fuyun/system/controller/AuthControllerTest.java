@@ -8,6 +8,7 @@ import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.dto.LoginRequest;
 import com.fuyun.system.dto.RefreshRequest;
 import com.fuyun.system.service.IAuthService;
+import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
 import com.fuyun.system.vo.UserVO;
 import java.util.List;
@@ -77,5 +78,17 @@ class AuthControllerTest {
         verify(authService).logout("raw-token-value");
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(response.getBody()).isNull();
+    }
+
+    @Test
+    @DisplayName("大屏订阅令牌端点：委派认证服务签发（匿名白名单端点无入参），服务响应直返")
+    void bigscreenTokenDelegatesToServiceAndReturnsResponse() {
+        BigscreenTokenVO expected = new BigscreenTokenVO("access-token", "Bearer", 300L);
+        when(authService.issueBigscreenToken()).thenReturn(expected);
+
+        BigscreenTokenVO actual = controller.bigscreenToken();
+
+        verify(authService).issueBigscreenToken();
+        assertThat(actual).isSameAs(expected);
     }
 }

@@ -20,7 +20,9 @@ import com.fuyun.system.service.IAuthService;
 import com.fuyun.system.service.IRoleService;
 import com.fuyun.system.service.ITokenService;
 import com.fuyun.system.service.IUserService;
+import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +47,24 @@ public class AuthServiceImpl implements IAuthService {
 
     /** 登录失败防枚举文案：账号不存在与口令错误共用（安全红线 §8-11，禁差异文案探测账号存在性） */
     private static final String LOGIN_FAIL_DETAIL = "登录名或密码错误";
+
+    /** 大屏匿名会话哨兵登录名：会话标记（W-39 P2 演进为专用匿名只读通道的锚点），不对应 sys_user 行 */
+    private static final String BIGSCREEN_LOGIN_NAME = "bigscreen";
+
+    /** 大屏匿名会话哨兵显示名：审计/排障可读载体（脱敏出网，非敏感字段） */
+    private static final String BIGSCREEN_DISPLAY_NAME = "候诊大屏";
+
+    /**
+     * 大屏匿名会话哨兵 userId：0 不与雪花 ID 冲突（正数域）；经会话进操作人上下文时以 "0" 呈现，
+     * P2 专用通道落地后随 W-39 收敛。
+     */
+    private static final long BIGSCREEN_SENTINEL_USER_ID = 0L;
+
+    /**
+     * 大屏订阅令牌 TTL：短期凭证（W-39 2026-09-25 用户裁决「缩短 TTL」过渡期口径）。令牌仅承载
+     * STOMP CONNECT 帧鉴权，失效由前端按次重签（换发成本为一次匿名 HTTP），不设 refresh。
+     */
+    private static final Duration BIGSCREEN_TOKEN_TTL = Duration.ofMinutes(5);
 
     private final IUserService userService;
 
@@ -158,6 +178,25 @@ public class AuthServiceImpl implements IAuthService {
         // typ=access 校验链通过后删会话键（sid 为令牌内部字段，删除动作收敛于令牌服务）
         tokenService.logout(rawToken);
         log.info("登出完成，会话已失效");
+    }
+
+    /**
+     * 大屏订阅令牌签发（BUG-19）：匿名哨兵会话 + 5 分钟短期单 access 令牌。
+     *
+     * <p>哨兵身份零权限面（零角色/零员工/零机构），不查库不写用户状态机；签发留痕经令牌服务
+     * info 日志承载（sid，禁令牌值）。演进注记与安全边界见 {@link IAuthService#issueBigscreenToken}。
+     */
+    @Override
+    public BigscreenTokenVO issueBigscreenToken() {
+        SessionUser screen = new SessionUser(
+                BIGSCREEN_SENTINEL_USER_ID, BIGSCREEN_LOGIN_NAME, BIGSCREEN_DISPLAY_NAME, null, null, List.of());
+        String accessToken = tokenService.issueAccess(screen, BIGSCREEN_TOKEN_TTL);
+        log.info(
+                "大屏订阅令牌已签发：loginName={}，ttl={}s（匿名哨兵会话，令牌值禁入日志）",
+                BIGSCREEN_LOGIN_NAME,
+                BIGSCREEN_TOKEN_TTL.toSeconds());
+        return new BigscreenTokenVO(
+                accessToken, SecurityConstants.BEARER_PREFIX.trim(), BIGSCREEN_TOKEN_TTL.toSeconds());
     }
 
     /**

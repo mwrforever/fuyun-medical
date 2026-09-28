@@ -6,6 +6,7 @@ import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.dto.LoginRequest;
 import com.fuyun.system.dto.RefreshRequest;
 import com.fuyun.system.service.IAuthService;
+import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -79,5 +80,23 @@ public class AuthController {
                 .substring(SecurityConstants.BEARER_PREFIX.length())
                 .trim());
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * 大屏订阅令牌签发（匿名，BUG-19）：候诊叫号大屏 WS 链路凭证的运行期获取入口。
+     *
+     * <p>白名单免认证（大屏无登录态设备直开，同队列快照匿名只读口径）：返回 5 分钟短期单
+     * access 令牌，前端注入 /ws/outpatient STOMP CONNECT 帧鉴权——替代已删除的构建期
+     * VITE_BIGSCREEN_TOKEN 内联（web 宪法 A.2-2 红线）。安全边界与 P2 演进注记见
+     * {@link com.fuyun.system.service.IAuthService#issueBigscreenToken}。
+     *
+     * <p>不落 @AuditLog：匿名高频机器签发（断线重连每次连接尝试重签），审计行会随重连风暴
+     * 刷表；签发留痕经令牌服务 info 日志（sid）承载，限流/风控随 M18 治理（裁决 13 注记同口径）。
+     *
+     * @return 大屏订阅令牌出参（令牌值 + Bearer 方案名 + 有效期秒数），非空
+     */
+    @PostMapping("/bigscreen-token")
+    public BigscreenTokenVO bigscreenToken() {
+        return authService.issueBigscreenToken();
     }
 }
