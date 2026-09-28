@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-06：V1105 outpatient.clinic_order 处方引用行 CAS 谓词补 ext_ref 部分索引（性能，行为保持）
+
+- **根因（OPT-06，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：`ClinicOrderMapper`
+  casRxRefCharged / casCancelRxRef / casMirrorDispensed / casMirrorReturned 四支 CAS 均以
+  ext_ref + order_type='RX_REF' + deleted 谓词定位行（settlement.completed /
+  prescription.cancelled / dispense.completed / dispense.returned 四类事件消费），V203 既有
+  索引均不含 ext_ref，引用行定位只能对 clinic_order 全表顺序扫描，随门诊开单量增长线性劣化。
+- **修复（行为保持）**：新增增量迁移 V1105 建 `idx_clinic_order_ext_ref (ext_ref)
+  WHERE order_type = 'RX_REF' AND deleted = 0`——四支 CAS 由顺序扫描 → 索引点查；部分谓词
+  与语句常量条件严格同构，非处方引用五类单据行（ext_ref 恒 NULL）不入索引，索引体量随处方量
+  而非开单总量增长；SQL 谓词与 Java 代码零改动，既有迁移 V203 未触碰（A.4.1-3 禁改红线）；
+  普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，V808/V900 同款取舍）。
+  注册表与 CHANGELOG 同 PR 先记再改。
+
 ## 2026-09-29 · 性能清单修复环 OPT-02：V1104 billing.refund_fee_link 退费聚合驱动侧补 fee_id 前导部分索引（性能，行为保持）
 
 - **根因（OPT-02，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：RefundRequestMapper.xml
