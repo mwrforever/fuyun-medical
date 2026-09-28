@@ -32,6 +32,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
@@ -40,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 交接班域服务实现（V807 shift_handover 业务面，SBAR 结构化交接班）。generate 六步链
- * （配置校验 → 在区视图汇总 → 逐患者在途任务 → SBAR 初稿 → 发号 → insert）收口单事务，
+ * （配置校验 → 在区视图汇总 → 批量在途任务 → SBAR 初稿 → 发号 → insert）收口单事务，
  * 生成即盖章交班签名（双签同刻口径的交班侧）；complete 为 CAS 双签终态流转（GC26 @Update
  * 条件更新 + 影响行数判定，0 行 → NS-1013）+ nursing.shift.completed 事件（事务内发布
  * AFTER_COMMIT 出站，GC8）；未完成不阻塞业务（DRAFT 草稿零副作用）。
@@ -82,7 +83,8 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
      * @param handoverMapper    交接班 mapper，非空；ServiceImpl 基座 mapper
      * @param wardPatientMapper 病区患者视图 mapper，非空；患者摘要汇总直查实体面（含 condition_tags）
      * @param wardMetaService   病区元数据服务，非空；生成前病区配置校验（无配置行 NS-1016，Task 3 面）
-     * @param taskService       护理任务服务，非空；逐患者在途任务收集（Task 7 面，读路径含惰性逾期写）
+     * @param taskService       护理任务服务，非空；批量在途任务收集（Task 9 待续事项面，
+     *                          visitIds 单次批查，读路径含惰性逾期批量写）
      * @param seqGate           业务单号发号器，非空；交接班单号 HO 段统一取号出口
      * @param events            Spring 应用事件发布器，非空；事务内发布经 NursingEventPublisher
      *                          AFTER_COMMIT 出 MQ（GC8 红线，NursingTaskServiceImpl 同款进程内桥）
@@ -115,7 +117,7 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
     @Override
     @Transactional
     public ShiftHandoverVO generate(HandoverGenerateRequest req) {
-        // 本链含 INSERT 落库与在途任务惰性逾期写（inFlightByVisit CAS），禁 readOnly——
+        // 本链含 INSERT 落库与在途任务惰性逾期写（inFlightByVisits 批量 CAS），禁 readOnly——
         // PG 只读事务内写操作直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）波及调用方
         // 步骤①：病区配置校验（无配置行 → NS-1016 未知病区，wardConfig 冻结面实况行为）
         wardMetaService.wardConfig(req.wardId());
@@ -126,10 +128,16 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
                 .orderByAsc(NursingWardPatient::getBedNo)
                 .orderByAsc(NursingWardPatient::getAdmittedAt));
         PatientSummary summary = aggregateSummary(inWard);
-        // 步骤③：逐患者在途任务收集待续事项（仅非空患者入选；在途输注/未闭环告警 P1 空数组）
+        // 步骤③：批量收集在区患者在途任务组装待续事项（仅非空患者入选；在途输注/未闭环告警 P1
+        // 空数组）——visitIds 键集前置已知，一次 IN 批查替代逐患者单查（N+1 消除，A.4.3-14）：
+        // 病区满员 50 人由 50 查收敛为 1 查，惰性逾期写同批收敛（病区级最坏 50 写 → 1 写）
         List<PendingItem> pendingItems = new ArrayList<>();
+        Map<String, List<NursingTaskVO>> inFlightByVisits = taskService.inFlightByVisits(
+                inWard.stream().map(NursingWardPatient::getVisitId).toList());
         for (NursingWardPatient patient : inWard) {
-            for (NursingTaskVO task : taskService.inFlightByVisit(patient.getVisitId())) {
+            // 键集内无在途任务的患者不出键，getOrDefault 归空清单（与逐患者单查空返回一致）；
+            // 患者床位序 + 组内计划时间升序，待续事项输出序与批量化前一致
+            for (NursingTaskVO task : inFlightByVisits.getOrDefault(patient.getVisitId(), List.of())) {
                 pendingItems.add(new PendingItem(
                         task.taskNo(), task.taskType(), task.planTime(), task.overdueFlag(), patient.getVisitId()));
             }

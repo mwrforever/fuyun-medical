@@ -2,6 +2,23 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-03：nursing 交接班生成在途任务 N+1 改 visitIds 单次批查 + 惰性逾期批量 CAS（性能，行为保持）
+
+- **根因（OPT-03 / BE-C4-01，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：
+  `ShiftHandoverServiceImpl.generate` 步骤③外层遍历在区患者、内层逐患者调
+  `inFlightByVisit` 单查在途任务（每次 selectList 单查 + markOverdueLazily 逐行惰性逾期
+  CAS），病区满员 50 人即 50 查 + 潜在 50 写（A.4.3-14 直接点名），交接班生成路径。
+- **修复（行为保持）**：`INursingTaskService` 新增 `inFlightByVisits(Collection)` 批量面
+  ——visitIds 键集前置已知（在区患者视图先行汇总），一次 IN 批查 + 内存按 visitId 分组，
+  交接班生成改走批量（50 查 → 1 查，输出序不变：患者床位序 + 组内计划时间升序）；守卫
+  判定（在途 + 未标记 + 越阈值）命中的越阈值未标记行收敛为单条 `casMarkOverdueBatch`
+  批量 CAS（病区级最坏 50 写 → 1 写），per-row overdue_flag=false 谓词保持仅首次递增、
+  escalation_count 生命周期至多一次递增（overdue_flag 单向置位无复位路径）故守卫行回写
+  与库态恒一致——批量 CAS 与逐行 CAS 语义逐行等价；`inFlightByVisit` 单查面保留（Task 3
+  详情卡仍消费），list/inFlightByVisit 既有逐行路径与其既有测试零触碰；行为锚定测试
+  「多患者交接班生成恰一次批查」先红后绿交付。
+- **验证**：`mvn -B -ntp -pl fuyun-nursing -am test` 全绿（211/0）+ `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-06：V1105 outpatient.clinic_order 处方引用行 CAS 谓词补 ext_ref 部分索引（性能，行为保持）
 
 - **根因（OPT-06，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：`ClinicOrderMapper`
