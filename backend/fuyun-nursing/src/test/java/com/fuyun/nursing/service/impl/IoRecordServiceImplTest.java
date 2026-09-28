@@ -138,6 +138,8 @@ class IoRecordServiceImplTest {
     void setUp() {
         service = new IoRecordServiceImpl(recordMapper, summaryMapper, entryMapper, wardMetaService, chartService);
         ReflectionTestUtils.setField(service, "baseMapper", recordMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", IoRecord.class);
         OperatorContextHolder.set("nurse-01");
     }
 

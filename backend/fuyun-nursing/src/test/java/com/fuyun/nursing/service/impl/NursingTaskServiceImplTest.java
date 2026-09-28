@@ -108,6 +108,8 @@ class NursingTaskServiceImplTest {
         // 阈值固定 30 分钟（NursingProperties 默认值，用例 6 惰性逾期判定基准）
         service = new NursingTaskServiceImpl(taskMapper, seqGate, events, new NursingProperties(30));
         ReflectionTestUtils.setField(service, "baseMapper", taskMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", NursingTask.class);
         OperatorContextHolder.set("nurse-01");
     }
 

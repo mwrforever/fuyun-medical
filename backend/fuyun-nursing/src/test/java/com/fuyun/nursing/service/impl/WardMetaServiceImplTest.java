@@ -171,6 +171,8 @@ class WardMetaServiceImplTest {
                 taskService,
                 new ObjectMapper());
         ReflectionTestUtils.setField(service, "baseMapper", wardPatientMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", NursingWardPatient.class);
         OperatorContextHolder.set("nurse-01");
     }
 

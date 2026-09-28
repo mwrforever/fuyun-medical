@@ -191,14 +191,17 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     @Override
     @Transactional(readOnly = true)
     public List<IoRecordVO> listByVisit(String visitId, LocalDate date) {
-        var wrapper = Wrappers.<IoRecord>lambdaQuery().eq(IoRecord::getVisitId, visitId);
+        // 主表链式查询（宪法 A.4.3-13）；条件分支保留 if：dayStart(date) 须空判后求值，
+        // 内联 boolean 重载会无条件求值实参致 NPE
+        var query = this.lambdaQuery().eq(IoRecord::getVisitId, visitId);
         if (date != null) {
             // 当日窗口（北京时区医疗日界口径，BUG-03）：含头不含尾，occur_at 为 TIMESTAMPTZ 边界安全
-            wrapper.ge(IoRecord::getOccurAt, dayStart(date)).lt(IoRecord::getOccurAt, dayStart(date.plusDays(1)));
+            query.ge(IoRecord::getOccurAt, dayStart(date)).lt(IoRecord::getOccurAt, dayStart(date.plusDays(1)));
         }
-        wrapper.orderByAsc(IoRecord::getOccurAt);
         // 数据库读操作：出入量明细清单（发生时间升序；逻辑删由 @TableLogic 自动过滤）
-        return baseMapper.selectList(wrapper).stream().map(IoRecordVO::from).toList();
+        return query.orderByAsc(IoRecord::getOccurAt).list().stream()
+                .map(IoRecordVO::from)
+                .toList();
     }
 
     /**

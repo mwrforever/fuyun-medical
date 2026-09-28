@@ -246,11 +246,12 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
     @Transactional(readOnly = true)
     public List<WardPatientVO> listByWard(String wardId) {
         // 数据库读操作：在区行一览（床位序；REMOVED 与他病区行由条件排除）
-        List<NursingWardPatient> rows = baseMapper.selectList(Wrappers.<NursingWardPatient>lambdaQuery()
+        List<NursingWardPatient> rows = this.lambdaQuery()
                 .eq(NursingWardPatient::getWardId, wardId)
                 .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
                 .orderByAsc(NursingWardPatient::getBedNo)
-                .orderByAsc(NursingWardPatient::getAdmittedAt));
+                .orderByAsc(NursingWardPatient::getAdmittedAt)
+                .list();
         return rows.stream().map(WardPatientVO::from).toList();
     }
 
@@ -527,17 +528,19 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
 
     /** 按 visit_id 定位在区行（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */
     private NursingWardPatient requireInWardByVisit(String visitId) {
-        return baseMapper.selectOne(Wrappers.<NursingWardPatient>lambdaQuery()
+        return this.lambdaQuery()
                 .eq(NursingWardPatient::getVisitId, visitId)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode()));
+                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
+                .one();
     }
 
     /** 床位占用前置检查：同病区同床位在区行存在即 NS-1002（uk_ward_patient_bed 前置）。 */
     private void assertBedFree(String wardId, String bedNo) {
-        Long occupied = baseMapper.selectCount(Wrappers.<NursingWardPatient>lambdaQuery()
+        Long occupied = this.lambdaQuery()
                 .eq(NursingWardPatient::getWardId, wardId)
                 .eq(NursingWardPatient::getBedNo, bedNo)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode()));
+                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
+                .count();
         if (occupied != null && occupied > 0) {
             throw new BizException(
                     NursingErrorCode.BED_OCCUPIED,

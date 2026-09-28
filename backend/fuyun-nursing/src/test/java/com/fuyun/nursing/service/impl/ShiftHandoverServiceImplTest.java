@@ -152,6 +152,8 @@ class ShiftHandoverServiceImplTest {
                 events,
                 new ObjectMapper().findAndRegisterModules().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS));
         ReflectionTestUtils.setField(service, "baseMapper", handoverMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", ShiftHandover.class);
         OperatorContextHolder.set("nurse-01");
     }
 

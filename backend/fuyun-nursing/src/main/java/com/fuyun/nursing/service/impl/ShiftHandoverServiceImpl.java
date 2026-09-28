@@ -250,10 +250,11 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
     @Transactional(readOnly = true)
     public List<ShiftHandoverVO> listByWard(String wardId, LocalDate date) {
         // 数据库读操作：同病区同日交接班行（跨日行由谓词滤除；命中 idx_shift_handover_ward_date）
-        List<ShiftHandover> rows = baseMapper.selectList(Wrappers.<ShiftHandover>lambdaQuery()
+        List<ShiftHandover> rows = this.lambdaQuery()
                 .eq(ShiftHandover::getWardId, wardId)
                 .eq(ShiftHandover::getHandoverDate, date)
-                .orderByAsc(ShiftHandover::getShiftCode));
+                .orderByAsc(ShiftHandover::getShiftCode)
+                .list();
         return rows.stream().map(this::toVo).toList();
     }
 
@@ -388,8 +389,8 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
 
     /** 按单号回读交接班行（逻辑删由 @TableLogic 自动过滤；未命中定性 NS-1016）。 */
     private ShiftHandover requireByHandoverNo(String handoverNo) {
-        ShiftHandover row = baseMapper.selectOne(
-                Wrappers.<ShiftHandover>lambdaQuery().eq(ShiftHandover::getHandoverNo, handoverNo));
+        ShiftHandover row =
+                this.lambdaQuery().eq(ShiftHandover::getHandoverNo, handoverNo).one();
         if (row == null) {
             // CAS 与回读间被并发逻辑删的极端窗口：资源已不存在，禁继续出事件
             throw new BizException(NursingErrorCode.CONFLICT, HttpStatus.CONFLICT, "交接班单不存在：handoverNo=" + handoverNo);

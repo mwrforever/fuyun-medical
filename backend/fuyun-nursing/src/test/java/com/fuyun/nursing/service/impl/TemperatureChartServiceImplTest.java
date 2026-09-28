@@ -92,6 +92,8 @@ class TemperatureChartServiceImplTest {
     void setUp() {
         service = new TemperatureChartServiceImpl(pageMapper, entryMapper);
         ReflectionTestUtils.setField(service, "baseMapper", pageMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", TemperatureChartPage.class);
     }
 
     @Test

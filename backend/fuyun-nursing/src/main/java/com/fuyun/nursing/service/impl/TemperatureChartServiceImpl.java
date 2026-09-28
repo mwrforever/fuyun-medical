@@ -258,9 +258,10 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
 
     /** 月页定位（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */
     private TemperatureChartPage locatePage(String visitId, YearMonth month) {
-        return baseMapper.selectOne(Wrappers.<TemperatureChartPage>lambdaQuery()
+        return this.lambdaQuery()
                 .eq(TemperatureChartPage::getVisitId, visitId)
-                .eq(TemperatureChartPage::getChartMonth, month.toString()));
+                .eq(TemperatureChartPage::getChartMonth, month.toString())
+                .one();
     }
 
     /** month 参数权威解析（禁裸 parse 先例 W-22⑦：格式违例显式拒 NS-1019）。 */

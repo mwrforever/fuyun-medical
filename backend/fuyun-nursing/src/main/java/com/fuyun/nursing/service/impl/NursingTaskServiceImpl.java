@@ -1,7 +1,5 @@
 package com.fuyun.nursing.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
@@ -229,19 +227,19 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
     public List<NursingTaskVO> list(String wardId, TaskStatus status, LocalDate date) {
         // 读路径含惰性逾期写（markOverdueLazily 触发 casMarkOverdue UPDATE），禁 readOnly——
         // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
-        LambdaQueryWrapper<NursingTask> wrapper =
-                Wrappers.<NursingTask>lambdaQuery().eq(NursingTask::getWardId, wardId);
+        // 主表链式查询（宪法 A.4.3-13）；条件分支保留 if：status.getCode()/date.atStartOfDay()
+        // 须空判后求值，内联 boolean 重载会无条件求值实参致 NPE
+        var query = this.lambdaQuery().eq(NursingTask::getWardId, wardId);
         if (status != null) {
-            wrapper.eq(NursingTask::getStatus, status.getCode());
+            query.eq(NursingTask::getStatus, status.getCode());
         }
         if (date != null) {
             // 当日窗口含头不含尾（TIMESTAMPTZ 按时刻比较，与体征/出入量查询同口径）
-            wrapper.ge(NursingTask::getPlanTime, date.atStartOfDay())
+            query.ge(NursingTask::getPlanTime, date.atStartOfDay())
                     .lt(NursingTask::getPlanTime, date.plusDays(1).atStartOfDay());
         }
-        wrapper.orderByAsc(NursingTask::getPlanTime);
         // 数据库读操作：病区任务清单（计划时间升序；命中 idx_nursing_task_ward_status_plan；逻辑删自动过滤）
-        List<NursingTask> rows = baseMapper.selectList(wrapper);
+        List<NursingTask> rows = query.orderByAsc(NursingTask::getPlanTime).list();
         markOverdueLazily(rows);
         return rows.stream().map(NursingTaskVO::from).toList();
     }
@@ -259,10 +257,11 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
         // 读路径含惰性逾期写（markOverdueLazily 触发 casMarkOverdue UPDATE），禁 readOnly——
         // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
         // 数据库读操作：在途任务（status IN 谓词滤除终态行；命中 idx_nursing_task_visit_status）
-        List<NursingTask> rows = baseMapper.selectList(Wrappers.<NursingTask>lambdaQuery()
+        List<NursingTask> rows = this.lambdaQuery()
                 .eq(NursingTask::getVisitId, visitId)
                 .in(NursingTask::getStatus, TaskStatus.PENDING.getCode(), TaskStatus.IN_PROGRESS.getCode())
-                .orderByAsc(NursingTask::getPlanTime));
+                .orderByAsc(NursingTask::getPlanTime)
+                .list();
         markOverdueLazily(rows);
         return rows.stream().map(NursingTaskVO::from).toList();
     }
@@ -385,8 +384,7 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
 
     /** 按任务号回读任务行（逻辑删由 @TableLogic 自动过滤；未命中定性 NS-1016）。 */
     private NursingTask requireByTaskNo(String taskNo) {
-        NursingTask row =
-                baseMapper.selectOne(Wrappers.<NursingTask>lambdaQuery().eq(NursingTask::getTaskNo, taskNo));
+        NursingTask row = this.lambdaQuery().eq(NursingTask::getTaskNo, taskNo).one();
         if (row == null) {
             // CAS 与回读间被并发逻辑删的极端窗口：资源已不存在，禁继续出事件
             throw new BizException(NursingErrorCode.CONFLICT, HttpStatus.CONFLICT, "护理任务不存在：taskNo=" + taskNo);
