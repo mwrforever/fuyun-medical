@@ -22,6 +22,10 @@ import java.math.BigDecimal;
  * @param weight      体重（kg，不参与阈值判定），可空；来源：测量值录入
  * @param height      身高（cm，不参与阈值判定），可空；来源：测量值录入
  * @param painScore   疼痛评分（NRS 0-10），可空；来源：患者主诉评估录入
+ * @param clientMsgId 客户端幂等键（D-22，UUID 形态 ≤64 字符），可空；来源：PDA 端为每次
+ *                    体征提交组合生成的稳定标识，弱网失败重试复用同一键；服务端按键回查
+ *                    重放返回原记录（HTTP 200）。空缺省=未携带（工作站面与存量调用方向后
+ *                    兼容，走既有唯一冲突 NS-1016 语义，零行为变化）
  */
 public record VitalSignRecordRequest(
         @NotBlank(message = "visitId 不能为空") String visitId,
@@ -35,4 +39,5 @@ public record VitalSignRecordRequest(
         Integer spo2,
         BigDecimal weight,
         BigDecimal height,
-        Integer painScore) {}
+        Integer painScore,
+        String clientMsgId) {}

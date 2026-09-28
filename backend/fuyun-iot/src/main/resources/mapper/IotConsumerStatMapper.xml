@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 消费积压快照最新行查询：每消费组取 sampled_at 最新一行（DISTINCT ON，>5 分钟告警判据读取面） -->
+<mapper namespace="com.fuyun.iot.mapper.IotConsumerStatMapper">
+
+    <!-- groups 为空时不过滤返回全部组（<if> 条件拼接）；结果按 sampled_at 降序稳定输出 -->
+    <select id="selectLatestPerGroup" resultType="com.fuyun.iot.entity.IotConsumerStatEntity">
+        SELECT DISTINCT ON (consumer_group)
+               id, consumer_group, sampled_at, oldest_msg_age_secs, consume_rate, arrive_rate, backlog_estimate
+        FROM iot.iot_consumer_stat
+        <if test="groups != null and groups.size() > 0">
+            WHERE consumer_group IN
+            <foreach collection="groups" item="grp" open="(" separator="," close=")">#{grp}</foreach>
+        </if>
+        ORDER BY consumer_group, sampled_at DESC
+    </select>
+</mapper>

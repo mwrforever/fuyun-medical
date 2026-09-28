@@ -29,6 +29,15 @@ public class TelemetryPayloadBuilder {
     /** 体征属性键：血氧饱和度（%） */
     public static final String PROP_SPO2 = "spo2";
 
+    /** 输液属性键：滴速（ml/h，仅 infusion 剧本输出，P2 PR-2 Task 14） */
+    public static final String PROP_INFUSION_RATE = "infusionRate";
+
+    /** 输液属性键：余量（ml，仅 infusion 剧本输出，P2 PR-2 Task 14） */
+    public static final String PROP_INFUSION_VOLUME_REMAINING = "infusionVolumeRemaining";
+
+    /** 体征属性键：体温（℃，P2 PR-2 Task 14） */
+    public static final String PROP_BODY_TEMP = "bodyTemp";
+
     /** 心率演示值域下界（bpm，静息正常区间） */
     private static final int HEART_RATE_MIN = 60;
 
@@ -75,19 +84,56 @@ public class TelemetryPayloadBuilder {
     }
 
     /**
-     * 产出一帧物模型上行 JSON。
+     * 产出一帧物模型上行 JSON（既有体征口径：内部自抽确定性体征序列）。
      *
      * @return 形如 {"services":[{"service_id":"Monitor","properties":{"heartRate":72,"spo2":98}}]}
      *         的 JSON 串，非空；心率 60~100 bpm、血氧 95~100%
      */
     public String next() {
+        return next(HEART_RATE_MIN + random.nextInt(HEART_RATE_SPAN), SPO2_MIN + random.nextInt(SPO2_SPAN));
+    }
+
+    /**
+     * 按显式体征值组帧（剧本引擎入口：剧本侧按阶段值域抽取体征值后委托组装）。
+     *
+     * @param heartRate 心率（bpm，整数），非空业务值；值域由调用方剧本保证
+     * @param spo2      血氧饱和度（%，整数），非空业务值
+     * @return 物模型 JSON 串，非空；Monitor 服务 properties 携 heartRate/spo2 双属性
+     */
+    public String next(int heartRate, int spo2) {
         ObjectNode root = mapper.createObjectNode();
         ArrayNode services = root.putArray(KEY_SERVICES);
         ObjectNode service = services.addObject();
         service.put(KEY_SERVICE_ID, SERVICE_ID);
         ObjectNode properties = service.putObject(KEY_PROPERTIES);
-        properties.put(PROP_HEART_RATE, HEART_RATE_MIN + random.nextInt(HEART_RATE_SPAN));
-        properties.put(PROP_SPO2, SPO2_MIN + random.nextInt(SPO2_SPAN));
+        properties.put(PROP_HEART_RATE, heartRate);
+        properties.put(PROP_SPO2, spo2);
+        return root.toString();
+    }
+
+    /**
+     * 按显式体征 + 输液值组帧（infusion 剧本专属口径）：输液三指标与体征同服务 Monitor
+     * 展开属性（物模型同服务口径）；输液指标仅 infusion 剧本调用本重载输出。
+     *
+     * @param heartRate           心率（bpm，整数），非空业务值；STARVED 应激段值域由剧本保证
+     * @param spo2                血氧饱和度（%，整数），非空业务值
+     * @param infusionRateMlH     滴速（ml/h）；来源：InfusionScenario 状态机当前泵速（一位小数）
+     * @param volumeRemainingMl   余量（ml）；来源：InfusionScenario 状态机消耗后快照（一位小数）
+     * @param bodyTempC           体温（℃）；来源：InfusionScenario 临床值域抽取（一位小数）
+     * @return 物模型 JSON 串，非空；properties 依序携
+     *         heartRate/spo2/infusionRate/infusionVolumeRemaining/bodyTemp 五属性
+     */
+    public String next(int heartRate, int spo2, double infusionRateMlH, double volumeRemainingMl, double bodyTempC) {
+        ObjectNode root = mapper.createObjectNode();
+        ArrayNode services = root.putArray(KEY_SERVICES);
+        ObjectNode service = services.addObject();
+        service.put(KEY_SERVICE_ID, SERVICE_ID);
+        ObjectNode properties = service.putObject(KEY_PROPERTIES);
+        properties.put(PROP_HEART_RATE, heartRate);
+        properties.put(PROP_SPO2, spo2);
+        properties.put(PROP_INFUSION_RATE, infusionRateMlH);
+        properties.put(PROP_INFUSION_VOLUME_REMAINING, volumeRemainingMl);
+        properties.put(PROP_BODY_TEMP, bodyTempC);
         return root.toString();
     }
 }

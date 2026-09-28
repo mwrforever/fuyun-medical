@@ -79,6 +79,67 @@ class SimulatorConfigTest {
                 .isEqualTo(10);
     }
 
+    @Test
+    @DisplayName("剧本档未配置：取缺省 vitals 且倍速取 1（P0 既有行为零变化）")
+    void appliesDefaultScenarioAndSpeedWhenAbsent() {
+        SimulatorConfig config = SimulatorConfig.fromEnv(minimalValidEnv());
+        assertThat(config.scenario()).as("剧本缺省档").isEqualTo("vitals");
+        assertThat(config.scenarioSpeed()).as("倍速缺省 1（真实时钟原速推进）").isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("剧本档显式配置：infusion 生效、倍速显式覆盖生效（演示加速口径）")
+    void honorsExplicitScenarioAndSpeed() {
+        Map<String, String> env = minimalValidEnv();
+        env.put("IOTDA_SCENARIO", "infusion");
+        env.put("IOTDA_SCENARIO_SPEED", "60");
+        SimulatorConfig config = SimulatorConfig.fromEnv(env);
+        assertThat(config.scenario()).as("剧本档名映射").isEqualTo("infusion");
+        assertThat(config.scenarioSpeed()).as("倍速映射（demo 加速档）").isEqualTo(60.0);
+    }
+
+    @Test
+    @DisplayName("剧本档空白与倍速空白等价未配置：归一缺省值（env_file 注入空串不阻断启动）")
+    void normalizesBlankScenarioAndSpeedToDefaults() {
+        Map<String, String> env = minimalValidEnv();
+        env.put("IOTDA_SCENARIO", "  ");
+        env.put("IOTDA_SCENARIO_SPEED", "");
+        SimulatorConfig config = SimulatorConfig.fromEnv(env);
+        assertThat(config.scenario()).as("空白档名归一缺省").isEqualTo("vitals");
+        assertThat(config.scenarioSpeed()).as("空白倍速归一缺省").isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("未知剧本档拒绝：中文错误点名 IOTDA_SCENARIO 与合法词表")
+    void rejectsUnknownScenarioWord() {
+        Map<String, String> env = minimalValidEnv();
+        env.put("IOTDA_SCENARIO", "bogus");
+        assertThatThrownBy(() -> SimulatorConfig.fromEnv(env))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IOTDA_SCENARIO")
+                .hasMessageContaining("bogus");
+    }
+
+    @Test
+    @DisplayName("倍速越界拒绝：0、负数与非数字均以中文错误点名 IOTDA_SCENARIO_SPEED")
+    void rejectsNonPositiveOrMalformedSpeed() {
+        assertThatThrownBy(() -> SimulatorConfig.fromEnv(withSpeed("0")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IOTDA_SCENARIO_SPEED");
+        assertThatThrownBy(() -> SimulatorConfig.fromEnv(withSpeed("-2.5")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> SimulatorConfig.fromEnv(withSpeed("fast")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("IOTDA_SCENARIO_SPEED");
+    }
+
+    /** 在合法最小环境上叠加倍速变量（含非法值场景） */
+    private static Map<String, String> withSpeed(String value) {
+        Map<String, String> env = minimalValidEnv();
+        env.put("IOTDA_SCENARIO_SPEED", value);
+        return env;
+    }
+
     /** 在合法最小环境上叠加周期变量（含非法值场景） */
     private static Map<String, String> withInterval(Object value) {
         Map<String, String> env = minimalValidEnv();

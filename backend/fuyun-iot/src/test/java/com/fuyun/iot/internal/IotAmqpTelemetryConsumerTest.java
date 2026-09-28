@@ -129,6 +129,14 @@ class IotAmqpTelemetryConsumerTest {
     /** 状态事件回调收集器：构造期注入消费者（发布器接线点的记录型替身） */
     private final List<DeviceStatusEvent> statusEventsPublished = new CopyOnWriteArrayList<>();
 
+    /** 设备告警帧回调收集器（Task 7 透传规则源接线点的记录型替身） */
+    private final List<TelemetryFrameParser.ParsedFrame.DeviceAlarmFrame> deviceAlarmFrames =
+            new CopyOnWriteArrayList<>();
+
+    /** 命令结果帧回调收集器（Task 8 结果回推消费源接线点的记录型替身） */
+    private final List<TelemetryFrameParser.ParsedFrame.CommandResultFrame> commandResultFrames =
+            new CopyOnWriteArrayList<>();
+
     /** 记录型假 sleeper：只记不睡（避免真实 sleep，退避节奏断言载体） */
     private List<Long> recordedDelays;
 
@@ -163,7 +171,9 @@ class IotAmqpTelemetryConsumerTest {
                 deviceStatusService,
                 mutableClock,
                 recordedDelays::add,
-                statusEventsPublished::add);
+                statusEventsPublished::add,
+                deviceAlarmFrames::add,
+                commandResultFrames::add);
     }
 
     @AfterEach
@@ -250,6 +260,27 @@ class IotAmqpTelemetryConsumerTest {
 
         verify(statusFrame, timeout(AWAIT_MILLIS)).acknowledge();
         assertThat(statusEventsPublished).as("无效设备不发布状态事件").isEmpty();
+    }
+
+    @Test
+    @DisplayName("命令结果帧路由：resource=device.command.status 判第五形态交命令域回调并即时确认（Task 8）")
+    void routesCommandResultFrameToCommandSinkAndAcknowledges() throws Exception {
+        Message commandFrame = bytesMessage("""
+                {"resource":"device.command.status","event_time_ms":"2026-09-26T01:02:03Z",
+                 "notify_data":{"header":{"device_id":"it-dev-001"},
+                 "body":{"command_id":"sim-cmd-2","status":"SUCCESS"}}}
+                """);
+        stubContextCreation();
+        when(jmsConsumer.receive(anyLong())).thenReturn(commandFrame).thenAnswer(this::idleAnswer);
+
+        consumer.start();
+
+        verify(commandFrame, timeout(AWAIT_MILLIS)).acknowledge();
+        assertThat(commandResultFrames).as("命令结果帧必须路由到命令域回调（构造期接线监听器）").hasSize(1);
+        assertThat(commandResultFrames.get(0).deviceId()).isEqualTo("it-dev-001");
+        assertThat(commandResultFrames.get(0).commandId()).isEqualTo("sim-cmd-2");
+        assertThat(commandResultFrames.get(0).registryStatus()).isEqualTo("SUCCESS");
+        verifyNoInteractions(ingestService);
     }
 
     @Test
@@ -363,7 +394,9 @@ class IotAmqpTelemetryConsumerTest {
                 deviceStatusService,
                 mutableClock,
                 recordedDelays::add,
-                statusEventsPublished::add);
+                statusEventsPublished::add,
+                deviceAlarmFrames::add,
+                commandResultFrames::add);
         try {
             Message firstFrame = bytesMessage(telemetryJson("it-dev-001", "vital.heart-rate", "72"));
             Message secondFrame = bytesMessage(telemetryJson("it-dev-001", "vital.spo2", "98"));

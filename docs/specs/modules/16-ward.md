@@ -237,3 +237,15 @@
 - **M-24**：文档头被依赖清单修正——M12 冷链实时拦截订阅 M14 `iot.alarm.triggered`（其 v1.1 已落地，本模块 alert-archived 不用于实时拦截）；本模块 `ward.cold-chain.alert-archived` 供 M15/M19 设备可靠性记录用途；§7 发布清单与 §8 M15 条目同步。
 - **M-25**：§7 `patient.merged` 订阅处成对补订 `patient.split`（M02 成对语义）。
 - **R5-19**：ward_meal_order channel 字段笔误修正（`Other` → `OTHER`）。
+
+## 13. P2 PR-2 落地注记（2026-09-27，feat/p2-pr2-m14-m16）
+
+> 本节为 P2 PR-2（M14 完整 + M16 核心：FU-M16-01/02/03/07）交付面相对本 Spec 的界定、降级与裁决声明，执行依据 `docs/superpowers/plans/2026-09-25-p2-pr2-m14-m16.md`（GC29 收口硬门槛、GC17 缺位降级清单）；P2 PR-2 口径以本节为准，Spec 正文不回改。
+
+1. **ward 号段登记与事件 id 82**：迁移落 `V1100–V1102`（呼叫域两表 `ward_call`/`ward_call_routing_rule`、冷链域两表 `cold_chain_archive`/`cold_chain_record`、事件种子），号段 V1100–V1199 经治理脚本与台账登记；V1100–V1102 为**零迁移 schema 初始化豁免段**（ward 全新 schema 首批享号段初始化豁免，且 V1100 > 基线全局最大已应用 V1003 乱序守卫天然通过，双保险）。事件 id 82 `ward.cold-chain.alert-archived` 随 V1102 登记（payload_desc↔`WardMessagingConstants`↔`ColdChainAlertArchivedPayload` 三方一致，契约锚 `WardMessagingContractTest`）；M14 侧事件 id 74–81 注记见 `14-iot.md` §13。
+2. **GC17② 降级注记（播报终端缺位）**：走廊屏/床头灯/床旁屏本地提示/报警终端语音等播报终端本 PR 缺位——15/10/5ml 三档告警降级为**病区输液看板分级着色**（`GET /infusion-board`，档位由 M14 三档阈值规则驱动）；5ml 红档**系统级呼叫落行**保留业务语义实况：ward 侧消费 `iot.alarm.triggered`（metricCode=INFUSION_SHORTAGE 且 triggerValue≤5）落 `ward_call`（call_type=INFUSION、source=IOT、source_ref=告警号、bed_id 空），走呼叫状态链可应答/完成（锚 `WardCallColdChainIT` 步骤②）；M14 联动 WARD_BROADCAST 动作 PENDING 留痕待回接。
+3. **GC17④ 降级注记（温度曲线存证顺延）**：温度曲线对象存储法定年限存证（§6 FU-M16-07「日报快照归档对象存储长期保存」）本 PR 顺延——温度曲线经 M14 时序查询**实时渲染**（`IotTelemetryQueryPort`，ward 不落温度读数；受明细 90 天保留窗口约束）；法定年限归档注记 P4/MinIO 集成面落地时补齐，巡检/处置/偏差三类合规记录台账不受影响（V1101 在位）。
+4. **GC17⑤ 降级注记（折网不断呼）**：呼叫主机/分机终端本地直通通道本 PR 不实现——「折网不断呼」降级为**服务端呼叫状态机承载**（ward_call CAS 迁移 + 读时惰性升级，`WardCallServiceImpl`）；§9「恢复后状态事件按序补传、以 call_no+动作幂等」契约声明保留，专用补传接口**预留**（随终端面交付引入；现事件上行侧幂等经 integration.received_event 消费幂等承载）。
+5. **`nursing.infusion.*` 消费骨架 PR-3 接线声明**：`NursingInfusionCompletedListener`（`q.ward.nursing.infusion.completed`，事件 V800 id 63 登记在位）订阅声明与拔针复位逻辑已在位——按 patient_id CAS 复位该患者全部活跃输液呼叫行，**事件到达即复位**；事件发布端归 PR-3 M05 实装，本 PR 落位后订阅空队列等待；`nursing.infusion.started`（在途清单事件刷新）消费面未落，随 PR-3 发布实装一并接线（看板现经 REST 聚合 M14 最新值刷新）。
+6. **任务转换 PENDING 注记**：`POST /ward-calls/{no}/route` 命中规则 `taskConvertFlag=true` 且 callType=EMERGENCY 时，M05 护理任务创建为 **PENDING**（本 PR 落字段与判断、日志留痕，不建任务，`WardCallServiceImpl` route 段），PR-3 闭合回接 M05 任务创建接口（与 M14 联动 NURSING_TASK 动作 PENDING 留痕同源，见 `14-iot.md` §13 第 5 条）。
+7. **GC17⑥ 降级注记（测量队列）**：测量队列/待测清单生成（FU-M16-02 依赖 M05 护理级别频次参数）归 PR-3 M05；本期体征采集编排以 M14 质量视图与断流提示承载（`iot_data_quality_stat` 按日缺数/异常统计 + `iot.telemetry.anomaly`（id 78）断流事件，ward 侧消费）。

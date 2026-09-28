@@ -65,6 +65,8 @@ async function onIdentify(): Promise<void> {
       diastolicBp: '',
       spo2: '',
     };
+    // 换患者识别：体征表单复位同时轮换幂等键（D-22，防前患者未落卡键串用到新患者提交）
+    vitalClientMsgId = newIdempotencyKey();
     patrolTask.value = null;
     void ElMessage.success(
       `已识别：${summary.value.patientName ?? ''}（${summary.value.bedNo ?? ''}）`,
@@ -111,6 +113,28 @@ const vitalForm = ref({
   spo2: '',
 });
 const recording = ref(false);
+
+/**
+ * 幂等键生成（D-22）：优先 crypto.randomUUID；该 API 仅安全上下文（HTTPS/localhost）可用，
+ * 院内 PDA 常经 HTTP 内网访问（nginx :80），此时回退自拼 v4 形态 UUID——键生成不可失败
+ * （setup 期即取键，无 UUID 会让整页崩死）。形态仍为 36 位 8-4-4-4-12 标准串（≤64 列宽）。
+ */
+function newIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const rand = (Math.random() * 16) | 0;
+    return (c === 'x' ? rand : (rand & 0x3) | 0x8).toString(16);
+  });
+}
+
+/**
+ * 体征提交幂等键（D-22）：一次「录入-提交-确认」组合的稳定标识——生成后保持不变，成功落卡
+ * 才轮换（弱网下请求在途失败的重试复用同一键，服务端按 client_msg_id 识别同一次点测并重放
+ * 返回原记录，杜绝补传重复落卡）；换患者识别随表单复位一并轮换，防前患者未落卡键串用。
+ */
+let vitalClientMsgId = newIdempotencyKey();
 
 /** 整数字段显式校验（纯数字正则 + 范围判定，禁裸 parse） */
 function isValidInt(raw: string, min: number, max: number): boolean {
@@ -179,10 +203,13 @@ async function onRecordVitals(): Promise<void> {
     return;
   }
   recording.value = true;
+  // D-22：幂等键置于 await 之前捕获——弱网在途失败后的重试复用同一键，成功落卡才轮换
+  const clientMsgId = vitalClientMsgId;
   try {
     await vitalSigns.record({
       visitId,
       source: 'PDA',
+      clientMsgId,
       temperature: form.temperature === '' ? undefined : Number(form.temperature),
       tempSite: form.temperature === '' ? undefined : form.tempSite,
       pulse: form.pulse === '' ? undefined : Number(form.pulse),
@@ -192,6 +219,8 @@ async function onRecordVitals(): Promise<void> {
       spo2: form.spo2 === '' ? undefined : Number(form.spo2),
     });
     void ElMessage.success('体征已录入');
+    // 提交成功才清表单，并轮换幂等键（失败保留表单与原键，重试仍复用同键）
+    vitalClientMsgId = newIdempotencyKey();
     vitalForm.value = {
       temperature: '',
       tempSite: 'AXILLARY',

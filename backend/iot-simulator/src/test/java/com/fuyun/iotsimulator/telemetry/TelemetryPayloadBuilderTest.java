@@ -46,4 +46,46 @@ class TelemetryPayloadBuilderTest {
         TelemetryPayloadBuilder fromEquivalentSeed = new TelemetryPayloadBuilder("dev-001".hashCode());
         assertThat(fromDeviceId.next()).isEqualTo(fromEquivalentSeed.next());
     }
+
+    @Test
+    @DisplayName("显式体征组帧：指定心率/血氧值原样写入 Monitor 服务属性（剧本引擎组帧入口）")
+    void buildsFrameWithExplicitVitals() throws Exception {
+        TelemetryPayloadBuilder builder = new TelemetryPayloadBuilder(42L);
+        JsonNode payload = MAPPER.readTree(builder.next(88, 97));
+
+        JsonNode properties = payload.path("services").get(0).path("properties");
+        assertThat(properties.path("heartRate").asInt()).as("显式心率值直写").isEqualTo(88);
+        assertThat(properties.path("spo2").asInt()).as("显式血氧值直写").isEqualTo(97);
+        assertThat(properties.has("infusionRate"))
+                .as("双参重载不携输液指标（输液指标仅 infusion 剧本输出）")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("输液五指标帧：体征 + 滴速/余量/体温同服务 Monitor 展开，数值一位小数保真")
+    void buildsInfusionFrameWithFiveMetrics() throws Exception {
+        TelemetryPayloadBuilder builder = new TelemetryPayloadBuilder(42L);
+        JsonNode payload = MAPPER.readTree(builder.next(110, 96, 16.0, 20.0, 36.5));
+
+        JsonNode properties = payload.path("services").get(0).path("properties");
+        assertThat(properties.path("heartRate").asInt()).as("应激心率值域值直写").isEqualTo(110);
+        assertThat(properties.path("spo2").asInt()).as("血氧值直写").isEqualTo(96);
+        assertThat(properties.path("infusionRate").asDouble()).as("滴速属性（ml/h）").isEqualTo(16.0);
+        assertThat(properties.path("infusionVolumeRemaining").asDouble())
+                .as("余量属性（ml）")
+                .isEqualTo(20.0);
+        assertThat(properties.path("bodyTemp").asDouble()).as("体温属性（℃）").isEqualTo(36.5);
+    }
+
+    @Test
+    @DisplayName("T-R3-5 帧体实测：输液五指标帧 UTF-8 字节数远低于 512B（单帧远低于 IoTDA 1MB 上限，无需分片）")
+    void infusionFrameStaysFarBelowPlatformMessageLimit() {
+        TelemetryPayloadBuilder builder = new TelemetryPayloadBuilder(42L);
+        byte[] frame = builder.next(110, 96, 16.0, 20.0, 36.5).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        assertThat(frame.length)
+                .as("五指标帧实测字节数（TASK.md T-R3-5 复核锚：官方限制为 MQTT 单条发布 ≤1MB，" + "512B 仅为实例上行速率规格的平均 payload 口径）")
+                .isLessThan(512)
+                .isGreaterThan(100);
+    }
 }

@@ -4,6 +4,7 @@ import com.fuyun.common.messaging.StandardTelemetryMessage;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.enums.ConsumeErrorStage;
 import com.fuyun.iot.internal.TelemetryFrameParser.ParsedFrame;
+import com.fuyun.iot.internal.alarm.AlarmEngine;
 import com.fuyun.iot.properties.IotProperties;
 import com.fuyun.iot.service.IConsumeErrorLogService;
 import com.fuyun.iot.service.IDeviceStatusService;
@@ -64,14 +65,16 @@ import org.springframework.context.SmartLifecycle;
  * maxReconnectDelay（默认 30s）封顶的节奏重建，连接成功即复位退避节奏并继续消费——重连无限次
  * 语义由 supervisor 承接，且每次重建均携带新时间戳凭证（透明重连不刷新时间戳的 IoTDA 语义对策）。
  *
- * <p><b>消费处理流程（四路同构）</b>：receive → 载体解码（字节/文本）→ TelemetryFrameParser 解析 →
+ * <p><b>消费处理流程（多路同构分派）</b>：receive → 载体解码（字节/文本）→ TelemetryFrameParser 解析 →
  * 遥测帧入 {@link TelemetryBatchAssembler} 有界队列（满则阻塞等待背压）；IoTDA 推送帧（顶层
  * resource=device.property，TASK.md L-3 冻结映射）解析展开为 N 条标准遥测消息逐条入攒批——
  * 客户端确认回调只挂尾条（其余挂空动作，见 {@link #dispatchTelemetryBatch} 挂尾安全性论证）；
  * 状态帧即时交 {@link IDeviceStatusService}，返回档案 wardId（非 null）时以之补全事件载荷（P0
  * 状态帧契约不含 wardId，档案行同数据源回填，恢复 /topic/iot/device-status/{wardId} 生产数据源）
  * 再经状态事件回调（构造期注入 {@link IotEventPublisher}#publishDeviceStatus，ObjectProvider 可选
- * 解析）发布 iot.device.status-changed 至 fy.topic；解析失败帧落 iot_consume_error_log
+ * 解析）发布 iot.device.status-changed 至 fy.topic；设备告警帧（resource=device.alarm，Task 7）
+ * 交告警引擎透传评估；命令结果帧（resource=device.command.status，Task 8）交命令域监听器回推
+ * 终态；解析失败帧落 iot_consume_error_log
  * （stage=PARSE）后确认抛弃（毒丸隔离，不阻塞队列）。留痕脱敏口径（TASK.md L-3 自带义务）：
  * raw_payload 入库前经 {@link ConsumePayloadMasker} 脱敏——IoTDA 推送形态白名单提取（属性值
  * 全打码，健康数据禁原文入库）、其余文本 SensitiveMasker 正则兜底；raw_digest 随之为脱敏后
@@ -134,6 +137,20 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
      */
     private final Consumer<DeviceStatusEvent> statusEventSink;
 
+    /**
+     * 设备告警帧回调（构造期注入，P2 PR-2 Task 7 透传规则源）：device.alarm 帧解析产物经回调交
+     * 告警引擎评估（evaluateDeviceAlarm 独立短事务承载落行与事件发布）；上下文未装配引擎时为
+     * 空实现防御（enabled=false 无消费源头，回调不会被触达）。
+     */
+    private final Consumer<ParsedFrame.DeviceAlarmFrame> alarmFrameSink;
+
+    /**
+     * 命令结果帧回调（构造期注入，P2 PR-2 Task 8 结果回推消费源）：device.command.status 帧
+     * 解析产物经回调交命令域监听器（终态迁移与 iot.command.completed 事件发布）；上下文未装配
+     * 监听器时为空实现防御（命令域缺席仅见于单测直构场景，回调不会被触达）。
+     */
+    private final Consumer<ParsedFrame.CommandResultFrame> commandResultSink;
+
     /** connected gauge 载体：1=连接正常 / 0=断链（IotAmqpMetrics 以此绑定 gauge iot.amqp.connected） */
     private final AtomicLong connectedFlag = new AtomicLong(0);
 
@@ -186,7 +203,9 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             IConsumeErrorLogService errorLogService,
             IDeviceStatusService deviceStatusService,
             Clock clock,
-            ObjectProvider<IotEventPublisher> statusEventPublisher) {
+            ObjectProvider<IotEventPublisher> statusEventPublisher,
+            ObjectProvider<AlarmEngine> alarmEngine,
+            ObjectProvider<IotDeviceCommandListener> commandResultListener) {
         this(
                 properties,
                 connectionFactory,
@@ -195,15 +214,21 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 deviceStatusService,
                 clock,
                 Thread::sleep,
-                optionalSink(statusEventPublisher));
+                optionalSink(statusEventPublisher),
+                optionalAlarmSink(alarmEngine),
+                optionalCommandSink(commandResultListener));
     }
 
     /**
-     * 全参构造器（包内测试用）：显式注入时钟、退避睡眠抽象与状态事件回调。
+     * 全参构造器（包内测试用）：显式注入时钟、退避睡眠抽象、状态事件回调、告警引擎回调与命令
+     * 结果帧回调。
      *
      * @param clock               时钟，非空；凭证时间戳与断链计时来源
      * @param sleeper             退避睡眠，非空；可中断
      * @param statusEventSink     状态事件回调，非空；测试注入记录型收集器（生产为发布器方法引用）
+     * @param alarmFrameSink      设备告警帧回调，非空；测试注入记录型收集器（生产为引擎方法引用）
+     * @param commandResultSink   命令结果帧回调，非空；测试注入记录型收集器（生产为命令域监听器
+     *                            方法引用）
      */
     IotAmqpTelemetryConsumer(
             IotProperties properties,
@@ -213,7 +238,9 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             IDeviceStatusService deviceStatusService,
             Clock clock,
             Sleeper sleeper,
-            Consumer<DeviceStatusEvent> statusEventSink) {
+            Consumer<DeviceStatusEvent> statusEventSink,
+            Consumer<ParsedFrame.DeviceAlarmFrame> alarmFrameSink,
+            Consumer<ParsedFrame.CommandResultFrame> commandResultSink) {
         this.amqp = properties.amqp();
         this.connectionFactory = connectionFactory;
         this.assembler = assembler;
@@ -222,6 +249,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         this.clock = clock;
         this.sleeper = sleeper;
         this.statusEventSink = statusEventSink;
+        this.alarmFrameSink = alarmFrameSink;
+        this.commandResultSink = commandResultSink;
         // 攒批器落库失败回调接线（审查修复）：失败批必须以会话销毁收场——CLIENT_ACKNOWLEDGE 累计
         // 确认下"零确认待重推"仅在会话销毁时成立，关闭全部在册上下文令未确认交付回归重投域
         assembler.registerFlushFailureListener(() -> triggerGlobalRebuildForRedelivery("遥测批落库失败"));
@@ -236,6 +265,31 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
     private static Consumer<DeviceStatusEvent> optionalSink(ObjectProvider<IotEventPublisher> statusEventPublisher) {
         IotEventPublisher publisher = statusEventPublisher.getIfAvailable();
         return publisher == null ? event -> {} : publisher::publishDeviceStatus;
+    }
+
+    /**
+     * 解析可选告警引擎为设备告警帧回调：引擎在场取其方法引用，缺席降级为空实现（Task 7 透传
+     * 规则源接线——引擎为 IotConfig 无条件 Bean，缺席仅见于单测直构场景）。
+     *
+     * @param alarmEngine 告警引擎解析器，非空
+     * @return 设备告警帧回调，非空
+     */
+    private static Consumer<ParsedFrame.DeviceAlarmFrame> optionalAlarmSink(ObjectProvider<AlarmEngine> alarmEngine) {
+        AlarmEngine engine = alarmEngine.getIfAvailable();
+        return engine == null ? frame -> {} : engine::evaluateDeviceAlarm;
+    }
+
+    /**
+     * 解析可选命令域监听器为命令结果帧回调：监听器在场取其方法引用，缺席降级为空实现（Task 8
+     * 结果回推消费源接线——监听器为 IotConfig 无条件 Bean，缺席仅见于单测直构场景）。
+     *
+     * @param commandResultListener 命令域监听器解析器，非空
+     * @return 命令结果帧回调，非空
+     */
+    private static Consumer<ParsedFrame.CommandResultFrame> optionalCommandSink(
+            ObjectProvider<IotDeviceCommandListener> commandResultListener) {
+        IotDeviceCommandListener listener = commandResultListener.getIfAvailable();
+        return listener == null ? frame -> {} : listener::onCommandResultFrame;
     }
 
     /** connected gauge 载体（单测断言 + IotAmqpMetrics gauge 绑定点），非空 */
@@ -542,8 +596,14 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 dispatchTelemetryBatch(queueAddress, batchFrame.messages(), message, rawText);
             } else if (frame instanceof ParsedFrame.StatusFrame statusFrame) {
                 handleStatusFrame(statusFrame.event(), message);
+            } else if (frame instanceof ParsedFrame.DeviceAlarmFrame alarmFrame) {
+                // 设备告警帧（Task 7 透传规则源）：交告警引擎评估（独立短事务），成功后即时确认
+                handleDeviceAlarmFrame(alarmFrame, message);
+            } else if (frame instanceof ParsedFrame.CommandResultFrame commandFrame) {
+                // 命令结果帧（Task 8 结果回推消费源）：交命令域监听器（终态迁移+事件发布），成功后即时确认
+                handleCommandResultFrame(commandFrame, message);
             } else {
-                // sealed 三形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
+                // sealed 五形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
                 throw new IllegalStateException("未接线的帧解析形态：" + frame.getClass().getName());
             }
         } catch (InterruptedException e) {
@@ -631,6 +691,56 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 event.status(),
                 wardId,
                 event.occurredAt());
+    }
+
+    /**
+     * 设备告警帧即时处理（Task 7 透传规则源）：交告警引擎评估（evaluateDeviceAlarm 独立短事务
+     * 承载落行与 triggered 事件发布；运行于本消费线程非事务上下文，事务由引擎代理开启）；随后
+     * 即时确认（告警帧不入攒批）。评估失败按业务失败上抛——外层统一触发全局会话重建令本帧回归
+     * 重投域（重投后由抑制①同源聚合幂等去重：活跃行仅聚合计数不新发）。
+     *
+     * @param frame   设备告警帧解析产物，非空
+     * @param message 来源 JMS 消息，非空
+     */
+    private void handleDeviceAlarmFrame(ParsedFrame.DeviceAlarmFrame frame, Message message) {
+        alarmFrameSink.accept(frame);
+        try {
+            message.acknowledge();
+        } catch (JMSException e) {
+            // 确认失败属连接级异常：转运行时异常交 supervisor 重建（重投后评估幂等无害）
+            throw new JMSRuntimeException(e.getMessage(), e.getErrorCode(), e);
+        }
+        log.info(
+                "设备告警帧已处理：deviceId={}，alarm={}，severity={}，occurredAt={}",
+                frame.deviceId(),
+                frame.metricCode(),
+                frame.severity(),
+                frame.occurredAt());
+    }
+
+    /**
+     * 命令结果帧即时处理（Task 8 结果回推消费源）：交命令域监听器（completeFromResultFrame 承载
+     * 终态迁移与 iot.command.completed 事件发布，事务由 TransactionTemplate 承载）；随后即时
+     * 确认（命令帧不入攒批）。处理失败按业务失败上抛——外层统一触发全局会话重建令本帧回归重投域
+     * （重投后由终态 CAS 幂等兜底：已终态零行不重发事件）。
+     *
+     * @param frame   命令状态帧解析产物，非空
+     * @param message 来源 JMS 消息，非空
+     */
+    private void handleCommandResultFrame(ParsedFrame.CommandResultFrame frame, Message message) {
+        commandResultSink.accept(frame);
+        try {
+            message.acknowledge();
+        } catch (JMSException e) {
+            // 确认失败属连接级异常：转运行时异常交 supervisor 重建（重投后终态 CAS 幂等无害）
+            throw new JMSRuntimeException(e.getMessage(), e.getErrorCode(), e);
+        }
+        log.info(
+                "命令结果帧已处理：deviceId={}，commandId={}，status={}，occurredAt={}",
+                frame.deviceId(),
+                frame.commandId(),
+                frame.registryStatus(),
+                frame.occurredAt());
     }
 
     /**

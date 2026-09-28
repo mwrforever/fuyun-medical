@@ -3,6 +3,7 @@ package com.fuyun.app;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.EventEnvelope;
@@ -207,8 +208,8 @@ class IotTelemetryPipelineIT {
     /** 绑定快照断言值：患者 ID（种子固定值） */
     private static final long SNAPSHOT_PATIENT_ID = 9001L;
 
-    /** 绑定快照断言值：就诊 ID（种子固定值） */
-    private static final long SNAPSHOT_VISIT_ID = 8001L;
+    /** 绑定快照断言值：就诊号（CF-3 定长 14 位字符串，V1006 类型改造后形态，种子固定值） */
+    private static final String SNAPSHOT_VISIT_ID = "I2026090100001";
 
     /** 绑定快照断言值：病区 ID（种子固定值，STOMP 两主题的路由锚点） */
     private static final long SNAPSHOT_WARD_ID = 1001L;
@@ -330,7 +331,7 @@ class IotTelemetryPipelineIT {
      */
     @Test
     @Order(1)
-    @DisplayName("种子：设备档案与 BOUND 绑定直插（绑定快照 9001/8001/1001 供消费链冗余）")
+    @DisplayName("种子：设备档案与 BOUND 绑定直插（绑定快照 9001/I2026090100001/1001 供消费链冗余）")
     void seedsDeviceAndBinding() {
         IotDeviceEntity device = new IotDeviceEntity();
         device.setDeviceId(DEVICE_ID);
@@ -375,7 +376,7 @@ class IotTelemetryPipelineIT {
         List<LineRow> rows = jdbcTemplate.query(
                 "SELECT metric_code, value, patient_id, visit_id FROM iot.iot_telemetry"
                         + " WHERE device_id = ? ORDER BY metric_code",
-                (rs, rowNum) -> new LineRow(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getLong(4)),
+                (rs, rowNum) -> new LineRow(rs.getString(1), rs.getString(2), rs.getLong(3), rs.getString(4)),
                 DEVICE_ID);
         assertThat(rows).hasSize(2);
         assertThat(rows).extracting(LineRow::metricCode).containsExactly("vital.heart-rate", "vital.spo2");
@@ -388,7 +389,10 @@ class IotTelemetryPipelineIT {
     /**
      * 步骤③：STOMP 摘要断言——先订阅 /topic/iot/telemetry/1001（等订阅收据回执确保生效），再发
      * 1 帧新遥测（新唯一键），断言收到摘要帧且含 deviceId/metricCode（落库成功后按病区推送，
-     * BRIEF-PR4-01 §6.2 步骤 3）。
+     * BRIEF-PR4-01 §6.2 步骤 3）。Task 11 起（WS 四主题推送完整化）摘要从逐批直推改为 2s 窗口
+     * 节流：步骤②批次落在窗口内，其摘要帧排空时点（兜底排空线程周期或本批 offer 前置排空触发）
+     * 晚于本步订阅建立——会话先收到上一窗口的滞后摘要帧，故按 items 含本批 metricCode 取本批帧
+     * 进断言（滞后帧跳过），count=1 等断言契约保持原样。
      */
     @Test
     @Order(3)
@@ -400,7 +404,7 @@ class IotTelemetryPipelineIT {
 
             // 新唯一键帧（不与步骤②重复）：消费→落库→按绑定快照 ward 推摘要全链
             sendFrames(List.of(telemetryJson(DEVICE_ID, "vital.respiration", "18", "2026-09-10T02:30:00Z")));
-            String frame = frames.poll(PIPELINE_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+            String frame = pollBatchSummaryFrame(frames, "vital.respiration");
             assertThat(frame).as("批落库后摘要帧到达订阅会话").isNotNull();
             JsonNode summary = objectMapper.readTree(frame);
             assertThat(summary.path("count").asInt()).as("摘要条数 = 本批 1 帧").isEqualTo(1);
@@ -590,7 +594,9 @@ class IotTelemetryPipelineIT {
     /**
      * 步骤⑨：IoTDA 推送帧展开全链（TASK.md L-3 冻结映射端到端验证）——真实取证报文
      * （resource=device.property）经 fake broker 投递，解析器展开为 2 条 CF-7 标准遥测消息
-     * （heartRate/spo2），断言 iot_telemetry 落 2 行且 value 数值定型、quality=GOOD、source=IOTDA。
+     * （heartRate/spo2），断言 iot_telemetry 落 2 行且 value 数值定型、quality=SUSPECT、
+     * source=IOTDA（Task 6 时间合理性步：取证报文 event_time_ms 为固定历史时点，偏差远超
+     * 默认阈值 300s → SUSPECT 标注<b>不丢弃</b>——行数断言本身即"不丢弃"语义的守卫）。
      * 该设备无绑定档案：患者/就诊列落 NULL 仍入库（"未关联仍入库"口径，14-iot §3.3）。
      */
     @Test
@@ -611,7 +617,9 @@ class IotTelemetryPipelineIT {
                 .extracting(IotdaRow::value)
                 .containsExactly(new BigDecimal("78"), new BigDecimal("100"));
         assertThat(rows).allSatisfy(row -> {
-            assertThat(row.quality()).as("数值属性质量口径 GOOD").isEqualTo("GOOD");
+            assertThat(row.quality())
+                    .as("取证时点偏差超阈值 → SUSPECT 标注不丢弃（FU-M14-05 时间合理性，Task 6 断言现代化：原口径 GOOD）")
+                    .isEqualTo("SUSPECT");
             assertThat(row.source()).as("IoTDA 推送帧来源标注 IOTDA").isEqualTo("IOTDA");
         });
     }
@@ -702,6 +710,36 @@ class IotTelemetryPipelineIT {
         session.subscribe(subscribeHeaders, summaryFrameHandler(frames));
         Thread.sleep(500);
         return frames;
+    }
+
+    /**
+     * 轮询等待本批遥测对应的摘要帧（Task 11 起 2s 窗口节流的时序适配，断言契约不变）：步骤②
+     * 批次落在 2s 窗口内，其摘要帧排空时点晚于订阅建立，会话会先收到上一窗口的滞后摘要帧（条数
+     * 为步骤②批真实累计值）——按 items 含本批 metricCode 识别本批帧，滞后帧跳过不进断言。
+     *
+     * @param frames     摘要帧队列，非空；来源：{@link #subscribeForFrames(StompSession, String)}
+     * @param metricCode 本批遥测指标编码，非空；来源：本步发送的遥测帧
+     * @return 本批对应的摘要帧 JSON 原文；等待窗口耗尽仍未命中返回 null（由调用方到帧断言兜底）
+     * @throws InterruptedException 轮询等待被中断（测试进程被强制关闭等场景，向上透传交由 JUnit 处置）
+     * @throws JsonProcessingException 摘要帧非法 JSON（正路径不应发生，服务端 Jackson 串行化契约）
+     */
+    private String pollBatchSummaryFrame(BlockingQueue<String> frames, String metricCode)
+            throws InterruptedException, JsonProcessingException {
+        long deadline = System.currentTimeMillis() + PIPELINE_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            String frame = frames.poll(deadline - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+            if (frame == null) {
+                // 等待窗口耗尽仍未收到任何帧：交由调用方"批落库后摘要帧到达订阅会话"断言兜底
+                return null;
+            }
+            JsonNode summary = objectMapper.readTree(frame);
+            for (JsonNode item : summary.path("items")) {
+                if (metricCode.equals(item.path("metricCode").asText())) {
+                    return frame;
+                }
+            }
+        }
+        return null;
     }
 
     /** 帧处理器：STOMP 载荷按字节收取（服务端 Jackson JSON 串行化），UTF-8 解码入队供轮询断言 */
@@ -804,8 +842,8 @@ class IotTelemetryPipelineIT {
         assertThat(condition.getAsBoolean()).as(description).isTrue();
     }
 
-    /** 遥测行投影（metric/value + 绑定快照两列） */
-    private record LineRow(String metricCode, String value, long patientId, long visitId) {}
+    /** 遥测行投影（metric/value + 绑定快照两列；visit_id 为 CF-3 字符串） */
+    private record LineRow(String metricCode, String value, long patientId, String visitId) {}
 
     /** 错误日志行投影（stage/status/摘要） */
     private record ErrorRow(String errorStage, String status, String rawDigest) {}

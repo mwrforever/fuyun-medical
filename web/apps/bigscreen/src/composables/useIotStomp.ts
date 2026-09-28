@@ -13,6 +13,9 @@
  *    onWebSocketClose/onStompError 先将在册句柄置 null 作废（不置 null 会让重连跳过重订阅，
  *    形成「徽标已连接、零帧流入」假连接，PR-5 Finding 2）；组件卸载 unsubscribe 由
  *    useIotTelemetry 的 onUnmounted 承接，显式 disconnect() 先退订在册订阅再 deactivate；
+ *    P2 PR-2 扩展：新增 subscribeIotTopic 通用主题注册表（多主题并存、deliver 闭包固化
+ *    parse+onFrame 载荷管线），承载运营大屏 alarm 与 dashboard/global 两主题消费，遥测摘要
+ *    专用单槽位保持不变（既有消费面零改动）；
  * 4. 【token 经 beforeConnect 动态注入】每次连接尝试（含断线自动重连）实时读 sessionStorage 键
  *    fy:bigscreen:iot-token 拼 Bearer 头进 STOMP CONNECT 帧（后端帧级鉴权唯一输入，PR-5
  *    Finding 1 迁移后口径）——重连自动携带最新令牌，禁构造参数固化一次性 token、禁 URL/query
@@ -75,6 +78,23 @@ let telemetrySubscription: {
   handle: StompSubscription | null;
 } | null = null;
 
+/**
+ * 通用主题订阅在册注册表（P2 PR-2 运营大屏扩展面：alarm/telemetry/dashboard 三主题并存）：
+ * 键=destination，同主题重复订阅先退订旧句柄再替换（换病区重订阅语义）；deliver 在
+ * subscribeIotTopic 内以闭包固化 parse+onFrame 载荷管线（注册表层擦除泛型、零类型断言）。
+ */
+interface TopicPipeline {
+  /** 订阅主题路径（与后端 IotMessagingConstants 契约逐字对齐） */
+  destination: string;
+  /** 帧处理管线（JSON.parse 产物收窄→毒帧 warn→合法帧回调），闭包持有调用方泛型 */
+  deliver: (raw: unknown) => void;
+  /** 库订阅句柄（null=待连接落地转正/已随连接作废） */
+  handle: StompSubscription | null;
+}
+
+/** 通用主题订阅注册表（destination 主题订阅并存；与遥测摘要单槽位互不干扰） */
+const topicPipelines = new Map<string, TopicPipeline>();
+
 /** connect() 传入的状态变更回调（ disconnect 时解除，防悬挂引用） */
 let stateChangeListener: ((state: IotConnectionState) => void) | null = null;
 
@@ -94,6 +114,21 @@ export const connectionState: Readonly<Ref<IotConnectionState>> = connectionStat
 export function telemetryTopicPath(wardId: string): string {
   return `/topic/iot/telemetry/${wardId}`;
 }
+
+/**
+ * 生成告警订阅主题路径（与后端 IotMessagingConstants.TOPIC_ALARM_PREFIX 契约逐字对齐；
+ * 运营大屏中列告警增量消费面，P2 PR-2 扩展）。
+ *
+ * @param wardId 病区 ID，纯数字字符串（调用方已校验）
+ * @return 主题路径，如 /topic/iot/alarm/1001
+ */
+export function alarmTopicPath(wardId: string): string {
+  return `/topic/iot/alarm/${wardId}`;
+}
+
+/** 全院摘要订阅主题（与后端 IotMessagingConstants.TOPIC_DASHBOARD_GLOBAL 契约逐字对齐：
+ * 全院主题不分病区，载荷与 REST DashboardSummaryVO 同构） */
+export const DASHBOARD_GLOBAL_TOPIC = '/topic/iot/dashboard/global';
 
 /** 状态翻转：去重后更新单例 ref 并触发调用方回调 */
 function setConnectionState(state: IotConnectionState): void {
@@ -131,11 +166,14 @@ function generateTraceId(): string {
 /**
  * 作废在册订阅句柄（置 null 是重连 onConnect 重订阅的前提，PR-5 Finding 2）：stompjs 7.3.0
  * 连接关闭后 _stompHandler 整体作废、旧订阅句柄已随连接失效且库内无自动重订阅——不清句柄
- * 会导致重连 onConnect 跳过重订阅的假连接。
+ * 会导致重连 onConnect 跳过重订阅的假连接。遥测摘要单槽位与通用主题注册表一并作废。
  */
 function invalidateSubscriptionHandle(): void {
   if (telemetrySubscription !== null) {
     telemetrySubscription.handle = null;
+  }
+  for (const record of topicPipelines.values()) {
+    record.handle = null;
   }
 }
 
@@ -175,6 +213,11 @@ function getOrCreateClient(): Client {
       if (record !== null) {
         record.handle = doSubscribe(record);
         info('已订阅遥测摘要主题', record.destination, traceTag());
+      }
+      // 通用主题注册表全量重订阅（运营大屏三主题面：断线重连后逐主题恢复，防零帧假连接）
+      for (const pipeline of topicPipelines.values()) {
+        pipeline.handle = doSubscribeTopic(pipeline);
+        info('已订阅主题', pipeline.destination, traceTag());
       }
       info('STOMP 已连接', buildBrokerUrl(), traceTag());
     },
@@ -226,6 +269,81 @@ function unsubscribeTelemetry(): void {
   }
   telemetrySubscription.handle?.unsubscribe();
   telemetrySubscription = null;
+}
+
+/**
+ * 落地通用主题库订阅：帧回调内 try/catch 包裹 JSON.parse，deliver 闭包内收窄载荷——
+ * 非法 JSON 毒帧 warn 留痕不中断订阅（等待下一帧自然恢复）。
+ */
+function doSubscribeTopic(pipeline: TopicPipeline): StompSubscription {
+  return getOrCreateClient().subscribe(pipeline.destination, (message: IMessage) => {
+    try {
+      pipeline.deliver(JSON.parse(message.body) as unknown);
+    } catch {
+      // 非法 JSON 毒帧：warn 留痕，订阅保持
+      warn('主题帧 JSON 解析失败，已忽略本帧', pipeline.destination, traceTag());
+    }
+  });
+}
+
+/** 退订指定通用主题订阅（键=destination；在册不存在时幂等跳过） */
+function unsubscribeTopic(destination: string): void {
+  const pipeline = topicPipelines.get(destination);
+  if (pipeline === undefined) {
+    return;
+  }
+  pipeline.handle?.unsubscribe();
+  topicPipelines.delete(destination);
+}
+
+/**
+ * 订阅任意 IoT 主题（运营大屏扩展面：alarm 与 dashboard/global 两主题经此消费；遥测摘要
+ * 主题仍走 subscribeTelemetrySummary 专用单槽位）。同一 destination 重复调用先退订旧订阅
+ * 再替换（换病区重订阅语义）；连接未落地时登记待订阅，onConnect 全量转正。
+ *
+ * @param destination 主题路径，非空；须与后端 IotMessagingConstants 契约逐字对齐
+ * @param parse 帧载荷收窄函数（unknown→T|null；返回 null 视为毒帧 warn 留痕忽略本帧）
+ * @param onFrame 合法载荷回调（parse 收窄后的强类型载荷）
+ * @return 订阅代理句柄（unsubscribe 幂等，组件卸载必须调用——web B.3-3 卸载条款）
+ */
+export function subscribeIotTopic<T>(
+  destination: string,
+  parse: (raw: unknown) => T | null,
+  onFrame: (payload: T) => void,
+): StompSubscription {
+  if (destination.trim() === '') {
+    throw new Error('订阅主题路径不得为空，已拒绝订阅');
+  }
+  // 换病区/同主题重订阅：先退订在册旧订阅，防旧句柄泄漏与重复帧流入
+  unsubscribeTopic(destination);
+  // deliver 闭包固化 parse+onFrame：载荷类型在闭包内闭合，注册表层零类型断言
+  const pipeline: TopicPipeline = {
+    destination,
+    deliver: (raw: unknown) => {
+      const payload = parse(raw);
+      if (payload === null) {
+        // 残缺载荷（结构不合法）：warn 留痕，订阅保持
+        warn('主题帧载荷不合法，已忽略本帧', destination, traceTag());
+        return;
+      }
+      onFrame(payload);
+    },
+    handle: null,
+  };
+  topicPipelines.set(destination, pipeline);
+  if (client !== null && client.connected) {
+    // 已连接：立即落地真实订阅
+    pipeline.handle = doSubscribeTopic(pipeline);
+    info('已订阅主题', destination, traceTag());
+  } else {
+    info('已登记主题待订阅（连接建立后自动落地）', destination, traceTag());
+  }
+  return {
+    id: `iot-topic-${destination}`,
+    unsubscribe: () => {
+      unsubscribeTopic(destination);
+    },
+  };
 }
 
 /**
@@ -302,6 +420,10 @@ export function subscribeTelemetrySummary(
  */
 export async function disconnect(): Promise<void> {
   unsubscribeTelemetry();
+  // 通用主题注册表全量退订（运营大屏卸载面；逐主题退订后清空注册表）
+  for (const destination of [...topicPipelines.keys()]) {
+    unsubscribeTopic(destination);
+  }
   stateChangeListener = null;
   if (client !== null) {
     await client.deactivate();

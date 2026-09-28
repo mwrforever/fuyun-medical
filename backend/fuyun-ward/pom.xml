@@ -8,13 +8,86 @@
     <artifactId>fuyun-backend</artifactId>
     <version>0.1.0-SNAPSHOT</version>
   </parent>
-  <!-- 业务模块（M16 智慧病房应用）：仅依赖公共模块，业务实现按 P0~P6 计划逐域实装 -->
+  <!-- 业务模块（M16 智慧病房应用）：P2 PR-2 起落迁移与业务实现（呼叫对讲状态机/冷链合规台账/
+       输液监控编排/体征自动采集视图），依赖面对齐 fuyun-iot 实证清单裁剪（common/system/integration/
+       amqp/websocket/validation/MP/jsqlparser/micrometer/modulith-api/lombok/test；不含 fuyun-patient/qpid）；
+       iot 事件经 @RabbitListener 消费（iot↔ward 事件链零模块依赖，P2 PR-2 计划 GC3），
+       WebSocket 面随呼叫/告警推送实装启用；P2 PR-2 Task 12 增补 fuyun-iot 依赖——仅消费其
+       api NamedInterface（IotTelemetryQueryPort/TelemetryPoint/告警载荷，Modulith verify 把关
+       的 api 面；Task 10 端口 javadoc 明示 ward 依赖 iot api 包，Task 1 本注释先于端口演进，
+       实况修订申报） -->
   <artifactId>fuyun-ward</artifactId>
   <dependencies>
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!-- 兄弟模块 api 面（system：审计注解与令牌校验；integration：MessagingGovernance 消息治理；
+         iot：遥测查询端口 IotTelemetryQueryPort 与告警/异常事件载荷——仅消费 api 包，
+         宪法 B.2-2 允许，Modulith verify 把关，inpatient pom 先例） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-system</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-iot</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- 基础设施：starter-amqp（iot 事件消费与 ward 域事件发布）/ starter-websocket（呼叫与告警
+         实时推送，传递引入 starter-web）/ starter-validation（@Validated 配置与入参校验）/
+         mybatis-plus starter + jsqlparser（ward 库数据访问，spring-boot3 后缀 starter，禁再引入
+         mybatis-spring 系，宪法 A.4.3-12）/ micrometer-core（监控指标）——版本全部 BOM 托管零声明
+         （iot pom 同源，禁自行声明版本） -->
+    <!-- spring-modulith-api（provided，BOM 托管零声明）：api 包 package-info @NamedInterface 声明
+         依赖（宪法 B.1 对外契约出口，nursing/iot pom 同源先例） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-amqp</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-jsqlparser</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>io.micrometer</groupId>
+      <artifactId>micrometer-core</artifactId>
+    </dependency>
+    <!-- Lombok（BOM 托管版本）：实体/VO 编译期依赖，provided 不打进运行产物 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+    <!-- 测试：错误码契约/状态机/服务单测（JUnit/AssertJ/Mockito），BOM 托管版本 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 </project>

@@ -29,14 +29,20 @@ public class IotTelemetryEntity {
     /** 患者 ID（写入时绑定快照，无绑定为 NULL），可空 */
     private Long patientId;
 
-    /** 就诊 ID（写入时绑定快照，无绑定为 NULL），可空 */
-    private Long visitId;
+    /** 就诊 ID（写入时绑定快照，无绑定为 NULL；CF-3 定长 14 位字符串，V1006 改造），可空 */
+    private String visitId;
 
     /** 指标编码（P0 未建 iot_metric_dict，原生编码直传；唯一键三列之一） */
     private String metricCode;
 
-    /** 采集值（CF-7 value 字符串解析定型为 NUMERIC；非法数值按 BAD 质量保留入库不阻断） */
+    /** 采集值（CF-7 value 字符串解析定型为 NUMERIC，仅数值定型行填写；非数值行为 NULL——原文承载见 rawValue） */
     private BigDecimal value;
+
+    /**
+     * 非数值遥测文本承载（W-7，V1005 列）：非数值标量为原文、对象/数组为紧凑 JSON（Jackson 标准
+     * 输出无空格）；数值定型行为 NULL。哨兵值会污染生理指标统计，故原文独立成列而非回填 value。
+     */
+    private String rawValue;
 
     /** 计量单位（无量纲指标为空），可空 */
     private String unit;

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.fuyun.iotsimulator.telemetry.DeviceCredentialEncoder;
 import java.nio.charset.StandardCharsets;
+import org.eclipse.paho.client.mqttv3.IMqttMessageListener;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
@@ -106,6 +107,27 @@ class IotdaMqttClientTest {
         assertThatCode(() -> callbackCaptor.getValue().messageArrived("t", new MqttMessage()))
                 .as("上行-only 客户端不消费下行帧（回调空实现不得抛错）")
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("任意主题发布（命令回执通道）：目标主题透传、qos=1、UTF-8 载荷")
+    void publishesToArbitraryTopicAtQosOne() throws MqttException {
+        client.publishTo("$oc/devices/dev-001/sys/commands/response/request_id=req-1", "{\"result_code\":0}");
+
+        verify(mqttClient)
+                .publish(eq("$oc/devices/dev-001/sys/commands/response/request_id=req-1"), messageCaptor.capture());
+        MqttMessage published = messageCaptor.getValue();
+        assertThat(published.getQos()).as("任意主题发布统一 qos=1").isEqualTo(1);
+        assertThat(new String(published.getPayload(), StandardCharsets.UTF_8)).isEqualTo("{\"result_code\":0}");
+    }
+
+    @Test
+    @DisplayName("下行订阅透传：topicFilter/qos/监听器原样交 Paho（命令下行挂接）")
+    void subscribesWithFilterQosAndListener() throws MqttException {
+        IMqttMessageListener listener = (topic, message) -> {};
+        client.subscribe("$oc/devices/dev-001/sys/commands/#", 1, listener);
+
+        verify(mqttClient).subscribe("$oc/devices/dev-001/sys/commands/#", 1, listener);
     }
 
     @Test

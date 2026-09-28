@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  质量监控两表复杂 SQL 映射（宪法 A.4.3-15）：iot_data_quality_stat 惰性重算 UPSERT（按
+  uk_iot_data_quality_stat_device_date 冲突覆盖，updated_at 由库端触发器维护应用层禁写）与
+  iot_consumer_stat 每消费组最新快照（DISTINCT ON 惯用法，积压监控 >5 分钟告警判据读取面）。
+  加载路径：MP starter 默认 mapper-locations=classpath*:/mapper/**/*.xml，零配置生效。
+-->
+<mapper namespace="com.fuyun.iot.mapper.IotDataQualityStatMapper">
+
+    <!-- 统计行 UPSERT：同设备同统计日覆盖计算值（updated_by 随调用方传值，触发器维护 updated_at） -->
+    <insert id="upsertStat">
+        INSERT INTO iot.iot_data_quality_stat
+            (device_id, stat_date, expected_count, received_count, missing_rate, anomaly_count, quality_score, updated_by)
+        VALUES
+            (#{deviceId}, #{statDate}, #{expectedCount}, #{receivedCount}, #{missingRate}, #{anomalyCount}, #{qualityScore}, #{updatedBy})
+        ON CONFLICT (device_id, stat_date) DO UPDATE SET
+            expected_count = EXCLUDED.expected_count,
+            received_count = EXCLUDED.received_count,
+            missing_rate = EXCLUDED.missing_rate,
+            anomaly_count = EXCLUDED.anomaly_count,
+            quality_score = EXCLUDED.quality_score,
+            updated_by = EXCLUDED.updated_by
+    </insert>
+</mapper>

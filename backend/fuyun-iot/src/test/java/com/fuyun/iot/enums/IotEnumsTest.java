@@ -62,7 +62,7 @@ class IotEnumsTest {
         }
     }
 
-    /** 参数化夹具清单：8 个枚举全量（V400~V401 全部状态列值域 + CF-7 两值域枚举） */
+    /** 参数化夹具清单（A.2-7 规范回归防线；P2 PR-2 Task 8 补纳命令域两枚举） */
     static List<Fixture> fixtures() {
         return List.of(
                 new Fixture("DeviceStatus", DeviceStatus.class, DeviceStatus::fromCode),
@@ -72,7 +72,9 @@ class IotEnumsTest {
                 new Fixture("ConsumeErrorStage", ConsumeErrorStage.class, ConsumeErrorStage::fromCode),
                 new Fixture("ConsumeErrorStatus", ConsumeErrorStatus.class, ConsumeErrorStatus::fromCode),
                 new Fixture("TelemetryQuality", TelemetryQuality.class, TelemetryQuality::fromCode),
-                new Fixture("TelemetrySource", TelemetrySource.class, TelemetrySource::fromCode));
+                new Fixture("TelemetrySource", TelemetrySource.class, TelemetrySource::fromCode),
+                new Fixture("CommandStatus", CommandStatus.class, CommandStatus::fromCode),
+                new Fixture("CommandDeliverMode", CommandDeliverMode.class, CommandDeliverMode::fromCode));
     }
 
     @ParameterizedTest(name = "[{index}] {0}")

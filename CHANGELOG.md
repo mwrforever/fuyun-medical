@@ -2,6 +2,161 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-28 · PR #57 合并前修复环收口：四笔修复 + scoped 复审 + 五条分流登记（先记再改）
+
+- ① **四笔修复（用户 2026-09-28 决策派发合并前修复环，范围锁定 B1/B2/P1/C2/C3 五项不扩大）**：
+  3c5f95c B1——AlarmEngine evaluate 批事务内 fireNewAlarm 捕获 DuplicateKeyException 后 PG 25P02
+  中止态连带回滚整批告警，每条告警「落行 + 事务内 triggered 事件 + afterCommit 推送/补推登记」
+  收进独立 REQUIRES_NEW perAlarmTx（对照 VitalSign 范式），冲突只丢单条、推送时机语义不回退，
+  补并发冲突用例；5d9c73d B2——风暴解除补推排空自 THRESHOLD 循环上提至 evaluate() 评估起点，
+  DEVICE_ALARM/OFFLINE 遗留队列不再静默等 1h TTL 过期，补两规则源排空用例；d2f7e5c P1——
+  fuyun-ward api 包补 package-info @NamedInterface（照 fuyun-iot 同款），连带 ward pom 补
+  spring-modulith-api（provided，BOM 托管零声明，注解编译类路径所需）；18dc26c C2/C3——
+  OfflineDetector 断流候选与 QualityServiceImpl 在线设备扫描两处 LIMIT 截断补
+  orderByAsc(last_online_at)（A.4.3-17），处置子集确定化。
+- ② **scoped 复审**：四笔落地后范围限定复审（仅核四笔改动面与回归），结论 READY_FOR_CI。
+- ③ **五条分流登记（TASK.md，同日修复环决策，不扩大修复环范围）**：C4 OfflineDetector 逐规则
+  循环单查（A.4.3-14，「批级口径」注释未申报）→W-60 随 PR-3（收敛单条动态 SQL 或补正式偏差
+  申报，二选一）；C1 HuaweiIotdaRegistry 外部网关无超时/读超时/有界重试/熔断显式配置（B.4-2）
+  →W-61 随 PR-4（IoTDA 联调硬前置）；C6 CommandDispatcher deliveryExecutor 无界
+  newCachedThreadPool（B.3-4）→W-62 随 PR-4；C7 registry/huawei 包位 vs B.4-1 gateway/adapter
+  归位→待决策 D-26（迁包或修宪豁免，二选一）；H1 消费错误重放与 raw_payload 脱敏/4000 截断
+  契约冲突→待决策 D-27（产品裁决重放适用范围，短期止血「打码/截断形态重放前显式拒绝」随裁决
+  一并定）。评审来源：PR #57 合并前 /code-review 修复环分诊（评分与核实细节见评审记录留档）。
+
+## 2026-09-27 · simulator 命令回执断言竞态窗口加宽（CI 稳定化）
+
+- CI runner 唯一失败用例 CommandSubscriberTest#respondsSuccessReceiptForSupportedCommand（run 36346561581，
+  本地历轮全绿）：回执断言 2s 轮询窗口在 CI 高负载下偶发不足（异步回执未达断言窗口）。修复提常量
+  AWAIT_MILLIS=5000（复用同模块既有字面量，fuyun-iot 同名惯例）加宽窗口，类内同型六处 timeout 统一替换，
+  断言内容与生产码零变更——终审分诊工单 W-52 CI 稳定性张（T10②/T14①/T15⑦）之 **T14① 顺带核销**，余项仍挂。
+
+## 2026-09-27 · 终审收尾双提交：comment fixup（必修四条+搭车十二条）与终审分诊工单登记 W-49~W-59（Ready to merge 后零生产逻辑变更）
+
+- ① **件一 comment fixup（commit 6341cef，15 文件纯注释/文案修正，零逻辑零断言变更）**：必修四条——
+  IotSeqGate「计划 GC15」实为 GC13（禁 Lua 条款，类注释与 next 行注两处）；IotMessagingConfig 定绑锚
+  GC7→GC6、不注册回调 GC8→GC7（Progress Task 2 审查 deferred-① 编号错位收口，javadoc 三处）；
+  MessagingGovernanceIT DisplayName「八十一条」→「八十二条（id 74–82）」与 totalRows=82 断言一致；
+  CommandDispatcher challengeId 明文 warn 补终审豁免注记（GETDEL 一次性消费+TTL 120s+仅失效路径
+  打印，不做掩码改码）。搭车十二条：IBindingService 类注释遥测富化通道改批量面（listActiveByDevices）
+  且 listActiveByDevices 参数措辞对齐 null 短路实现；ProductVO createdAt 注明 POST /products 上架响应
+  未经回查为 null；IotDeviceRegistry 类注释「五面」补删除/注销面；DeviceStatusServiceImplTest 存在性
+  查询 helper「三列投影」→「四列投影」（投影含 last_online_at）；application.yml 波形日配额预留参数补
+  TODO(wave-quota) 格式；TelemetryPushServiceImpl「两轮轮询」→「四轮」（2000/500）+ buildAlarmPayload
+  补 occurredAt 漂移口径注记（last_triggered_at 经计数 UPDATE 原地刷新，补推/强化重推晚于 MQ 首发值）；
+  IotConfig Task 7 告警域件数七→八（含 AlarmProperties，与 @Import 行注八件对齐）；冷链请求 DTO 与实体
+  「其余类型忽略置空/为空」→「不校验不置空、按请求原样落库」（registerRecord 实况）；WardMessagingConfig
+  订阅事件三→四（V1004 id 74/78/81 与 V800 id 63）；ProductManageView 映射弹窗「编码退化为手工录入」→
+  「指标编码下拉无选项（映射行无法补全）」（空 select 实况）。
+- ② **件二工单登记（本提交）**：终审分诊表「立工单」清单按域归并 11 张（W-49~W-59，每张注明来源条目号
+  与一句修法指引）——W-49 SeqGate 原子性（T3⑥/T12④）/ W-50 Wrapper 条件断言（T5②，建议下一 PR 首项）/
+  W-51 输入校验面（T4③/T4④/T13①）/ W-52 CI 稳定性（T10②/T14①/T15⑦）/ W-53 性能面（T7①/T10①/T11①）/
+  W-54 临床与运维可见性（T12⑥ 输液停报 NONE 掩盖红档 + T15⑤ 分页截断提示 + T17① 趋势图冻结）/
+  W-55 契约防重（T12⑧）/ W-56 命令与设备域轻量项（T8② 注记已搭车存档掩码选项、T7④/T5③/T5④/T8③/T4②）/
+  W-57 消费链与推送域轻量项（T10③/T11③/T11⑤/T6③/T7⑤/T14③/T12②）/ W-58 前端轻量项（T15②/T15③）/
+  W-59 消息域 GC 编号引用错位残余（WardSeqGate「计划 GC15」与 ward/iot 消息域 GC7/GC8 旧引用——必修②
+  同类扩展，非终审清单项；PR-1 产物各自计划语境引用不动）。
+- ③ **验证与跳过清单**：`python scripts/check-encoding.py` 通过；`mvn -pl fuyun-iot,fuyun-app -am
+  test-compile` BUILD SUCCESS（编译零破坏）。跳过条目：T15⑥「注册缺项用例计数笔误」——现场核对四页
+  spec 头部/用例计数（6+6+5+6=23 与 Task 15 报告一致）、注册缺项用例题面四必填字段（设备ID/产品ID/名称/
+  类型）与注册表单实况、SimulatedRegistryTest 七用例/HuaweiIotdaRegistryTest 三用例均名实相符，未定位到
+  笔误，按「禁猜」原则跳过（明细见 .superpowers/sdd/2026-09-25-p2-pr2-m14-m16/task-18-final-fixup-report.md）。
+
+## 2026-09-27 · Task 18 真栈探针修复环 round 2：D1 AMQP 启用态 Clock 二义启动失败修复（D2/D3 配置面零代码闭合）
+
+- ① **D1（阻断级）根因与修法**：`fuyun.iot.amqp.enabled=true` 时 `IotAmqpConfig.iotAmqpClock` 与
+  `IotWebSocketConfig.iotPushClock` 双 `Clock` Bean 并存，Spring Modulith 事件注册表工厂方法
+  （`EventPublicationAutoConfiguration#eventPublicationRegistry`）经 `ObjectProvider<Clock>` 按
+  类型无标识解析（库内注入点挂不上 @Qualifier）二义失败，经 EventOpsJob 依赖链阻断启动——
+  全量门禁 IT 恰有 @Primary 测试时钟（IotTelemetryPipelineIT/IotAmqpReconnectIT）遮蔽，CI 绿而
+  真栈红。修复取 BillingWebConfig 取价时钟同款先例（非纯 @Qualifier 形态的裁决依据：库内注入点
+  不可限定，且任一生产 Clock 加 @Primary 会与既有两 IT 的 @Primary 测试时钟双 primary 冲突）：
+  删除 `iotPushClock` 全局 Bean，推送节流时钟改 `IotWebSocketConfig` 装配点显式构造
+  `Clock.systemUTC()`；`TelemetrySummaryAggregator` 构造器摘除 @Qualifier；enabled 两态按类型
+  候选均 ≤1（true=iotAmqpClock 单候选，false=零候选走注册表内置 UTC 默认），AMQP 凭证时钟与
+  推送节流时钟语义各自不变（推送时钟生产恒系统 UTC，单测构造器注入固定时钟不变）。
+- ② **D1 回归锚**：新增 `IotAmqpClockAmbiguityTest`（fuyun-app，ApplicationContextRunner 走真实
+  Modulith 自动配置，无容器 CI 可跑）两面——缺陷机理面：双无主 Clock 候选下上下文启动失败且
+  报告点名 `iotAmqpClock/iotPushClock/eventPublicationRegistry`（与真栈错误同形，防再引入第二
+  全局 Clock Bean）；修复面：真实 `IotAmqpConfig`（enabled=true + 连接四要素）与
+  `IotWebSocketConfig` 同上下文装配成功、Clock 候选恰一、注册表解析成功、聚合器 Bean 在位。
+- ③ **D2/D3 定性与零代码闭合**：D2 实为映射管理面（PUT metric-mappings）字典存在性校验
+  （IOT-1004）拒绝 `INFUSION_SHORTAGE`——ingest 两面（HTTP 兜底/AMQP）词表外直通本就同构无差异；
+  词表缺口走既有运行时登记端点 `POST /api/v1/iot/metrics`（字典自管设计内面，ward 侧
+  WardMessagingConstants「词表缺位申报」预告的对齐路径）闭合，不改 V1007 种子、不新增迁移号、
+  ward 侧 metricCode 精确相等语义不动；D3 经核 `deploy/.env.example:86` 占位键与
+  `docker-compose.yml:111` 接线在 HEAD 已齐备，缺口仅在本地真实 `.env`（红线禁动，演示经进程
+  环境变量注入）。
+
+## 2026-09-27 · P2 PR-2 收口：M14/M16 七条验收锚点 IT 全绿与文档收口（Task 18 批次 D）
+
+- ① **事件与号段收口**：**事件 id 74–82 落地**（74–81 iot 八事件落 V1004、82 ward.cold-chain.alert-archived 落 V1102，三方一致契约锚 IotMessagingContractTest/WardMessagingContractTest）；**迁移号勘误申报**（乱序守卫裁定出处=本文件 2026-09-26「P2 PR-2 前置」条目⑤ + 台账 `docs/migrations/flyway-version-registry.md` 同日行）：iot 原排 V404–V413 与 nursing 原排 V809 低于基线全局最大已应用 V1003 被乱序守卫拒止，改通用段续号 **V1004–V1013/V1014**（billing V1001–V1003 先例），ward **V1100–V1102 维持**（全新 schema 享号段初始化豁免且 V1100>V1003 双保险）。
+- ② **D-21 断言现代化留痕（主控义务①）**：Task 6 对 `IotTelemetryPipelineIT` 步骤⑨ quality 断言 **GOOD→SUSPECT 单点等严修订**——取证报文为固定历史时点（真实取证原文不改），时间合理性新契约下精确值即 SUSPECT，行数断言（恰 2 行）续守「标注不丢弃」语义；四边界齐：**逐次批准**（用户 2026-09-22 批复 D-21 破例制度化，根 AGENTS.md §7 回归红线出口）/ **严格度不降**（`isEqualTo` 全量精确匹配，未放宽为部分匹配）/ **原子交付**（断言修订+实现变更+回归锚同 PR）/ **留痕**（task-6-report 申报 + 本条）。
+- ③ **IOT-1023~1025 词表扩容申报（Task 11 主控裁定接受，借用先例延续）**：网关 CRUD 域计划无冻结码位（计划缺口），沿 Task 4 确立的「IOT-1023 起接续顺延」先例借增 GATEWAY_NOT_FOUND(404)/GATEWAY_ALREADY_EXISTS(409)/GATEWAY_STANDBY_INVALID(409)；`IotErrorCodeTest` 冻结全集 22→25 逐位连续 + HTTP 映射全量精确匹配（严格度不降）。
+- ④ **交付面落地**：Registry 双实现（`fuyun.iot.admin.enabled` 条件装配——false 缺省 SimulatedRegistry（CI/单测/IT 恒此形态），true 走 HuaweiIotdaRegistry 出网华为 SDK 3.1.218（表外申报先例），调用失败统一 RegistryException→IOT-1022(503)）；**iot-simulator 生产级升级**（Task 14 @ d11a2d8：输液场景剧本/临床值域多指标/设备状态帧/命令下行订阅）；W-7 数据面（V1005 raw_value）与 W-10 类型改造（V1006 CF-3 VARCHAR(14)+夹具重插）随验收锚 IT 落地；**七条验收锚点 IT 全绿入库**（679dc3f：IotNonNumericIngestIT/IotBindingMigrationIT/IotTelemetryQueryIT/IotAlarmClosedLoopIT/IotCommandFlowIT/IotLinkageFlowIT/WardCallColdChainIT，全量门禁通过）。
+- ⑤ **casClose 实况收口（与 14-iot.md §13 第 10 条注记同源）**：告警关闭 CAS 实况允许 ACTIVE/ACKNOWLEDGED 两态直关（`IotAlarmMapper`:74-76），与 Spec §5 线性生命周期描述的矛盾以收口注记收口——主控裁定后端实况为准，前端已三方收敛（api 注释/视图暴露/测试用例，Task 15）。
+- ⑥ **批次 A/B/C 生产代码修复申报面**：七条 IT 验证报告（A：IotNonNumericIngestIT+IotBindingMigrationIT / B：IotTelemetryQueryIT+IotAlarmClosedLoopIT / C：IotCommandFlowIT+IotLinkageFlowIT / ward：WardCallColdChainIT）**生产代码改动均为零**。测试侧修复申报：A 批次 IotNonNumericIngestIT 两处（兜底 token 动态属性注入缺失致 401、非法 JSON 输入改 `{bad}` 精确命中树规整失败兜底分支）、B1 批次 IotTelemetryQueryIT +16 行（动态属性/CALL 形态回刷/注释校正）、门禁期 IotTelemetryPipelineIT 步骤③ pollBatchSummaryFrame 时序适配（ff5c9c4：2s 窗口节流下滞后摘要帧过滤后取本批帧，断言契约与生产码零改动）；B2/C1/C2 一次通过零改动；ward 批次首跑即绿，contracts 三处事实修正（LT 越限示例、操作者取登录 id、complete 空白 400 出处）仅测试侧锚定，spotless 顺带归一四个姊妹 IT 文件格式（零逻辑变更，已在收口提交面）。终局申报：全量门禁三轮证据终局 BUILD SUCCESS（首跑 TelemetryPipeline 回归经 ff5c9c4 已修、run2 Pharmacy 超时定性环境抖动单跑复现绿、run3 全零终局 EXIT=0）+ 前端 audit 官方源复核零漏洞；Task 4 物模型 JSON 双形态不对称经可达性核链判定不修（华为同步专属解析面在 CI/单测/IT/演示链全路径不可达——admin.enabled=false 缺省装配 SimulatedRegistry 原样存储不解析、批次 E 演示链管理面申报待凭证注入，生产触发需凭证注入+超契约包裹形态入库双条件且失败为显式 IOT-1022 可对账，依据申报见 task-18-gate-report「遗留申报」节）。
+- ⑦ **文档收口（GC29/GC30）**：`docs/specs/modules/14-iot.md` 追加「§13 P2 PR-2 落地注记」10 条（W-7/W-10 数据面形态、事件 id 74–81、Registry 双实现切换口径、GC17①③ 降级（GC17⑥ 测量队列条审查门归位 16-ward 侧，14-iot 侧留一句话指路）、OTA 与波形查询端点顺延、iot_metric_dict 自管面（词表外直通行质量按管道重算，「词表外 SUSPECT」仅报文侧缺省语义）、casClose 实况、WS 尾帧 ≤2.5s 量级注记）；`docs/specs/modules/16-ward.md` 追加「§13 P2 PR-2 落地注记」7 条（ward 号段 V1100–V1102 零迁移豁免段/事件 id 82、GC17②④⑤⑥ 降级、nursing.infusion.completed 消费骨架 PR-3 接线声明、route 任务转换 PENDING）；TASK.md 销项——**W-7 删除**（V1005+IotNonNumericIngestIT 闭合）、**W-10 删除**（V1006+IotBindingMigrationIT 闭合）、**D-22 删除**（V1014+Task 13 幂等键链闭合）、**W-48 保留**（Task 1 排查结论已在位：三排查点无可确定性收敛缺陷、@ServiceConnection/latch/future.get(60s) 均非固定 sleep，失败形态 Docker 闪断，不改码留单继续观察）、**T-R3-5 回填闭环**（官方页 1MB 实测 + Task 14 帧体 147B/74B/40B 双证据，无需分片）；其余工单行不动（W-27/W-34/W-37~W-41/W-47/D-25 归 PR-3/PR-4）。
+
+## 2026-09-27 · P2 PR-2 Task 13：D-22 PDA 弱网补传幂等键收敛（nursing V1014 + 重放语义 + PdaView 幂等键）
+
+- ① **V1014 迁移落盘**（nursing 段，`V1014__add_vital_sign_client_msg_id.sql`）：vital_sign_record 增
+  可空 client_msg_id VARCHAR(64) 列 + 稀疏部分唯一索引 uk_vital_sign_client_msg（WHERE
+  client_msg_id IS NOT NULL AND deleted = 0）——DB 层最终兜底，与 NS-1016 应用层语义构成两层幂等
+  （A.5-6 同构）；号段依 2026-09-26 条目⑤勘误走通用段（registry 台账 V1014 行 Task 1.5 已登记，
+  本次核验一致零微调）；V803 禁改红线不变（新文件 ALTER，零触碰既有迁移）。
+- ② **后端重放语义（GC16 方案 B 冻结口径）**：VitalSignRecordRequest 增可空 clientMsgId（向后兼
+  容，空白归一 NULL 不占稀疏键位）；record() insert 捕获 DuplicateKeyException 后按 client_msg_id
+  回查——命中重放返回原 VO（HTTP 200 非 409，观察行/体温单条目/事件零重复），未命中（极端并
+  发下行已逻辑删）维持 NS-1016，无键请求既有路径全不变；measuredAt 服务器时间红线不动（GC25）。
+  **实现注记**：回查经构造器注入 PlatformTransactionManager 构建只读 REQUIRES_NEW 事务模板承载
+  （replayLookupTx）——PostgreSQL 唯一冲突即中止当前事务（25P02），同事务内 SELECT 必失败，须
+  挂起死事务以独立新事务回查（IT 真栈实证：同键重试 200 返回原行 id，无 25P02/无 409）。
+- ③ **前端 PdaView 幂等键**：vitalClientMsgId 生成后保持，成功落卡或换患者识别才轮换（弱网在途
+  失败重试复用同一键，服务端按键重放收敛补传）；键置于 await 之前捕获；payload 增 clientMsgId。
+  **实现注记**：newIdempotencyKey() 带非安全上下文回退（crypto.randomUUID 仅 HTTPS/localhost 可用，
+  院内 PDA 经 nginx :80 HTTP 访问该 API 缺位会 setup 即崩）——回退自拼 v4 形态，仍为 ≤64 位标准串。
+- ④ **测试**：VitalSignServiceImplTest 扩四组用例（同键重放返回原 VO/无键 409 保持+零回查锚/异键
+  新行/空键兼容）+ 回查未命中兜底例，TDD 先红后绿；NursingVitalSignFlowIT 扩 step11 重试重放真栈
+  用例（200 同 id 同刻，行数/条目/观察行零新增）；前端 PdaView.spec 扩键随载荷+成功轮换与失败重
+  试复用同键两例。api.d.ts 经 pnpm gen:api 全量重生成（临时导出 IT 等价 curl /v3/api-docs 管道，
+  用后即删）：+78 schema/+54 path 全为 PR-2 Tasks 2–12 iot/ward 契约首次入库，零 schema/路径删除
+  （−行均为 operation id 改号噪声），nursing 面净增 clientMsgId 一行。
+
+## 2026-09-26 · P2 PR-2 Task 12 装配面增量：ward pom 依赖增补 + iot api.payload NamedInterface 暴露
+
+- ① **fuyun-ward pom 增补 fuyun-iot 依赖**（仅消费其 api NamedInterface 面）：Task 1 pom 注释
+  「iot↔ward 零模块依赖」先于 Task 10 端口演进——`IotTelemetryQueryPort` javadoc 明示「ward 依赖
+  iot api 包 = Modulith verify 把关的 api 面」（冷链温度曲线/输液看板消费面），Task 12 实装按端口
+  契约增补；事件链零模块依赖语义不变（消费走 RabbitMQ 队列，Modulith 边界仅放行 api 包引用）。
+- ② **iot/api/payload 子包 NamedInterface 暴露**（新增 package-info.java）：Modulith 1.4 子包默认
+  不继承父包 NamedInterface——ward 消费 `AlarmTriggeredPayload`/`TelemetryAnomalyPayload`
+  （V1004 id 74/78 冻结契约）触发「depends on non-exposed type」红灯；载荷 record 本就是跨模块
+  消费契约（V1004 种子三方一致红线），`@NamedInterface("api")` 显式声明即设计意图落纸。
+
+## 2026-09-26 · P2 PR-2 前置：ward 号段登记（V1100 段）+ 事件 id 74–82 排定 + 表外依赖申报 + JaCoCo 扩名单
+
+- ① ward 固定百位段 **V1100–V1199** 登记（`scripts/check-migration-governance.py` `_SEGMENTS` 增行
+  + `docs/migrations/flyway-version-registry.md` 台账同步）：首批 V1100–V1102（呼叫域两表/冷链域两表/
+  事件种子 id 82，随 PR-2 Task 12 落盘）；基线全局最大 V1003，V1100 > V1003 乱序守卫天然通过
+  （ward 全新 schema 另享号段初始化豁免，双保险）。
+- ② **事件 id 74–82 排定**（全局递增，先例 V901 id 65–72/V1002 id 73，撰写期实测 event_registry
+  最大 id=73）：74–81 iot 八事件（alarm.triggered / alarm.escalated / alarm.closed /
+  binding.changed / telemetry.anomaly / command.completed / linkage.executed / call.triggered）
+  落 iot V1004；82 ward.cold-chain.alert-archived（producer=ward）落 ward V1102；
+  MessagingGovernanceIT 总行断言两批落改——Task 2 改 73→81（V1004 +8），Task 12 改 81→82（V1102 +1）。
+- ③ **表外依赖申报**：后端 `com.huaweicloud.sdk:huaweicloud-sdk-iotda` + `huaweicloud-sdk-core`
+  （华为云 IoTDA 管理 SDK，Registry 双实现之 HuaweiIotdaRegistry；Boot BOM 外依赖，版本执行期实取
+  maven central 锁定 **3.1.218**（2026-09-26 复核 metadata，lastUpdated 2026-09-24），仅 fuyun-iot
+  pom 显式声明，父 POM dependencyManagement 不动；PR-2 结束前补 docs/language 定稿表）；
+  前端 bigscreen `echarts`（IoT 运营大屏图表首引，pnpm 锁定，随 PR-2 前端任务引入）。
+- ④ **JaCoCo 规则二纳入 `com.fuyun.ward.service.impl`**（父 POM PACKAGE LINE=1.00）：呼叫状态机/
+  冷链合规台账属「核心业务状态机」路径；撰写期实测 `com.fuyun.iot.service.impl` 已在名单（父 POM
+  :271）无需增行，仅新增 ward 行；包不存在时规则零包平凡通过，首个 impl 落码即生效。
+- ⑤ **迁移号勘误（先记再改）**：全局乱序守卫（基线最大已应用 V1003）拒止 iot V404–V413 与 nursing
+  V809——改通用段续号 V1004–V1013/V1014（billing V1001–V1003 先例），ward V1100–V1102 维持；后续 PR
+  各模块固定段已低于全局最大者，增量一律走通用段续号。
+
 ## 2026-09-26 · 宪法修订：web C.7 谋建琢三段律按体系模板内置条款补强
 
 - 范围：仅 `web/AGENTS.md` §C.7 一节（标题层级 `##`→`###` 归位，与 C.1–C.6 一致；正文按 constitution-generator `template.md` A.8 原文直写），其余章节零改动。

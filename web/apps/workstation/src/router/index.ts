@@ -153,6 +153,69 @@ export const router = createRouter({
           component: () => import('@/views/pharmacy/ReviewTaskView.vue'),
           meta: { permission: 'pharmacy:review:audit' },
         },
+        {
+          // IoT 管理七路由第一批四条（第二批三路由归 M14 后续任务登记）
+          path: 'iot/products',
+          name: 'iot-products',
+          component: () => import('@/views/iot/ProductManageView.vue'),
+          meta: { permission: 'iot:product:manage' },
+        },
+        {
+          path: 'iot/devices',
+          name: 'iot-devices',
+          component: () => import('@/views/iot/DeviceManageView.vue'),
+          meta: { permission: 'iot:device:manage' },
+        },
+        {
+          path: 'iot/bindings',
+          name: 'iot-bindings',
+          component: () => import('@/views/iot/BindingManageView.vue'),
+          meta: { permission: 'iot:binding:manage' },
+        },
+        {
+          path: 'iot/alarm-rules',
+          name: 'iot-alarm-rules',
+          component: () => import('@/views/iot/AlarmRuleView.vue'),
+          meta: { permission: 'iot:alarm-rule:manage' },
+        },
+        {
+          // IoT 管理第二批三路由（M16 命令/联动/质量面）
+          path: 'iot/commands',
+          name: 'iot-commands',
+          component: () => import('@/views/iot/CommandCenterView.vue'),
+          meta: { permission: 'iot:command:issue' },
+        },
+        {
+          path: 'iot/linkage-rules',
+          name: 'iot-linkage-rules',
+          component: () => import('@/views/iot/LinkageRuleView.vue'),
+          meta: { permission: 'iot:linkage:manage' },
+        },
+        {
+          path: 'iot/quality',
+          name: 'iot-quality',
+          component: () => import('@/views/iot/QualityBoardView.vue'),
+          meta: { permission: 'iot:quality:view' },
+        },
+        {
+          // 病区视图分组三路由（M16 病区视图：输液看板/呼叫工作台/冷链台账）
+          path: 'ward/infusion-board',
+          name: 'ward-infusion-board',
+          component: () => import('@/views/ward/InfusionBoardView.vue'),
+          meta: { permission: 'ward:infusion:view' },
+        },
+        {
+          path: 'ward/call-workbench',
+          name: 'ward-call-workbench',
+          component: () => import('@/views/ward/CallWorkbenchView.vue'),
+          meta: { permission: 'ward:call:handle' },
+        },
+        {
+          path: 'ward/cold-chain',
+          name: 'ward-cold-chain',
+          component: () => import('@/views/ward/ColdChainView.vue'),
+          meta: { permission: 'ward:coldchain:manage' },
+        },
       ],
     },
     {

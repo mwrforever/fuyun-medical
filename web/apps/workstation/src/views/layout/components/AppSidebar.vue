@@ -36,6 +36,18 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/inpatient/transfer', label: '转抄工作台', abbr: '抄', group: '住院管理' },
   { index: '/inpatient/discharge', label: '出院管理', abbr: '出', group: '住院管理' },
   { index: '/pharmacy/review', label: '住院审方台', abbr: '审', group: '药房管理' },
+  // IoT 管理分组（M14 管理台四项 + M16 命令/联动/质量三页）
+  { index: '/iot/products', label: '产品与物模型', abbr: '物', group: 'IoT 管理' },
+  { index: '/iot/devices', label: '设备管理', abbr: '备', group: 'IoT 管理' },
+  { index: '/iot/bindings', label: '设备绑定', abbr: '绑', group: 'IoT 管理' },
+  { index: '/iot/alarm-rules', label: '告警规则', abbr: '警', group: 'IoT 管理' },
+  { index: '/iot/commands', label: '命令中心', abbr: '令', group: 'IoT 管理' },
+  { index: '/iot/linkage-rules', label: '联动规则', abbr: '联', group: 'IoT 管理' },
+  { index: '/iot/quality', label: '质量看板', abbr: '质', group: 'IoT 管理' },
+  // 病区视图分组（M16 病区视图三页：输液看板/呼叫工作台/冷链台账）
+  { index: '/ward/infusion-board', label: '输液看板', abbr: '液', group: '病区视图' },
+  { index: '/ward/call-workbench', label: '呼叫工作台', abbr: '呼', group: '病区视图' },
+  { index: '/ward/cold-chain', label: '冷链台账', abbr: '冷', group: '病区视图' },
 ];
 
 /** 顶层菜单项（group 空串），渲染在各分组之前 */

@@ -21,5 +21,13 @@ export const router = createRouter({
       // 大屏现场展示面：诊区经 query.dept 书签化（deptCode 路由 query 可直接部署到诊区大屏）
       meta: { public: true },
     },
+    {
+      path: '/dashboard',
+      name: 'iot-dashboard',
+      // 路由组件全懒加载（web B.3-2 红线），禁静态导入
+      component: () => import('@/views/dashboard/DashboardView.vue'),
+      // 大屏现场展示面：病区经 query.wardId 书签化（wardId 路由 query 可直接部署到病区大屏）
+      meta: { public: true },
+    },
   ],
 });

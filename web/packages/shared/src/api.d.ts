@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/api/v1/ward/cold-chain/archives/{archiveNo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get"];
+        put: operations["update"];
+        post?: never;
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pharmacy/drugs/{id}": {
         parameters: {
             query?: never;
@@ -12,9 +28,9 @@ export interface paths {
             cookie?: never;
         };
         /** 药品详情 */
-        get: operations["get"];
+        get: operations["get_1"];
         /** 药品变更 */
-        put: operations["update"];
+        put: operations["update_1"];
         post?: never;
         delete?: never;
         options?: never;
@@ -46,7 +62,7 @@ export interface paths {
             cookie?: never;
         };
         get: operations["detail"];
-        put: operations["update_1"];
+        put: operations["update_2"];
         post?: never;
         delete?: never;
         options?: never;
@@ -73,6 +89,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/iot/products/{productId}/metric-mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateMetricMappings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/products/{productId}/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateCommands"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/linkage-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_3"];
+        post?: never;
+        delete: operations["delete_1"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/gateways/{gatewayId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_4"];
+        post?: never;
+        delete: operations["delete_2"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/alarm-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update_5"];
+        post?: never;
+        delete: operations["delete_3"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ingest/iotda-fallback": {
         parameters: {
             query?: never;
@@ -83,6 +179,150 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["ingestIotdaFallback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page"];
+        put?: never;
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}/transfer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["transfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}/route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["route"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["progress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["complete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["answer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/cold-chain/archives": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_1"];
+        put?: never;
+        post: operations["create_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/cold-chain/archives/{archiveNo}/records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["records"];
+        put?: never;
+        post: operations["registerRecord"];
         delete?: never;
         options?: never;
         head?: never;
@@ -294,7 +534,7 @@ export interface paths {
         get: operations["list"];
         put?: never;
         /** 开方 */
-        post: operations["create"];
+        post: operations["create_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -311,7 +551,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 处方作废 */
-        post: operations["cancel"];
+        post: operations["cancel_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -328,7 +568,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 药品建档 */
-        post: operations["create_1"];
+        post: operations["create_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -477,7 +717,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["create_2"];
+        post: operations["create_4"];
         delete?: never;
         options?: never;
         head?: never;
@@ -573,7 +813,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["create_3"];
+        post: operations["create_5"];
         delete?: never;
         options?: never;
         head?: never;
@@ -987,7 +1227,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** portal 退号（免登录） */
-        post: operations["cancel_1"];
+        post: operations["cancel_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1004,7 +1244,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 申请单作废 */
-        post: operations["cancel_2"];
+        post: operations["cancel_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1106,7 +1346,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 预约退号 */
-        post: operations["cancel_3"];
+        post: operations["cancel_4"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1228,7 +1468,7 @@ export interface paths {
         get: operations["list_2"];
         put?: never;
         /** 护理任务创建（手工开立） */
-        post: operations["create_4"];
+        post: operations["create_6"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1245,7 +1485,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 护理任务完成 */
-        post: operations["complete"];
+        post: operations["complete_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1262,7 +1502,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 护理任务取消 */
-        post: operations["cancel_4"];
+        post: operations["cancel_5"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1297,7 +1537,7 @@ export interface paths {
         get: operations["listByVisit"];
         put?: never;
         /** 创建护理记录（草稿） */
-        post: operations["create_5"];
+        post: operations["create_7"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1367,7 +1607,7 @@ export interface paths {
         get: operations["listByVisit_1"];
         put?: never;
         /** 出入量明细录入 */
-        post: operations["create_6"];
+        post: operations["create_8"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1384,7 +1624,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** 交接班完成（双签确认） */
-        post: operations["complete_1"];
+        post: operations["complete_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1437,14 +1677,46 @@ export interface paths {
         get: operations["listByVisit_2"];
         put?: never;
         /** 护理评估单创建（五量表判级 + 高危联动） */
-        post: operations["create_7"];
+        post: operations["create_9"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/mdm-subscriptions": {
+    "/api/v1/iot/products": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_2"];
+        put?: never;
+        post: operations["create_10"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/products/{productId}/model-sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["syncModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/metrics": {
         parameters: {
             query?: never;
             header?: never;
@@ -1453,6 +1725,70 @@ export interface paths {
         };
         get: operations["list_3"];
         put?: never;
+        post: operations["create_11"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/linkage-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_4"];
+        put?: never;
+        post: operations["create_12"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/linkage-logs/{linkageNo}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["retry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/gateways": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_3"];
+        put?: never;
+        post: operations["create_13"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_4"];
+        put?: never;
         post: operations["register_1"];
         delete?: never;
         options?: never;
@@ -1460,7 +1796,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/dead-letters/{id}/replay": {
+    "/api/v1/iot/devices/{deviceId}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["disable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/devices/{deviceId}/credential-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resetCredential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/consume-errors/{errorId}/replay": {
         parameters: {
             query?: never;
             header?: never;
@@ -1476,7 +1844,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/integration/dead-letters/{id}/close": {
+    "/api/v1/iot/consume-errors/{errorId}/abandon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["abandon"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_5"];
+        put?: never;
+        post: operations["dispatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/commands/confirm-challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["confirmChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_6"];
+        put?: never;
+        post: operations["bind_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/bindings/{deviceId}/unbind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["unbind_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/alarms/{alarmNo}/close": {
         parameters: {
             query?: never;
             header?: never;
@@ -1486,6 +1934,102 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["close_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/alarms/{alarmNo}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acknowledge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/alarm-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_5"];
+        put?: never;
+        post: operations["create_14"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/alarm-rules/{id}/simulate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["simulate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/mdm-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_6"];
+        put?: never;
+        post: operations["register_2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/dead-letters/{id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["replay_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/dead-letters/{id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["close_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2415,6 +2959,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/probe/biz-exception": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["triggerBizException"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/ward-calls/{callNo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/vital-board/{wardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["board"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/infusion-history/{deviceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ward/infusion-board/{wardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["board_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/dicts/{typeCode}": {
         parameters: {
             query?: never;
@@ -2439,7 +3063,7 @@ export interface paths {
             cookie?: never;
         };
         /** 审方工作台列表 */
-        get: operations["list_4"];
+        get: operations["list_7"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2538,7 +3162,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_5"];
+        get: operations["list_8"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2822,7 +3446,7 @@ export interface paths {
             cookie?: never;
         };
         /** 护理记录详情 */
-        get: operations["get_1"];
+        get: operations["get_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2839,7 +3463,7 @@ export interface paths {
             cookie?: never;
         };
         /** 病区交接班清单（按日检索） */
-        get: operations["list_6"];
+        get: operations["list_9"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2865,55 +3489,263 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/iot/telemetry/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/telemetry/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["latest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/quality/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/quality/device-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["deviceUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/products/{productId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["detail_4"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/monitor/consumer-lag": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["consumerLag"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/linkage-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_7"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/devices/{deviceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["detail_5"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/devices/{deviceId}/shadow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["shadow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/dashboard/wards/{wardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["wardWall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/dashboard/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["summary_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/consume-errors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_8"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/commands/{commandNo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getByCommandNo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/bindings/wards/{wardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listByWard_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/bindings/devices/{deviceId}/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["activeByDevice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/iot/alarms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["page_9"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integration/received-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_7"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/integration/event-registry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_8"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/integration/event-publications": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_9"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/integration/dead-letters": {
         parameters: {
             query?: never;
             header?: never;
@@ -2929,6 +3761,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/integration/event-registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_11"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/event-publications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_12"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integration/dead-letters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_13"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/integration/dead-letters/{id}": {
         parameters: {
             query?: never;
@@ -2936,7 +3816,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["detail_4"];
+        get: operations["detail_6"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3237,6 +4117,32 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SaveColdChainArchiveRequest: {
+            /** @enum {string} */
+            purpose: "VACCINE" | "BLOOD" | "REAGENT" | "PHARMA";
+            deviceId: string;
+            /** @enum {string} */
+            tempRangeType: "FREEZE" | "COOL" | "SHELDED" | "NORMAL";
+            /** Format: date-time */
+            verifyDueAt?: string;
+            inventoryDigest?: string;
+        };
+        ColdChainArchiveVO: {
+            /** @example 0 */
+            id?: string;
+            archiveNo?: string;
+            /** @enum {string} */
+            purpose?: "VACCINE" | "BLOOD" | "REAGENT" | "PHARMA";
+            deviceId?: string;
+            /** @enum {string} */
+            tempRangeType?: "FREEZE" | "COOL" | "SHELDED" | "NORMAL";
+            /** Format: date-time */
+            verifyDueAt?: string;
+            inventoryDigest?: string;
+            overdue?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+        };
         DrugSaveRequest: {
             drugCode: string;
             genericName: string;
@@ -3359,6 +4265,155 @@ export interface components {
             releaseTime?: string;
             status?: string;
         };
+        MappingItem: {
+            propertyName: string;
+            metricCode: string;
+            /** @enum {string} */
+            mismatchStrategy?: "RAW_PASSTHROUGH";
+        };
+        UpdateMappingsRequest: {
+            mappings: components["schemas"]["MappingItem"][];
+        };
+        MetricMappingVO: {
+            /** @example 0 */
+            id?: string;
+            productId?: string;
+            propertyName?: string;
+            metricCode?: string;
+            /** @enum {string} */
+            mismatchStrategy?: "RAW_PASSTHROUGH";
+        };
+        CommandItem: {
+            commandName: string;
+            serviceId?: string;
+            /** @enum {string} */
+            safetyLevel: "SAFETY" | "TREATMENT";
+            allowed?: boolean;
+        };
+        UpdateCommandsRequest: {
+            commands: components["schemas"]["CommandItem"][];
+        };
+        CommandVO: {
+            /** @example 0 */
+            id?: string;
+            productId?: string;
+            commandName?: string;
+            serviceId?: string;
+            /** @enum {string} */
+            safetyLevel?: "SAFETY" | "TREATMENT";
+            allowed?: boolean;
+        };
+        JsonNode: unknown;
+        SaveLinkageRuleRequest: {
+            ruleName: string;
+            /** @enum {string} */
+            triggerSource: "ALARM_TRIGGERED" | "TELEMETRY_ANOMALY" | "DEVICE_STATUS";
+            triggerCondition: components["schemas"]["JsonNode"];
+            /** @enum {string} */
+            actionType: "NOTIFY" | "M01_NOTIFY" | "CALL_TRANSFER" | "NURSING_TASK" | "WARD_BROADCAST";
+            actionConfig?: components["schemas"]["JsonNode"];
+            /** @example 0 */
+            targetWardId?: string;
+            enabled?: boolean;
+        };
+        LinkageRuleVO: {
+            /** @example 0 */
+            id?: string;
+            ruleName?: string;
+            /** @enum {string} */
+            triggerSource?: "ALARM_TRIGGERED" | "TELEMETRY_ANOMALY" | "DEVICE_STATUS";
+            triggerCondition?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            actionType?: "NOTIFY" | "M01_NOTIFY" | "CALL_TRANSFER" | "NURSING_TASK" | "WARD_BROADCAST";
+            actionConfig?: {
+                [key: string]: unknown;
+            };
+            /** @example 0 */
+            targetWardId?: string;
+            enabled?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        SaveGatewayRequest: {
+            gatewayId: string;
+            gatewayName: string;
+            /** @enum {string} */
+            mode: "B" | "C";
+            standbyOf?: string;
+            /** @example 0 */
+            wardId: string;
+            /** @enum {string} */
+            status: "ONLINE" | "OFFLINE" | "MAINTENANCE";
+        };
+        GatewayVO: {
+            gatewayId?: string;
+            gatewayName?: string;
+            /** @enum {string} */
+            mode?: "B" | "C";
+            standbyOf?: string;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            status?: "ONLINE" | "OFFLINE" | "MAINTENANCE";
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        SaveAlarmRuleRequest: {
+            ruleName: string;
+            /** @enum {string} */
+            ruleType: "DEVICE_ALARM" | "THRESHOLD" | "OFFLINE";
+            deviceId?: string;
+            metricCode?: string;
+            /** @enum {string} */
+            compareOp?: ">" | "<";
+            thresholdValue?: number;
+            /** Format: int32 */
+            durationSecs?: number;
+            recoveryBand?: number;
+            /** Format: int32 */
+            silenceWindowSecs?: number;
+            /** Format: int32 */
+            offlineSecs?: number;
+            /** @enum {string} */
+            alarmLevel: "INFO" | "WARNING" | "CRITICAL";
+            /** Format: int32 */
+            escalateAfterSecs?: number;
+            enabled?: boolean;
+        };
+        AlarmRuleVO: {
+            /** @example 0 */
+            id?: string;
+            ruleName?: string;
+            /** @enum {string} */
+            ruleType?: "DEVICE_ALARM" | "THRESHOLD" | "OFFLINE";
+            deviceId?: string;
+            metricCode?: string;
+            /** @enum {string} */
+            compareOp?: ">" | "<";
+            thresholdValue?: number;
+            /** Format: int32 */
+            durationSecs?: number;
+            recoveryBand?: number;
+            /** Format: int32 */
+            silenceWindowSecs?: number;
+            /** Format: int32 */
+            offlineSecs?: number;
+            /** @enum {string} */
+            alarmLevel?: "INFO" | "WARNING" | "CRITICAL";
+            /** Format: int32 */
+            escalateAfterSecs?: number;
+            enabled?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
         FallbackIngestRequest: {
             deviceId: string;
             metricCode: string;
@@ -3370,6 +4425,82 @@ export interface components {
         };
         FallbackIngestResponse: {
             accepted?: boolean;
+        };
+        CreateWardCallRequest: {
+            /** @example 0 */
+            wardId: string;
+            /** @example 0 */
+            bedId: string;
+            /** @example 0 */
+            patientId: string;
+            deviceId?: string;
+            /** @enum {string} */
+            callType: "NORMAL" | "EMERGENCY" | "INFUSION" | "SERVICE";
+            /** @enum {string} */
+            source: "BEDSIDE" | "BRROOM" | "PATIENT_PAD" | "NURSE_PAD" | "IOT";
+            sourceRef?: string;
+        };
+        WardCallVO: {
+            /** @example 0 */
+            id?: string;
+            callNo?: string;
+            /** @example 0 */
+            wardId?: string;
+            /** @example 0 */
+            bedId?: string;
+            /** @example 0 */
+            patientId?: string;
+            deviceId?: string;
+            /** @enum {string} */
+            callType?: "NORMAL" | "EMERGENCY" | "INFUSION" | "SERVICE";
+            /** @enum {string} */
+            source?: "BEDSIDE" | "BRROOM" | "PATIENT_PAD" | "NURSE_PAD" | "IOT";
+            /** @enum {string} */
+            status?: "CREATED" | "ANSWERED" | "IN_PROGRESS" | "COMPLETED" | "TRANSFERRED" | "CANCELLED";
+            /** Format: int32 */
+            escalationCount?: number;
+            processedBy?: string;
+            resultSummary?: string;
+            sourceRef?: string;
+            /** Format: date-time */
+            answeredAt?: string;
+            /** Format: date-time */
+            completedAt?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        WardCallRouteVO: {
+            callNo?: string;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            callType?: "NORMAL" | "EMERGENCY" | "INFUSION" | "SERVICE";
+            targetChain?: string[];
+            taskConvertFlag?: boolean;
+        };
+        CompleteWardCallRequest: {
+            resultSummary: string;
+        };
+        RegisterColdChainRecordRequest: {
+            /** @enum {string} */
+            recordType: "INSPECTION" | "ALARM_HANDLE" | "DEVIATION";
+            alarmRef?: string;
+            secondOperator?: string;
+            content?: string;
+        };
+        ColdChainRecordVO: {
+            /** @example 0 */
+            id?: string;
+            recordNo?: string;
+            archiveNo?: string;
+            /** @enum {string} */
+            recordType?: "INSPECTION" | "ALARM_HANDLE" | "DEVIATION";
+            alarmRef?: string;
+            secondOperator?: string;
+            content?: string;
+            recordedBy?: string;
+            /** Format: date-time */
+            recordedAt?: string;
         };
         PracticeGrantCreateRequest: {
             /** @example 0 */
@@ -3984,6 +5115,7 @@ export interface components {
             height?: number;
             /** Format: int32 */
             painScore?: number;
+            clientMsgId?: string;
         };
         VitalSignVO: {
             /** @example 0 */
@@ -4296,6 +5428,278 @@ export interface components {
             nextAssessPlan?: string;
             triggeredTaskRef?: string;
             adverseEventRef?: string;
+        };
+        CreateProductRequest: {
+            productName: string;
+            deviceType: string;
+            protocolType: string;
+            dataFormat: string;
+            manufacturerName?: string;
+            industry?: string;
+            description?: string;
+            modelDefinitionJson?: string;
+        };
+        ProductVO: {
+            productId?: string;
+            productName?: string;
+            deviceType?: string;
+            protocolType?: string;
+            dataFormat?: string;
+            manufacturerName?: string;
+            industry?: string;
+            description?: string;
+            modelDefinition?: string;
+            /** @enum {string} */
+            syncStatus?: "SYNCING" | "SYNCED" | "MISMATCH";
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        CreateMetricRequest: {
+            metricCode: string;
+            metricName: string;
+            /** @enum {string} */
+            category: "VITAL_SIGN" | "WAVEFORM" | "ALARM" | "DEVICE_STATUS";
+            /** @enum {string} */
+            dataType: "NUMERIC" | "TEXT" | "JSON";
+            unit?: string;
+            physioMin?: number;
+            physioMax?: number;
+            defaultLevel?: string;
+        };
+        MetricDictVO: {
+            metricCode?: string;
+            metricName?: string;
+            /** @enum {string} */
+            category?: "VITAL_SIGN" | "WAVEFORM" | "ALARM" | "DEVICE_STATUS";
+            /** @enum {string} */
+            dataType?: "NUMERIC" | "TEXT" | "JSON";
+            unit?: string;
+            physioMin?: number;
+            physioMax?: number;
+            defaultLevel?: string;
+        };
+        LinkageLogVO: {
+            /** @example 0 */
+            id?: string;
+            linkageNo?: string;
+            /** @example 0 */
+            ruleId?: string;
+            /** @enum {string} */
+            triggerSource?: "ALARM_TRIGGERED" | "TELEMETRY_ANOMALY" | "DEVICE_STATUS";
+            triggerRef?: string;
+            /** @enum {string} */
+            actionType?: "NOTIFY" | "M01_NOTIFY" | "CALL_TRANSFER" | "NURSING_TASK" | "WARD_BROADCAST";
+            /** @enum {string} */
+            actionResult?: "SUCCESS" | "FAILED" | "PENDING";
+            /** Format: int32 */
+            retryCount?: number;
+            errorMsg?: string;
+            /** Format: date-time */
+            executedAt?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        DeviceRegisterRequest: {
+            deviceId: string;
+            nodeId?: string;
+            productId: string;
+            deviceName: string;
+            deviceType: string;
+            /** @enum {string} */
+            accessMode: "A" | "B" | "C" | "D";
+        };
+        DeviceVO: {
+            deviceId?: string;
+            nodeId?: string;
+            productId?: string;
+            deviceName?: string;
+            deviceType?: string;
+            /** @enum {string} */
+            accessMode?: "A" | "B" | "C" | "D";
+            /** @example 0 */
+            wardId?: string;
+            credentialRef?: string;
+            /** @enum {string} */
+            status?: "INACTIVE" | "ONLINE" | "OFFLINE" | "ABNORMAL" | "DISABLED";
+            /** Format: date-time */
+            lastOnlineAt?: string;
+            /** Format: date-time */
+            lastOfflineAt?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            credentialSecret?: string;
+        };
+        DeviceCredentialResetVO: {
+            deviceId?: string;
+            credentialRef?: string;
+            secret?: string;
+        };
+        ConsumeErrorVO: {
+            /** @example 0 */
+            errorId?: string;
+            queueName?: string;
+            rawDigest?: string;
+            rawPayload?: string;
+            /** @enum {string} */
+            errorStage?: "PARSE" | "VALIDATE" | "PERSIST";
+            errorMsg?: string;
+            /** @enum {string} */
+            status?: "PENDING" | "REPLAYED" | "ABANDONED";
+            /** Format: int32 */
+            replayCount?: number;
+            handledBy?: string;
+            /** Format: date-time */
+            handledAt?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        AbandonConsumeErrorRequest: {
+            reason: string;
+        };
+        IssueCommandRequest: {
+            challengeId: string;
+            deviceId: string;
+            commandName: string;
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        CommandLogVO: {
+            /** @example 0 */
+            id?: string;
+            commandNo?: string;
+            deviceId?: string;
+            commandName?: string;
+            params?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            safetyLevel?: "SAFETY" | "TREATMENT";
+            operator?: string;
+            /** @enum {string} */
+            deliverMode?: "SYNC" | "ASYNC";
+            /** @enum {string} */
+            status?: "ISSUED" | "DELIVERED" | "SUCCESS" | "FAILED" | "TIMEOUT";
+            /** Format: date-time */
+            issuedAt?: string;
+            /** Format: date-time */
+            resultAt?: string;
+            errorMsg?: string;
+            traceId?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        ConfirmChallengeRequest: {
+            deviceId: string;
+            commandName: string;
+            params?: {
+                [key: string]: unknown;
+            };
+        };
+        ConfirmChallengeVO: {
+            challengeId?: string;
+            commandNo?: string;
+            /** @example 0 */
+            expiresIn?: string;
+        };
+        BindDeviceRequest: {
+            deviceId: string;
+            /** @example 0 */
+            patientId: string;
+            visitId: string;
+            /** @example 0 */
+            bedId?: string;
+            /** @example 0 */
+            wardId: string;
+            /** @enum {string} */
+            bindType: "FIXED" | "MOBILE";
+            bindReason?: string;
+        };
+        BindingVO: {
+            /** @example 0 */
+            id?: string;
+            deviceId?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            /** @example 0 */
+            bedId?: string;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            bindType?: "FIXED" | "MOBILE";
+            /** @enum {string} */
+            status?: "BOUND" | "UNBINDING" | "UNBOUND";
+            bindReason?: string;
+            unbindReason?: string;
+            boundBy?: string;
+            /** Format: date-time */
+            boundAt?: string;
+            /** Format: date-time */
+            unboundAt?: string;
+        };
+        UnbindDeviceRequest: {
+            reason?: string;
+        };
+        CloseAlarmRequest: {
+            reason: string;
+        };
+        AlarmVO: {
+            /** @example 0 */
+            id?: string;
+            alarmNo?: string;
+            /** @example 0 */
+            ruleId?: string;
+            deviceId?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            alarmLevel?: "INFO" | "WARNING" | "CRITICAL";
+            metricCode?: string;
+            triggerValue?: string;
+            /** @enum {string} */
+            status?: "ACTIVE" | "ACKNOWLEDGED" | "CLOSED";
+            /** Format: int32 */
+            triggerCount?: number;
+            /** Format: date-time */
+            lastTriggeredAt?: string;
+            /** Format: int32 */
+            escalationCount?: number;
+            /** Format: date-time */
+            lastEscalatedAt?: string;
+            acknowledgedBy?: string;
+            /** Format: date-time */
+            acknowledgedAt?: string;
+            closedBy?: string;
+            /** Format: date-time */
+            closedAt?: string;
+            closeReason?: string;
+            traceId?: string;
+            /** Format: date-time */
+            createdAt?: string;
+        };
+        SimulateAlarmRequest: {
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+        };
+        SimulateResultVO: {
+            /** @example 0 */
+            scannedRows?: string;
+            triggers?: components["schemas"]["SimulateTrigger"][];
+        };
+        SimulateTrigger: {
+            deviceId?: string;
+            metricCode?: string;
+            /** Format: date-time */
+            triggeredAt?: string;
+            triggerValue?: string;
+            /** @enum {string} */
+            alarmLevel?: "INFO" | "WARNING" | "CRITICAL";
         };
         MdmSubscriptionCreateRequest: {
             topic: string;
@@ -4781,6 +6185,80 @@ export interface components {
             approvedBalance?: string;
             status?: string;
         };
+        WardCallQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            status?: "CREATED" | "ANSWERED" | "IN_PROGRESS" | "COMPLETED" | "TRANSFERRED" | "CANCELLED";
+        };
+        PageResultWardCallVO: {
+            content?: components["schemas"]["WardCallVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        VitalAnomalyVO: {
+            deviceId?: string;
+            metricCode?: string;
+            anomalyType?: string;
+            /** Format: date-time */
+            lastOccurredAt?: string;
+            /** Format: date-time */
+            detectedAt?: string;
+        };
+        VitalBoardVO: {
+            /** @example 0 */
+            wardId?: string;
+            presenceMetric?: string;
+            anomalies?: components["schemas"]["VitalAnomalyVO"][];
+            note?: string;
+        };
+        InfusionHistoryVO: {
+            deviceId?: string;
+            remainSeries?: components["schemas"]["TelemetryPoint"][];
+            dropSeries?: components["schemas"]["TelemetryPoint"][];
+            note?: string;
+        };
+        TelemetryPoint: {
+            deviceId?: string;
+            metricCode?: string;
+            /** Format: date-time */
+            time?: string;
+            min?: number;
+            max?: number;
+            avg?: number;
+            first?: number;
+            last?: number;
+            /** @example 0 */
+            sampleCount?: string;
+        };
+        InfusionBoardDeviceVO: {
+            deviceId?: string;
+            remainLatest?: number;
+            dropRateLatest?: number;
+            alertLevel?: string;
+        };
+        InfusionBoardVO: {
+            /** @example 0 */
+            wardId?: string;
+            devices?: components["schemas"]["InfusionBoardDeviceVO"][];
+        };
+        PageResultColdChainArchiveVO: {
+            content?: components["schemas"]["ColdChainArchiveVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
         PracticeGrantVO: {
             /** @example 0 */
             id?: string;
@@ -5132,6 +6610,273 @@ export interface components {
                 [key: string]: number[];
             };
             totalRule?: string;
+        };
+        TelemetrySeriesRequest: {
+            scope: string;
+            deviceId?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** @example 0 */
+            wardId?: string;
+            metricCode: string;
+            /** Format: date-time */
+            from: string;
+            /** Format: date-time */
+            to: string;
+            granularity?: string;
+        };
+        TelemetryLatestVO: {
+            deviceId?: string;
+            metricCode?: string;
+            value?: number;
+            /** Format: date-time */
+            occurredAt?: string;
+        };
+        QualityStatQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            deviceId?: string;
+            /** Format: date */
+            statDate?: string;
+        };
+        DataQualityStatVO: {
+            deviceId?: string;
+            /** Format: date */
+            statDate?: string;
+            /** @example 0 */
+            expectedCount?: string;
+            /** @example 0 */
+            receivedCount?: string;
+            missingRate?: number;
+            /** @example 0 */
+            anomalyCount?: string;
+            qualityScore?: number;
+            usageRate?: number;
+        };
+        PageResultDataQualityStatVO: {
+            content?: components["schemas"]["DataQualityStatVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        ProductQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** @enum {string} */
+            syncStatus?: "SYNCING" | "SYNCED" | "MISMATCH";
+        };
+        PageResultProductVO: {
+            content?: components["schemas"]["ProductVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        ConsumerStatVO: {
+            consumerGroup?: string;
+            /** Format: date-time */
+            sampledAt?: string;
+            /** @example 0 */
+            oldestMsgAgeSecs?: string;
+            consumeRate?: number;
+            arriveRate?: number;
+            backlogEstimate?: number;
+        };
+        LinkageLogQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** @example 0 */
+            ruleId?: string;
+            /** @enum {string} */
+            triggerSource?: "ALARM_TRIGGERED" | "TELEMETRY_ANOMALY" | "DEVICE_STATUS";
+            /** @enum {string} */
+            actionResult?: "SUCCESS" | "FAILED" | "PENDING";
+        };
+        PageResultLinkageLogVO: {
+            content?: components["schemas"]["LinkageLogVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        GatewayQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            mode?: "B" | "C";
+            /** @enum {string} */
+            status?: "ONLINE" | "OFFLINE" | "MAINTENANCE";
+            gatewayId?: string;
+        };
+        PageResultGatewayVO: {
+            content?: components["schemas"]["GatewayVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        DeviceQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            status?: "INACTIVE" | "ONLINE" | "OFFLINE" | "ABNORMAL" | "DISABLED";
+            productId?: string;
+        };
+        PageResultDeviceVO: {
+            content?: components["schemas"]["DeviceVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        DeviceShadowVO: {
+            desired?: {
+                [key: string]: unknown;
+            };
+            reported?: {
+                [key: string]: unknown;
+            };
+        };
+        BedDeviceItem: {
+            /** @example 0 */
+            bedId?: string;
+            deviceId?: string;
+            deviceName?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            /** @enum {string} */
+            status?: "INACTIVE" | "ONLINE" | "OFFLINE" | "ABNORMAL" | "DISABLED";
+            /** Format: date-time */
+            lastOnlineAt?: string;
+            latestValues?: components["schemas"]["LatestValue"][];
+        };
+        LatestValue: {
+            deviceId?: string;
+            metricCode?: string;
+            value?: number;
+            /** Format: date-time */
+            occurredAt?: string;
+        };
+        WardDeviceWallVO: {
+            /** @example 0 */
+            wardId?: string;
+            items?: components["schemas"]["BedDeviceItem"][];
+        };
+        DashboardSummaryVO: {
+            /** @example 0 */
+            deviceTotal?: string;
+            /** @example 0 */
+            onlineCount?: string;
+            /** @example 0 */
+            offlineCount?: string;
+            /** @example 0 */
+            activeAlarmCount?: string;
+            stormActive?: boolean;
+            backlogEstimate?: number;
+            qualityScore?: number;
+        };
+        ConsumeErrorQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            queueName?: string;
+            /** @enum {string} */
+            status?: "PENDING" | "REPLAYED" | "ABANDONED";
+        };
+        PageResultConsumeErrorVO: {
+            content?: components["schemas"]["ConsumeErrorVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        CommandQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            deviceId?: string;
+            /** @enum {string} */
+            status?: "ISSUED" | "DELIVERED" | "SUCCESS" | "FAILED" | "TIMEOUT";
+        };
+        PageResultCommandLogVO: {
+            content?: components["schemas"]["CommandLogVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        BindingQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            deviceId?: string;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            status?: "BOUND" | "UNBINDING" | "UNBOUND";
+        };
+        PageResultBindingVO: {
+            content?: components["schemas"]["BindingVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        AlarmQueryRequest: {
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** @example 0 */
+            wardId?: string;
+            /** @enum {string} */
+            alarmLevel?: "INFO" | "WARNING" | "CRITICAL";
+            /** @enum {string} */
+            status?: "ACTIVE" | "ACKNOWLEDGED" | "CLOSED";
+        };
+        PageResultAlarmVO: {
+            content?: components["schemas"]["AlarmVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         PageResultReceivedEventVO: {
             content?: components["schemas"]["ReceivedEventVO"][];
@@ -5570,6 +7315,74 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                archiveNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ColdChainArchiveVO"];
+                };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                archiveNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveColdChainArchiveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ColdChainArchiveVO"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                archiveNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
                 id: string;
             };
             cookie?: never;
@@ -5587,7 +7400,7 @@ export interface operations {
             };
         };
     };
-    update: {
+    update_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -5661,7 +7474,7 @@ export interface operations {
             };
         };
     };
-    update_1: {
+    update_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -5758,6 +7571,196 @@ export interface operations {
             };
         };
     };
+    updateMetricMappings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMappingsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MetricMappingVO"][];
+                };
+            };
+        };
+    };
+    updateCommands: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateCommandsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["CommandVO"][];
+                };
+            };
+        };
+    };
+    update_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveLinkageRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LinkageRuleVO"];
+                };
+            };
+        };
+    };
+    delete_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gatewayId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveGatewayRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["GatewayVO"];
+                };
+            };
+        };
+    };
+    delete_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                gatewayId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveAlarmRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AlarmRuleVO"];
+                };
+            };
+        };
+    };
+    delete_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     ingestIotdaFallback: {
         parameters: {
             query?: never;
@@ -5780,6 +7783,284 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["FallbackIngestResponse"];
+                };
+            };
+        };
+    };
+    page: {
+        parameters: {
+            query: {
+                request: components["schemas"]["WardCallQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultWardCallVO"];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateWardCallRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    transfer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    route: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallRouteVO"];
+                };
+            };
+        };
+    };
+    progress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    complete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompleteWardCallRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    answer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    page_1: {
+        parameters: {
+            query?: {
+                purpose?: "VACCINE" | "BLOOD" | "REAGENT" | "PHARMA";
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultColdChainArchiveVO"];
+                };
+            };
+        };
+    };
+    create_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveColdChainArchiveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ColdChainArchiveVO"];
+                };
+            };
+        };
+    };
+    records: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                archiveNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ColdChainRecordVO"][];
+                };
+            };
+        };
+    };
+    registerRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                archiveNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterColdChainRecordRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ColdChainRecordVO"];
                 };
             };
         };
@@ -6113,7 +8394,7 @@ export interface operations {
             };
         };
     };
-    create: {
+    create_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -6137,7 +8418,7 @@ export interface operations {
             };
         };
     };
-    cancel: {
+    cancel_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -6161,7 +8442,7 @@ export interface operations {
             };
         };
     };
-    create_1: {
+    create_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -6393,7 +8674,7 @@ export interface operations {
             };
         };
     };
-    create_2: {
+    create_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -6559,7 +8840,7 @@ export interface operations {
             };
         };
     };
-    create_3: {
+    create_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -7137,7 +9418,7 @@ export interface operations {
             };
         };
     };
-    cancel_1: {
+    cancel_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -7163,7 +9444,7 @@ export interface operations {
             };
         };
     };
-    cancel_2: {
+    cancel_3: {
         parameters: {
             query: {
                 reason: string;
@@ -7309,7 +9590,7 @@ export interface operations {
             };
         };
     };
-    cancel_3: {
+    cancel_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -7553,7 +9834,7 @@ export interface operations {
             };
         };
     };
-    create_4: {
+    create_6: {
         parameters: {
             query?: never;
             header?: never;
@@ -7577,7 +9858,7 @@ export interface operations {
             };
         };
     };
-    complete: {
+    complete_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -7599,7 +9880,7 @@ export interface operations {
             };
         };
     };
-    cancel_4: {
+    cancel_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -7672,7 +9953,7 @@ export interface operations {
             };
         };
     };
-    create_5: {
+    create_7: {
         parameters: {
             query?: never;
             header?: never;
@@ -7814,7 +10095,7 @@ export interface operations {
             };
         };
     };
-    create_6: {
+    create_8: {
         parameters: {
             query?: never;
             header?: never;
@@ -7838,7 +10119,7 @@ export interface operations {
             };
         };
     };
-    complete_1: {
+    complete_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -7958,7 +10239,7 @@ export interface operations {
             };
         };
     };
-    create_7: {
+    create_9: {
         parameters: {
             query?: never;
             header?: never;
@@ -7982,7 +10263,627 @@ export interface operations {
             };
         };
     };
+    page_2: {
+        parameters: {
+            query: {
+                request: components["schemas"]["ProductQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultProductVO"];
+                };
+            };
+        };
+    };
+    create_10: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProductRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ProductVO"];
+                };
+            };
+        };
+    };
+    syncModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ProductVO"];
+                };
+            };
+        };
+    };
     list_3: {
+        parameters: {
+            query?: {
+                category?: "VITAL_SIGN" | "WAVEFORM" | "ALARM" | "DEVICE_STATUS";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MetricDictVO"][];
+                };
+            };
+        };
+    };
+    create_11: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateMetricRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MetricDictVO"];
+                };
+            };
+        };
+    };
+    list_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LinkageRuleVO"][];
+                };
+            };
+        };
+    };
+    create_12: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveLinkageRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LinkageRuleVO"];
+                };
+            };
+        };
+    };
+    retry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkageNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LinkageLogVO"];
+                };
+            };
+        };
+    };
+    page_3: {
+        parameters: {
+            query: {
+                request: components["schemas"]["GatewayQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultGatewayVO"];
+                };
+            };
+        };
+    };
+    create_13: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveGatewayRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["GatewayVO"];
+                };
+            };
+        };
+    };
+    page_4: {
+        parameters: {
+            query: {
+                request: components["schemas"]["DeviceQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultDeviceVO"];
+                };
+            };
+        };
+    };
+    register_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceRegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DeviceVO"];
+                };
+            };
+        };
+    };
+    disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resetCredential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DeviceCredentialResetVO"];
+                };
+            };
+        };
+    };
+    replay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                errorId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsumeErrorVO"];
+                };
+            };
+        };
+    };
+    abandon: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                errorId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AbandonConsumeErrorRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsumeErrorVO"];
+                };
+            };
+        };
+    };
+    page_5: {
+        parameters: {
+            query: {
+                request: components["schemas"]["CommandQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultCommandLogVO"];
+                };
+            };
+        };
+    };
+    dispatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueCommandRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["CommandLogVO"];
+                };
+            };
+        };
+    };
+    confirmChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConfirmChallengeVO"];
+                };
+            };
+        };
+    };
+    page_6: {
+        parameters: {
+            query: {
+                request: components["schemas"]["BindingQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultBindingVO"];
+                };
+            };
+        };
+    };
+    bind_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BindDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BindingVO"];
+                };
+            };
+        };
+    };
+    unbind_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UnbindDeviceRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    close_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alarmNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloseAlarmRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AlarmVO"];
+                };
+            };
+        };
+    };
+    acknowledge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alarmNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AlarmVO"];
+                };
+            };
+        };
+    };
+    list_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AlarmRuleVO"][];
+                };
+            };
+        };
+    };
+    create_14: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveAlarmRuleRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AlarmRuleVO"];
+                };
+            };
+        };
+    };
+    simulate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SimulateAlarmRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SimulateResultVO"];
+                };
+            };
+        };
+    };
+    list_6: {
         parameters: {
             query?: {
                 topic?: string;
@@ -8007,7 +10908,7 @@ export interface operations {
             };
         };
     };
-    register_1: {
+    register_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -8031,7 +10932,7 @@ export interface operations {
             };
         };
     };
-    replay: {
+    replay_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -8053,7 +10954,7 @@ export interface operations {
             };
         };
     };
-    close_1: {
+    close_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -9462,6 +12363,114 @@ export interface operations {
             };
         };
     };
+    triggerBizException: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    get_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                callNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardCallVO"];
+                };
+            };
+        };
+    };
+    board: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wardId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["VitalBoardVO"];
+                };
+            };
+        };
+    };
+    history: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["InfusionHistoryVO"];
+                };
+            };
+        };
+    };
+    board_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wardId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["InfusionBoardVO"];
+                };
+            };
+        };
+    };
     readVersion: {
         parameters: {
             query?: {
@@ -9486,7 +12495,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_7: {
         parameters: {
             query?: {
                 status?: string;
@@ -9627,7 +12636,7 @@ export interface operations {
             };
         };
     };
-    list_5: {
+    list_8: {
         parameters: {
             query?: {
                 status?: string;
@@ -10018,7 +13027,7 @@ export interface operations {
             };
         };
     };
-    get_1: {
+    get_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -10040,7 +13049,7 @@ export interface operations {
             };
         };
     };
-    list_6: {
+    list_9: {
         parameters: {
             query: {
                 wardId: string;
@@ -10083,7 +13092,356 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    series: {
+        parameters: {
+            query: {
+                request: components["schemas"]["TelemetrySeriesRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TelemetryPoint"][];
+                };
+            };
+        };
+    };
+    latest: {
+        parameters: {
+            query: {
+                deviceId: string;
+                metricCode: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TelemetryLatestVO"];
+                };
+            };
+        };
+    };
+    stats: {
+        parameters: {
+            query: {
+                request: components["schemas"]["QualityStatQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultDataQualityStatVO"];
+                };
+            };
+        };
+    };
+    deviceUsage: {
+        parameters: {
+            query: {
+                request: components["schemas"]["QualityStatQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultDataQualityStatVO"];
+                };
+            };
+        };
+    };
+    detail_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ProductVO"];
+                };
+            };
+        };
+    };
+    consumerLag: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ConsumerStatVO"][];
+                };
+            };
+        };
+    };
+    page_7: {
+        parameters: {
+            query: {
+                request: components["schemas"]["LinkageLogQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultLinkageLogVO"];
+                };
+            };
+        };
+    };
+    detail_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DeviceVO"];
+                };
+            };
+        };
+    };
+    shadow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DeviceShadowVO"];
+                };
+            };
+        };
+    };
+    wardWall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wardId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardDeviceWallVO"];
+                };
+            };
+        };
+    };
+    summary_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DashboardSummaryVO"];
+                };
+            };
+        };
+    };
+    page_8: {
+        parameters: {
+            query: {
+                request: components["schemas"]["ConsumeErrorQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultConsumeErrorVO"];
+                };
+            };
+        };
+    };
+    getByCommandNo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                commandNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["CommandLogVO"];
+                };
+            };
+        };
+    };
+    listByWard_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wardId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BindingVO"][];
+                };
+            };
+        };
+    };
+    activeByDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deviceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BindingVO"];
+                };
+            };
+        };
+    };
+    page_9: {
+        parameters: {
+            query: {
+                request: components["schemas"]["AlarmQueryRequest"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultAlarmVO"];
+                };
+            };
+        };
+    };
+    list_10: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -10112,7 +13470,7 @@ export interface operations {
             };
         };
     };
-    list_8: {
+    list_11: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -10138,7 +13496,7 @@ export interface operations {
             };
         };
     };
-    list_9: {
+    list_12: {
         parameters: {
             query?: {
                 eventType?: string;
@@ -10165,7 +13523,7 @@ export interface operations {
             };
         };
     };
-    list_10: {
+    list_13: {
         parameters: {
             query?: {
                 status?: string;
@@ -10192,7 +13550,7 @@ export interface operations {
             };
         };
     };
-    detail_4: {
+    detail_6: {
         parameters: {
             query?: never;
             header?: never;

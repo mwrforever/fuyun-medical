@@ -1,23 +1,121 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <!--
-  遥测明细批量写映射（IotTelemetryMapper.insertBatchIgnoreConflict，宪法 A.4.3-15 复杂 SQL 走 mapper+XML）。
-  冲突忽略 = 写入幂等载体：唯一索引 uk_iot_telemetry_device_metric_time (device_id, metric_code, occurred_at)
-  命中已落库行时 DO NOTHING（14-iot §3.1 明细层幂等，AMQP 重推与 HTTP 兜底双通道去重同键）。
+  遥测明细批量写与时序查询读面映射（IotTelemetryMapper，宪法 A.4.3-15 复杂 SQL 走 mapper+XML）。
+  写面：冲突忽略 = 写入幂等载体，唯一索引 uk_iot_telemetry_device_metric_time
+  (device_id, metric_code, occurred_at) 命中已落库行时 DO NOTHING（14-iot §3.1 明细层幂等，
+  AMQP 重推与 HTTP 兜底双通道去重同键）。
+  读面（FU-M14-06 查询路由，P2 PR-2 Task 10）：raw 明细档与连续聚合档（V1011 cagg_1min/cagg_1h）
+  构造器映射到 api 契约 record TelemetryPoint；聚合列名为函数默认名 min/max/avg/first/last/count
+  （V1011 实测，保留字列以双引号引用）。cagg 表名经 ${} 拼接（SQL 无法参数化表名），取值仅来自
+  服务层路由枚举白名单，禁接用户输入。
+  质量面（FU-M14-11）：末次采集时点 GROUP BY 聚合下推 + 单日计数聚合下推（禁全量捞行内存计数）。
   枚举列（quality/source）经 MP MybatisEnumTypeHandler 按 @EnumValue code 绑定（starter 全局默认）。
   加载路径：MP starter 默认 mapper-locations=classpath*:/mapper/**/*.xml，零配置生效。
 -->
 <mapper namespace="com.fuyun.iot.mapper.IotTelemetryMapper">
 
-    <!-- 多值 INSERT 一次落整批（500-5000 条/批独立事务由 service 层承担）；冲突行忽略不中断批次 -->
+    <!-- 时序点构造器映射：列名与 TelemetryPoint 组件名一一同源（RefundRequestMapper 构造器映射先例） -->
+    <resultMap id="telemetryPointMap" type="com.fuyun.iot.api.TelemetryPoint">
+        <constructor>
+            <arg column="device_id" javaType="java.lang.String"/>
+            <arg column="metric_code" javaType="java.lang.String"/>
+            <arg column="time" javaType="java.time.OffsetDateTime"/>
+            <arg column="min" javaType="java.math.BigDecimal"/>
+            <arg column="max" javaType="java.math.BigDecimal"/>
+            <arg column="avg" javaType="java.math.BigDecimal"/>
+            <arg column="first" javaType="java.math.BigDecimal"/>
+            <arg column="last" javaType="java.math.BigDecimal"/>
+            <arg column="sample_count" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 设备×指标末次采集时点投影映射（断流判定数据源） -->
+    <resultMap id="deviceMetricLastRowMap" type="com.fuyun.iot.record.DeviceMetricLastRow">
+        <constructor>
+            <arg column="device_id" javaType="java.lang.String"/>
+            <arg column="metric_code" javaType="java.lang.String"/>
+            <arg column="last_occurred_at" javaType="java.time.OffsetDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 单日质量计数投影映射（FU-M14-11 日统计数据源） -->
+    <resultMap id="dailyQualityCountRowMap" type="com.fuyun.iot.record.DailyQualityCountRow">
+        <constructor>
+            <arg column="total_count" javaType="java.lang.Long"/>
+            <arg column="anomaly_count" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 多值 INSERT 一次落整批（500-5000 条/批独立事务由 service 层承担）；冲突行忽略不中断批次。
+         raw_value 为 W-7 非数值承载列（V1005）：非数值标量原文/对象数组紧凑 JSON，数值行 NULL -->
     <insert id="insertBatchIgnoreConflict">
         INSERT INTO iot.iot_telemetry
-            (device_id, patient_id, visit_id, metric_code, value, unit, occurred_at, quality, source)
+            (device_id, patient_id, visit_id, metric_code, value, raw_value, unit, occurred_at, quality, source)
         VALUES
         <foreach collection="batch" item="item" separator=",">
             (#{item.deviceId}, #{item.patientId}, #{item.visitId}, #{item.metricCode},
-             #{item.value}, #{item.unit}, #{item.occurredAt}, #{item.quality}, #{item.source})
+             #{item.value}, #{item.rawValue}, #{item.unit}, #{item.occurredAt}, #{item.quality}, #{item.source})
         </foreach>
         ON CONFLICT (device_id, metric_code, occurred_at) DO NOTHING
     </insert>
+
+    <!-- raw 明细档时序查询（路由档位一：≤24h 走明细）：三个范围条件按需叠加（服务层路由产物互斥），
+         occurred_at 升序输出；value IS NOT NULL 与 V1011 聚合过滤口径对齐（非数值行无聚合语义） -->
+    <select id="selectRawSeries" resultMap="telemetryPointMap">
+        SELECT device_id, metric_code, occurred_at AS time,
+               value AS min, value AS max, value AS avg, value AS first, value AS last,
+               1 AS sample_count
+        FROM iot.iot_telemetry
+        WHERE metric_code = #{metricCode}
+          AND occurred_at &gt;= #{from}
+          AND occurred_at &lt; #{to}
+          AND value IS NOT NULL
+        <if test="deviceId != null">
+            AND device_id = #{deviceId}
+        </if>
+        <if test="patientId != null">
+            AND patient_id = #{patientId}
+        </if>
+        <if test="deviceIds != null and deviceIds.size() > 0">
+            AND device_id IN
+            <foreach collection="deviceIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+        </if>
+        ORDER BY occurred_at
+    </select>
+
+    <!-- 连续聚合档时序查询（路由档位二/三）：表名 ${} 白名单拼接（服务层路由枚举，禁用户输入），
+         聚合列名保留字双引号引用（V1011 实测默认列名），bucket 升序输出；
+         实时查询语义下未物化窗口由 TimescaleDB 自动联合明细 -->
+    <select id="selectCaggSeries" resultMap="telemetryPointMap">
+        SELECT device_id, metric_code, bucket AS time,
+               "min" AS min, "max" AS max, "avg" AS avg, "first" AS first, "last" AS last,
+               "count" AS sample_count
+        FROM ${tableName}
+        WHERE metric_code = #{metricCode}
+          AND bucket &gt;= #{from}
+          AND bucket &lt; #{to}
+          AND device_id IN
+          <foreach collection="deviceIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+        ORDER BY bucket
+    </select>
+
+    <!-- 设备集合内各设备×指标末次有效采集时刻（GROUP BY 聚合下推，批级一次） -->
+    <select id="selectLastOccurredByDeviceMetric" resultMap="deviceMetricLastRowMap">
+        SELECT device_id, metric_code, MAX(occurred_at) AS last_occurred_at
+        FROM iot.iot_telemetry
+        WHERE device_id IN
+        <foreach collection="deviceIds" item="did" open="(" separator="," close=")">#{did}</foreach>
+        GROUP BY device_id, metric_code
+    </select>
+
+    <!-- 单设备单日质量计数（聚合下推：total 含 BAD 标注行——标注不丢弃口径，异常=quality != GOOD） -->
+    <select id="countDailyQuality" resultMap="dailyQualityCountRowMap">
+        SELECT COUNT(*) AS total_count,
+               COUNT(*) FILTER (WHERE quality &lt;&gt; 'GOOD') AS anomaly_count
+        FROM iot.iot_telemetry
+        WHERE device_id = #{deviceId}
+          AND occurred_at &gt;= #{from}
+          AND occurred_at &lt; #{to}
+    </select>
 </mapper>
