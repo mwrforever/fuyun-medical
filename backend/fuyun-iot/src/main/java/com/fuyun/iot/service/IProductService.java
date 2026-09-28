@@ -80,4 +80,14 @@ public interface IProductService {
      *                                                 IOT-1005（409 同批属性名重复）
      */
     List<MetricMappingVO> updateMetricMappings(String productId, UpdateMappingsRequest request);
+
+    /**
+     * 属性 MDC 映射回显查询（GET /api/v1/iot/products/{id}/metric-mappings）：PUT 全量替换
+     * 语义的回读面——编辑弹窗打开时拉取既有全集回显，防仅携增量提交静默清空（BUG-17）。
+     *
+     * @param productId 注册中心产品标识，非空
+     * @return 该产品未删映射清单（id 升序与保存序一致），无配置回空清单，非空
+     * @throws com.fuyun.common.exception.BizException IOT-1002（404 产品不存在）
+     */
+    List<MetricMappingVO> listMetricMappings(String productId);
 }

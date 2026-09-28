@@ -148,6 +148,21 @@ class ProductControllerTest {
     }
 
     @Test
+    @DisplayName("映射回显：GET metric-mappings 返回 200 清单且以路径变量调用服务")
+    void getMetricMappingsReturnsList() throws Exception {
+        when(productService.listMetricMappings(PRODUCT_ID))
+                .thenReturn(List.of(new MetricMappingVO(
+                        1L, PRODUCT_ID, "heartRate", "MDC_ECG_HEART_RATE", MismatchStrategy.RAW_PASSTHROUGH)));
+
+        mockMvc.perform(get("/api/v1/iot/products/{productId}/metric-mappings", PRODUCT_ID)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].propertyName").value("heartRate"))
+                .andExpect(jsonPath("$[0].metricCode").value("MDC_ECG_HEART_RATE"));
+        verify(productService).listMetricMappings(PRODUCT_ID);
+    }
+
+    @Test
     @DisplayName("映射编辑：PUT metric-mappings 返回 200 清单且策略回显")
     void updateMappingsReturnsList() throws Exception {
         when(productService.updateMetricMappings(eq(PRODUCT_ID), any(UpdateMappingsRequest.class)))

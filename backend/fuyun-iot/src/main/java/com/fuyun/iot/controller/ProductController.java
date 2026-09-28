@@ -24,9 +24,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 产品管理端点（/api/v1/iot/products 六端点，FU-M14-02 上架流水线）：上架（POST，201）、物模型
+ * 产品管理端点（/api/v1/iot/products 七端点，FU-M14-02 上架流水线）：上架（POST，201）、物模型
  * 同步（POST /{id}/model-sync）、分页（GET）、详情（GET /{id}）、命令安全等级标注
- * （PUT /{id}/commands）、属性 MDC 映射编辑（PUT /{id}/metric-mappings）。
+ * （PUT /{id}/commands）、属性 MDC 映射编辑（PUT /{id}/metric-mappings）与回显
+ * （GET /{id}/metric-mappings，PUT 全量替换语义的回读面防静默清空）。
  *
  * <p>职责边界（宪法 B.1/A.1-8）：仅 @Valid 校验 + 调用产品服务 + 编排响应，禁业务逻辑、禁
  * @Transactional（事务归 service impl 方法级）；上架/同步/标注/映射编辑挂 WRITE 审计
@@ -133,5 +134,18 @@ public class ProductController {
     public List<MetricMappingVO> updateMetricMappings(
             @PathVariable String productId, @Valid @RequestBody UpdateMappingsRequest request) {
         return productService.updateMetricMappings(productId, request);
+    }
+
+    /**
+     * 属性 MDC 映射回显（GET /api/v1/iot/products/{productId}/metric-mappings；纯读）：PUT 全量
+     * 替换语义的回读面——编辑弹窗打开时拉取既有全集回显，防仅携增量提交静默清空（BUG-17）。
+     *
+     * @param productId 注册中心产品标识（路径变量）
+     * @return 该产品未删映射清单（id 升序与保存序一致），无配置回空清单；200
+     * @throws com.fuyun.common.exception.BizException IOT-1002（404 产品不存在）
+     */
+    @GetMapping("/{productId}/metric-mappings")
+    public List<MetricMappingVO> getMetricMappings(@PathVariable String productId) {
+        return productService.listMetricMappings(productId);
     }
 }

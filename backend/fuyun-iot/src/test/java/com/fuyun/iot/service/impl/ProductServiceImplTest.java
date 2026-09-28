@@ -229,6 +229,29 @@ class ProductServiceImplTest {
     }
 
     @Test
+    @DisplayName("映射回显查询：命中回显全集 / 空配置回空清单 / 产品不存在 IOT-1002（404）")
+    void listMetricMappingsEchoesExistingRowsOrEmpty() {
+        when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCED));
+        when(mappingMapper.selectList(any()))
+                .thenReturn(List.of(
+                        mappingRow("heartRate", "MDC_ECG_HEART_RATE"), mappingRow("spo2", "MDC_PULSE_OXIM_SPO2")));
+
+        List<MetricMappingVO> result = service.listMetricMappings(PRODUCT_ID);
+
+        assertThat(result).as("既有映射全集回显（弹窗打开回填）").hasSize(2);
+        assertThat(result.get(0).propertyName()).isEqualTo("heartRate");
+        assertThat(result.get(1).metricCode()).isEqualTo("MDC_PULSE_OXIM_SPO2");
+        // 空配置态：回空清单（弹窗回落单空行快速录入）
+        when(mappingMapper.selectList(any())).thenReturn(List.of());
+        assertThat(service.listMetricMappings(PRODUCT_ID)).as("无映射配置回空清单").isEmpty();
+        // 产品不存在：404 守卫与详情同口径
+        when(productMapper.selectById("missing")).thenReturn(null);
+        assertThatThrownBy(() -> service.listMetricMappings("missing"))
+                .isInstanceOfSatisfying(BizException.class, ex -> assertThat(ex.getErrorCode())
+                        .isEqualTo(IotErrorCode.PRODUCT_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("映射编辑冲突：同批 propertyName 重复 IOT-1005（409），且不触库写路径")
     void updateMappingsRejectsDuplicatePropertyInBatch() {
         when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCING));

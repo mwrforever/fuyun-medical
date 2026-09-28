@@ -259,6 +259,19 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
         return result;
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<MetricMappingVO> listMetricMappings(String productId) {
+        // 404 守卫与详情同口径（回显弹窗以产品存在为前提）
+        requireProduct(productId);
+        // 数据库读操作：id 升序稳定回显（与 PUT 保存序一致，管理台弹窗回填确定性口径）
+        return metricMappingMapper
+                .selectList(lambdaQueryOfMappings(productId).orderByAsc(IotMetricMappingEntity::getId))
+                .stream()
+                .map(MetricMappingVO::from)
+                .toList();
+    }
+
     /**
      * 失配检测：提取模型快照全部属性名（services[].properties[].name），比对映射表已配置面——
      * 存在未映射属性即失配（遥测按原文透传并告警，不静默丢弃）。
