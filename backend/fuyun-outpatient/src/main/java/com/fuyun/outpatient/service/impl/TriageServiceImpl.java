@@ -6,6 +6,7 @@ import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.cache.QueueZsetStore;
+import com.fuyun.outpatient.convert.QueueTicketConverter;
 import com.fuyun.outpatient.dto.CheckInRequest;
 import com.fuyun.outpatient.dto.QueueCallRequest;
 import com.fuyun.outpatient.dto.TriageAdjustRequest;
@@ -233,7 +234,8 @@ public class TriageServiceImpl implements ITriageService {
                 visit.getDeptCode(),
                 score,
                 request.stationId());
-        return toVO(ticket, visit.getTriageLevel(), displayNameOf(visit.getPatientId()));
+        return QueueTicketConverter.INSTANCE.toQueueTicketVO(
+                ticket, visit.getTriageLevel(), displayNameOf(visit.getPatientId()));
     }
 
     /**
@@ -342,7 +344,8 @@ public class TriageServiceImpl implements ITriageService {
                 ticket.getQueueId(),
                 ticket.getPriorityScore(),
                 ticket.getDoctorId());
-        return toVO(ticket, visit.getTriageLevel(), displayNameOf(visit.getPatientId()));
+        return QueueTicketConverter.INSTANCE.toQueueTicketVO(
+                ticket, visit.getTriageLevel(), displayNameOf(visit.getPatientId()));
     }
 
     /**
@@ -543,7 +546,7 @@ public class TriageServiceImpl implements ITriageService {
         return tickets.stream()
                 .map(ticket -> {
                     Visit visit = visits.get(ticket.getVisitId());
-                    return toVO(
+                    return QueueTicketConverter.INSTANCE.toQueueTicketVO(
                             ticket,
                             visit == null ? null : visit.getTriageLevel(),
                             visit == null ? null : displayNames.get(visit.getPatientId()));
@@ -898,36 +901,10 @@ public class TriageServiceImpl implements ITriageService {
     }
 
     /**
-     * 实体 → 票据出参投影（patientName 为脱敏展示名出网，无证件号等敏感字段——Spec §9 脱敏红线；
-     * triageLevel 取 visit 权威快照，由调用方按各自路径供给——D-2）。
-     *
-     * @param ticket      票据实体，非空
-     * @param triageLevel 分诊级别快照（visit.triage_level），可空（未分级）
-     * @param patientName 脱敏展示名，可空
-     * @return 票据出参，非空
-     */
-    private static QueueTicketVO toVO(QueueTicket ticket, Integer triageLevel, String patientName) {
-        return new QueueTicketVO(
-                ticket.getId(),
-                ticket.getVisitId(),
-                ticket.getQueueId(),
-                ticket.getTicketNo(),
-                ticket.getTicketType(),
-                ticket.getDoctorId(),
-                ticket.getPriorityScore(),
-                ticket.getQueueSeq(),
-                ticket.getQueueTime(),
-                ticket.getCalledCount(),
-                ticket.getCallTime(),
-                ticket.getStatus(),
-                patientName,
-                triageLevel);
-    }
-
-    /**
      * 单票路径出参组装（call/pass/recall/markServing 共用）：按票据就诊号一次读取 visit 行，同时
      * 取分诊级别快照（D-2：queue_ticket 无此列，权威在 visit.triage_level）与患者脱敏展示名，
-     * 禁拆两次查询；visit 缺失（数据异常防御）时两字段均 null，与既有 maskedNameOf 空语义一致。
+     * 禁拆两次查询；票面直映归 QueueTicketConverter（BUG-20 迁出），visit 缺失（数据异常防御）
+     * 时跨源两字段均 null，与既有 maskedNameOf 空语义一致。
      *
      * @param ticket 票据实体，非空
      * @return 票据出参，非空
@@ -935,7 +912,7 @@ public class TriageServiceImpl implements ITriageService {
     private QueueTicketVO toVOWithVisit(QueueTicket ticket) {
         // 数据库读操作：visit 业务号定位（分级快照+患者主索引单次读取）
         Visit visit = visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, ticket.getVisitId()));
-        return toVO(
+        return QueueTicketConverter.INSTANCE.toQueueTicketVO(
                 ticket,
                 visit == null ? null : visit.getTriageLevel(),
                 visit == null ? null : displayNameOf(visit.getPatientId()));

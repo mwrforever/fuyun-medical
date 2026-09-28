@@ -8,6 +8,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OrderCreatedPayload;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.ClinicOrderConverter;
 import com.fuyun.outpatient.dto.OrderCreateRequest;
 import com.fuyun.outpatient.dto.OrderItemRequest;
 import com.fuyun.outpatient.dto.PrescriptionOpenRequest;
@@ -243,7 +244,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 request.orderType(),
                 order.getOrderDoctorId(),
                 itemRows.size());
-        return toVO(order, itemRows);
+        return ClinicOrderConverter.INSTANCE.toClinicOrderVO(order, itemRows);
     }
 
     /**
@@ -313,7 +314,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 rx.rxNo(),
                 order.getOrderDoctorId());
         // ⑤ 出参直出（extRef 承载 rxNo；引用行零明细行）
-        return toVO(order, List.of());
+        return ClinicOrderConverter.INSTANCE.toClinicOrderVO(order, List.of());
     }
 
     /**
@@ -406,7 +407,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 order.getVisitId(),
                 voidedFees,
                 reason);
-        return toVO(order, itemsOf(order.getId()));
+        return ClinicOrderConverter.INSTANCE.toClinicOrderVO(order, itemsOf(order.getId()));
     }
 
     /**
@@ -434,7 +435,8 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 .stream()
                 .collect(Collectors.groupingBy(ClinicOrderItem::getOrderId));
         return orders.stream()
-                .map(order -> toVO(order, itemsByOrder.getOrDefault(order.getId(), List.of())))
+                .map(order -> ClinicOrderConverter.INSTANCE.toClinicOrderVO(
+                        order, itemsByOrder.getOrDefault(order.getId(), List.of())))
                 .toList();
     }
 
@@ -628,31 +630,5 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
     private List<ClinicOrderItem> itemsOf(Long orderId) {
         return clinicOrderItemMapper.selectList(
                 Wrappers.<ClinicOrderItem>lambdaQuery().eq(ClinicOrderItem::getOrderId, orderId));
-    }
-
-    /**
-     * 实体+明细 → 申请单出参投影（quantity DECIMAL string 透传，禁数值化——D-18 同源）。
-     *
-     * @param order 申请单实体，非空
-     * @param items 明细行清单，非空
-     * @return 申请单出参，非空
-     */
-    private static ClinicOrderVO toVO(ClinicOrder order, List<ClinicOrderItem> items) {
-        return new ClinicOrderVO(
-                order.getId(),
-                order.getOrderNo(),
-                order.getVisitId(),
-                order.getPatientId(),
-                order.getOrderType(),
-                order.getExtRef(),
-                order.getOrderDoctorId(),
-                order.getValidTo(),
-                order.getStatus(),
-                // 发药回流镜像透传（D-3：M06 发药/退药事件 CAS 回写值，null=未发药）
-                order.getDispenseStatus(),
-                order.getFeeSettlementId(),
-                items.stream()
-                        .map(row -> new ClinicOrderVO.Item(row.getItemCode(), row.getQuantity(), row.getUsageSummary()))
-                        .toList());
     }
 }
