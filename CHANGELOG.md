@@ -2,6 +2,28 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-28 · PR #57 合并前修复环收口：四笔修复 + scoped 复审 + 五条分流登记（先记再改）
+
+- ① **四笔修复（用户 2026-09-28 决策派发合并前修复环，范围锁定 B1/B2/P1/C2/C3 五项不扩大）**：
+  3c5f95c B1——AlarmEngine evaluate 批事务内 fireNewAlarm 捕获 DuplicateKeyException 后 PG 25P02
+  中止态连带回滚整批告警，每条告警「落行 + 事务内 triggered 事件 + afterCommit 推送/补推登记」
+  收进独立 REQUIRES_NEW perAlarmTx（对照 VitalSign 范式），冲突只丢单条、推送时机语义不回退，
+  补并发冲突用例；5d9c73d B2——风暴解除补推排空自 THRESHOLD 循环上提至 evaluate() 评估起点，
+  DEVICE_ALARM/OFFLINE 遗留队列不再静默等 1h TTL 过期，补两规则源排空用例；d2f7e5c P1——
+  fuyun-ward api 包补 package-info @NamedInterface（照 fuyun-iot 同款），连带 ward pom 补
+  spring-modulith-api（provided，BOM 托管零声明，注解编译类路径所需）；18dc26c C2/C3——
+  OfflineDetector 断流候选与 QualityServiceImpl 在线设备扫描两处 LIMIT 截断补
+  orderByAsc(last_online_at)（A.4.3-17），处置子集确定化。
+- ② **scoped 复审**：四笔落地后范围限定复审（仅核四笔改动面与回归），结论 READY_FOR_CI。
+- ③ **五条分流登记（TASK.md，同日修复环决策，不扩大修复环范围）**：C4 OfflineDetector 逐规则
+  循环单查（A.4.3-14，「批级口径」注释未申报）→W-60 随 PR-3（收敛单条动态 SQL 或补正式偏差
+  申报，二选一）；C1 HuaweiIotdaRegistry 外部网关无超时/读超时/有界重试/熔断显式配置（B.4-2）
+  →W-61 随 PR-4（IoTDA 联调硬前置）；C6 CommandDispatcher deliveryExecutor 无界
+  newCachedThreadPool（B.3-4）→W-62 随 PR-4；C7 registry/huawei 包位 vs B.4-1 gateway/adapter
+  归位→待决策 D-26（迁包或修宪豁免，二选一）；H1 消费错误重放与 raw_payload 脱敏/4000 截断
+  契约冲突→待决策 D-27（产品裁决重放适用范围，短期止血「打码/截断形态重放前显式拒绝」随裁决
+  一并定）。评审来源：PR #57 合并前 /code-review 修复环分诊（评分与核实细节见评审记录留档）。
+
 ## 2026-09-27 · simulator 命令回执断言竞态窗口加宽（CI 稳定化）
 
 - CI runner 唯一失败用例 CommandSubscriberTest#respondsSuccessReceiptForSupportedCommand（run 36346561581，
