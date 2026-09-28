@@ -467,10 +467,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
     // ---------------------------------------------------------------- 退号退费联动（Task 6）
 
     /**
-     * 退号（四分支锁死，裁决 7——退费一律经 billing 端口免审档，appointment/visit 终态一律
-     * billing.refund.approved 回执后置）：入口守卫（存在性/终态/线上退号时限）后按状态分流——
-     * TAKEN 先核 visit 态（非 REGISTERED 即已报到/已接诊，OP-1010 拒线上退）再走退费链；
-     * RESERVED 按费态分流（已付有结算锚走退费链保持占位待回执，否则免退费直取消+回池）。
+     * 退号（工作站/自助等已鉴权链路入口，语义见接口 javadoc）：直接委托三参实现免归属校验。
      *
      * @param apptNo 预约单业务号，非空
      * @param reason 退号原因，非空白
@@ -481,12 +478,49 @@ public class AppointmentServiceImpl implements IAppointmentService {
     @Override
     @Transactional
     public AppointmentVO cancel(String apptNo, String reason) {
+        // 工作站鉴权链路：免介质归属校验（BUG-01 仅收口 portal 免登录面，已鉴权行为保持）
+        return cancel(apptNo, reason, null);
+    }
+
+    /**
+     * 退号（四分支锁死，裁决 7——退费一律经 billing 端口免审档，appointment/visit 终态一律
+     * billing.refund.approved 回执后置；BUG-01 增介质归属守卫）：入口守卫（存在性→归属比对→
+     * 终态→线上退号时限）后按状态分流——TAKEN 先核 visit 态（非 REGISTERED 即已报到/已接诊，
+     * OP-1010 拒线上退）再走退费链；RESERVED 按费态分流（已付有结算锚走退费链保持占位待回执，
+     * 否则免退费直取消+回池）。
+     *
+     * @param apptNo         预约单业务号，非空
+     * @param reason         退号原因，非空白
+     * @param ownerPatientId portal 免登录链路介质解析出的归属患者主索引，null 时跳过归属校验
+     *                       （已鉴权链路内部委托）
+     * @return 预约单出参（分支 1=CANCELLED；分支 2/3=原态占位待回执），非空
+     * @throws BizException OP-1021（403 归属不匹配）/ OP-1009（预约单不存在/终态不可退）/
+     *                      OP-1010（线上时限外/已报到拒线上退）/ M13 退费守卫（BILL-*，端口
+     *                      原样透传）时触发
+     */
+    @Override
+    @Transactional
+    public AppointmentVO cancel(String apptNo, String reason, Long ownerPatientId) {
         // 数据库读操作：按业务号定位预约单
         Appointment appointment =
                 appointmentMapper.selectOne(Wrappers.<Appointment>lambdaQuery().eq(Appointment::getApptNo, apptNo));
         if (appointment == null) {
             throw new BizException(
                     OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "预约单不存在：apptNo=" + apptNo);
+        }
+        // 介质归属校验（BUG-01 收口，portal 免登录链路）：单号顺序流水可枚举，匿名请求介质解析
+        // 患者与单据归属不一致即 403 拒绝，阻断遍历单号退他人号源/触发他人退费链；比对与取消
+        // 同事务完成，杜绝校验通过后状态变更的竞态窗口（null 仅限已鉴权链路内部委托）
+        if (ownerPatientId != null && !ownerPatientId.equals(appointment.getPatientId())) {
+            log.warn(
+                    "免登录退号归属校验拒绝：apptNo={}，介质解析患者 {} 与单据归属患者 {} 不一致",
+                    apptNo,
+                    ownerPatientId,
+                    appointment.getPatientId());
+            throw new BizException(
+                    OutpatientErrorCode.APPT_OWNER_MISMATCH,
+                    HttpStatus.FORBIDDEN,
+                    "预约单归属校验失败，仅患者本人介质可退号：apptNo=" + apptNo);
         }
         ApptStatus status = appointment.getStatus();
         if (status != ApptStatus.RESERVED && status != ApptStatus.TAKEN) {

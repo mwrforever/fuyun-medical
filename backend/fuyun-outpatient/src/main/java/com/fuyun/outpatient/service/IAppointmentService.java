@@ -59,6 +59,26 @@ public interface IAppointmentService {
     AppointmentVO cancel(String apptNo, String reason);
 
     /**
+     * 退号（portal 免登录链路带介质归属校验，BUG-01 收口）：单号 AP+日期+顺序流水高度可枚举，
+     * 免登录通道禁仅凭单号退号——先比对介质解析患者与单据归属患者，不一致 403 OP-1021 阻断
+     * 匿名越权（退他人号源/触发他人退费链），一致后进入与两参 cancel 同一四分支语义；比对与
+     * 取消同事务完成，杜绝校验通过后状态变更的竞态窗口。
+     *
+     * @param apptNo         预约单业务号，非空；来源：portal 退号入口（路径参数）
+     * @param reason         退号原因，非空白；来源：患者录入（事件 reason 组件与审计留痕同源）
+     * @param ownerPatientId 介质解析出的归属患者主索引（patient api PatientIdentityQuery 产物），
+     *                       portal 链路必传非空；null 语义仅保留给已鉴权两参通道内部委托（免归属校验）
+     * @return 预约单出参（分支 1=CANCELLED；分支 2/3=原态占位待回执），非空
+     * @throws com.fuyun.common.exception.BizException OP-1021（403 归属不匹配）/ OP-1009（409 预约单
+     *                                                 不存在或终态不可退）/ OP-1010（409 线上退号时限外
+     *                                                 或已报到不可线上退）/ M13 退费守卫（BILL-*，经端口
+     *                                                 原样透传）/ PAT-1001（404 介质未命中，controller
+     *                                                 解析侧透出）时触发；建议处理策略：归属失败提示
+     *                                                 核对凭证，时限外单引导窗口办理
+     */
+    AppointmentVO cancel(String apptNo, String reason, Long ownerPatientId);
+
+    /**
      * 改期（退旧号新，reschedule_of 链；先占新后退旧防两头空，Spec :137）：新池行全套预扣+CAS+
      * 新 appointment 行（RESERVED、reschedule_of=旧单号），成功后旧单 CAS→CANCELLED+回池+删占位键；
      * 任一步失败整体回滚（事务），成功发布 appointment.rescheduled 链事件。改期仅承载未支付占位

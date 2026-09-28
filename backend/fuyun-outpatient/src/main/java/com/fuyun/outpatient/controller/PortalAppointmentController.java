@@ -18,6 +18,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +38,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 禁业务逻辑与事务（宪法 B.1/A.1-8）。
  */
 @Tag(name = "portal 匿名预约")
+@Slf4j
 @RestController
 @RequestMapping("/api/v1/outpatient/portal")
 @RequiredArgsConstructor
@@ -90,17 +92,40 @@ public class PortalAppointmentController {
     }
 
     /**
-     * portal 退号（免登录，Task 5 移交随退号四分支统一交付）：与工作站退号共用四分支语义
-     * （线上退号时限 OP-1010/已付退费回执驱动终态），匿名链路不经审计切面（裁决 13——操作者
-     * 留痕取哨兵值 PORTAL；限流/风控随 M18 注记）。
+     * portal 退号（免登录，Task 5 移交随退号四分支统一交付；BUG-01 归属校验收口）：与工作站退号
+     * 共用四分支语义（线上退号时限 OP-1010/已付退费回执驱动终态），但必须携带介质凭证——单号
+     * 顺序流水高度可枚举，服务端解析 patientId 后由服务层比对单据归属（不匹配 403 OP-1021，
+     * 阻断匿名遍历单号退他人号源）；匿名链路不经审计切面（裁决 13——操作者留痕取哨兵值
+     * PORTAL；限流/风控随 M18 注记）。
      *
      * @param no      预约单业务号（路径参数）
-     * @param request 退号请求（reason 必填留痕），非空
+     * @param request 退号请求（reason 必填留痕；credentialType/credentialNo 介质凭证本链路必填），非空
      * @return 预约单出参（分支 1=CANCELLED；分支 2=RESERVED 待退费回执），非空
      */
     @Operation(summary = "portal 退号（免登录）")
     @PostMapping("/appointments/{no}/cancel")
     public AppointmentVO cancel(@PathVariable("no") String no, @Valid @RequestBody CancelAppointmentRequest request) {
-        return appointmentService.cancel(no, request.reason());
+        // 介质凭证显式校验（BUG-01）：DTO 与工作站鉴权链路共用禁加 Bean Validation 必填，本免登录
+        // 链路显式拒空值与词表外值（W-22⑦ 口径）；先判空再 contains——Set.of 对 null 元素抛 NPE
+        if (request.credentialType() == null
+                || request.credentialType().isBlank()
+                || request.credentialNo() == null
+                || request.credentialNo().isBlank()
+                || !PORTAL_CREDENTIAL_TYPES.contains(request.credentialType())) {
+            throw new BizException(
+                    OutpatientErrorCode.PARAM_FORMAT_INVALID,
+                    HttpStatus.BAD_REQUEST,
+                    "退号介质凭证必填且类型仅支持 ID_CARD/VISIT_CARD");
+        }
+        // 介质解析（M02 身份解析面，与 book 同型）：明文仅本调用生命周期内存活，禁入日志（脱敏红线）
+        long patientId = patientIdentityQuery.resolveActivePatientId(request.credentialType(), request.credentialNo());
+        // 受理留痕（info）：凭证只打类型与长度摘要，禁任何明文片段（患者敏感字段脱敏红线）
+        log.info(
+                "portal 免登录退号受理：apptNo={}，介质类型={}，介质号长度={}",
+                no,
+                request.credentialType(),
+                request.credentialNo().length());
+        // 归属比对与取消在服务层同事务完成（TOCTOU 收口），携解析患者委托三参 cancel
+        return appointmentService.cancel(no, request.reason(), patientId);
     }
 }
