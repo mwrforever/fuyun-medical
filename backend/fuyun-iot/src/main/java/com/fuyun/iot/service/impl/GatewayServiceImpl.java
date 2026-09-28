@@ -1,7 +1,7 @@
 package com.fuyun.iot.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.api.IotErrorCode;
@@ -23,6 +23,12 @@ import org.springframework.transaction.annotation.Transactional;
  * 网关 CRUD（软删）与热备对端校验单点。注册与拓扑经 IoTDA 维护（Registry 直通占位，Spec
  * 「拓扑经 IoTDA 维护」），本实现零 Registry 依赖——禁在档案服务内发起云端管理面调用。
  *
+ * <p>配对纪律（宪法 A.4.3-20）：单表 CRUD 型服务实现继承
+ * {@code ServiceImpl<IotGatewayMapper, IotGatewayEntity>}，主表 mapper 经基类 {@code baseMapper}
+ * 字段注入（Spring @Autowired，无显式构造器依赖）；主表查询一律实现内置 {@code lambdaQuery()}
+ * 链式（宪法 A.4.3-13，不手动构建 wrapper），分页/主键读写直接复用 IService 契约能力
+ * （{@code page/getById/save/updateById/removeById}，底层同走 baseMapper 通道）。
+ *
  * <p>standby 校验语义（brief 冻结「校验语义取贴切实现并注记」）：standby_of 归一空白为 null
  * （无双机热备场景）；非空时①对端须存在（{@code @TableLogic} 自动过滤已删行——指向已删对端
  * 同样拒绝）、②禁自引用、③禁成环（沿 standby 链游走，回到保存目标即环；visited 集合防既有
@@ -34,37 +40,24 @@ import org.springframework.transaction.annotation.Transactional;
  * （com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
  */
 @Slf4j
-public class GatewayServiceImpl implements IGatewayService {
-
-    private final IotGatewayMapper gatewayMapper;
-
-    /**
-     * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1）。
-     *
-     * @param gatewayMapper 网关档案 mapper，非空；来源：同模块 mapper 包
-     */
-    public GatewayServiceImpl(IotGatewayMapper gatewayMapper) {
-        this.gatewayMapper = gatewayMapper;
-    }
+public class GatewayServiceImpl extends ServiceImpl<IotGatewayMapper, IotGatewayEntity> implements IGatewayService {
 
     @Override
     @Transactional(readOnly = true)
     public PageResult<GatewayVO> page(GatewayQueryRequest request) {
         int page = request.page() == null ? 0 : request.page();
         int size = request.size() == null ? 20 : request.size();
-        // 数据库读操作：过滤分页（gateway_id 升序稳定输出；@TableLogic 自动携带 deleted=0）
-        Page<IotGatewayEntity> result = gatewayMapper.selectPage(
-                new Page<>(page + 1L, size),
-                Wrappers.<IotGatewayEntity>lambdaQuery()
-                        .eq(request.wardId() != null, IotGatewayEntity::getWardId, request.wardId())
-                        .eq(request.mode() != null, IotGatewayEntity::getMode, request.mode())
-                        .eq(request.status() != null, IotGatewayEntity::getStatus, request.status())
-                        .eq(
-                                request.gatewayId() != null
-                                        && !request.gatewayId().isBlank(),
-                                IotGatewayEntity::getGatewayId,
-                                request.gatewayId())
-                        .orderByAsc(IotGatewayEntity::getGatewayId));
+        // 数据库读操作：主表过滤分页链式查询（gateway_id 升序稳定输出；@TableLogic 自动携带 deleted=0）
+        Page<IotGatewayEntity> result = lambdaQuery()
+                .eq(request.wardId() != null, IotGatewayEntity::getWardId, request.wardId())
+                .eq(request.mode() != null, IotGatewayEntity::getMode, request.mode())
+                .eq(request.status() != null, IotGatewayEntity::getStatus, request.status())
+                .eq(
+                        request.gatewayId() != null && !request.gatewayId().isBlank(),
+                        IotGatewayEntity::getGatewayId,
+                        request.gatewayId())
+                .orderByAsc(IotGatewayEntity::getGatewayId)
+                .page(new Page<>(page + 1L, size));
         return PageResult.of(result.getRecords().stream().map(GatewayVO::from).toList(), page, size, result.getTotal());
     }
 
@@ -72,7 +65,7 @@ public class GatewayServiceImpl implements IGatewayService {
     @Transactional
     public GatewayVO create(SaveGatewayRequest request) {
         // 数据库读操作：自然键唯一性应用层前置（@TableLogic 过滤已删行——软删网关重登记不受此预检拦截）
-        if (gatewayMapper.selectById(request.gatewayId()) != null) {
+        if (getById(request.gatewayId()) != null) {
             throw new BizException(
                     IotErrorCode.GATEWAY_ALREADY_EXISTS, HttpStatus.CONFLICT, "网关已存在：" + request.gatewayId());
         }
@@ -81,7 +74,7 @@ public class GatewayServiceImpl implements IGatewayService {
         validateStandby(entity);
         try {
             // 数据库写操作：网关档案落行（自然键直写，@TableId(INPUT)；PK 约束兜底并发与软删占位）
-            gatewayMapper.insert(entity);
+            save(entity);
         } catch (DataIntegrityViolationException e) {
             // PK 冲突翻译 IOT-1024 409：①软删行仍占物理 PK（唯一性预检按逻辑删过滤，探测不到）；
             // ②并发重复登记竞态。软删网关重登记须先恢复原行（运维处置），不做静默物理复活
@@ -116,7 +109,7 @@ public class GatewayServiceImpl implements IGatewayService {
                         request.status()));
         validateStandby(entity);
         // 数据库写操作：字段全量覆写（updated_at 由数据库触发器维护，应用层不触碰审计列）
-        gatewayMapper.updateById(entity);
+        updateById(entity);
         log.info(
                 "边缘网关已更新：gatewayId={}，name={}，status={}，standbyOf={}",
                 entity.getGatewayId(),
@@ -130,16 +123,17 @@ public class GatewayServiceImpl implements IGatewayService {
     @Transactional
     public void delete(String gatewayId) {
         requireGateway(gatewayId);
-        // 数据库读操作：删除守卫——他网关 standby_of 反查（部分索引 idx_iot_gateway_standby 准入）
-        Long inboundRefs = gatewayMapper.selectCount(Wrappers.<IotGatewayEntity>lambdaQuery()
+        // 数据库读操作：删除守卫——他网关 standby_of 反查（部分索引 idx_iot_gateway_standby 准入，链式 count）
+        Long inboundRefs = lambdaQuery()
                 .eq(IotGatewayEntity::getStandbyOf, gatewayId)
-                .ne(IotGatewayEntity::getGatewayId, gatewayId));
+                .ne(IotGatewayEntity::getGatewayId, gatewayId)
+                .count();
         if (inboundRefs != null && inboundRefs > 0) {
             throw new BizException(
                     IotErrorCode.GATEWAY_STANDBY_INVALID, HttpStatus.CONFLICT, "存在其他网关以本网关为热备对端，须先解除热备关系：" + gatewayId);
         }
         // 数据库写操作：软删（@TableLogic 逻辑删；iot_device.gateway_id 历史引用留痕由设备管理域处置）
-        gatewayMapper.deleteById(gatewayId);
+        removeById(gatewayId);
         log.info("边缘网关已删除（软删）：gatewayId={}", gatewayId);
     }
 
@@ -180,7 +174,7 @@ public class GatewayServiceImpl implements IGatewayService {
         String cursor = standbyOf;
         while (cursor != null && visited.add(cursor)) {
             // 数据库读操作：游走节点存在性校验（@TableLogic 自动过滤已删行——已删对端等同不存在）
-            IotGatewayEntity node = gatewayMapper.selectById(cursor);
+            IotGatewayEntity node = getById(cursor);
             if (node == null) {
                 throw new BizException(IotErrorCode.GATEWAY_STANDBY_INVALID, HttpStatus.CONFLICT, "热备对端不存在：" + cursor);
             }
@@ -202,7 +196,7 @@ public class GatewayServiceImpl implements IGatewayService {
      * @throws BizException IOT-1023（404；gateway_id 无命中）
      */
     private IotGatewayEntity requireGateway(String gatewayId) {
-        IotGatewayEntity entity = gatewayMapper.selectById(gatewayId);
+        IotGatewayEntity entity = getById(gatewayId);
         if (entity == null) {
             throw new BizException(IotErrorCode.GATEWAY_NOT_FOUND, HttpStatus.NOT_FOUND, "网关不存在：" + gatewayId);
         }

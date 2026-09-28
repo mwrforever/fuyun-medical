@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.api.IotErrorCode;
@@ -19,6 +20,7 @@ import com.fuyun.iot.entity.IotGatewayEntity;
 import com.fuyun.iot.enums.GatewayMode;
 import com.fuyun.iot.enums.GatewayStatus;
 import com.fuyun.iot.mapper.IotGatewayMapper;
+import com.fuyun.iot.service.IGatewayService;
 import com.fuyun.iot.vo.GatewayVO;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -33,6 +35,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 边缘网关管理服务单测（P2 PR-2 Task 11 Step 1，TDD 先行）：CRUD 主链（登记唯一性 IOT-1024/
@@ -75,7 +78,11 @@ class GatewayServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new GatewayServiceImpl(gatewayMapper);
+        // 无 Spring 上下文直构（Bean 注册归 app 侧 IotConfig @Import）；ServiceImpl 基类字段手工注入
+        // （baseMapper/entityClass，BindingServiceImplTest 同款形态——链式与 IService 能力的载体）
+        service = new GatewayServiceImpl();
+        ReflectionTestUtils.setField(service, "baseMapper", gatewayMapper);
+        ReflectionTestUtils.setField(service, "entityClass", IotGatewayEntity.class);
     }
 
     @Test
@@ -321,6 +328,33 @@ class GatewayServiceImplTest {
         assertThat(result.page()).as("0 基回显").isEqualTo(2);
         assertThat(result.size()).isEqualTo(50);
         assertThat(result.total()).isEqualTo(101);
+    }
+
+    @Test
+    @DisplayName("配对纪律（A.4.3-20）：IGatewayService 两侧继承 IService/ServiceImpl，接口面承载链式能力")
+    void serviceCarriesIServicePairingContract() {
+        // CRUD 单表服务强制配对：接口缺 extends IService / 实现缺 extends ServiceImpl 即本用例红
+        assertThat(IService.class.isAssignableFrom(IGatewayService.class))
+                .as("接口侧配对：IGatewayService extends IService<IotGatewayEntity>")
+                .isTrue();
+        assertThat(service).as("实现侧配对：GatewayServiceImpl extends ServiceImpl").isInstanceOf(IService.class);
+    }
+
+    @Test
+    @DisplayName("分页链式等价：无命中空结果边界——空清单 + total 0 + 0 基回显，行为与链式化前一致")
+    void pageReturnsEmptyResultWithZeroTotalWhenNoMatch() {
+        // 边界场景（主表查询链式化后的行为等价守护）：过滤无命中时不出错、不造数据
+        Page<IotGatewayEntity> page = new Page<>(1, 20);
+        page.setRecords(List.of());
+        page.setTotal(0);
+        when(gatewayMapper.selectPage(any(), any())).thenReturn(page);
+
+        PageResult<GatewayVO> result = service.page(new GatewayQueryRequest(null, null, WARD_ID, null, null, null));
+
+        assertThat(result.page()).isZero();
+        assertThat(result.size()).isEqualTo(20);
+        assertThat(result.total()).isZero();
+        assertThat(result.content()).isEmpty();
     }
 
     /** 保存请求夹具（status 可覆写） */
