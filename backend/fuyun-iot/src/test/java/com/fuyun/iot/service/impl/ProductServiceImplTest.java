@@ -308,6 +308,29 @@ class ProductServiceImplTest {
     }
 
     @Test
+    @DisplayName("命令回显查询：命中回显全集 / 空配置回空清单 / 产品不存在 IOT-1002（404）")
+    void listCommandsEchoesExistingRowsOrEmpty() {
+        when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCED));
+        when(commandMapper.selectList(any()))
+                .thenReturn(List.of(commandRow("setWorkMode", CommandSafetyLevel.SAFETY, true)));
+
+        List<CommandVO> result = service.listCommands(PRODUCT_ID);
+
+        assertThat(result).as("既有命令标注全集回显（弹窗打开回填）").hasSize(1);
+        assertThat(result.get(0).commandName()).isEqualTo("setWorkMode");
+        assertThat(result.get(0).safetyLevel()).isEqualTo(CommandSafetyLevel.SAFETY);
+        assertThat(result.get(0).allowed()).as("放行状态随行回显（FU-M14-09 白名单数据源）").isTrue();
+        // 空配置态：回空清单（弹窗回落单空行快速录入）
+        when(commandMapper.selectList(any())).thenReturn(List.of());
+        assertThat(service.listCommands(PRODUCT_ID)).as("无命令标注回空清单").isEmpty();
+        // 产品不存在：404 守卫与详情同口径
+        when(productMapper.selectById("missing")).thenReturn(null);
+        assertThatThrownBy(() -> service.listCommands("missing"))
+                .isInstanceOfSatisfying(BizException.class, ex -> assertThat(ex.getErrorCode())
+                        .isEqualTo(IotErrorCode.PRODUCT_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("命令安全等级默认面：SAFETY→allowed=true、TREATMENT→allowed=false、显式 allowed 覆盖生效")
     void updateCommandsAppliesSafetyDefaults() {
         when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCING));
@@ -407,6 +430,17 @@ class ProductServiceImplTest {
         entity.setPropertyName(propertyName);
         entity.setMetricCode(metricCode);
         entity.setMismatchStrategy(MismatchStrategy.RAW_PASSTHROUGH);
+        return entity;
+    }
+
+    /** 命令标注实体夹具（回显查询 stub 载体） */
+    private static IotProductCommandEntity commandRow(
+            String commandName, CommandSafetyLevel safetyLevel, Boolean allowed) {
+        IotProductCommandEntity entity = new IotProductCommandEntity();
+        entity.setProductId(PRODUCT_ID);
+        entity.setCommandName(commandName);
+        entity.setSafetyLevel(safetyLevel);
+        entity.setAllowed(allowed);
         return entity;
     }
 

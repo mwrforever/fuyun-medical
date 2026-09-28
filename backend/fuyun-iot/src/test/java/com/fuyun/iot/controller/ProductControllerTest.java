@@ -148,6 +148,21 @@ class ProductControllerTest {
     }
 
     @Test
+    @DisplayName("命令回显：GET commands 返回 200 清单且以路径变量调用服务")
+    void getCommandsReturnsList() throws Exception {
+        when(productService.listCommands(PRODUCT_ID))
+                .thenReturn(List.of(
+                        new CommandVO(1L, PRODUCT_ID, "setWorkMode", "vital", CommandSafetyLevel.SAFETY, true)));
+
+        mockMvc.perform(get("/api/v1/iot/products/{productId}/commands", PRODUCT_ID)
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].commandName").value("setWorkMode"))
+                .andExpect(jsonPath("$[0].allowed").value(true));
+        verify(productService).listCommands(PRODUCT_ID);
+    }
+
+    @Test
     @DisplayName("映射回显：GET metric-mappings 返回 200 清单且以路径变量调用服务")
     void getMetricMappingsReturnsList() throws Exception {
         when(productService.listMetricMappings(PRODUCT_ID))

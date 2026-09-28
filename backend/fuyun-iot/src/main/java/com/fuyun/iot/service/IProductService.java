@@ -69,6 +69,17 @@ public interface IProductService {
     List<CommandVO> updateCommands(String productId, UpdateCommandsRequest request);
 
     /**
+     * 命令安全等级回显查询（GET /api/v1/iot/products/{id}/commands）：PUT 全量替换语义的
+     * 回读面——登记弹窗打开时拉取既有全集回显，防仅携增量提交静默清空白名单标注
+     * （FU-M14-09 治疗级管控数据源，BUG-18）。
+     *
+     * @param productId 注册中心产品标识，非空
+     * @return 该产品未删命令标注清单（id 升序与保存序一致），无配置回空清单，非空
+     * @throws com.fuyun.common.exception.BizException IOT-1002（404 产品不存在）
+     */
+    List<CommandVO> listCommands(String productId);
+
+    /**
      * 属性 MDC 映射全量编辑（PUT /api/v1/iot/products/{id}/metric-mappings）：逻辑删旧行 +
      * 落新行；mismatchStrategy 缺省 RAW_PASSTHROUGH。
      *

@@ -213,6 +213,19 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<CommandVO> listCommands(String productId) {
+        // 404 守卫与详情同口径（登记弹窗以产品存在为前提）
+        requireProduct(productId);
+        // 数据库读操作：id 升序稳定回显（与 PUT 保存序一致，FU-M14-09 白名单数据源回读面）
+        return commandMapper
+                .selectList(lambdaQueryOfCommands(productId).orderByAsc(IotProductCommandEntity::getId))
+                .stream()
+                .map(CommandVO::from)
+                .toList();
+    }
+
+    @Override
     @Transactional
     public List<MetricMappingVO> updateMetricMappings(String productId, UpdateMappingsRequest request) {
         requireProduct(productId);
