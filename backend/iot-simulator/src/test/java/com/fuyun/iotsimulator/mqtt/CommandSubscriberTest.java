@@ -93,8 +93,9 @@ class CommandSubscriberTest {
                         new MqttMessage("{\"command_name\":\"PAUSE_INFUSION\",\"service_id\":\"Monitor\",\"paras\":{}}"
                                 .getBytes(StandardCharsets.UTF_8)));
 
-        assertThat(receivedCommands).as("剧本回调挂接：命令名原值透传").contains("PAUSE_INFUSION");
+        // 回调经 commandExecutor 异步执行，回执发布在剧本回调完成之后——先等回执到达再断言回调挂接，消除高负载同步断言竞态
         verify(mqttClient, timeout(AWAIT_MILLIS)).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
+        assertThat(receivedCommands).as("剧本回调挂接：命令名原值透传").contains("PAUSE_INFUSION");
         JsonNode receipt = MAPPER.readTree(payloadCaptor.getValue());
         assertThat(receipt.path("result_code").asInt())
                 .as("执行成功回执 result_code=0（平台归 SUCCESS 终态）")
