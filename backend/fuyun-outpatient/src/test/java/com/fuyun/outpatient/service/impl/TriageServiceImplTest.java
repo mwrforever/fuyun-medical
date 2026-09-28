@@ -676,6 +676,63 @@ class TriageServiceImplTest {
         verify(queueZsetStore).enqueue("DEP001", 501L, 999 * SCORE_ENCODE_SCALE + 1);
     }
 
+    // ---------------------------------------------------------------- BUG-07 并发防覆写回归锚
+
+    @Test
+    @DisplayName("BUG-07 并发防覆写：调级回写仅携本操作变更列——visit/票快照状态与叫号计数不落 SET" + "（对端 CAS 已迁移态不被覆写）")
+    void adjustLevelWriteOmitsStatusSnapshotColumns() {
+        // 复现口径：adjust 读点（visit/票 selectOne）返回快照后、落库前，对端叫号/接诊 CAS 已并发
+        // 迁移库端状态（票 WAITING→CALLED+called_count 累加、visit 可经接诊联动迁移）——若以读点
+        // 快照整行 updateById 回写，SET 子句携带快照 status/called_count，后提交者以快照覆写对端
+        // 已迁移态（状态回退+叫号计数归零）。单测以「回写实体不携状态类快照列」为不覆写判据
+        // （NOT_NULL 更新策略下 null 列不进 SET 子句），真栈并发时序由集成测试承载
+        Visit visit = visit(VisitStatus.WAITING, null, (short) 0);
+        QueueTicket ticket = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
+        when(visitMapper.selectOne(any())).thenReturn(visit);
+        when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
+
+        service.adjust(new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null, "病情变化升Ⅰ级"));
+
+        // visit 分级回写仅携 triage_level/updated_by：status 快照列不携——不覆写对端 casStatus/
+        // casAdmit 已迁移的库端状态（如接诊后 IN_CONSULT 被快照 WAITING 覆写回候诊态）
+        ArgumentCaptor<Visit> visitWriteCaptor = ArgumentCaptor.forClass(Visit.class);
+        verify(visitMapper).updateById(visitWriteCaptor.capture());
+        assertThat(visitWriteCaptor.getValue().getStatus()).isNull();
+        assertThat(visitWriteCaptor.getValue().getTriageLevel()).isEqualTo(1);
+        assertThat(visitWriteCaptor.getValue().getUpdatedBy()).isEqualTo("nurse001");
+        // 票分值回写仅携 priority_score/ticket_no/updated_by：status/called_count/call_time 快照列
+        // 不携——对端 casCall 已累加的叫号计数与已迁移状态不被读点快照覆写；票号随回写同值保持
+        // （Spec :106 调级不改号）
+        ArgumentCaptor<QueueTicket> ticketWriteCaptor = ArgumentCaptor.forClass(QueueTicket.class);
+        verify(queueTicketMapper).updateById(ticketWriteCaptor.capture());
+        assertThat(ticketWriteCaptor.getValue().getStatus()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getCalledCount()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getCallTime()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getPriorityScore()).isEqualTo(900);
+        assertThat(ticketWriteCaptor.getValue().getTicketNo()).isEqualTo("A001");
+    }
+
+    @Test
+    @DisplayName("BUG-07 并发防覆写：RE_TRIAGE 改派医生回写仅携指派列——票快照状态与叫号计数不落 SET")
+    void adjustRetriageWriteOmitsStatusSnapshotColumns() {
+        // 快照口径：票已在读点前被叫过 2 次（calledCount=2）——若改派整行回写携快照，对端并发
+        // casCall 在窗口内累加的计数将被快照值覆写
+        Visit visit = visit(VisitStatus.WAITING, null, (short) 0);
+        QueueTicket ticket = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 2);
+        when(visitMapper.selectOne(any())).thenReturn(visit);
+        when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
+
+        service.adjust(new TriageAdjustRequest("O2026092100001", "RE_TRIAGE", null, "DOC009", null, null, "家属要求换医生"));
+
+        ArgumentCaptor<QueueTicket> ticketWriteCaptor = ArgumentCaptor.forClass(QueueTicket.class);
+        verify(queueTicketMapper).updateById(ticketWriteCaptor.capture());
+        assertThat(ticketWriteCaptor.getValue().getStatus()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getCalledCount()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getDoctorId()).isEqualTo("DOC009");
+        // RE_TRIAGE 不携分级入参——visit 零回写（分级回写仅请求携 triageLevel 时触发）
+        verify(visitMapper, never()).updateById(any(Visit.class));
+    }
+
     // ---------------------------------------------------------------- 守卫用例（LINE=1.00 分支行覆盖）
 
     @Test

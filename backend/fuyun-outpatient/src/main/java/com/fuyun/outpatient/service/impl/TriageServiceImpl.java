@@ -294,18 +294,33 @@ public class TriageServiceImpl implements ITriageService {
                     HttpStatus.NOT_FOUND,
                     "在队候诊票不存在（未报到或已离队）：visitId=" + request.visitId());
         }
-        // 分级快照回写 visit（国标字段分诊台写入；调级重算以 visit 当前分级为口径）
+        // 分级快照回写 visit（国标字段分诊台写入；调级重算以 visit 当前分级为口径）。指定列回写
+        // （BUG-07 并发防覆写）：仅携 id/triage_level/updated_by 的补丁实体落库，禁以读点整行
+        // 快照回写——读改写窗口内对端 casStatus/casAdmit 已迁移的 status（如接诊 IN_CONSULT）会被
+        // 快照 WAITING 覆写回旧态；NOT_NULL 更新策略下补丁未携列不进 SET 子句，状态机列天然不落库
+        // （对齐 casCall/casAdmit 显式列纪律，D-13）
         if (request.triageLevel() != null) {
+            // 内存实体同步新分级：供后续调级重算/留痕/出参直取，与落库互不替代
             visit.setTriageLevel(request.triageLevel());
-            visit.setUpdatedBy(OperatorContextHolder.get());
-            visitMapper.updateById(visit);
+            Visit patch = new Visit();
+            patch.setId(visit.getId());
+            patch.setTriageLevel(request.triageLevel());
+            patch.setUpdatedBy(OperatorContextHolder.get());
+            visitMapper.updateById(patch);
         }
         // 动作分流（CHECK_IN 已前置守卫拒绝，枚举四值穷举其余三值——switch 语句无需 default 死分支）
         switch (action) {
             case RE_TRIAGE -> {
+                // 内存实体同步指派：供留痕/出参直取
                 ticket.setDoctorId(request.doctorId());
-                ticket.setUpdatedBy(OperatorContextHolder.get());
-                queueTicketMapper.updateById(ticket);
+                // 指定列回写（BUG-07 并发防覆写）：仅携指派/票号/审计列，禁整行快照回写——
+                // 窗口内对端 casCall/casAdmit 已迁移的 status 与已累加的 called_count 不被覆写
+                QueueTicket patch = new QueueTicket();
+                patch.setId(ticket.getId());
+                patch.setTicketNo(ticket.getTicketNo());
+                patch.setDoctorId(request.doctorId());
+                patch.setUpdatedBy(OperatorContextHolder.get());
+                queueTicketMapper.updateById(patch);
             }
             case LEVEL_ADJUST -> adjustLevel(ticket, visit, factors);
             case QUEUE_TRANSFER -> ticket = transferQueue(ticket, visit, request, factors);
@@ -591,9 +606,17 @@ public class TriageServiceImpl implements ITriageService {
      */
     private void adjustLevel(QueueTicket ticket, Visit visit, List<String> factors) {
         int newScore = priorityScore(visit.getTriageLevel(), ticket.getTicketType(), factors);
+        // 内存实体同步新分值：供出参/留痕直取
         ticket.setPriorityScore(newScore);
-        ticket.setUpdatedBy(OperatorContextHolder.get());
-        queueTicketMapper.updateById(ticket);
+        // 指定列回写（BUG-07 并发防覆写）：仅携分值/票号/审计列，禁整行快照回写——票号随回写
+        // 同值保持（Spec :106 调级不改号），status/called_count/call_time 快照列不携，窗口内
+        // 对端 casCall 已迁移态与已累加叫号计数不被覆写
+        QueueTicket patch = new QueueTicket();
+        patch.setId(ticket.getId());
+        patch.setTicketNo(ticket.getTicketNo());
+        patch.setPriorityScore(newScore);
+        patch.setUpdatedBy(OperatorContextHolder.get());
+        queueTicketMapper.updateById(patch);
         // 缓存写操作：ZSET 重排（同 member 换分——票号不变，Spec :106）
         queueZsetStore.remove(ticket.getQueueId(), ticket.getId());
         queueZsetStore.enqueue(ticket.getQueueId(), ticket.getId(), encodedScore(newScore, ticket.getQueueSeq()));
