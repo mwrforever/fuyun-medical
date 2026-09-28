@@ -10,7 +10,7 @@
   </parent>
   <!-- 业务模块（M16 智慧病房应用）：P2 PR-2 起落迁移与业务实现（呼叫对讲状态机/冷链合规台账/
        输液监控编排/体征自动采集视图），依赖面对齐 fuyun-iot 实证清单裁剪（common/system/integration/
-       amqp/websocket/validation/MP/jsqlparser/micrometer/lombok/test；不含 fuyun-patient/qpid）；
+       amqp/websocket/validation/MP/jsqlparser/micrometer/modulith-api/lombok/test；不含 fuyun-patient/qpid）；
        iot 事件经 @RabbitListener 消费（iot↔ward 事件链零模块依赖，P2 PR-2 计划 GC3），
        WebSocket 面随呼叫/告警推送实装启用；P2 PR-2 Task 12 增补 fuyun-iot 依赖——仅消费其
        api NamedInterface（IotTelemetryQueryPort/TelemetryPoint/告警载荷，Modulith verify 把关
@@ -46,6 +46,13 @@
          mybatis-plus starter + jsqlparser（ward 库数据访问，spring-boot3 后缀 starter，禁再引入
          mybatis-spring 系，宪法 A.4.3-12）/ micrometer-core（监控指标）——版本全部 BOM 托管零声明
          （iot pom 同源，禁自行声明版本） -->
+    <!-- spring-modulith-api（provided，BOM 托管零声明）：api 包 package-info @NamedInterface 声明
+         依赖（宪法 B.1 对外契约出口，nursing/iot pom 同源先例） -->
+    <dependency>
+      <groupId>org.springframework.modulith</groupId>
+      <artifactId>spring-modulith-api</artifactId>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-amqp</artifactId>
