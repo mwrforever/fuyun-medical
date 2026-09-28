@@ -39,7 +39,9 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * 免认证登录端点无操作人上下文时回退取入参登录名（审计主体口径）、BizException/任意异常记 FAIL
  * 且原样 rethrow、fail_reason 脱敏 + 500 字符截断、审计落库失败全吞不阻断业务（成功与失败双路径）、
  * 请求上下文缺失兜底 unknown、标识白名单掩码（PR-6 修复环 R2：identifier 参数/含 identifier 组件
- * 的 record 尾四位掩码不落明文，白名单外参数逐字节原样）。落库字段语义的真库落点归 AuthFlowIT
+ * 的 record 尾四位掩码不落明文，白名单外参数逐字节原样）、敏感命名字段 record 掩码（BUG-02：
+ * 白名单外 record 含 idCardNo/mobile/address/identifierValue 组件时值掩码不落明文，非正则形态
+ * 整体打码、无敏感组件 record 保持默认 toString）。落库字段语义的真库落点归 AuthFlowIT
  * 步骤 7 端到端断言。
  */
 @ExtendWith(MockitoExtension.class)
@@ -187,6 +189,57 @@ class AuditLogAspectTest {
     }
 
     @Test
+    @DisplayName("敏感命名字段 record 入参（建档形态）：idCardNo/mobile/address 掩码不落明文，非敏感组件原样")
+    void sensitiveNamedRecordComponentsAreMaskedInDetail() {
+        proxy.createPatient(new SampleService.PatientCreateSampleRequest(
+                "张三", "110101199001011234", "13812345678", "北京市海淀区医学路10号", "WINDOW"));
+
+        verify(auditLogService).append(entryCaptor.capture());
+        AuditLogEntry entry = entryCaptor.getValue();
+        // 掩码形态锚定：证号前6后4、手机号前3后4（对齐 SensitiveMasker 口径），住址自由文本无形态可保留整体打码
+        assertThat(entry.detail())
+                .contains("name=张三")
+                .contains("idCardNo=110101********1234")
+                .contains("mobile=138****5678")
+                .contains("address=***")
+                .contains("registerChannel=WINDOW")
+                .doesNotContain("110101199001011234")
+                .doesNotContain("13812345678")
+                .doesNotContain("北京市海淀区医学路10号");
+    }
+
+    @Test
+    @DisplayName("敏感命名字段 record 入参（补挂标识形态）：非正则形态标识值整体打码，非敏感组件原样")
+    void identifierValueComponentWithoutRegexFormIsFullyMasked() {
+        proxy.attachIdentifier(new SampleService.IdentifierAttachSampleRequest("PASSPORT", "E12345678", "C001"));
+
+        verify(auditLogService).append(entryCaptor.capture());
+        // 渲染形态精确锚定：护照号无证号/手机号正则形态，走键名+全打码；identifierType/cardNo 非敏感原样
+        assertThat(entryCaptor.getValue().detail())
+                .isEqualTo("identifierType=PASSPORT, identifierValue=***, cardNo=C001");
+    }
+
+    @Test
+    @DisplayName("不含敏感命名字段的 record 入参：保持默认 toString 直出（白名单外行为保持锚定）")
+    void plainRecordWithoutSensitiveFieldsKeepsDefaultToString() {
+        proxy.merge(new SampleService.MergeSampleRequest(1L, 2L, "重复档案"));
+
+        verify(auditLogService).append(entryCaptor.capture());
+        // 精确匹配锚定：无敏感组件命中时不进组件重排，detail 与既有 toString 直出逐字节一致
+        assertThat(entryCaptor.getValue().detail())
+                .isEqualTo("MergeSampleRequest[survivorPatientId=1, mergedPatientId=2, mergeReason=重复档案]");
+    }
+
+    @Test
+    @DisplayName("敏感命名字段空值：null 组件输出字面 null，不误伤渲染链路")
+    void nullSensitiveComponentRendersAsLiteralNull() {
+        proxy.updatePatient(new SampleService.PatientUpdateSampleRequest(null, null));
+
+        verify(auditLogService).append(entryCaptor.capture());
+        assertThat(entryCaptor.getValue().detail()).isEqualTo("mobile=null, address=null");
+    }
+
+    @Test
     @DisplayName("业务异常：记 FAIL 行（fail_reason=异常消息）后原样 rethrow；无参无上下文操作人回退 system")
     void bizExceptionRecordsFailEntryAndRethrows() {
         BizException expected =
@@ -302,7 +355,44 @@ class AuditLogAspectTest {
             return "ok";
         }
 
+        /** 注解落点形态与 PatientController.create 一致：含敏感命名字段的白名单外 record 入参 */
+        @AuditLog(actionType = AuditActionType.WRITE)
+        public String createPatient(PatientCreateSampleRequest request) {
+            return "ok";
+        }
+
+        /** 注解落点形态与 PatientIdentifierController.attach 一致：identifierValue 载体 record 入参 */
+        @AuditLog(actionType = AuditActionType.WRITE)
+        public String attachIdentifier(IdentifierAttachSampleRequest request) {
+            return "ok";
+        }
+
+        /** 注解落点形态与 PatientController.update 一致：敏感命名字段可空（部分更新语义） */
+        @AuditLog(actionType = AuditActionType.WRITE)
+        public String updatePatient(PatientUpdateSampleRequest request) {
+            return "ok";
+        }
+
+        /** 不含任何敏感命名字段的白名单外 record 入参（锚定默认 toString 行为保持） */
+        @AuditLog(actionType = AuditActionType.WRITE)
+        public String merge(MergeSampleRequest request) {
+            return "ok";
+        }
+
         /** 样本 record（组件形态与 PdaPatrolRequest 一致：identifier 扫码标识 + visitId 归属键） */
         public record PatrolSampleRequest(String identifier, String visitId) {}
+
+        /** 样本 record（组件名与 PatientCreateRequest 敏感子集一致：证号/手机号/住址 + 非敏感字段） */
+        public record PatientCreateSampleRequest(
+                String name, String idCardNo, String mobile, String address, String registerChannel) {}
+
+        /** 样本 record（组件名与 IdentifierCreateRequest 一致：identifierValue 载体） */
+        public record IdentifierAttachSampleRequest(String identifierType, String identifierValue, String cardNo) {}
+
+        /** 样本 record（组件名与 PatientUpdateRequest 一致：敏感命名字段可空） */
+        public record PatientUpdateSampleRequest(String mobile, String address) {}
+
+        /** 样本 record（无敏感命名字段，形态与 MergeCreateRequest 一致） */
+        public record MergeSampleRequest(long survivorPatientId, long mergedPatientId, String mergeReason) {}
     }
 }
