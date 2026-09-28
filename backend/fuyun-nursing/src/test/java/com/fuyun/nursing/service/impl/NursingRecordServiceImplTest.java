@@ -32,8 +32,10 @@ import com.fuyun.nursing.vo.NursingRecordVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.TimeZone;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -378,6 +380,31 @@ class NursingRecordServiceImplTest {
                 .doesNotContain("record_time >=")
                 .contains("ORDER BY")
                 .contains("record_time");
+    }
+
+    @Test
+    @DisplayName("日界时区锚（BUG-03）：JVM 默认时区为 UTC（未注入 TZ 的容器基底）时，date 当日窗仍按北京时区 [00:00+08, 次日 00:00+08) 收敛")
+    void listByVisitKeepsBeijingDayWindowUnderUtcDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 复现缺陷环境：镜像基底 eclipse-temurin:17-jre 默认 UTC，systemDefault 日界会错位 8 小时
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            when(recordMapper.selectList(any())).thenReturn(List.of());
+
+            service.listByVisit(VISIT, LocalDate.of(2026, 9, 22));
+
+            // 医疗日界口径=北京时区自然日：当日窗边界显式断言 +08:00 偏移（非 UTC 的 Z 偏移）
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            verify(recordMapper).selectList(queryCaptor.capture());
+            LambdaQueryWrapper<NursingRecord> wrapper = rendered(queryCaptor.getValue());
+            assertThat(wrapper.getParamNameValuePairs().values())
+                    .contains(
+                            VISIT,
+                            LocalDate.of(2026, 9, 22).atStartOfDay(beijing).toOffsetDateTime(),
+                            LocalDate.of(2026, 9, 23).atStartOfDay(beijing).toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

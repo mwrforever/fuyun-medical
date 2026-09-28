@@ -92,6 +92,8 @@ services:
     env_file: .env                              # IoTDA 等低频变量整组带入，高频连接变量在下方显式覆写
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-dev}
+      # 容器时区（BUG-03）：backend 业务日界按北京时区，与 Dockerfile ENV TZ 同源兜底（可经 .env 覆写）
+      TZ: ${TZ:-Asia/Shanghai}
       # 服务名经 fy-net DNS 解析；连接凭据与四基础设施同源（.env），杜绝双份口令漂移
       # 必须自带 reWriteBatchedInserts=true（backend A.4.2-6）：env 变量存在会覆盖 application-dev.yml 内含该参数的默认值，缺失则批量写优化静默失效
       FUYUN_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}?reWriteBatchedInserts=true

@@ -7,6 +7,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.api.VitalSignRecordedPayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
+import com.fuyun.nursing.constants.NursingTimeConstants;
 import com.fuyun.nursing.constants.NursingVitalThresholds;
 import com.fuyun.nursing.constants.VitalSignValues;
 import com.fuyun.nursing.dto.VitalSignRecordRequest;
@@ -26,7 +27,6 @@ import com.fuyun.nursing.vo.VitalSignVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -261,12 +261,15 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
     @Transactional(readOnly = true)
     public List<VitalSignVO> listByPatient(long patientId, Instant from, Instant to) {
         var wrapper = Wrappers.<VitalSignRecord>lambdaQuery().eq(VitalSignRecord::getPatientId, patientId);
+        // 窗口边界按北京时区偏移承载（BUG-03 医疗日界口径）：时刻不变（TIMESTAMPTZ 按时刻比较），禁 systemDefault
         if (from != null) {
-            wrapper.ge(VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(from, ZoneId.systemDefault()));
+            wrapper.ge(
+                    VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(from, NursingTimeConstants.HEALTHCARE_TZ));
         }
         if (to != null) {
             // 窗口含头不含尾：to 为开区间上界（与护理记录单当日窗口同口径）
-            wrapper.lt(VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(to, ZoneId.systemDefault()));
+            wrapper.lt(
+                    VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(to, NursingTimeConstants.HEALTHCARE_TZ));
         }
         wrapper.orderByAsc(VitalSignRecord::getMeasuredAt);
         // 数据库读操作：患者体征清单（测量时点升序；逻辑删由 @TableLogic 自动过滤）
