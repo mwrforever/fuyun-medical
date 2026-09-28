@@ -389,4 +389,42 @@ describe('住院医生站', () => {
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(expect.stringContaining('频次'));
     expect(orders.create).not.toHaveBeenCalled();
   });
+
+  it('切换在院患者复位开立草稿明细行与长期频次，未提交医嘱不跨患者续提（FE-A2-02）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([
+      wardPatientMock({ visitId: 'I2026092500001', bedNo: '01' }),
+      wardPatientMock({ visitId: 'I2026092500002', bedNo: '02' }),
+    ]);
+    const wrapper = mount(DoctorStationView);
+    await flushPromises();
+    // 选中 01 床患者：留两行成组医嘱草稿 + 长期频次（均不提交）
+    await wrapper.find('.station-patient-row').trigger('click');
+    await flushPromises();
+    await wrapper.find('.station-item-code').setValue('ASP500');
+    await wrapper.find('.station-item-name').setValue('阿司匹林片');
+    await wrapper.find('.station-item-dosage').setValue('0.5');
+    await wrapper.find('.station-item-unit').setValue('g');
+    await wrapper.find('.station-item-route').setValue('PO');
+    await clickButton(wrapper, '加一行（成组）');
+    await wrapper.find('input[aria-label="第2行项目编码"]').setValue('ASP250');
+    await wrapper.find('input[aria-label="第2行项目名称"]').setValue('阿司匹林肠溶片');
+    await wrapper.find('input[aria-label="医嘱分类长期"]').setValue(true);
+    await wrapper.find('select[aria-label="医嘱频次"]').setValue('bid');
+    // 切换 02 床患者：草稿明细与频次不得跨患者滞留（续提即开错患者——用药安全风险）
+    await wrapper.findAll('.station-patient-row')[1].trigger('click');
+    await flushPromises();
+    // 明细行归一为 1 行空行（成组草稿清空）
+    expect(wrapper.findAll('.station-item-row')).toHaveLength(1);
+    expect((wrapper.find('.station-item-code').element as HTMLInputElement).value).toBe('');
+    expect((wrapper.find('.station-item-name').element as HTMLInputElement).value).toBe('');
+    // 长期频次清空（回「未选择」）
+    expect((wrapper.find('select[aria-label="医嘱频次"]').element as HTMLSelectElement).value).toBe(
+      '',
+    );
+    // 行为兜底：空草稿直接保存被显式校验拦截零出网（不给 02 床患者开出 01 床草稿）
+    await clickButton(wrapper, '保存医嘱');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('第 1 行项目编码/名称必填');
+    expect(orders.create).not.toHaveBeenCalled();
+  });
 });

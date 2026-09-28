@@ -94,12 +94,14 @@ async function loadPatients(): Promise<void> {
   }
 }
 
-/** 行点击选中：驱动中列上下文与医嘱列表，并懒加载过敏标识（行内与上下文徽标共用缓存） */
+/** 行点击选中：驱动中列上下文与医嘱列表，并懒加载过敏标识（行内与上下文徽标共用缓存）；
+ * 换患者即复位开立草稿——前患者未提交的明细行/频次不跨患者滞留，否则续提即开错患者（用药安全） */
 async function selectPatient(row: WardPatientVO): Promise<void> {
   selectedVisit.value = row;
   orderRows.value = [];
   selectedOrder.value = null;
   traceEntries.value = [];
+  resetOrderDraft();
   if (row.visitId !== undefined && !allergyFlagMap.value.has(row.visitId)) {
     try {
       const detail = await wardPatients.detail(row.visitId);
@@ -208,6 +210,16 @@ function removeItemRow(index: number): void {
   }
 }
 
+/** 复位开立草稿：明细行归一空行 + 长期项（频次/嘱托）清空，类型/分类为医生录入偏好保留
+ * （与提交成功后复位同口径），换患者选中与开立成功共用，防前患者草稿跨上下文续提。 */
+function resetOrderDraft(): void {
+  itemRows.value = [
+    { itemCode: '', itemName: '', dosage: '', dosageUnit: '', route: '', quantity: 1 },
+  ];
+  createForm.value.freqCode = '';
+  createForm.value.standbyFlag = false;
+}
+
 /**
  * 保存医嘱（开立）：显式格式校验（IP-1011 类）零出网 → 出网 → CREATED 返回后按用药类
  * 提示「待药师审」并刷新医嘱列表。入口在途早退守卫防双击重复开立。
@@ -269,11 +281,8 @@ async function onSaveOrder(): Promise<void> {
     } else {
       void ElMessage.success(`医嘱 ${saved.orderNo ?? ''} 已开立`);
     }
-    itemRows.value = [
-      { itemCode: '', itemName: '', dosage: '', dosageUnit: '', route: '', quantity: 1 },
-    ];
-    createForm.value.freqCode = '';
-    createForm.value.standbyFlag = false;
+    // 开立成功后复位草稿（与换患者复位同口径）
+    resetOrderDraft();
     await loadOrders();
   } catch (error) {
     // 执业授权 IP-1012/过敏冲突 IP-1013 等业务拒绝：detail 中文原文兜底透出
