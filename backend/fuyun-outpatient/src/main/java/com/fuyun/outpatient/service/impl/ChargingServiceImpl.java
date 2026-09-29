@@ -21,6 +21,10 @@ import com.fuyun.outpatient.service.IAppointmentService;
 import com.fuyun.outpatient.service.IChargingService;
 import com.fuyun.outpatient.service.OutpatientVisitStateMachine;
 import com.fuyun.pharmacy.api.PrescriptionCancelledPayload;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
@@ -196,10 +200,25 @@ public class ChargingServiceImpl implements IChargingService {
     @Transactional
     public void onRefundApproved(RefundApprovedPayload payload) {
         SettlementSourceRefs refs = requireSourceRefs(payload.settlementId());
+        // 空清单零查询零日志（与原空循环零查询语义对齐；空键集 IN 不出网）
+        if (refs.orderRefs().isEmpty()) {
+            return;
+        }
+        // 数据库读操作：orderRefs 清单键集一次 IN 批查（uk_order_no 保证每单号至多一行，与原逐单
+        //   selectOne 同语义；退号链/非 M03 开单等缺号不出结果集→映射缺位即原无命中幂等跳过）
+        //   ——A.4.3-14 循环单查改批量，N 单 N 查收敛为 1 查，缩短 refund.approved 消费事务持锁
+        Map<String, ClinicOrder> orderByNo =
+                clinicOrderMapper
+                        .selectList(Wrappers.<ClinicOrder>lambdaQuery().in(ClinicOrder::getOrderNo, refs.orderRefs()))
+                        .stream()
+                        .collect(Collectors.toMap(
+                                ClinicOrder::getOrderNo,
+                                Function.identity(),
+                                (first, duplicate) -> first,
+                                LinkedHashMap::new));
         for (String orderNo : refs.orderRefs()) {
-            // 数据库读操作：按单号定位本域申请单（退号链/非 M03 开单等无命中即幂等跳过）
-            ClinicOrder order = clinicOrderMapper.selectOne(
-                    Wrappers.<ClinicOrder>lambdaQuery().eq(ClinicOrder::getOrderNo, orderNo));
+            // 批查映射取行（原逐单 selectOne 同位替换；缺号映射缺位=null 即原无命中幂等跳过分支）
+            ClinicOrder order = orderByNo.get(orderNo);
             if (order == null) {
                 log.info(
                         "退费逆向幂等跳过（无本域单据命中）：orderNo={}，settlementId={}，refundNo={}",

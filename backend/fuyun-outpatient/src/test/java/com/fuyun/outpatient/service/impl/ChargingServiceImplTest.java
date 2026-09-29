@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -13,6 +14,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.billing.api.RefundApprovedPayload;
 import com.fuyun.billing.api.SettlementCompletedPayload;
@@ -42,6 +45,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -204,9 +208,11 @@ class ChargingServiceImplTest {
         when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
                 .thenReturn(new SettlementSourceRefs(
                         SETTLEMENT_ID, List.of("OP20260920000001", "OP20260920000002"), List.of("RX20260920000001")));
-        when(clinicOrderMapper.selectOne(any()))
-                .thenReturn(order(881L, "OP20260920000001", OrderStatus.CHARGED))
-                .thenReturn(order(882L, "OP20260920000002", OrderStatus.CHARGED));
+        // 桩面随批查实现机械迁移（selectOne×2 → selectList 一次，业务断言零改动）
+        when(clinicOrderMapper.selectList(any()))
+                .thenReturn(List.of(
+                        order(881L, "OP20260920000001", OrderStatus.CHARGED),
+                        order(882L, "OP20260920000002", OrderStatus.CHARGED)));
         when(clinicOrderMapper.casStatus(881L, "CHARGED", "CANCELLED")).thenReturn(1);
         when(clinicOrderMapper.casStatus(882L, "CHARGED", "CANCELLED")).thenReturn(1);
 
@@ -236,12 +242,62 @@ class ChargingServiceImplTest {
     void refundApprovedSkipsUnknownOrders() {
         when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
                 .thenReturn(new SettlementSourceRefs(SETTLEMENT_ID, List.of("OP20260929999999"), List.of()));
-        when(clinicOrderMapper.selectOne(any())).thenReturn(null);
+        when(clinicOrderMapper.selectList(any())).thenReturn(List.of());
 
         service.onRefundApproved(refundApproved());
 
         verify(clinicOrderMapper, never()).casStatus(anyLong(), anyString(), anyString());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("退费回执批查：多单号清单键集一次 IN 批查（N 单 N 查收敛 1 查）+ 逐单号 selectOne 零触达 " + "+ 混合面输出等价（部分命中收敛+部分无命中幂等跳过）")
+    void refundApprovedBatchesOrderReadOnceAndHandlesMixedRefs() {
+        when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
+                .thenReturn(new SettlementSourceRefs(
+                        SETTLEMENT_ID,
+                        List.of("OP20260920000001", "OP20260929999999", "OP20260920000002"),
+                        List.of("RX20260920000001")));
+        // 批查结果集仅含两张本域命中单（缺号 OP…9999 退号链/非 M03 开单不出结果集→映射缺位即原幂等跳过）
+        when(clinicOrderMapper.selectList(any()))
+                .thenReturn(List.of(
+                        order(881L, "OP20260920000001", OrderStatus.CHARGED),
+                        order(882L, "OP20260920000002", OrderStatus.CHARGED)));
+        when(clinicOrderMapper.casStatus(881L, "CHARGED", "CANCELLED")).thenReturn(1);
+        when(clinicOrderMapper.casStatus(882L, "CHARGED", "CANCELLED")).thenReturn(1);
+
+        service.onRefundApproved(refundApproved());
+
+        // 申请单批查恰一次（旧逐单=3 单 3 查；批查与单数解耦恒 1 查），逐单号 selectOne 旧路径零触达
+        verify(clinicOrderMapper, times(1)).selectList(any());
+        verify(clinicOrderMapper, never()).selectOne(any());
+        // 批查键集契约=清单 orderRefs 全集（含无命中缺号——缺号不出结果集即原幂等跳过分支）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<ClinicOrder>> orderQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(clinicOrderMapper).selectList(orderQueryCaptor.capture());
+        AbstractWrapper<?, ?, ?> orderWrapper = (AbstractWrapper<?, ?, ?>) orderQueryCaptor.getValue();
+        orderWrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
+        assertThat(orderWrapper.getParamNameValuePairs().values())
+                .containsExactlyInAnyOrder("OP20260920000001", "OP20260929999999", "OP20260920000002");
+        // 混合面输出等价：无命中缺号幂等跳过不阻断同批——两命中单仍按清单序 CAS 与逐单扇出
+        InOrder rollbackOrder = inOrder(clinicOrderMapper);
+        rollbackOrder.verify(clinicOrderMapper).casStatus(881L, "CHARGED", "CANCELLED");
+        rollbackOrder.verify(clinicOrderMapper).casStatus(882L, "CHARGED", "CANCELLED");
+        verify(events, times(2)).publishEvent(eventCaptor.capture());
+        List<OutpatientDomainEvent> published = eventCaptor.getAllValues();
+        assertThat(published).allSatisfy(event -> assertThat(event.eventType())
+                .isEqualTo(OutpatientMessagingConstants.EVENT_ORDER_CANCELLED));
+        var first = (com.fuyun.outpatient.api.OrderCancelledPayload)
+                published.get(0).payload();
+        var second = (com.fuyun.outpatient.api.OrderCancelledPayload)
+                published.get(1).payload();
+        assertThat(first.orderNo()).isEqualTo("OP20260920000001");
+        assertThat(second.orderNo()).isEqualTo("OP20260920000002");
+        assertThat(first.reason()).isEqualTo("退费逆向终态确认");
+        assertThat(second.reason()).isEqualTo("退费逆向终态确认");
+        assertThat(first.rxNos()).containsExactly("RX20260920000001");
+        assertThat(first.patientId()).isEqualTo(9L);
+        assertThat(first.visitId()).isEqualTo(VISIT_ID);
     }
 
     @Test
@@ -402,7 +458,8 @@ class ChargingServiceImplTest {
     void refundApprovedSkipsNonChargedOrder() {
         when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
                 .thenReturn(new SettlementSourceRefs(SETTLEMENT_ID, List.of("OP20260920000001"), List.of()));
-        when(clinicOrderMapper.selectOne(any())).thenReturn(order(881L, "OP20260920000001", OrderStatus.PENDING_FEE));
+        when(clinicOrderMapper.selectList(any()))
+                .thenReturn(List.of(order(881L, "OP20260920000001", OrderStatus.PENDING_FEE)));
 
         service.onRefundApproved(refundApproved());
 
@@ -415,7 +472,8 @@ class ChargingServiceImplTest {
     void refundApprovedSkipsOnCasMiss() {
         when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
                 .thenReturn(new SettlementSourceRefs(SETTLEMENT_ID, List.of("OP20260920000001"), List.of()));
-        when(clinicOrderMapper.selectOne(any())).thenReturn(order(881L, "OP20260920000001", OrderStatus.CHARGED));
+        when(clinicOrderMapper.selectList(any()))
+                .thenReturn(List.of(order(881L, "OP20260920000001", OrderStatus.CHARGED)));
         when(clinicOrderMapper.casStatus(881L, "CHARGED", "CANCELLED")).thenReturn(0);
 
         service.onRefundApproved(refundApproved());

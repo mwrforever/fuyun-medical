@@ -2,6 +2,25 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-10：outpatient 退费回执逐单号查询改清单键集一次 IN 批查（性能，行为保持）
+
+- **根因（OPT-10 / BE-C4-18 ↔ BE-B1-05 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80，A.4.3-14 点名）**：`ChargingServiceImpl.onRefundApproved`（refund.approved 退费
+  回执 MQ 消费业务体）@Transactional 内 `for (String orderNo : refs.orderRefs())` 逐单号
+  无条件 `clinicOrderMapper.selectOne` 定位本域申请单——热路径每单必查（与同文件 :136/:153
+  CAS 未命中条件分支重读性质不同，后者清单已认定豁免），N 单即 N 次单查，放大消费事务
+  持锁时长；orderRefs 键集前置已知。
+- **修复（行为保持）**：orderRefs 全集循环前一次 IN 批查 → `LinkedHashMap<orderNo,
+  ClinicOrder>` 按号映射（uk_order_no 保证每单号至多一行=原逐单 selectOne 语义；遇序保序
+  与原逐行处理序一致）；循环内取行换 Map.get，缺号映射缺位即原无命中幂等跳过分支（info
+  文案逐字保持）；空清单短路零查询（与原空循环零查询语义对齐）。命中后状态流转写侧、
+  逐单扇出、日志与幂等语义全部原形态零触碰；N 单 N 查 → 恒 1 查。行为锚定测试「多单号
+  清单（两命中+一无命中缺号）批查恰一次+键集契约=清单全集+逐单号 selectOne 零触达+混合面
+  输出等价（缺号幂等跳过不阻断同批，两命中单仍按清单序 CAS 与扇出）」先红后绿交付；既有
+  4 个退费用例桩面随实现由 selectOne 机械换至 selectList（业务断言零改动）。
+- **验证**：`mvn -B -ntp -pl fuyun-outpatient -am test` 全绿（295 用例，+1 新锚定）+
+  `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-09：pharmacy 退费终态确认双重 N+1 改两级键集 IN 批查（性能，行为保持）
 
 - **根因（OPT-09 / BE-C4-16 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
