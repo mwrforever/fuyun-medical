@@ -3,6 +3,7 @@ package com.fuyun.inpatient.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -388,7 +389,10 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
     /**
      * 单次执行计划生成（临时医嘱转抄同步生成/嘱托按需触发共用）：按明细行逐行开立计划实例
      * （计划粒度=明细行——执行回签与计价按项对齐）；plan_time=生成基准时点+默认准备窗口、
-     * shift=基准时点落班、plan_no=PL 流水逐行签发。
+     * shift=基准时点落班、plan_no=PL 流水逐行签发。计划行集一次 saveBatch 批插（EX-37：
+     * JDBC 批处理替代逐行 insert，行集与行序不变、ASSIGN_ID 自动填充 ID；批语句唯一冲突
+     * 经 Spring 翻译链仍抛 DuplicateKeyException——原逐行 catch 定性语义原样保留，失败即
+     * 抛随编排/触发事务整体回滚，无吞行/部分落库窗口）。
      *
      * @param order    所属医嘱行，非空
      * @param visit    关联就诊行（病区/就诊主键取数面），非空
@@ -419,17 +423,21 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
             plan.setStatus(PlanStatus.PENDING.getCode());
             plan.setCreatedBy(operatorText);
             plan.setUpdatedBy(operatorText);
-            try {
-                // 数据库写操作：计划行落库（uk_order_execute_plan_no/uk_plan_order_item_time 兜底幂等）
-                planMapper.insert(plan);
-            } catch (DuplicateKeyException e) {
-                // 并发窗口同项同时点重复生成（微秒级同瞬触发）——幂等拒绝定性冲突
-                throw new BizException(
-                        InpatientErrorCode.CONFLICT,
-                        HttpStatus.CONFLICT,
-                        "执行计划唯一冲突（同项同时点重复生成，幂等拒绝）：orderNo=" + order.getOrderNo());
-            }
             created.add(plan);
+        }
+        try {
+            // 数据库写操作：计划行一次批插（uk_order_execute_plan_no/uk_plan_order_item_time
+            // 兜底幂等；A.4.3-16 须在事务内调用——transferCheck/standbyTrigger 均
+            // @Transactional 承载，与转抄台账/事件同事务成败与共）
+            Db.saveBatch(created);
+        } catch (DuplicateKeyException e) {
+            // 并发窗口同项同时点重复生成（微秒级同瞬触发）——幂等拒绝定性冲突；批插后异常
+            // 出口不变：批语句唯一冲突经 Spring 翻译链仍抛 DuplicateKeyException，整批随
+            // 事务回滚（原逐行失败亦全量回滚——零部分落库窗口，语义与逐行时代完全一致）
+            throw new BizException(
+                    InpatientErrorCode.CONFLICT,
+                    HttpStatus.CONFLICT,
+                    "执行计划唯一冲突（同项同时点重复生成，幂等拒绝）：orderNo=" + order.getOrderNo());
         }
         return created;
     }
@@ -516,10 +524,16 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
         return visit;
     }
 
-    /** 就诊下指定分类医嘱主键集（转科三分钩子的分野查询面；含全状态——计划归属以计划行状态裁决）。 */
+    /**
+     * 就诊下指定分类医嘱主键集（转科三分钩子的分野查询面；含全状态——计划归属以计划行状态
+     * 裁决）。.select 仅取 id 列（唯一消费面=组装计划批量更新 IN 集——EX-39 投影收敛，医嘱
+     * 宽行全列取回仅 map(getId)；行集不变仅列收敛，IN 集与全列取回完全等价）。
+     */
     private List<Long> orderIdsOfVisit(Long visitId, OrderClass orderClass) {
+        // 数据库读操作：分野查询仅取 id 恰 1 列（医嘱宽行禁入投影——EX-39/A.4.3-14）
         return orderMapper
                 .selectList(Wrappers.<MedicalOrder>lambdaQuery()
+                        .select(MedicalOrder::getId)
                         .eq(MedicalOrder::getVisitId, visitId)
                         .eq(MedicalOrder::getOrderClass, orderClass.getCode()))
                 .stream()

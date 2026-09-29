@@ -2,6 +2,7 @@ package com.fuyun.inpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -199,7 +200,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
         } catch (DuplicateKeyException e) {
             throw new BizException(InpatientErrorCode.CONFLICT, HttpStatus.CONFLICT, "医嘱号唯一冲突（幂等拒绝）：" + orderNo);
         }
-        // 子表逐行落库：item_seq 按列表序 1 起递增（服务层单一写入口保证组内唯一），布尔缺省回填
+        // 子表一次批插落库：item_seq 按列表序 1 起递增（服务层单一写入口保证组内唯一），布尔缺省回填
         List<MedicalOrderItem> savedItems = saveItems(order, req.items(), operator);
         // 事务内发布开立事件（与驳回重提面共用发布链——publishOrderCreated 收口）
         publishOrderCreated(order, visitId, orderType, orderClass, req, savedItems);
@@ -595,7 +596,10 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
     }
 
     /**
-     * 子表逐行落库：item_seq 按列表序 1 起递增（服务层生成，禁前端错序），布尔缺省回填 false。
+     * 子表一次批插落库：item_seq 按列表序 1 起递增（服务层生成，禁前端错序），布尔缺省回填
+     * false。明细行集一次 saveBatch 批插（EX-37：JDBC 批处理替代逐行 insert，行集与行序
+     * 不变、ASSIGN_ID 自动填充 ID；本写面无状态 CAS/逐行 catch 语义——纯 INSERT 收拢零
+     * 对外行为变化；A.4.3-16 须在事务内调用，create/resubmit 均 @Transactional 承载）。
      *
      * @param order    医嘱主表行（已落库，id 已回填），非空
      * @param items    明细入参，非空
@@ -627,10 +631,11 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
             row.setFeeStopped(false);
             row.setCreatedBy(operator);
             row.setUpdatedBy(operator);
-            // 数据库写操作：明细行落库（与主表同事务成败与共）
-            itemMapper.insert(row);
             saved.add(row);
         }
+        // 数据库写操作：明细行一次批插（与主表同事务成败与共；先例 DispenseServiceImpl/
+        // PrescriptionServiceImpl——空集直过零 SQL，行集与行序与逐行 insert 完全一致）
+        Db.saveBatch(saved);
         return saved;
     }
 
