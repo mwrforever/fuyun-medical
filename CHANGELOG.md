@@ -2,6 +2,29 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-14：inpatient 日计划批任务在院就诊候选查询补 .select 精确投影（性能，行为保持）
+
+- **根因（OPT-14 / BE-C4-26 ↔ BE-C2-18 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80，A.4.3-14 投影子款点名）**：`OrderPlanServiceImpl.decomposeCandidates`（长期医嘱
+  日切批任务候选查询）全列取回全部 ADMITTED 在院就诊行（三级医院夜间千级宽行，含入院
+  诊断/医保/床位/护理级别等 25 列）仅 `stream().map(InpatientVisit::getId)` 组装候选医嘱
+  IN 集；宽行全量入内存徒增占用，逐夜必发。
+- **修复（行为保持，方案：补 .select 投影）**：`.select(InpatientVisit::getId)`（恰 1 列）；
+  谓词（status=ADMITTED）、候选口径（TRANSFERRED/EXECUTING × LONG × end_at 过滤）、生成
+  与写侧零变化；javadoc 与行级注释补投影口径句（行集不变仅列收敛，IN 集与全列取回完全
+  等价）。**方案裁量（.select 而非聚合/子查询下推）**：消费面为 id 键集（非聚合值），IN
+  集组装须在应用侧进行，`.select` 已完整承载——无可下推的聚合算式，键集语义等价，故以
+  最小改动收敛列面，不新增 XML SQL 面。
+- **测试（先红后绿）**：新增 3 个行为锚定——「在院就诊候选查询投影契约（恰 1 列 id+谓词
+  status=ADMITTED 零变化锚定）」改前红（getSqlSelect 为 null，NPE 断言失败）改后绿；
+  「批任务输出等价（两在院就诊 id 全量喂入候选 IN 集+候选谓词 visit_id/status 双值/
+  order_class=LONG 零变化锚定，各医嘱计划归属各自就诊 orderId@visitId 配对——丢任一就诊
+  行即失败）」与「零在院就诊边界（空集直过零事务零事件，不发起下游医嘱候选查询——投影
+  不改空集语义）」两用例改前改后均绿（行为锚定）。既有用例零改动（桩面 selectList(any())
+  对投影不敏感，业务断言零变化，无 D-21 桩更新）。
+- **验证**：`mvn -B -ntp -pl fuyun-inpatient -am test` 全绿（193 用例，OrderPlanServiceImplTest
+  24）+ `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-13：billing 押金欠费判定已确认费用聚合补 .select 精确投影（性能，行为保持）
 
 - **根因（OPT-13 / BE-C4-24，2026-09-28 全仓性能与代码质量优化清单，评分 80，

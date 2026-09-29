@@ -416,15 +416,20 @@ public class OrderPlanServiceImpl implements OrderPlanService {
      * （brief 冻结候选面；COMPLETED/STOPPED/CANCELLED 终态不再分解）× end_at 未越界——
      * 次日已越过医嘱明示结束日（end_at）者不排程（审查修复环 R1，与回签终态守卫
      * {@link #longOrderExhausted} 语义一致：end_at 到期日之后生命周期已尽，无需再生成次日
-     * 计划）。
+     * 计划）。在院就诊查询 .select 仅取 id 列（唯一消费面=组装候选医嘱 IN 集——夜间批任务
+     * 千级宽行全列取回仅 map(getId)，A.4.3-14），谓词与候选口径不因投影而变（行集不变仅
+     * 列收敛，IN 集与全列取回完全等价）。
      *
      * @param planDate 目标计划日期（end_at 越界判定基准），非空
      * @return 候选医嘱行全集（未分批），非空（空集=无候选）
      */
     private List<MedicalOrder> decomposeCandidates(LocalDate planDate) {
-        // 数据库读操作：在院就诊全集（ADMITTED——出院申请中患者的在途医嘱由出院清理面收口）
-        List<InpatientVisit> visits = visitMapper.selectList(
-                Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getStatus, VisitStatus.ADMITTED.getCode()));
+        // 数据库读操作：在院就诊全集（ADMITTED——出院申请中患者的在途医嘱由出院清理面收口）——
+        //   仅消费 id 列（组装下方候选医嘱 IN 集），.select 精确投影免千级就诊宽行全列入内存
+        //   （A.4.3-14；行集不变仅列收敛，IN 集与全列取回完全等价）
+        List<InpatientVisit> visits = visitMapper.selectList(Wrappers.<InpatientVisit>lambdaQuery()
+                .select(InpatientVisit::getId)
+                .eq(InpatientVisit::getStatus, VisitStatus.ADMITTED.getCode()));
         if (visits.isEmpty()) {
             return List.of();
         }
