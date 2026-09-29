@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.service.OrderPlanService;
+import com.fuyun.inpatient.service.IOrderPlanService;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
@@ -172,7 +172,7 @@ class InpatientTransferDischargeIT extends FuyunStackITBase {
 
     /** 日切分解服务（转科前置：为长期医嘱排程次日计划，作「长期计划作废」断言的预置数据面）。 */
     @Autowired
-    private OrderPlanService orderPlanService;
+    private IOrderPlanService orderPlanService;
 
     /** 带 Bearer 的 GET 助手。 */
     private JsonNode getJson(String path, String token) {

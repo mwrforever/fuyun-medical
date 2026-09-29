@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.service.OrderPlanService;
+import com.fuyun.inpatient.service.IOrderPlanService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.integration.constants.MessagingConstants;
@@ -102,7 +102,7 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
 
     /** 日切分解服务（IT 直调 decomposeNextDay=02:30 任务同入口；补偿面经转抄链自动触发）。 */
     @Autowired
-    private OrderPlanService orderPlanService;
+    private IOrderPlanService orderPlanService;
 
     /**
      * 捕获队列声明（A.5-4 治理红线：经治理构件声明，OutpatientFullFlowIT ItCaptureConfig 同型）。
