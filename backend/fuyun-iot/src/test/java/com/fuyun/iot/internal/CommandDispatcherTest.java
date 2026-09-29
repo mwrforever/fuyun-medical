@@ -42,6 +42,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -442,6 +443,54 @@ class CommandDispatcherTest {
 
         verifyNoInteractions(events);
         verify(commandLogMapper, never()).casTerminal(any(), any(), any(), any(), any());
+    }
+
+    // ---------------------------------------------------------------- 生命周期收口（EX-32）
+
+    @Test
+    @DisplayName("destroy 生命周期收口（EX-32）：shutdown→awaitTermination 生效，停机后新任务不被执行")
+    void destroyShutsDownDeliveryExecutorAndRejectsNewTasks() throws Exception {
+        dispatcher.destroy();
+
+        assertThat(dispatcher.deliveryExecutor().isShutdown())
+                .as("destroy 后下发池已停收")
+                .isTrue();
+        assertThat(dispatcher.deliveryExecutor().awaitTermination(1, TimeUnit.SECONDS))
+                .as("空闲池在限时窗口内完成终止（awaitTermination 生效）")
+                .isTrue();
+        // 停机后不再接受任务：CallerRunsPolicy 在 shutdown 态静默丢弃提交（不执行不外抛），
+        // 故以「提交的任务永不执行」为拒收断言锚（确定性：无任何路径会运行该任务）
+        AtomicBoolean ran = new AtomicBoolean(false);
+        dispatcher.deliveryExecutor().submit(() -> ran.set(true));
+        assertThat(ran).as("停机后提交的任务不被执行（shutdown 拒收语义）").isFalse();
+    }
+
+    @Test
+    @DisplayName("destroy 限时等待在途任务：阻塞中的任务完成后池终止（在途执行不因收口丢失）")
+    void destroyAwaitsInFlightDeliveryTaskBeforeTermination() throws Exception {
+        CountDownLatch taskStarted = new CountDownLatch(1);
+        CountDownLatch taskRelease = new CountDownLatch(1);
+        dispatcher.deliveryExecutor().submit(() -> {
+            taskStarted.countDown();
+            try {
+                taskRelease.await(3, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        assertThat(taskStarted.await(3, TimeUnit.SECONDS)).as("在途任务已开始执行").isTrue();
+
+        Thread destroyer = new Thread(dispatcher::destroy, "it-destroy-probe");
+        destroyer.start();
+        // 在途任务未放行期间不得提前终止（awaitTermination 限时等待语义，非立即 shutdownNow）
+        assertThat(dispatcher.deliveryExecutor().isTerminated())
+                .as("在途任务执行中池不得终止")
+                .isFalse();
+        taskRelease.countDown();
+        destroyer.join(5000);
+        assertThat(dispatcher.deliveryExecutor().isTerminated())
+                .as("在途任务完成后池终止")
+                .isTrue();
     }
 
     // ---------------------------------------------------------------- 夹具与桩件
