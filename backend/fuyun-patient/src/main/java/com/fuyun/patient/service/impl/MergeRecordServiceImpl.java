@@ -255,7 +255,7 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
     }
 
     /**
-     * 拆分恢复（COMPLETED→REVERSED 终态；标识按快照回挂）。
+     * 拆分恢复（COMPLETED→REVERSED 终态；标识按快照回挂——EX-38 键集批查+批量写收敛）。
      *
      * @param id     合并记录 id，非空
      * @param reason 拆分原因，非空
@@ -271,14 +271,30 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         }
         Patient survivor = requireExists(record.getSurvivorPatientId());
         Patient merged = requireExists(record.getMergedPatientId());
-        // 标识按快照回挂（快照 identifier 清单原 patientId=从档；快照损坏显式暴露拒拆）
+        // 标识按快照回挂（快照 identifier 清单原 patientId=从档；快照损坏显式暴露拒拆）。
+        // EX-38 键集前置批量面（A.4.3-14「循环内单查改 in 批量」）：快照标识清单循环前一次 IN
+        // 批查建键 Map、循环内纯内存改挂、一次批量写——N 行回挂的 2N 次逐行读写收敛为
+        // 「1 查 + 1 批写」；行缺失（含逻辑删，listByIds 同样过滤）跳过不报错，与原逐行
+        // getById null 判容错语义一致
         List<Long> snapshotIds = extractSnapshotIdentifierIds(record.getPreSnapshot());
-        for (Long identifierId : snapshotIds) {
-            PatientIdentifier identifier = identifierService.getById(identifierId);
-            if (identifier != null) {
-                identifier.setPatientId(merged.getPatientId());
-                identifierService.updateById(identifier);
+        // 空键集守卫：MP listByIds 无内建空集短路（in() 空集生成非法 SQL），空快照零触达
+        // （与原空循环零查询语义保持一致；PricingEngineServiceImpl 同款守卫先例）
+        if (!snapshotIds.isEmpty()) {
+            Map<Long, PatientIdentifier> identifierById = new HashMap<>(snapshotIds.size());
+            for (PatientIdentifier loaded : identifierService.listByIds(snapshotIds)) {
+                identifierById.put(loaded.getId(), loaded);
             }
+            List<PatientIdentifier> rehangTargets = new ArrayList<>(snapshotIds.size());
+            for (Long identifierId : snapshotIds) {
+                PatientIdentifier identifier = identifierById.get(identifierId);
+                if (identifier != null) {
+                    // 恢复快照记录的原挂接（历史业务行零改写仅改指针归属，is_primary 随行保留）
+                    identifier.setPatientId(merged.getPatientId());
+                    rehangTargets.add(identifier);
+                }
+            }
+            // 数据库写操作：批量改挂（JDBC 批处理；全行缺失时空批写零语句，无副作用）
+            identifierService.updateBatchById(rehangTargets);
         }
         // 从档恢复 NORMAL 并清合并指针（与 executeMerge ④ 互逆）。指针置空必须显式 SET：
         // updateById 默认忽略 null 字段会遗留 merged_into_patient_id（真栈 IT 实证），
