@@ -375,8 +375,10 @@ public class DashboardServiceImpl implements IDashboardService {
             return Map.of();
         }
         Map<String, List<String>> metricsByProduct = new HashMap<>();
-        for (IotMetricMappingEntity mapping : metricMappingMapper.selectList(
-                Wrappers.<IotMetricMappingEntity>lambdaQuery().in(IotMetricMappingEntity::getProductId, productIds))) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：产品映射行单次装载，循环内纯迭代展开
+        List<IotMetricMappingEntity> mappings = metricMappingMapper.selectList(
+                Wrappers.<IotMetricMappingEntity>lambdaQuery().in(IotMetricMappingEntity::getProductId, productIds));
+        for (IotMetricMappingEntity mapping : mappings) {
             metricsByProduct
                     .computeIfAbsent(mapping.getProductId(), k -> new ArrayList<>())
                     .add(mapping.getMetricCode());

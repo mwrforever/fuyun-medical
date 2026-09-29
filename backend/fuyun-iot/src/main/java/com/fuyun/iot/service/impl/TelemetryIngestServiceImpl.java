@@ -184,7 +184,9 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
         // 患者关联（步骤五）数据源：绑定快照单次批量查询（Task 3 既有链路保留，宪法 A.4.3-14）：
         // distinct 设备集合入参，只取 BOUND 生效绑定，patient/visit/ward 供快照冗余与摘要推送分组
         Map<String, BindingVO> boundByDeviceId = new HashMap<>(deviceIds.size());
-        for (BindingVO binding : bindingService.listActiveByDevices(deviceIds)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：生效绑定单次装载，循环内纯迭代组装映射
+        List<BindingVO> bindings = bindingService.listActiveByDevices(deviceIds);
+        for (BindingVO binding : bindings) {
             // 快照映射组装（纯内存）：uk_iot_binding_device_bound 保证每设备至多一条活跃绑定
             boundByDeviceId.put(binding.deviceId(), binding);
         }

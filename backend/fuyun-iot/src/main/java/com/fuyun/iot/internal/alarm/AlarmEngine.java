@@ -399,7 +399,9 @@ public class AlarmEngine {
         List<Long> ruleIds =
                 candidates.stream().map(IotAlarmEntity::getRuleId).distinct().toList();
         Map<Long, IotAlarmRuleEntity> ruleById = new HashMap<>(ruleIds.size());
-        for (IotAlarmRuleEntity rule : ruleMapper.selectBatchIds(ruleIds)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：候选规则单次批量装载，循环内纯迭代组装映射
+        List<IotAlarmRuleEntity> rules = ruleMapper.selectBatchIds(ruleIds);
+        for (IotAlarmRuleEntity rule : rules) {
             ruleById.put(rule.getId(), rule);
         }
         OffsetDateTime now = OffsetDateTime.ofInstant(Instant.now(), ZoneOffset.UTC);
@@ -825,7 +827,9 @@ public class AlarmEngine {
         }
         // 数据库读操作：单次 IN 批量取 BOUND 生效绑定
         Map<String, BindingVO> bindingByDevice = new HashMap<>(deviceIds.size());
-        for (BindingVO binding : bindingService.listActiveByDevices(deviceIds)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：生效绑定单次装载，循环内纯迭代组装映射
+        List<BindingVO> bindings = bindingService.listActiveByDevices(deviceIds);
+        for (BindingVO binding : bindings) {
             bindingByDevice.put(binding.deviceId(), binding);
         }
         return bindingByDevice;
@@ -843,8 +847,10 @@ public class AlarmEngine {
         }
         // 数据库读操作：单次 IN 批量取设备档案
         Map<String, IotDeviceEntity> deviceByDeviceId = new HashMap<>(deviceIds.size());
-        for (IotDeviceEntity device : deviceMapper.selectList(
-                Wrappers.<IotDeviceEntity>lambdaQuery().in(IotDeviceEntity::getDeviceId, deviceIds))) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：设备档案单次装载，循环内纯迭代组装映射
+        List<IotDeviceEntity> devices = deviceMapper.selectList(
+                Wrappers.<IotDeviceEntity>lambdaQuery().in(IotDeviceEntity::getDeviceId, deviceIds));
+        for (IotDeviceEntity device : devices) {
             deviceByDeviceId.put(device.getDeviceId(), device);
         }
         return deviceByDeviceId;

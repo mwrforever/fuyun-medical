@@ -284,9 +284,11 @@ public class QualityServiceImpl implements IQualityService {
         }
         // 数据库读操作：字典标称频率单次 IN 查询，取最大值（设备多指标按最高频指标推算期望）
         BigDecimal max = null;
-        for (IotMetricDictEntity dict : metricDictMapper.selectList(Wrappers.<IotMetricDictEntity>lambdaQuery()
+        // 循环前批量取数（BE-C4 判据①形态收拢）：字典标称频率行单次装载，循环内纯迭代取最大
+        List<IotMetricDictEntity> dictRows = metricDictMapper.selectList(Wrappers.<IotMetricDictEntity>lambdaQuery()
                 .in(IotMetricDictEntity::getMetricCode, metricCodes)
-                .isNotNull(IotMetricDictEntity::getNominalFreqPerMin))) {
+                .isNotNull(IotMetricDictEntity::getNominalFreqPerMin));
+        for (IotMetricDictEntity dict : dictRows) {
             BigDecimal freq = dict.getNominalFreqPerMin();
             if (freq.signum() > 0 && (max == null || freq.compareTo(max) > 0)) {
                 max = freq;
@@ -352,13 +354,17 @@ public class QualityServiceImpl implements IQualityService {
                 onlineDevices.stream().map(IotDeviceEntity::getDeviceId).toList();
         // 数据库读操作：末次有效采集时刻批级一次聚合下推（禁循环内单查）
         Map<String, OffsetDateTime> lastByKey = new HashMap<>(deviceIds.size() * 2);
-        for (DeviceMetricLastRow row : telemetryMapper.selectLastOccurredByDeviceMetric(deviceIds)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：末次采集时刻行单次装载，循环内纯迭代组装映射
+        List<DeviceMetricLastRow> lastRows = telemetryMapper.selectLastOccurredByDeviceMetric(deviceIds);
+        for (DeviceMetricLastRow row : lastRows) {
             lastByKey.put(row.deviceId() + ":" + row.metricCode(), row.lastOccurredAt());
         }
         // 数据库读操作：登记标称频率的字典行单次装载（指标 → 次/分钟）
         Map<String, BigDecimal> freqByMetric = new HashMap<>();
-        for (IotMetricDictEntity dict : metricDictMapper.selectList(
-                Wrappers.<IotMetricDictEntity>lambdaQuery().isNotNull(IotMetricDictEntity::getNominalFreqPerMin))) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：字典标称频率行单次装载，循环内纯迭代组装映射
+        List<IotMetricDictEntity> dictRows = metricDictMapper.selectList(
+                Wrappers.<IotMetricDictEntity>lambdaQuery().isNotNull(IotMetricDictEntity::getNominalFreqPerMin));
+        for (IotMetricDictEntity dict : dictRows) {
             if (dict.getNominalFreqPerMin().signum() > 0) {
                 freqByMetric.put(dict.getMetricCode(), dict.getNominalFreqPerMin());
             }
