@@ -31,6 +31,7 @@ import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.enums.PlanStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.DischargeRequestMapper;
 import com.fuyun.inpatient.mapper.FollowUpPlanMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
@@ -110,6 +111,8 @@ public class DischargeServiceImpl implements IDischargeService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final MedicalOrderMapper orderMapper;
 
     private final OrderExecutePlanMapper planMapper;
@@ -140,6 +143,7 @@ public class DischargeServiceImpl implements IDischargeService {
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
      * @param visitMapper             住院就诊 mapper，非空；状态 CAS 三面（申请/取消/离院确认）
+     * @param visitAccessor           住院就诊共享访问器（EX-44 下沉），非空；就诊定位守卫统一面
      * @param orderMapper             医嘱主表 mapper，非空；清理分野查询与带药放行值面
      * @param planMapper              执行计划 mapper，非空；在途计划计数与批量作废
      * @param auditMapper             审核流水 mapper，非空；带药放行 SYSTEM 审计行
@@ -156,6 +160,7 @@ public class DischargeServiceImpl implements IDischargeService {
      */
     public DischargeServiceImpl(
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             MedicalOrderMapper orderMapper,
             OrderExecutePlanMapper planMapper,
             OrderAuditMapper auditMapper,
@@ -170,6 +175,7 @@ public class DischargeServiceImpl implements IDischargeService {
             ApplicationEventPublisher events,
             ObjectMapper objectMapper) {
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.orderMapper = orderMapper;
         this.planMapper = planMapper;
         this.auditMapper = auditMapper;
@@ -197,7 +203,8 @@ public class DischargeServiceImpl implements IDischargeService {
     @Override
     @Transactional
     public DischargeRequestVO createRequest(String visitId, DischargeRequestCreate req) {
-        InpatientVisit visit = requireVisit(visitId);
+        // 就诊定位与在院守卫（load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         // 守卫：出院申请限在院态（已申请/已出院/已作废一律拒）
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
             throw new BizException(
@@ -224,8 +231,9 @@ public class DischargeServiceImpl implements IDischargeService {
                     HttpStatus.CONFLICT,
                     "出院申请就诊状态并发冲突（已申请/已出院/已作废），本次申请回滚：visitId=" + visitId);
         }
-        // 回读申请后行（申请时点由库端 now() 写入禁应用时钟——事件载荷源，admitWard 回读先例）
-        InpatientVisit requested = requireVisit(visitId);
+        // 回读申请后行（申请时点由库端 now() 写入禁应用时钟——事件载荷源，admitWard 回读先例；
+        // load+check 经共享访问器——EX-44）
+        InpatientVisit requested = visitAccessor.requireByVisitId(visitId);
         // 申请行落库（预审态直落——清理与预审同事务完成，REQUESTED 为词表保完整的瞬时态）；
         // uk_visit_active 兜底一 visit 至多一条在途申请（并发重复申请 DB 硬防线）
         DischargeRequest row = new DischargeRequest();
@@ -292,13 +300,10 @@ public class DischargeServiceImpl implements IDischargeService {
                     HttpStatus.CONFLICT,
                     "仅申请中（REQUESTED）出院申请可取消：requestNo=" + requestNo + "，当前状态=" + row.getStatus());
         }
-        InpatientVisit visit = visitMapper.selectById(row.getVisitId());
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "出院申请关联住院就诊不存在（数据不一致）：requestNo=" + requestNo);
-        }
+        // 申请关联就诊定位（未命中 IP-1007 数据不一致——load+check 经共享访问器，文案参数化
+        // 保持对外契约零变化——EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(row.getVisitId(), "出院申请关联住院就诊不存在（数据不一致）：requestNo=" + requestNo);
         // visit CAS DISCHARGE_REQUESTED→ADMITTED（0 行=并发离院确认——取消与确认互斥窗口）
         if (visitMapper.casCancelDischarge(visit.getVisitId(), operator) == 0) {
             throw new BizException(
@@ -332,13 +337,9 @@ public class DischargeServiceImpl implements IDischargeService {
     @Transactional(readOnly = true)
     public ClearanceVO clearance(String requestNo) {
         DischargeRequest row = requireRequest(requestNo);
-        InpatientVisit visit = visitMapper.selectById(row.getVisitId());
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "出院申请关联住院就诊不存在（数据不一致）：requestNo=" + requestNo);
-        }
+        // 申请关联就诊定位（未命中 IP-1007 数据不一致——共享访问器统一承载，EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(row.getVisitId(), "出院申请关联住院就诊不存在（数据不一致）：requestNo=" + requestNo);
         ClearanceSnapshot snapshot = deserializeClearance(row.getClearanceResult(), requestNo);
         return new ClearanceVO(
                 requestNo,
@@ -385,13 +386,9 @@ public class DischargeServiceImpl implements IDischargeService {
         rejectIfOngoingLongOrders(row.getVisitId(), requestNo);
         // GC19 前置④：在途执行计划清零（申请时点已全量作废——此处防御后续新增/漏网）
         rejectIfPendingPlans(row.getVisitId(), requestNo);
-        InpatientVisit visit = visitMapper.selectById(row.getVisitId());
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "出院申请关联住院就诊不存在（数据不一致）：requestNo=" + requestNo);
-        }
+        // 申请关联就诊定位（未命中 IP-1007 数据不一致——共享访问器统一承载，EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(row.getVisitId(), "出院申请关联住院就诊不存在（数据不一致）：requestNo=" + requestNo);
         // 出院带药放行：DISCHARGE_MED 类 CREATED 医嘱迁 AUDITED + audited.discharge-med 子键事件
         releaseDischargeMeds(visit, operator, operatorId);
         // visit CAS DISCHARGE_REQUESTED→DISCHARGED（出院时点库端 now()，离院方式誊写病案统计口径）
@@ -760,16 +757,6 @@ public class DischargeServiceImpl implements IDischargeService {
             throw new BizException(
                     InpatientErrorCode.CONFLICT, HttpStatus.CONFLICT, "清理结果快照解析失败（数据不一致）：requestNo=" + requestNo);
         }
-    }
-
-    /** 按就诊号定位行（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
-        return visit;
     }
 
     /** 按申请单号定位行（未命中定性 IP-1018；逻辑删由 @TableLogic 自动过滤）。 */

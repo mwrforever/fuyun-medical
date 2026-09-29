@@ -29,6 +29,7 @@ import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedAssignMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
@@ -104,7 +105,8 @@ class BedServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new BedServiceImpl(assignMapper, visitMapper, events);
+        // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+        service = new BedServiceImpl(assignMapper, visitMapper, new InpatientVisitAccessor(visitMapper), events);
         // 链式与 IService 能力的载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设
         // 免走 getMapperClass 反射解析（GatewayServiceImplTest/BindingServiceImplTest 同款形态）
         ReflectionTestUtils.setField(service, "baseMapper", bedMapper);

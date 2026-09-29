@@ -16,6 +16,7 @@ import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedAssignMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
@@ -59,19 +60,26 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedS
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final ApplicationEventPublisher events;
 
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
-     * @param assignMapper 床位占用流水 mapper，非空；开账/闭合只增表操作
-     * @param visitMapper  住院就诊 mapper，非空；占床主体解析与床位图摘要聚合
-     * @param events       进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
+     * @param assignMapper  床位占用流水 mapper，非空；开账/闭合只增表操作
+     * @param visitMapper   住院就诊 mapper，非空；床位图摘要聚合
+     * @param visitAccessor 住院就诊共享访问器（EX-44 下沉），非空；占床主体资格定位 load+check
+     * @param events        进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
      */
     public BedServiceImpl(
-            BedAssignMapper assignMapper, InpatientVisitMapper visitMapper, ApplicationEventPublisher events) {
+            BedAssignMapper assignMapper,
+            InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
+            ApplicationEventPublisher events) {
         this.assignMapper = assignMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.events = events;
     }
 
@@ -148,13 +156,8 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedS
     @Transactional
     public void assign(Long bedId, BedAssignRequest req) {
         // 占用主体资格先行：就诊在位且待入科/在院（已出院床位禁再分配；visit 非本服务主表，
-        // Wrappers 手构保留——A.4.3-13 副表面）
-        InpatientVisit visit = visitMapper.selectOne(
-                Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, req.visitId()));
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + req.visitId());
-        }
+        // load+check 经共享访问器统一承载——EX-44，A.4.3-21 禁复制查询逻辑）
+        InpatientVisit visit = visitAccessor.requireByVisitId(req.visitId());
         if (!ASSIGNABLE_VISIT_STATUSES.contains(visit.getStatus())) {
             throw new BizException(
                     InpatientErrorCode.VISIT_STATE_NOT_ALLOWED,

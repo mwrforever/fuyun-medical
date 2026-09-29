@@ -1,6 +1,5 @@
 package com.fuyun.inpatient.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.inpatient.api.InpatientErrorCode;
@@ -13,6 +12,7 @@ import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.service.IBedService;
@@ -51,6 +51,8 @@ public class TransferServiceImpl implements ITransferService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final BedMapper bedMapper;
 
     private final IBedService bedService;
@@ -66,7 +68,8 @@ public class TransferServiceImpl implements ITransferService {
      * MedicalOrderServiceImpl 落地后装配链闭合；Task 7 追加 IOrderTransferService——阶段②
      * 计划三分钩子回接面）。
      *
-     * @param visitMapper          住院就诊 mapper，非空；在院态定位与 current_* 原子更新
+     * @param visitMapper          住院就诊 mapper，非空；current_* 原子更新
+     * @param visitAccessor        住院就诊共享访问器（EX-44 下沉），非空；在院态定位 load+check
      * @param bedMapper            床位 mapper，非空；目标床位归属校验（只读）
      * @param bedService           床位管理服务（CAS 流转与流水开账权威），非空
      * @param medicalOrderService  住院医嘱服务（转科自动停嘱，Task 5 impl），非空
@@ -75,12 +78,14 @@ public class TransferServiceImpl implements ITransferService {
      */
     public TransferServiceImpl(
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             BedMapper bedMapper,
             IBedService bedService,
             IMedicalOrderService medicalOrderService,
             IOrderTransferService orderTransferService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.bedMapper = bedMapper;
         this.bedService = bedService;
         this.medicalOrderService = medicalOrderService;
@@ -222,13 +227,9 @@ public class TransferServiceImpl implements ITransferService {
         return transferredAt;
     }
 
-    /** 在院就诊定位（未命中 IP-1007；非 ADMITTED 态 IP-1008——转科/转床限在院患者）。 */
+    /** 在院就诊定位（未命中 IP-1007——load+check 经共享访问器 EX-44；非 ADMITTED 态 IP-1008——转科/转床限在院患者）。 */
     private InpatientVisit requireOngoingVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
             throw new BizException(
                     InpatientErrorCode.VISIT_STATE_NOT_ALLOWED,

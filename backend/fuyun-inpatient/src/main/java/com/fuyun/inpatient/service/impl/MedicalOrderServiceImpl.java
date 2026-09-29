@@ -23,7 +23,7 @@ import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
-import com.fuyun.inpatient.mapper.InpatientVisitMapper;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
@@ -87,7 +87,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
 
     private final OrderExecutePlanMapper planMapper;
 
-    private final InpatientVisitMapper visitMapper;
+    private final InpatientVisitAccessor visitAccessor;
 
     private final InpatientSeqGate seqGate;
 
@@ -110,7 +110,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      * @param itemMapper        医嘱明细 mapper，非空
      * @param frequencyMapper   频次字典 mapper，非空；频次有效性校验（IP-1021）
      * @param planMapper        执行计划 mapper，非空；停嘱联动未来计划批量作废（Task 7 回接面）
-     * @param visitMapper       住院就诊 mapper，非空；在院校验与 visitId 号映射
+     * @param visitAccessor     住院就诊共享访问器（EX-44 下沉），非空；在院校验与 visitId 号映射
      * @param seqGate           住院业务号发号器（MO 医嘱号），非空
      * @param practiceCheckPort 执业授权校验端口（system api），非空；L1 承载
      * @param allergyChecker    过敏项校验端口（patient api），非空；L2 承载
@@ -123,7 +123,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
             MedicalOrderItemMapper itemMapper,
             OrderFrequencyMapper frequencyMapper,
             OrderExecutePlanMapper planMapper,
-            InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
             PracticeCheckPort practiceCheckPort,
             AllergyChecker allergyChecker,
@@ -134,7 +134,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
         this.itemMapper = itemMapper;
         this.frequencyMapper = frequencyMapper;
         this.planMapper = planMapper;
-        this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.practiceCheckPort = practiceCheckPort;
         this.allergyChecker = allergyChecker;
@@ -155,8 +155,8 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
     @Override
     @Transactional
     public MedicalOrderVO create(String visitId, OrderCreateRequest req) {
-        // 守卫链⓪：就诊定位与在院态校验（出院/作废就诊禁开立）
-        InpatientVisit visit = requireVisit(visitId);
+        // 守卫链⓪：就诊定位与在院态校验（出院/作废就诊禁开立；load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
             throw new BizException(
                     InpatientErrorCode.VISIT_STATE_NOT_ALLOWED,
@@ -235,7 +235,8 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
     @Transactional(readOnly = true)
     public PageResult<MedicalOrderVO> list(String visitId, OrderClass clazz, int page, int size) {
         // 查询键校验（就诊号必填——住院医嘱视图以就诊为轴）兼出参 visitId 号映射取数
-        InpatientVisit visit = requireVisit(visitId);
+        // （load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         // 分类条件缺席即全分类（null.getCode() 惰性求值防护：先取值再进条件）
         String classCode = clazz == null ? null : clazz.getCode();
         // 数据库读操作：分页（0 基请求转 MP 1 基 current；Wrappers 直构范式同 AdmissionServiceImpl）
@@ -265,12 +266,9 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
     @Transactional(readOnly = true)
     public OrderDetailVO detail(String orderNo) {
         MedicalOrder order = requireOrder(orderNo);
-        // 出参 visitId 号映射（表内存 inpatient_visit 主键，出参转 I 型 14 位号）
-        InpatientVisit visit = visitMapper.selectById(order.getVisitId());
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "医嘱关联住院就诊不存在（数据不一致）：" + orderNo);
-        }
+        // 出参 visitId 号映射（表内存 inpatient_visit 主键，出参转 I 型 14 位号；未命中 IP-1007
+        // 数据不一致——load+check 经共享访问器，文案参数化保持对外契约零变化——EX-44）
+        InpatientVisit visit = visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：" + orderNo);
         // 数据库读操作：明细行全集（item_seq 升序）
         List<OrderItemVO> items = itemMapper
                 .selectList(Wrappers.<MedicalOrderItem>lambdaQuery()
@@ -309,12 +307,9 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
     @Override
     @Transactional
     public void stopAllForTransfer(Long visitId, String reason) {
-        // 就诊定位（出参/事件 visitId 号映射面；不存在定性 IP-1007——编排调用前已校验，此处防御）
-        InpatientVisit visit = visitMapper.selectById(visitId);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：visitId(pk)=" + visitId);
-        }
+        // 就诊定位（出参/事件 visitId 号映射面；不存在定性 IP-1007——编排调用前已校验，此处防御；
+        // load+check 经共享访问器，文案参数化保持对外契约零变化——EX-44）
+        InpatientVisit visit = visitAccessor.requireByPk(visitId, "住院就诊不存在：visitId(pk)=" + visitId);
         // 转科停嘱面：长期（order_class=long）且处可停态（AUDITED/TRANSFERRED/EXECUTING）全集；
         // CREATED/AUDIT_REJECTED 停留中的医嘱不在停嘱面（状态机合法迁移表无 CREATED→STOPPED 边，
         // 04 Spec §3.3 冻结），转科后由审核链自然收敛
@@ -694,16 +689,6 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
         return isBlank(item.getDosageUnit()) ? item.getDosage() : item.getDosage() + item.getDosageUnit();
     }
 
-    /** 按就诊号定位行（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
-        return visit;
-    }
-
     /** 按医嘱号定位行（未命中定性 IP-1009；逻辑删由 @TableLogic 自动过滤）。 */
     private MedicalOrder requireOrder(String orderNo) {
         MedicalOrder order =
@@ -714,16 +699,14 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
         return order;
     }
 
-    /** 就诊主键→I 型号映射（事件载荷/出参 visitId 号口径；未命中定性 IP-1007 数据不一致）。 */
+    /**
+     * 就诊主键→I 型号映射（事件载荷/出参 visitId 号口径；未命中定性 IP-1007 数据不一致——
+     * load+check 经共享访问器承载，EX-44 下沉后本方法仅保留号映射语义）。
+     */
     private String visitNoOf(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit.getVisitId();
+        return visitAccessor
+                .requireByPk(visitPk, "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk)
+                .getVisitId();
     }
 
     /**

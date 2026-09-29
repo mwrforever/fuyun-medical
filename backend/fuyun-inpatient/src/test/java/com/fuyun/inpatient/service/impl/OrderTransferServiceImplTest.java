@@ -34,6 +34,7 @@ import com.fuyun.inpatient.enums.OrderClass;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
@@ -152,6 +153,8 @@ class OrderTransferServiceImplTest {
                 transferLogMapper,
                 planMapper,
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 seqGate,
                 stateMachine,
                 orderPlanService,

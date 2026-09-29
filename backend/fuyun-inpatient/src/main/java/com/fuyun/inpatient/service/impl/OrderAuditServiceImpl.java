@@ -24,6 +24,7 @@ import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
@@ -82,6 +83,8 @@ public class OrderAuditServiceImpl implements IOrderAuditService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final ConsultationMapper consultationMapper;
 
     private final InpatientSeqGate seqGate;
@@ -97,7 +100,8 @@ public class OrderAuditServiceImpl implements IOrderAuditService {
      * @param itemMapper         医嘱明细 mapper，非空；口头医嘱行存在性校验（oral_flag）
      * @param auditMapper        审核流水 mapper，非空；SYSTEM/PHARMACIST 两阶段结论落行
      * @param statusLogMapper    状态迁移日志 mapper，非空；重整留痕（from=to）直写面
-     * @param visitMapper        住院就诊 mapper，非空；事件载荷 visitId 号映射与钩子草稿申请科室取数
+     * @param visitMapper        住院就诊 mapper，非空；钩子草稿申请科室取数（缺失宽容面）
+     * @param visitAccessor      住院就诊共享访问器（EX-44 下沉），非空；事件载荷 visitId 号映射
      * @param consultationMapper 会诊单 mapper，非空；CONSULT 类钩子自动建草稿落库（V908）
      * @param seqGate            住院业务号发号器（CS 会诊号段），非空；钩子建单取号
      * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
@@ -109,6 +113,7 @@ public class OrderAuditServiceImpl implements IOrderAuditService {
             OrderAuditMapper auditMapper,
             OrderStatusLogMapper statusLogMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             ConsultationMapper consultationMapper,
             InpatientSeqGate seqGate,
             IOrderStateMachineService stateMachine,
@@ -118,6 +123,7 @@ public class OrderAuditServiceImpl implements IOrderAuditService {
         this.auditMapper = auditMapper;
         this.statusLogMapper = statusLogMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.consultationMapper = consultationMapper;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
@@ -278,7 +284,8 @@ public class OrderAuditServiceImpl implements IOrderAuditService {
     @Override
     @Transactional
     public void reorganize(OrderReorganizeRequest req) {
-        InpatientVisit visit = requireVisit(req.visitId());
+        // 就诊定位（load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(req.visitId());
         long operator = parseOperatorAsEmployeeId();
         OffsetDateTime occurredAt = OffsetDateTime.now();
         for (String orderNo : req.orderNos()) {
@@ -520,26 +527,14 @@ public class OrderAuditServiceImpl implements IOrderAuditService {
         return order;
     }
 
-    /** 按就诊号定位行（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
-        return visit;
-    }
-
-    /** 就诊主键→I 型号映射（事件载荷 visitId 号口径；未命中定性 IP-1007 数据不一致）。 */
+    /**
+     * 就诊主键→I 型号映射（事件载荷 visitId 号口径；未命中定性 IP-1007 数据不一致——load+check
+     * 经共享访问器承载，EX-44 下沉后本方法仅保留号映射语义）。
+     */
     private String visitNoOf(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit.getVisitId();
+        return visitAccessor
+                .requireByPk(visitPk, "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk)
+                .getVisitId();
     }
 
     /**

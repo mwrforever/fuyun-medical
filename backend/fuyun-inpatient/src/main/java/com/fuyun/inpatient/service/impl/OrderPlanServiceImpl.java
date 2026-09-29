@@ -22,6 +22,7 @@ import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.PlanStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
@@ -135,6 +136,8 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final InpatientSeqGate seqGate;
 
     private final IOrderStateMachineService stateMachine;
@@ -153,7 +156,8 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
      * @param auditMapper         审核流水 mapper，非空；追溯审核环节聚合
      * @param statusLogMapper     状态迁移日志 mapper，非空；追溯状态环节聚合
      * @param transferLogMapper   转抄台账 mapper，非空；追溯转抄环节聚合
-     * @param visitMapper         住院就诊 mapper，非空；在院候选与病区定位
+     * @param visitMapper         住院就诊 mapper，非空；在院候选批量取数
+     * @param visitAccessor       住院就诊共享访问器（EX-44 下沉），非空；回签/追溯关联就诊定位
      * @param seqGate             住院业务号发号器（PL 计划号），非空
      * @param stateMachine        医嘱状态机服务（医嘱头迁移唯一执行面），非空
      * @param events              进程内事件发布器（AFTER_COMMIT 出 MQ），非空
@@ -168,6 +172,7 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
             OrderStatusLogMapper statusLogMapper,
             OrderTransferLogMapper transferLogMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
             IOrderStateMachineService stateMachine,
             ApplicationEventPublisher events,
@@ -180,6 +185,7 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
         this.statusLogMapper = statusLogMapper;
         this.transferLogMapper = transferLogMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
         this.events = events;
@@ -326,7 +332,10 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
                     "执行计划状态不允许回签（仅 PENDING 待执行态）：planNo=" + planNo + "，当前状态=" + current.getStatus());
         }
         MedicalOrder order = requireOrderById(plan.getOrderId());
-        InpatientVisit visit = requireVisitById(order.getVisitId());
+        // 关联就诊定位（未命中 IP-1007 数据不一致——load+check 经共享访问器，文案参数化保持
+        // 对外契约零变化——EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
         // 医嘱头三态推进（唯一经状态机——留痕随状态机自动落 order_status_log）；executedAt
         // 同源传入作为 end_at 守卫的「当日」基准（回签执行时点即判定基准）
         advanceOrderHead(order, executedAt, operator);
@@ -356,7 +365,9 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
     @Transactional(readOnly = true)
     public OrderTraceVO trace(String orderNo) {
         MedicalOrder order = requireOrder(orderNo);
-        InpatientVisit visit = requireVisitById(order.getVisitId());
+        // 关联就诊定位（未命中 IP-1007 数据不一致——共享访问器统一承载，EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
         List<OrderTraceVO.TraceEntry> entries = new ArrayList<>();
         // 环节一·开立：医嘱头承载（开立医生/开立时点；detail 携类型/分类/频次定位面）
         entries.add(new OrderTraceVO.TraceEntry(
@@ -788,18 +799,6 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
             throw new BizException(InpatientErrorCode.PLAN_NOT_FOUND, HttpStatus.NOT_FOUND, "执行计划不存在：" + planNo);
         }
         return plan;
-    }
-
-    /** 按就诊主键定位行（未命中定性 IP-1007 数据不一致；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisitById(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit;
     }
 
     /**

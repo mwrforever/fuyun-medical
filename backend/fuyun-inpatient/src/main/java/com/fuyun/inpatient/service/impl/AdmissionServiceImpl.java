@@ -24,6 +24,7 @@ import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.SourceType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
@@ -87,6 +88,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final BedMapper bedMapper;
 
     private final InpatientSeqGate seqGate;
@@ -106,6 +109,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
      *
      * @param admissionMapper        住院证 mapper，非空；ServiceImpl 基座 mapper
      * @param visitMapper            住院就诊 mapper，非空；登记确认落库、入科确认与欠费标识 CAS
+     * @param visitAccessor          住院就诊共享访问器（EX-44 下沉），非空；入科就诊定位 load+check
      * @param bedMapper              床位 mapper，非空；欠费清单床位号批量映射
      * @param seqGate                住院业务号发号器（AD 号 / I 型 visit_id），非空
      * @param patientContextResolver 患者上下文解析（patient api），非空；归一/拦截
@@ -118,6 +122,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     public AdmissionServiceImpl(
             AdmissionMapper admissionMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             BedMapper bedMapper,
             InpatientSeqGate seqGate,
             PatientContextResolver patientContextResolver,
@@ -126,6 +131,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             IBedService bedService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.bedMapper = bedMapper;
         this.seqGate = seqGate;
         this.patientContextResolver = patientContextResolver;
@@ -409,11 +415,9 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         if (!NURSING_LEVELS.contains(req.nursingLevel())) {
             throw paramInvalid("nursingLevel", req.nursingLevel());
         }
-        // 就诊行定位（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）
-        InpatientVisit visit = requireByVisitId(visitId);
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
+        // 就诊行定位（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤；load+check 经共享
+        // 访问器统一承载——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         String operator = operator();
         // 数据库写操作：入科 CAS（REGISTERED→ADMITTED，入科时点库端 now()；0 行定性状态机违例）
         int rows = visitMapper.casAdmitWard(

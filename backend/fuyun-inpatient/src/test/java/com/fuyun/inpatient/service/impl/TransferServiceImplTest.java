@@ -24,6 +24,7 @@ import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.service.IBedService;
@@ -110,8 +111,15 @@ class TransferServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
         service = new TransferServiceImpl(
-                visitMapper, bedMapper, bedService, medicalOrderService, orderTransferService, events);
+                visitMapper,
+                new InpatientVisitAccessor(visitMapper),
+                bedMapper,
+                bedService,
+                medicalOrderService,
+                orderTransferService,
+                events);
         OperatorContextHolder.set("doc-01");
     }
 

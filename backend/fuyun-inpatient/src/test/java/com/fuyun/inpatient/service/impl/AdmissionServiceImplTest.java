@@ -36,6 +36,7 @@ import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
@@ -154,6 +155,8 @@ class AdmissionServiceImplTest {
         service = new AdmissionServiceImpl(
                 admissionMapper,
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 bedMapper,
                 seqGate,
                 patientContextResolver,

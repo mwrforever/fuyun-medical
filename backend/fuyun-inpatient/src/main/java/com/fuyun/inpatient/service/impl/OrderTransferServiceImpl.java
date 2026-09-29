@@ -24,6 +24,7 @@ import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.enums.PlanStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
@@ -100,6 +101,8 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final InpatientSeqGate seqGate;
 
     private final IOrderStateMachineService stateMachine;
@@ -117,7 +120,8 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
      * @param itemMapper         医嘱明细 mapper，非空；单次计划按明细行生成取数
      * @param transferLogMapper  转抄记录 mapper，非空；双人核对台账落行
      * @param planMapper         执行计划 mapper，非空；计划开立/查询/作废/重定向
-     * @param visitMapper        住院就诊 mapper，非空；病区聚合与号映射
+     * @param visitMapper        住院就诊 mapper，非空；病区聚合
+     * @param visitAccessor      住院就诊共享访问器（EX-44 下沉），非空；号映射与事件载荷取数
      * @param seqGate            住院业务号发号器（PL 计划号），非空
      * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
      * @param orderPlanService   医嘱执行计划服务（长期医嘱当日增量补偿——Task 8 衔接面），非空
@@ -130,6 +134,7 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
             OrderTransferLogMapper transferLogMapper,
             OrderExecutePlanMapper planMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
             IOrderStateMachineService stateMachine,
             IOrderPlanService orderPlanService,
@@ -140,6 +145,7 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
         this.transferLogMapper = transferLogMapper;
         this.planMapper = planMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
         this.orderPlanService = orderPlanService;
@@ -241,7 +247,10 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
                         HttpStatus.BAD_REQUEST,
                         "输血类医嘱转抄须双人核对（第二核对人必填）：" + orderNo);
             }
-            InpatientVisit visit = requireVisitByPk(order.getVisitId());
+            // 关联就诊定位（未命中 IP-1007 数据不一致——load+check 经共享访问器，文案参数化
+            // 保持对外契约零变化——EX-44）
+            InpatientVisit visit = visitAccessor.requireByPk(
+                    order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
             OffsetDateTime transferredAt = OffsetDateTime.now();
             // 状态机唯一迁移面（AUDITED→TRANSFERRED，留痕随状态机自动落 order_status_log）
             stateMachine.transition(order, OrderStatus.TRANSFERRED, REASON_TRANSFER_CHECK, operator);
@@ -346,7 +355,9 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
                     HttpStatus.CONFLICT,
                     "嘱托触发要求医嘱已经转抄（TRANSFERRED/EXECUTING）：orderNo=" + orderNo + "，当前状态=" + order.getStatus());
         }
-        InpatientVisit visit = requireVisitByPk(order.getVisitId());
+        // 关联就诊定位（未命中 IP-1007 数据不一致——共享访问器统一承载，EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
         long operator = parseOperatorAsEmployeeId();
         OffsetDateTime triggerAt = OffsetDateTime.now();
         // 单次计划生成与临时医嘱转抄同步生成共用实现（plan_time=触发时点+默认准备窗口）
@@ -474,18 +485,6 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
             throw new BizException(InpatientErrorCode.ORDER_NOT_FOUND, HttpStatus.NOT_FOUND, "医嘱不存在：" + orderNo);
         }
         return order;
-    }
-
-    /** 按就诊主键定位行（未命中定性 IP-1007 数据不一致；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisitByPk(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit;
     }
 
     /** 医嘱类型词表裁决（词表外=主数据脏数据，fail-closed 拒 IP-1023——OrderAuditServiceImpl 同款）。 */

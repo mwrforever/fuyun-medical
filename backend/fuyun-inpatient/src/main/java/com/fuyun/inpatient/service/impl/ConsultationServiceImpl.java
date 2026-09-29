@@ -18,6 +18,7 @@ import com.fuyun.inpatient.enums.ConsultationStatus;
 import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.service.IConsultationService;
@@ -59,6 +60,8 @@ public class ConsultationServiceImpl implements IConsultationService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final InpatientSeqGate seqGate;
 
     private final ApplicationEventPublisher events;
@@ -67,17 +70,20 @@ public class ConsultationServiceImpl implements IConsultationService {
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
      * @param consultationMapper 会诊单 mapper，非空；单落库与四 CAS 面（状态机唯一执行面）
-     * @param visitMapper        住院就诊 mapper，非空；就诊守卫与 I 型号出参映射
+     * @param visitMapper        住院就诊 mapper，非空；分页列表就诊行批量映射
+     * @param visitAccessor      住院就诊共享访问器（EX-44 下沉），非空；就诊守卫与 I 型号出参映射
      * @param seqGate            住院业务号发号器（CS 会诊号段），非空
      * @param events             进程内事件发布器（AFTER_COMMIT 出 MQ），非空
      */
     public ConsultationServiceImpl(
             ConsultationMapper consultationMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
             ApplicationEventPublisher events) {
         this.consultationMapper = consultationMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.events = events;
     }
@@ -100,7 +106,8 @@ public class ConsultationServiceImpl implements IConsultationService {
         if (level == null) {
             throw paramInvalid("level", req.level());
         }
-        InpatientVisit visit = requireVisit(req.visitId());
+        // 就诊定位与在院守卫（load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(req.visitId());
         // 守卫：会诊申请限在院态（未入科/已申请出院/已出院一律拒）
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
             throw new BizException(
@@ -409,32 +416,18 @@ public class ConsultationServiceImpl implements IConsultationService {
         return row;
     }
 
-    /** 按就诊号定位行（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
-        return visit;
-    }
-
     /**
-     * 就诊主键→I 型号映射（事件载荷号口径；未命中定性 IP-1007 数据不一致）。
+     * 就诊主键→I 型号映射（事件载荷号口径；未命中定性 IP-1007 数据不一致——load+check
+     * 经共享访问器承载，EX-44 下沉后本方法仅保留号映射语义）。
      *
      * @param visitPk 住院就诊主键，非空
      * @return I 型 14 位就诊号，非空
      * @throws BizException IP-1007 就诊行缺失（数据不一致）时触发
      */
     private String visitNoOf(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "会诊关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit.getVisitId();
+        return visitAccessor
+                .requireByPk(visitPk, "会诊关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk)
+                .getVisitId();
     }
 
     /**
