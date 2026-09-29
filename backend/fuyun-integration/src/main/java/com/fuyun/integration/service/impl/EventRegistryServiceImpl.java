@@ -1,7 +1,5 @@
 package com.fuyun.integration.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.web.PageResult;
@@ -198,14 +196,14 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
     @Override
     @Transactional(readOnly = true)
     public PageResult<EventRegistryVO> query(EventRegistryQuery query) {
-        LambdaQueryWrapper<EventRegistry> wrapper = Wrappers.lambdaQuery(EventRegistry.class)
+        Page<EventRegistry> page = this.lambdaQuery()
                 .eq(query.eventType() != null, EventRegistry::getEventType, query.eventType())
                 .eq(query.producerModule() != null, EventRegistry::getProducerModule, query.producerModule())
                 .eq(query.status() != null, EventRegistry::getStatus, query.status())
                 // 排序唯一性约束（A.4.3-17）：类型名 + 主键
                 .orderByAsc(EventRegistry::getEventType)
-                .orderByAsc(EventRegistry::getId);
-        Page<EventRegistry> page = this.page(new Page<>(query.page() + 1L, query.size()), wrapper);
+                .orderByAsc(EventRegistry::getId)
+                .page(new Page<>(query.page() + 1L, query.size()));
         return PageResult.of(
                 converter.toEventRegistryVOs(page.getRecords()),
                 page.getCurrent() - 1,

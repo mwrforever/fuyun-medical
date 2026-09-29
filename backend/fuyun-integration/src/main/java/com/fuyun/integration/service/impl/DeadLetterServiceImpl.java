@@ -1,7 +1,5 @@
 package com.fuyun.integration.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -74,16 +72,16 @@ public class DeadLetterServiceImpl extends ServiceImpl<DeadLetterMapper, DeadLet
     @Override
     @Transactional(readOnly = true)
     public PageResult<DeadLetterVO> query(DeadLetterQuery query) {
-        LambdaQueryWrapper<DeadLetter> wrapper = Wrappers.lambdaQuery(DeadLetter.class)
+        // 契约 0 基（A.3-6）↔ MP 分页器 1 基：服务层唯一转换点，进出各一次
+        Page<DeadLetter> page = this.lambdaQuery()
                 .eq(query.status() != null, DeadLetter::getStatus, query.status())
                 .eq(query.eventType() != null, DeadLetter::getEventType, query.eventType())
                 .eq(query.eventId() != null, DeadLetter::getEventId, query.eventId())
                 .eq(query.sourceQueue() != null, DeadLetter::getSourceQueue, query.sourceQueue())
                 // 排序唯一性约束（A.4.3-17）：时间相同时以主键兜底，防深翻页漏行
                 .orderByDesc(DeadLetter::getFirstDeadAt)
-                .orderByDesc(DeadLetter::getId);
-        // 契约 0 基（A.3-6）↔ MP 分页器 1 基：服务层唯一转换点，进出各一次
-        Page<DeadLetter> page = this.page(new Page<>(query.page() + 1L, query.size()), wrapper);
+                .orderByDesc(DeadLetter::getId)
+                .page(new Page<>(query.page() + 1L, query.size()));
         return PageResult.of(
                 converter.toDeadLetterVOs(page.getRecords()), page.getCurrent() - 1, page.getSize(), page.getTotal());
     }

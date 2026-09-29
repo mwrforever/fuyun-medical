@@ -1,7 +1,5 @@
 package com.fuyun.integration.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
@@ -55,13 +53,13 @@ public class MdmSubscriptionServiceImpl extends ServiceImpl<MdmSubscriptionMappe
     @Override
     @Transactional(readOnly = true)
     public PageResult<MdmSubscriptionVO> query(MdmSubscriptionQuery query) {
-        LambdaQueryWrapper<MdmSubscription> wrapper = Wrappers.lambdaQuery(MdmSubscription.class)
+        Page<MdmSubscription> page = this.lambdaQuery()
                 .eq(query.topic() != null, MdmSubscription::getTopic, query.topic())
                 .eq(query.subscriberModule() != null, MdmSubscription::getSubscriberModule, query.subscriberModule())
                 // 排序唯一性约束（A.4.3-17）：主题 + 主键（矩阵阅读顺序）
                 .orderByAsc(MdmSubscription::getTopic)
-                .orderByAsc(MdmSubscription::getId);
-        Page<MdmSubscription> page = this.page(new Page<>(query.page() + 1L, query.size()), wrapper);
+                .orderByAsc(MdmSubscription::getId)
+                .page(new Page<>(query.page() + 1L, query.size()));
         return PageResult.of(
                 converter.toMdmSubscriptionVOs(page.getRecords()),
                 page.getCurrent() - 1,
@@ -156,10 +154,11 @@ public class MdmSubscriptionServiceImpl extends ServiceImpl<MdmSubscriptionMappe
     @Override
     @Transactional(readOnly = true)
     public List<String> listSubscriberModules(String topic) {
-        return this.list(Wrappers.lambdaQuery(MdmSubscription.class)
-                        .eq(MdmSubscription::getTopic, topic)
-                        .select(MdmSubscription::getSubscriberModule)
-                        .orderByAsc(MdmSubscription::getId))
+        return this.lambdaQuery()
+                .eq(MdmSubscription::getTopic, topic)
+                .select(MdmSubscription::getSubscriberModule)
+                .orderByAsc(MdmSubscription::getId)
+                .list()
                 .stream()
                 .map(MdmSubscription::getSubscriberModule)
                 .toList();
