@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.AuditActionType;
+import com.fuyun.system.api.SystemErrorCode;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -13,14 +15,16 @@ import java.util.function.Function;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.http.HttpStatus;
 
 /**
  * RBAC/审计/字典全量枚举 code↔enum 双向映射测试（backend 宪法 A.2-7 枚举规范回归防线）。
  *
- * <p>断言三条契约对 12 个枚举的每一个常量成立：
+ * <p>断言三条契约对 13 个枚举的每一个常量成立：
  * ① getCode 返回与常量名一致的存储值且 code→枚举往返无损；② DB 映射注解 {@code @EnumValue} 落在
  * code 字段（MP 3.5.17 该注解仅支持 FIELD 目标）、JSON 输出注解 {@code @JsonValue} 落在 getCode 上；
- * ③ 未知 code 拒绝映射并抛 IllegalArgumentException（脏数据不得静默吞成 null）。
+ * ③ 未知 code 拒绝映射并抛 BizException 400 SYS-1031（BE-C3-05/A.3-3 双层错误模型收口；脏数据
+ * 不得静默吞成 null）。
  */
 class SystemEnumsTest {
 
@@ -63,7 +67,7 @@ class SystemEnumsTest {
         }
     }
 
-    /** 参数化夹具清单：12 个枚举全量（V300~V302 全部状态列值域 + 审计两枚举） */
+    /** 参数化夹具清单：13 个枚举全量（V300~V302 全部状态列值域 + 执业授权状态 + 审计两枚举） */
     static List<Fixture> fixtures() {
         return List.of(
                 new Fixture("UserType", UserType.class, UserType::fromCode),
@@ -76,6 +80,7 @@ class SystemEnumsTest {
                 new Fixture("DataScopeType", DataScopeType.class, DataScopeType::fromCode),
                 new Fixture("PermissionType", PermissionType.class, PermissionType::fromCode),
                 new Fixture("DictVersionStatus", DictVersionStatus.class, DictVersionStatus::fromCode),
+                new Fixture("PracticeGrantStatus", PracticeGrantStatus.class, PracticeGrantStatus::fromCode),
                 new Fixture("AuditActionType", AuditActionType.class, AuditActionType::fromCode),
                 new Fixture("AuditResult", AuditResult.class, AuditResult::fromCode));
     }
@@ -89,12 +94,16 @@ class SystemEnumsTest {
 
     @ParameterizedTest(name = "[{index}] {0}")
     @MethodSource("fixtures")
-    @DisplayName("未知 code 拒绝映射并抛 IllegalArgumentException（脏数据不得静默吞）")
+    @DisplayName("未知 code 拒绝映射并抛 BizException 400 SYS-1031（脏数据不得静默吞）")
     void unknownCodeIsRejected(Fixture fixture) {
+        // BE-C3-05 收口回归锚（D-21 断言现代化）：原锚 IllegalArgumentException 升级为
+        // BizException 双层契约全量精确断言（类型 + 错误码 + HTTP 状态 + 消息含探针 code）
         assertThatThrownBy(() -> fixture.fromCode().apply(UNKNOWN_CODE))
                 .as("%s 未知 code 应拒绝映射", fixture.type().getSimpleName())
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining(UNKNOWN_CODE);
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining(UNKNOWN_CODE)
+                .extracting("errorCode", "httpStatus")
+                .containsExactly(SystemErrorCode.ENUM_VALUE_INVALID, HttpStatus.BAD_REQUEST);
     }
 
     /**

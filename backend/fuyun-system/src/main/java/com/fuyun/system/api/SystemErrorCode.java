@@ -48,7 +48,14 @@ public enum SystemErrorCode implements ErrorCode {
     PRACTICE_GRANT_NOT_FOUND("SYS-1021"),
 
     /** 同一员工同一授权类型已存在生效行（409）：重复登记冲突 */
-    PRACTICE_GRANT_DUPLICATE("SYS-1022");
+    PRACTICE_GRANT_DUPLICATE("SYS-1022"),
+
+    /**
+     * 枚举 code 值域非法（400；通用段 1031+，BE-C3-05/A.3-3 双层错误模型收口）：
+     * 全部枚举 fromCode 未知 code 统一抛出（外部入参转枚举失败按非法请求处置，禁散落裸
+     * IllegalArgumentException）。
+     */
+    ENUM_VALUE_INVALID("SYS-1031");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

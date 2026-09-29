@@ -380,6 +380,7 @@ public class AuditLogAspect {
             } catch (ReflectiveOperationException e) {
                 // 反射失败交由 record() 兜底 catch（审计整行告警跳过，绝不阻断业务）；禁回退默认
                 // toString——那会把 identifier/敏感字段明文写回审计（等保红线）
+                // EX-19 C 类留痕：内部反射防御路径（非用户可达输入），保留 IllegalStateException 语义
                 throw new IllegalStateException("审计参数摘要渲染 record 组件失败：" + component.getName(), e);
             }
         }

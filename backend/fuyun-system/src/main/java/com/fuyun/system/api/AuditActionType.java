@@ -2,6 +2,8 @@ package com.fuyun.system.api;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import org.springframework.http.HttpStatus;
 
 /**
  * 审计动作类型枚举（system.audit_log.action_type 列值域，M01 Spec §4）。
@@ -50,7 +52,8 @@ public enum AuditActionType {
      *
      * @param code 存储值，来源：DB 列读取或外部入参；非空（列 NOT NULL）
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或版本不一致），建议上游按数据异常处置
+     * @throws BizException code 无对应枚举常量（400 SYS-1031，BE-C3-05/A.3-3 双层错误模型收口）：
+     *                       外部入参转枚举失败按非法请求处置；DB 脏数据触达同口径，禁止静默吞成 null
      */
     public static AuditActionType fromCode(String code) {
         for (AuditActionType type : values()) {
@@ -58,6 +61,7 @@ public enum AuditActionType {
                 return type;
             }
         }
-        throw new IllegalArgumentException("未知的审计动作类型 code: " + code);
+        // 未知 code 收口为 BizException 400（BE-C3-05）：外部入参转枚举失败按非法请求语义返回，禁散落裸 IAE
+        throw new BizException(SystemErrorCode.ENUM_VALUE_INVALID, HttpStatus.BAD_REQUEST, "未知的审计动作类型 code: " + code);
     }
 }

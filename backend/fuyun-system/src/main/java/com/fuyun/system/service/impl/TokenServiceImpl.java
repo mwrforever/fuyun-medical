@@ -300,6 +300,7 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
             sessionJson = objectMapper.writeValueAsString(session);
         } catch (JsonProcessingException e) {
             log.error("会话 JSON 序列化失败：userId={}", user.userId(), e);
+            // EX-19 C 类留痕：系统级序列化故障按 500 语义上抛（非用户可达输入），保留 IllegalStateException
             throw new IllegalStateException("登录会话序列化失败", e);
         }
         redisTemplate.opsForValue().set(sessionKey(sid), sessionJson, ttl);
@@ -345,6 +346,7 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
             return encoder.encodeToString(payload) + "." + encoder.encodeToString(hmac(payload));
         } catch (JsonProcessingException e) {
             log.error("令牌载荷 JSON 序列化失败：typ={}", claims.typ(), e);
+            // EX-19 C 类留痕：系统级序列化故障按 500 语义上抛（非用户可达输入），保留 IllegalStateException
             throw new IllegalStateException("令牌载荷序列化失败", e);
         }
     }
@@ -364,6 +366,7 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
             mac.init(new SecretKeySpec(secretBytes, HMAC_ALGORITHM));
             return mac.doFinal(data);
         } catch (GeneralSecurityException e) {
+            // EX-19 C 类留痕：JCE 环境异常属系统级故障（非用户可达输入），保留 IllegalStateException
             throw new IllegalStateException("HMAC-SHA256 签名计算失败", e);
         }
     }
