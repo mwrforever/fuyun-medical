@@ -275,7 +275,9 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
         // 步骤②：聚合——窗口 [from, to) 按类型求和（缺型补零，两位小数规整）
         BigDecimal intake = BigDecimal.ZERO;
         BigDecimal output = BigDecimal.ZERO;
-        for (IoRecord sum : baseMapper.sumByTypeAndPeriod(req.visitId(), from, to)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：窗口分型合计行单次装载，循环内纯迭代归位
+        List<IoRecord> sums = baseMapper.sumByTypeAndPeriod(req.visitId(), from, to);
+        for (IoRecord sum : sums) {
             if (IoType.INTAKE.getCode().equals(sum.getIoType()) && sum.getQuantity() != null) {
                 intake = sum.getQuantity();
             } else if (IoType.OUTPUT.getCode().equals(sum.getIoType()) && sum.getQuantity() != null) {
