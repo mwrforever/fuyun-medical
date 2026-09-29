@@ -81,7 +81,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  * {@code sumInFlightRefundedFenByFeeIds}，谓词口径由 RefundRequestMapper.xml 承载，
  * SQL 文本守卫见 RefundAggregateSqlGuardTest）；link 落表断言点从逐行 insert 改 Db.saveBatch
  * 批插（A.4.3-16）；金额边界对照用例断言批量取值与旧逐行 refundedFen/decidedRefundedFen
- * 两步内存求和结果一致。
+ * 两步内存求和结果一致。EX-37 后 execute 判态回写断言点从逐行 feeRecordMapper.updateById 改
+ * Db.updateBatchById 批量写（A.4.3-16，桩面随写通道迁移，行集/行序/每行终态断言语义不变）。
  */
 @ExtendWith(MockitoExtension.class)
 class RefundServiceImplTest {
@@ -758,7 +759,17 @@ class RefundServiceImplTest {
                 .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
         when(cardAccountLedger.record(any())).thenReturn(777L);
 
-        service.execute(100L);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+
+            // 费用行判态：「既有已退+本次退」≥ 行金额 → FULL_REFUND（EX-37 桩面随通道迁移：
+            //   原 feeRecordMapper.updateById captor 等价改 Db.updateBatchById 批量行集 captor，断言语义不变）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<FeeRecord>> feeRowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(feeRowsCaptor.capture()));
+            assertThat(feeRowsCaptor.getValue()).hasSize(1);
+            assertThat(feeRowsCaptor.getValue().get(0).getStatus()).isEqualTo(FeeStatus.FULL_REFUND);
+        }
 
         // 原路退回·就诊卡侧：channelRef=5 → 台账 REFUND 入账恰一次，金额=退费额、对账键=refundNo
         verify(cardAccountLedger, times(1)).record(new CardTxnRecord(5L, CardTxnType.REFUND, 3000L, "R100"));
@@ -767,10 +778,6 @@ class RefundServiceImplTest {
         verify(refundRequestMapper).updateById(refundCaptor.capture());
         assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
         assertThat(refundCaptor.getValue().getPaymentRefundRef()).isEqualTo("777");
-        // 费用行判态：「既有已退+本次退」≥ 行金额 → FULL_REFUND
-        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
-        verify(feeRecordMapper).updateById(feeCaptor.capture());
-        assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.FULL_REFUND);
         // 结算单全额退完 → REFUNDED
         ArgumentCaptor<Settlement> stCaptor = ArgumentCaptor.forClass(Settlement.class);
         verify(settlementMapper).updateById(stCaptor.capture());
@@ -821,7 +828,11 @@ class RefundServiceImplTest {
                 .thenReturn(List.of(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE)));
         when(cardAccountLedger.record(any())).thenReturn(777L);
 
-        service.execute(100L);
+        // EX-37 桩面随通道迁移：判态批写经 Db.updateBatchById 静态桩承接（本用例聚焦同卡聚合入账，
+        //   批写行集断言由 executeWritesJudgedFeeStatusInSingleBatch 承载）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+        }
 
         // 并发收口（2026-09-18 裁决）：同卡多行按 channelRef 聚合单次全额贷记——修复前逐行全额
         //   贷记会入账两倍退费额；断言台账恰一次且金额=退费额 5000（与写入侧求和扣款口径对称）
@@ -868,7 +879,16 @@ class RefundServiceImplTest {
         when(feeRecordMapper.selectBatchIds(List.of(1L)))
                 .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
-        service.execute(100L);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+
+            // 费用行 1 全退（EX-37 桩面随通道迁移：updateById captor 等价改批量行集 captor）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<FeeRecord>> feeRowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(feeRowsCaptor.capture()));
+            assertThat(feeRowsCaptor.getValue()).hasSize(1);
+            assertThat(feeRowsCaptor.getValue().get(0).getStatus()).isEqualTo(FeeStatus.FULL_REFUND);
+        }
 
         // 纯 CASH 支付：payment_details 无 CARD_BALANCE 行 → 台账零触碰、退费单无原路流水
         verifyNoInteractions(cardAccountLedger);
@@ -876,10 +896,6 @@ class RefundServiceImplTest {
         verify(refundRequestMapper).updateById(refundCaptor.capture());
         assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
         assertThat(refundCaptor.getValue().getPaymentRefundRef()).isNull();
-        // 费用行 1 全退
-        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
-        verify(feeRecordMapper).updateById(feeCaptor.capture());
-        assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.FULL_REFUND);
         // 已退 3000 < 结算总额 8000 → 结算单留 SETTLED（部分退不改结算终态）
         verify(settlementMapper, never()).updateById(any(Settlement.class));
     }
@@ -902,7 +918,10 @@ class RefundServiceImplTest {
         when(feeRecordMapper.selectBatchIds(List.of(1L)))
                 .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
-        service.execute(100L);
+        // EX-37 桩面随通道迁移：判态批写经 Db.updateBatchById 静态桩承接（本用例聚焦空集聚合兜底）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+        }
 
         // 已退聚合 0 < 结算总额 8000 → 结算单留 SETTLED（部分退不改结算终态）
         verify(settlementMapper, never()).updateById(any(Settlement.class));
@@ -930,7 +949,13 @@ class RefundServiceImplTest {
         // 结算维度聚合（totalRefundedFen）已决集空 → 聚合 0 分 < 总额 8000（结算单留 SETTLED 断言源）
         when(refundRequestMapper.selectList(any())).thenReturn(List.of());
 
-        service.execute(100L);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+
+            // 零费用迁移新通道锚（EX-37 桩面随通道迁移追加）：link 空集 → 批量写零发出
+            //   （与旧零 updateById 语义对齐，MP Db 空集合 Assert 拒由空清单短路守卫承载）
+            mockedDb.verify(() -> Db.updateBatchById(any()), never());
+        }
 
         // 零费用迁移：link 空集 → 判态循环零迭代，费用行零 update、批量预载与已决聚合零查询
         verify(feeRecordMapper, never()).updateById(any(FeeRecord.class));
@@ -1151,13 +1176,18 @@ class RefundServiceImplTest {
         when(feeRecordMapper.selectBatchIds(List.of(1L)))
                 .thenReturn(List.of(fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
-        service.execute(100L);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
 
-        // 修复面断言：仅已决 3000 < 行额 5000 → PART_REFUND（修复前混入在途 2000 误判 5000≥5000 →
-        //  FULL_REFUND，兄弟单驳回后剩余 2000 分被 apply 行状态守卫永锁）
-        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
-        verify(feeRecordMapper).updateById(feeCaptor.capture());
-        assertThat(feeCaptor.getValue().getStatus()).isEqualTo(FeeStatus.PART_REFUND);
+            // 修复面断言：仅已决 3000 < 行额 5000 → PART_REFUND（修复前混入在途 2000 误判 5000≥5000 →
+            //   FULL_REFUND，兄弟单驳回后剩余 2000 分被 apply 行状态守卫永锁）（EX-37 桩面随通道迁移：
+            //   updateById captor 等价改批量行集 captor）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<FeeRecord>> feeRowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(feeRowsCaptor.capture()));
+            assertThat(feeRowsCaptor.getValue()).hasSize(1);
+            assertThat(feeRowsCaptor.getValue().get(0).getStatus()).isEqualTo(FeeStatus.PART_REFUND);
+        }
         // 口径钉死：execute 全程零在途聚合（sumInFlightRefundedFenByFeeIds 零调用），已决聚合恰一次
         //  （在途两态绝不出现在 execute 判态口径中——谓词由 RefundRequestMapper.xml 承载并钉死）；
         //  selectList 恰 1 次=结算维度聚合，谓词只携已决两态
@@ -1467,14 +1497,18 @@ class RefundServiceImplTest {
         // 结算维度聚合（totalRefundedFen 维持 id 集两步查询）：已决本单 → link 合计 3000 < 9000 留 SETTLED
         when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
 
-        service.execute(100L);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
 
-        // 逐行判态对照断言：fee1 恰好退满 → FULL_REFUND；fee2 未满 → PART_REFUND（批量预载取值与旧逐行一致）
-        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
-        verify(feeRecordMapper, times(2)).updateById(feeCaptor.capture());
-        assertThat(feeCaptor.getAllValues())
-                .extracting(FeeRecord::getId, FeeRecord::getStatus)
-                .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.PART_REFUND));
+            // 逐行判态对照断言：fee1 恰好退满 → FULL_REFUND；fee2 未满 → PART_REFUND（批量预载取值与旧逐行
+            //   一致）（EX-37 桩面随通道迁移：原 times(2) updateById captor 等价改一次批量行集 captor）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<FeeRecord>> feeRowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(feeRowsCaptor.capture()));
+            assertThat(feeRowsCaptor.getValue())
+                    .extracting(FeeRecord::getId, FeeRecord::getStatus)
+                    .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.PART_REFUND));
+        }
         // 批量预载钉死：费用行集一次 selectBatchIds、已决聚合一次（循环内零再查询）
         verify(feeRecordMapper, times(1)).selectBatchIds(List.of(1L, 2L));
         verify(refundRequestMapper, times(1)).sumDecidedRefundedFenByFeeIds(List.of(1L, 2L));
@@ -1500,7 +1534,10 @@ class RefundServiceImplTest {
         when(feeRecordMapper.selectBatchIds(List.of(1L)))
                 .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
-        service.execute(100L);
+        // EX-37 桩面随通道迁移：判态批写经 Db.updateBatchById 静态桩承接（本用例聚焦两步查询投影契约）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+        }
 
         // 第一步投影契约（totalRefundedFen 结算维度 id 集查询，selectList 恰 1 次）：仅取 id 恰 1 列，
         //   退费单宽行列（单号/金额/状态/患者）禁入投影（OPT-12 前全列取回仅 map id）；谓词零变化锚定：
@@ -1543,7 +1580,10 @@ class RefundServiceImplTest {
         when(feeRecordMapper.selectBatchIds(List.of(1L)))
                 .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
-        service.execute(100L);
+        // EX-37 桩面随通道迁移：判态批写经 Db.updateBatchById 静态桩承接（本用例聚焦空集短路语义）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+        }
 
         // 短路锚点：link 查询恰 1 次=本单清单（eq 谓词），结算维度第二步因空 id 集零发出
         verify(refundFeeLinkMapper, times(1)).selectList(any());
@@ -1574,20 +1614,63 @@ class RefundServiceImplTest {
                         fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE),
                         fee(2L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
 
-        service.execute(100L);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+
+            // 费用行照常判态（两行均退满 FULL_REFUND）（EX-37 桩面随通道迁移：原 times(2) updateById
+            //   captor 等价改一次批量行集 captor）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<FeeRecord>> feeRowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(feeRowsCaptor.capture()));
+            assertThat(feeRowsCaptor.getValue())
+                    .extracting(FeeRecord::getId, FeeRecord::getStatus)
+                    .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.FULL_REFUND));
+        }
 
         // 多行求和锚点：两 link 合计恰为结算总额 → 结算单转 REFUNDED（投影修复不改聚合算式）
         ArgumentCaptor<Settlement> stCaptor = ArgumentCaptor.forClass(Settlement.class);
         verify(settlementMapper).updateById(stCaptor.capture());
         assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.REFUNDED);
-        // 费用行照常判态（两行均退满 FULL_REFUND）、退费单终态 EXECUTED
-        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
-        verify(feeRecordMapper, times(2)).updateById(feeCaptor.capture());
-        assertThat(feeCaptor.getAllValues())
-                .extracting(FeeRecord::getId, FeeRecord::getStatus)
-                .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.FULL_REFUND));
+        // 退费单终态 EXECUTED
         ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
         verify(refundRequestMapper).updateById(refundCaptor.capture());
         assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+    }
+
+    // ===== EX-37：费用行判态回写批量化（A.4.3-16 批量写收口锚定）=====
+
+    @Test
+    @DisplayName("判态回写批量化：两行判态恰一次批量写（Db.updateBatchById 恰 1 次、逐行 updateById 通道零调用、行序终态保持）")
+    void executeWritesJudgedFeeStatusInSingleBatch() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 4000L);
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 本单两 link（fee1 退 3000 恰满 → FULL、fee2 退 1000 未满 → PART）：判态行集=link 序两行
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L), link(100L, 2L, 1000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L, 2L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L), new FeeRefundedFenRow(2L, 1000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L, 2L)))
+                .thenReturn(List.of(
+                        fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE),
+                        fee(2L, 1000L, 4000L, LocalDate.now(), ExecOccupyStatus.NONE)));
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.execute(100L);
+
+            // 批量写契约（EX-37）：N 行判态恰一次批量写——Db.updateBatchById 恰 1 次且行集=link 序，
+            //   每行终态与逐行 updateById 时代完全一致（FULL/PART 按行判态不因批量化漂移）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<FeeRecord>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue())
+                    .extracting(FeeRecord::getId, FeeRecord::getStatus)
+                    .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.PART_REFUND));
+        }
+        // 逐行写通道已下线：EX-37 前 N 次 feeRecordMapper.updateById 通道零调用锚
+        verify(feeRecordMapper, never()).updateById(any(FeeRecord.class));
     }
 }

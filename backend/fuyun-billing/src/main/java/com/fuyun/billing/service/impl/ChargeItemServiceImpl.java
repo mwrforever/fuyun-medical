@@ -1,6 +1,7 @@
 package com.fuyun.billing.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.dto.ChargeItemCreateRequest;
@@ -13,6 +14,7 @@ import com.fuyun.billing.mapper.ChargeItemComponentMapper;
 import com.fuyun.billing.mapper.ChargeItemMapper;
 import com.fuyun.billing.service.IChargeItemService;
 import com.fuyun.common.exception.BizException;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -133,12 +135,20 @@ public class ChargeItemServiceImpl extends ServiceImpl<ChargeItemMapper, ChargeI
         // 非本 service 主表经 Wrappers 静态工厂（A.4.3-13，禁内联全限定，A.1-13）
         componentMapper.delete(
                 Wrappers.<ChargeItemComponent>lambdaQuery().eq(ChargeItemComponent::getComboItemId, comboItemId));
+        // EX-37：成员落库逐行 insert 改一次批插（Db.saveBatch JDBC 批处理 + ASSIGN_ID 自动填充，先例
+        //   RefundServiceImpl link 批插与 DispenseServiceImpl 明细批插，A.4.3-16 须在事务内调用——本方法
+        //   @Transactional 承载）：成员插入无状态 CAS 依赖，落库行集与行序不变、批量收口零语义变化；
+        //   空清单短路——MP Db 空集合无法解析实体类（Assert 拒），空成员=清空全部成员照常只删旧零批插
+        List<ChargeItemComponent> rows = new ArrayList<>(components.size());
         for (ComboComponentRequest c : components) {
             ChargeItemComponent row = new ChargeItemComponent();
             row.setComboItemId(comboItemId);
             row.setComponentItemId(c.componentItemId());
             row.setDefaultQuantity(c.defaultQuantity());
-            componentMapper.insert(row);
+            rows.add(row);
+        }
+        if (!rows.isEmpty()) {
+            Db.saveBatch(rows);
         }
         log.info("组合构成维护：comboItemId={}，成员数={}", comboItemId, components.size());
     }

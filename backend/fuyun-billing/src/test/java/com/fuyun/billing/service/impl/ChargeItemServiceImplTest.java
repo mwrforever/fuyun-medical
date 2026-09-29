@@ -2,6 +2,7 @@ package com.fuyun.billing.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -12,6 +13,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.dto.ChargeItemCreateRequest;
 import com.fuyun.billing.dto.ComboComponentRequest;
@@ -34,6 +36,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -189,9 +193,21 @@ class ChargeItemServiceImplTest {
                         .isEqualTo(BillingErrorCode.CHARGE_ITEM_STATE_NOT_ALLOWED));
         verify(componentMapper, never()).delete(any());
 
-        service.saveComboComponents(9L, members);
+        // EX-37 桩面随通道迁移：成员落库通道=Db.saveBatch 批插（原 componentMapper.insert captor
+        //   等价改批量行集 captor，行内容断言语义不变；静态桩须先于 service 调用开启）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.saveComboComponents(9L, members);
 
-        // 全量覆盖式落成员：先逻辑删旧成员，再逐成员插入
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ChargeItemComponent>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue()).hasSize(1);
+            assertThat(rowsCaptor.getValue().get(0).getComboItemId()).isEqualTo(9L);
+            assertThat(rowsCaptor.getValue().get(0).getComponentItemId()).isEqualTo(12L);
+            assertThat(rowsCaptor.getValue().get(0).getDefaultQuantity()).isEqualByComparingTo(new BigDecimal("2.000"));
+        }
+
+        // 全量覆盖式落成员：先逻辑删旧成员，再批量插新成员
         // 删旧 SQL 守卫钉死：delete 必须限定 combo_item_id=本次组合（防删旧条件被静默删除放大为全表逻辑删）
         ArgumentCaptor<Wrapper<ChargeItemComponent>> deleteCaptor = ArgumentCaptor.forClass(Wrapper.class);
         verify(componentMapper).delete(deleteCaptor.capture());
@@ -200,11 +216,52 @@ class ChargeItemServiceImplTest {
         // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（模块内既有同款）
         assertThat(deleteWrapper.getSqlSegment()).contains("combo_item_id");
         assertThat(deleteWrapper.getParamNameValuePairs().values()).contains(9L);
-        ArgumentCaptor<ChargeItemComponent> captor = ArgumentCaptor.forClass(ChargeItemComponent.class);
-        verify(componentMapper).insert(captor.capture());
-        assertThat(captor.getValue().getComboItemId()).isEqualTo(9L);
-        assertThat(captor.getValue().getComponentItemId()).isEqualTo(12L);
-        assertThat(captor.getValue().getDefaultQuantity()).isEqualByComparingTo(new BigDecimal("2.000"));
+    }
+
+    @Test
+    @DisplayName("成员批插契约：多成员一次批插恰 1 次（Db.saveBatch），逐行 insert 通道零调用、行序=清单序")
+    void saveComboComponentsInsertsMembersInSingleBatch() {
+        ChargeItem combo = new ChargeItem();
+        combo.setComboFlag(true);
+        when(chargeItemMapper.selectById(9L)).thenReturn(combo);
+        List<ComboComponentRequest> members = List.of(
+                new ComboComponentRequest(12L, new BigDecimal("2.000")),
+                new ComboComponentRequest(13L, new BigDecimal("1.500")));
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.saveComboComponents(9L, members);
+
+            // 批量写契约（EX-37）：N 成员恰一次批插——Db.saveBatch 恰 1 次且行集=清单序，
+            //   每行三键（组合 id/成员 id/默认数量）与逐行 insert 时代完全一致
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ChargeItemComponent>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue())
+                    .extracting(
+                            ChargeItemComponent::getComboItemId,
+                            ChargeItemComponent::getComponentItemId,
+                            ChargeItemComponent::getDefaultQuantity)
+                    .containsExactly(tuple(9L, 12L, new BigDecimal("2.000")), tuple(9L, 13L, new BigDecimal("1.500")));
+        }
+        // 逐行写通道已下线：EX-37 前 N 次 componentMapper.insert 通道零调用锚
+        verify(componentMapper, never()).insert(any(ChargeItemComponent.class));
+    }
+
+    @Test
+    @DisplayName("空成员清单：全量覆盖语义只删旧零批插（Db.saveBatch 零调用，与旧零 insert 语义对齐）")
+    void saveComboComponentsSkipsBatchInsertWhenMembersEmpty() {
+        ChargeItem combo = new ChargeItem();
+        combo.setComboFlag(true);
+        when(chargeItemMapper.selectById(9L)).thenReturn(combo);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.saveComboComponents(9L, List.of());
+            // 空清单零批插（MP Db 空集合无法解析实体类，须短路守卫承载——零语句语义与旧零 insert 对齐）
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+        }
+        // 全量覆盖删旧照常（空清单=清空全部成员的合法语义，delete 不受批插收口影响）
+        verify(componentMapper).delete(any());
+        verify(componentMapper, never()).insert(any(ChargeItemComponent.class));
     }
 
     @Test

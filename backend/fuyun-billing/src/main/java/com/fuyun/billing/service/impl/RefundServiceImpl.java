@@ -579,11 +579,21 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 : feeRecordMapper.selectBatchIds(linkFeeIds).stream()
                         .collect(Collectors.toMap(FeeRecord::getId, f -> f));
         Map<Long, Long> decidedFenByFeeId = linkFeeIds.isEmpty() ? Map.of() : decidedRefundedFenByFeeIds(linkFeeIds);
+        // EX-37：费用行判态回写逐行 updateById 改一次批量写（Db.updateBatchById JDBC 批处理，先例 apply
+        //   侧 link 批插与 DispenseServiceImpl，A.4.3-16 须在事务内调用——本方法 @Transactional 承载）：
+        //   本写点纯按预载聚合内存判态、无状态 CAS 谓词依赖（casMarkExecuted 抢锚已在方法首步完成，
+        //   BUG-10 审批链 CAS 与本循环互不相干，批量收口零触碰），行集、行序与每行终态和逐行写完全一致；
+        //   空清单短路——MP Db 空集合无法解析实体类（Assert 拒），零 link 时保持零语句写（与旧空循环对齐）
+        List<FeeRecord> judgedFees = new ArrayList<>(links.size());
         for (RefundFeeLink link : links) {
             FeeRecord fee = feeById.get(link.getFeeId());
             long refunded = decidedFenByFeeId.getOrDefault(link.getFeeId(), 0L);
             fee.setStatus(refunded >= fee.getAmount() ? FeeStatus.FULL_REFUND : FeeStatus.PART_REFUND);
-            feeRecordMapper.updateById(fee);
+            judgedFees.add(fee);
+        }
+        if (!judgedFees.isEmpty()) {
+            // 数据库写操作：判态终态一次批量回写（fee_record 按 id 整行更新，逐行语义不变）
+            Db.updateBatchById(judgedFees);
         }
         // 结算单全额退完转 REFUNDED（同上聚合口径判定 ≥ 结算总额）；部分退留 SETTLED
         if (totalRefundedFen(st.getId()) >= st.getTotalAmount()) {
