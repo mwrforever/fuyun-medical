@@ -108,6 +108,18 @@ public class AuthServiceImpl implements IAuthService {
         this.securityProperties = securityProperties;
     }
 
+    /**
+     * 登录用例编排（认证链路入口）：账号加载 → 锁定校验（先于口令比对，防锁定期间继续累加
+     * 失败计数）→ 停用校验 → bcrypt 口令比对（失败走 recordLoginFailure 状态机）→ 成功走
+     * recordLoginSuccess 复位 → 组装会话身份（员工反查 + 角色摘要）→ 签发双令牌。
+     *
+     * <p>防枚举口径：账号不存在与口令错误共用 SYS-1001 同文案，禁止差异文案探测账号存在性。
+     *
+     * @param request 登录请求，非空；loginName/password 非空由 controller 层 @Valid 保证
+     * @return 登录响应（双令牌 + 用户身份 VO），非空
+     * @throws BizException SYS-1001（登录名或密码错误/账号不存在，401，防枚举同文案）、
+     *                      SYS-1002（账号锁定中，401，文案含解锁时刻）、SYS-1006（账号已停用，403）
+     */
     @Override
     public LoginResponse login(LoginRequest request) {
         // 1. 加载账号：不存在按 SYS-1001 拒绝（与口令错误同文案，防用户枚举）
@@ -151,6 +163,17 @@ public class AuthServiceImpl implements IAuthService {
                 authConverter.toUserVO(sessionUser));
     }
 
+    /**
+     * 刷新用例编排：以 refresh 令牌换发同 sid 的新 access 令牌（校验成功即滑动续期，refresh
+     * 值不轮换为 P0 口径）。
+     *
+     * <p>换发校验收敛于令牌服务（typ=refresh 强校验，失败统一 SYS-1005 不透出细分）；本方法
+     * 仅从会话状态重组会话身份并组装响应（refresh 原值回填，前端覆盖存储时值未变）。
+     *
+     * @param request 刷新请求，非空；refreshToken 非空由 controller 层 @Valid 保证
+     * @return 登录响应（新 access + 原 refresh + 用户身份 VO），非空
+     * @throws BizException SYS-1005（刷新令牌无效/过期/会话不存在，401）
+     */
     @Override
     public LoginResponse refresh(RefreshRequest request) {
         // 换发收敛于令牌服务：typ=refresh 强校验 + 同 sid 新 access（校验成功即滑动续期），失败统一 SYS-1005
@@ -173,6 +196,16 @@ public class AuthServiceImpl implements IAuthService {
                 authConverter.toUserVO(sessionUser));
     }
 
+    /**
+     * 登出用例编排：typ=access 校验链通过后按令牌内 sid 删除会话键（access 与 refresh 同 sid
+     * 同时失效，"删除即全端失效"语义）。
+     *
+     * <p>校验与删键动作收敛于令牌服务（防伪造/过期令牌触发删除探测）；本方法仅承载用例编排
+     * 与留痕。
+     *
+     * @param rawToken 访问令牌原文（controller 已剥离 Bearer 方案前缀），非空
+     * @throws BizException SYS-1003（令牌无效/会话不存在，401）、SYS-1004（令牌已过期，401）
+     */
     @Override
     public void logout(String rawToken) {
         // typ=access 校验链通过后删会话键（sid 为令牌内部字段，删除动作收敛于令牌服务）

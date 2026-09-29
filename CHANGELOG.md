@@ -2,6 +2,28 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（system 组，第 4/6）：fuyun-system 认证域与字典域公开方法 Javadoc 补齐（BE-A4-05，零行为变化）
+
+- **根因（BE-A4-05 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：认证域
+  （AuthServiceImpl:92 锚点）方法体编号行注释较完整，公开方法缺方法级 Javadoc；实扫
+  全模块缺方法级 Javadoc 公开方法恰 13 个（=报告组量）：认证域 7+字典域 6。
+- **补齐（纯注释，零代码行变化）**：13 方法 / 7 文件——AuthServiceImpl 3（login：
+  账号加载→锁定/停用校验→bcrypt 比对→状态机复位→会话组装→双令牌签发，SYS-1001/1002/
+  1006 与防枚举口径；refresh：同 sid 换发 refresh 值不轮换 SYS-1005；logout：按 sid
+  删会话键双令牌同时失效 SYS-1003/1004）+ UserServiceImpl 3（findByLoginName 认证列
+  精确投影、逻辑删/不存在同归 null；recordLoginFailure 计数累加达阈置锁定含并发丢计数
+  边界；recordLoginSuccess 计数/锁定/最近登录三复位）+ RoleServiceImpl 1
+  （findRoleCodesByUserId 两步单表查询仅 ACTIVE）+ 字典域 6（DictItemServiceImpl.
+  addItem 仅 DRAFT 版本可维护、uk 兜底并发；DictQueryServiceImpl.readPublished 无
+  服务端缓存+no-cache 协商每次回源写实；DictTypeServiceImpl.createType 前置校验已删行
+  不占用+uk 并发兜底、getByTypeCode 两列投影禁当完整实体用；DictVersionServiceImpl.
+  createVersion 版本号同类型自增 uk 兜底、publish DRAFT→PUBLISHED 条件更新防并发双
+  发布+AFTER_COMMIT 广播下游缓存联动语义）。**多退**：控制器/服务接口/
+  TokenServiceImpl/AuthTokenInterceptor/Practice 系列等实扫均已合规未动。
+- **验证**：`mvn -B -ntp -pl fuyun-system -am test` 全绿（fuyun-system 161 用例，
+  reactor 四模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-system spotless:check` 通过；
+  `git diff` 复核 157 行全为 Javadoc 新增、零删除、零代码行/签名/import 变化。
+
 ## 2026-09-29 · 注释补齐环 EX-01（pharmacy 组，第 3/6）：fuyun-pharmacy 药事核心链路公开方法 Javadoc 补齐（BE-A4-04，零行为变化）
 
 - **根因（BE-A4-04 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：药事核心链路

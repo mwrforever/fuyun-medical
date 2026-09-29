@@ -56,6 +56,22 @@ public class DictQueryServiceImpl implements IDictQueryService {
         this.dictConverter = dictConverter;
     }
 
+    /**
+     * 读取字典版本及条目全量清单（GET /api/v1/system/dicts/{typeCode}?version= 执行点）：
+     * dict_type + dict_version + dict_item 三表聚合的契约型读，供字典消费方本地装载与对账。
+     *
+     * <p>版本解析口径：version 空=该类型当前 PUBLISHED 版本（尚无已发布版本即抛 SYS-1012）；
+     * 非空=指定版本（任意状态，供草稿预览与历史回溯）。缓存语义写实：本方法直查数据库，
+     * 无任何服务端缓存（P0 不建，P1 预留字典缓存版本化）；唯一调用方 DictController 以
+     * Cache-Control: no-cache 交客户端协商，P0 无 ETag/Last-Modified 协商载体，语义等价
+     * 每次回源。条目契约型读豁免分页（理由随 IDictQueryService javadoc 固化）。
+     *
+     * @param typeCode 字典类型编码，非空；来源：契约读路径参数
+     * @param version  版本号，可空；null=当前 PUBLISHED 版本，非空=指定版本（任意状态）
+     * @return 版本出参（类型 + 版本 + 条目全量清单，条目按 sort 升序 + itemCode 唯一次序键），非空
+     * @throws BizException SYS-1011（字典类型不存在，HTTP 404）、SYS-1012（字典版本不存在
+     *                      或尚无已发布版本，HTTP 404）
+     */
     @Override
     @Transactional(readOnly = true)
     public DictVersionVO readPublished(String typeCode, Integer version) {
