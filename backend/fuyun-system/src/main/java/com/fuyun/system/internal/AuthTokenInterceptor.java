@@ -74,7 +74,7 @@ public class AuthTokenInterceptor implements HandlerInterceptor {
             SessionData session = tokenService.verify(rawToken, SecurityConstants.TOKEN_TYPE_ACCESS);
             // 校验通过注入操作人上下文（十进制字符串化 userId；审计切面与 created_by 注入读取，收尾必清）
             OperatorContextHolder.set(String.valueOf(session.userId()));
-            // 角色清单同源注入：脱敏豁免（M02 PrivacyMaskService）与 P1 鉴权拦截的统一数据源（SessionData.roles 非 null）
+            // 角色清单同源注入：脱敏豁免（M02 IPrivacyMaskService）与 P1 鉴权拦截的统一数据源（SessionData.roles 非 null）
             RoleContextHolder.set(session.roles());
             return true;
         } catch (BizException ex) {
