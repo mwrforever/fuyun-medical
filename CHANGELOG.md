@@ -2,6 +2,30 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 批次 C 宪法 C3/C1 轨总收口（EX-14~18+20：分层下沉/异常可观测/审计全量/for 头形态，五路并行+专项）
+
+- **根因**：BE-C3-03/04/06/07/10/12（分层/审计/异常口径——「自述边界/契约留痕不构成
+  背书」按总裁决收拢）+BE-C4-02~12（总裁决④用户显式重开 for 头形态收拢）。
+- **分层下沉**：EX-14 patient PrivacyController 两链路（SEC-01 门禁折入
+  PrivacyMaskServiceImpl.updateRule 既有用例方法防无门禁写路径回归、分页收敛下沉
+  PrivacyServiceImpl 参数对象法，8fb82a0）；EX-15 iot 兜底入库鉴权+消息组装下沉新建
+  IFallbackIngestService（app IotConfig @Import 装配行 3 行最小跨模块触碰，aca3a69）。
+- **异常可观测**：EX-16 评估告警 catch 事实修正（fa87a33 起已有 error 非静默）——
+  增强既有唯一日志补设备标识/旁路语义/异常类名（采样常量防刷屏，不降级 error）；
+  EX-17 CommandLogVO 空 catch 补 @Slf4j+参数化 warn（契约不变 null 出网）（同提交
+  fea8ec8）。
+- **审计全量口径**：EX-18 四写端点（book/take/register/feeUpload）补
+  @AuditLog(WRITE)（待裁决 #8 转正；portal 豁免维持；依赖可达无 BUG-24 反应环，
+  ef1f366）。
+- **EX-20 for 头形态收拢（11 处=BE-C4-02~12 全量，含实扫补全 2 处）**：冒号右侧
+  查询/IO 内嵌提取循环前变量——纯形态重构（for 头仅求值一次，零行为零性能变化）；
+  修宪候选地位不变仍呈报 N8；第 12 处 WardMetaServiceImpl:574（本地私有方法间接
+  解析）形态间接主控裁定不扩，N8 复核。
+- **验证**：patient 242（+2 门禁用例等强度迁移）/iot 532（+8 fallback 交付）/
+  billing 292/outpatient 295/nursing 211 全绿+四模块 spotless 过；fuyun-app
+  test-compile 13 模块 SUCCESS。附：EX-03 重命名 fuyun-app 两 IT 跨模块引用遗漏
+  由本轮并行验证暴露并即修（9255c37）。
+
 ## 2026-09-29 · 批次 B 持久层组总收口（EX-08~13，BE-C2 半配对/手构 wrapper/无上界查询，按模块六提交）
 
 - **根因**：BE-C2 待裁决 #5/#6/#7 转正（宪法 A.4.3-20 半配对十七对全部判 CRUD 收拢、

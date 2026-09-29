@@ -510,7 +510,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         //   使 channelRef 缺失/null 文本行抛 NumberFormatException 出 500
         Map<Long, Long> cardChannels = new LinkedHashMap<>();
         try {
-            for (JsonNode detail : objectMapper.readTree(st.getPaymentDetails())) {
+            // 循环前批量取数（BE-C4 判据①形态收拢）：payment_details JSON 单次解析为树，循环内纯迭代
+            JsonNode paymentDetailsTree = objectMapper.readTree(st.getPaymentDetails());
+            for (JsonNode detail : paymentDetailsTree) {
                 if ("CARD_BALANCE".equals(detail.path("method").asText())) {
                     // 卡引用先守卫后聚合（2026-09-18 修复）：写入侧 settle 只对 >0 卡行解析引用，
                     //   读回侧不可复制该漏洞——缺失/null/空文本/非数字在此即 BILL-1012 拒，
