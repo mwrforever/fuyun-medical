@@ -2,6 +2,25 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（iot 组，第 1/6）：fuyun-iot 华为对接边界与 trivial 覆写公开方法 Javadoc 补齐（BE-A4-01/02/07，零行为变化）
+
+- **根因（BE-A4-01 评分 75 / BE-A4-07 评分 60，2026-09-28 全仓高风险问题清单低置信节）**：
+  fuyun-iot 华为对接边界（IotDeviceRegistry 双实现）与命名锚点（AlarmRuleServiceImpl:83）公开
+  方法行级注释在而方法级 Javadoc 缺；SmartLifecycle trivial 覆写（IotAmqpTelemetryConsumer:372
+  isAutoStartup 等）无覆写意图说明。BE-A4-02（消费幂等基础设施）iot 侧实扫为空——幂等消费
+  监听器（IotAlarmEventListener/IotFanoutListener）方法级 Javadoc 已合规，其基础设施本体
+  （MessageIdempotencyServiceImpl）在 fuyun-integration，归后续 EX 组。
+- **补齐（纯注释，零代码行变化）**：实扫 fuyun-iot src/main/java 公开方法，按三组语义范围
+  补齐 26 方法 / 6 文件——华为对接边界 HuaweiIotdaRegistry 8 + SimulatedRegistry 8（SDK
+  映射、secret 一次性透出红线、幂等语义）+ 命名锚点 AlarmRuleServiceImpl 5（抖动防护②、
+  回放状态机、LIMIT 硬顶）+ AMQP 消费循环 QueueWorker.run 1 + trivial 覆写 4
+  （isAutoStartup×3 / isRunning×1，一两句覆写意图）。**多退**：全模块实扫 88 处缺方法级
+  Javadoc，超出三组语义范围者（其余 service impl / config / handler 等约 62 处）与两处
+  匿名类 afterCommit 覆写（外围方法已文档化意图）本次不动，留待后续组。
+- **验证**：`mvn -B -ntp -pl fuyun-iot -am test` 全绿（fuyun-iot 523 用例，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-iot spotless:check` 通过；`git diff -U0` 复核 185 行
+  全为注释新增、零删除、零代码行与 import 变化。
+
 ## 2026-09-29 · 性能清单修复环 OPT-14：inpatient 日计划批任务在院就诊候选查询补 .select 精确投影（性能，行为保持）
 
 - **根因（OPT-14 / BE-C4-26 ↔ BE-C2-18 归并组，2026-09-28 全仓性能与代码质量优化清单，

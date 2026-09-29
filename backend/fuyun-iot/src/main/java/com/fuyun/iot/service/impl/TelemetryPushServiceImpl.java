@@ -246,11 +246,16 @@ public class TelemetryPushServiceImpl implements ITelemetryPushService, SmartLif
         log.info("遥测摘要窗口兜底排空线程已停机（尾帧不补推，REST 兜底）");
     }
 
+    /**
+     * 覆写意图：显式声明兜底排空线程随容器自动启动（SmartLifecycle 默认 true 的显式覆写，与
+     * 攒批器/消费者同链路生命周期契约锚点）。
+     */
     @Override
     public boolean isAutoStartup() {
         return true;
     }
 
+    /** 运行态标记：排空线程存续期间为 true（start/stop CAS 同源，供生命周期处理器校验）。 */
     @Override
     public boolean isRunning() {
         return running.get();

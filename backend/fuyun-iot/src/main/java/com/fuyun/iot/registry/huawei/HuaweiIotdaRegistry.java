@@ -82,6 +82,17 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 产品创建的 IoTDA 侧执行体（映射 SDK createProduct）：物模型随产品创建一并提交（SDK 无
+     * 独立模型上传端点，serviceCapabilities 随产品面承载）；manufacturerName/industry/
+     * description 可选段仅在场时携带。受理成功返回云端分配的 productId（调用方随后落镜像行），
+     * 任一异常（网络/凭证/云端拒绝）统一转 {@link RegistryException} 交服务层渲染 IOT-1022。
+     *
+     * @param spec 产品规格（名称/类型/协议/数据格式与可选模型 JSON），非空；来源：产品服务上架编排
+     * @return 云端产品引用（productId 为 IoTDA 分配值），非空
+     * @throws RegistryException IoTDA 调用失败（端点不可达/凭证非法/参数被云端拒绝，IOT-1022 语义），
+     *                           建议调用方转 BizException 渲染管理台提示
+     */
     @Override
     public ProductRef createProduct(ProductSpec spec) {
         try {
@@ -115,6 +126,15 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 物模型同步的 IoTDA 侧执行体（映射 SDK updateProduct）：serviceCapabilities 全量重推（本地
+     * 快照为权威源），云端受理即返回，一致性对账由调用方按映射表完成；模型 JSON 解析失败按快照
+     * 数据损坏处置，同样转 {@link RegistryException} 上抛。
+     *
+     * @param productId           IoTDA 产品标识，非空；来源：iot_product.product_id 镜像行
+     * @param modelDefinitionJson 模型 JSON 快照（服务能力数组形态），非空；来源：iot_product.model_definition
+     * @throws RegistryException IoTDA 调用失败或模型 JSON 非法（IOT-1022 语义），建议调用方对账告警
+     */
     @Override
     public void syncModel(String productId, String modelDefinitionJson) {
         try {
@@ -131,6 +151,15 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 设备注册的 IoTDA 侧执行体（映射 SDK addDevice）：本地生成 UUID secret 经 authInfo 传入
+     * 云端（一机一密），credentialRef 固定 "iotda-{deviceId}" 形态；secret 仅随返回值一次性
+     * 透出，禁日志禁二次落地（14-iot §9 红线）。
+     *
+     * @param spec 设备规格（deviceId/nodeId/productId/deviceName），非空；来源：设备接入登记
+     * @return 设备凭证（credentialRef 引用 + secret 明文一次性面），非空
+     * @throws RegistryException IoTDA 调用失败（设备已存在/参数被拒/端点不可达，IOT-1022 语义）
+     */
     @Override
     public DeviceCredential registerDevice(RegistryDeviceSpec spec) {
         try {
@@ -156,6 +185,15 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 凭证换发的 IoTDA 侧执行体（映射 SDK resetDeviceSecret）：换发即覆盖——本地生成新 UUID
+     * secret 传云端（IoTDA 重置为入参式换发，非云端随机生成），旧 secret 即刻失效；新 secret
+     * 仅随返回值一次性透出（与 registerDevice 同红线：禁日志禁落库，云端响应体不读取）。
+     *
+     * @param deviceId IoTDA 设备标识，非空；来源：iot_device.device_id
+     * @return 换发后设备凭证（credentialRef 引用 + 新 secret 明文一次性面），非空
+     * @throws RegistryException IoTDA 调用失败或设备不存在于云端（IOT-1022 语义）
+     */
     @Override
     public DeviceCredential resetDeviceCredential(String deviceId) {
         try {
@@ -175,6 +213,16 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 命令下发的 IoTDA 侧执行体（映射 SDK createCommand 同步命令面）：空参命令不携带 paras 段；
+     * 云端 response 体（可空，设备回执摘要）转文本随 {@link CommandRef} 供管理台回显。
+     *
+     * @param deviceId    IoTDA 设备标识，非空；来源：iot_device.device_id
+     * @param commandName 命令名称（物模型 commands[].name），非空；来源：产品命令定义
+     * @param params      命令参数键值对，可空（无参命令传 null 或空 map）
+     * @return 命令回执引用（commandId + 结果摘要文本，摘要可空），非空
+     * @throws RegistryException IoTDA 调用失败/设备离线/命令被云端拒绝（IOT-1022 语义）
+     */
     @Override
     public CommandRef sendCommand(String deviceId, String commandName, Map<String, Object> params) {
         try {
@@ -199,6 +247,14 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 影子查询的 IoTDA 侧执行体（映射 SDK showDeviceShadow）：多服务影子合并——各服务
+     * desired/reported 属性键值经 Jackson 归一后并入统一 map（非对象形态属性跳过，不中断合并）。
+     *
+     * @param deviceId IoTDA 设备标识，非空；来源：iot_device.device_id
+     * @return 设备影子（desired/reported 双面 map；设备无上报时为空 map，契约非 null），非空
+     * @throws RegistryException IoTDA 调用失败或设备不存在（IOT-1022 语义）
+     */
     @Override
     public DeviceShadow shadow(String deviceId) {
         try {
@@ -226,6 +282,13 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 产品删除的 IoTDA 侧执行体（映射 SDK deleteProduct）：本地镜像行由调用方处置；仍有设备
+     * 挂载时云端拒绝（调用方应先清空设备再下架）。
+     *
+     * @param productId IoTDA 产品标识，非空；来源：iot_product.product_id 镜像行
+     * @throws RegistryException IoTDA 调用失败或云端拒绝删除（设备未清空等，IOT-1022 语义）
+     */
     @Override
     public void deleteProduct(String productId) {
         try {
@@ -238,6 +301,13 @@ public class HuaweiIotdaRegistry implements IotDeviceRegistry {
         }
     }
 
+    /**
+     * 设备注销的 IoTDA 侧执行体（映射 SDK deleteDevice——SDK 无 deregisterDevice 命名，映射
+     * 偏差已申报）：云端删除设备档案，凭证一并失效；本地行由调用方处置。
+     *
+     * @param deviceId IoTDA 设备标识，非空；来源：iot_device.device_id
+     * @throws RegistryException IoTDA 调用失败（IOT-1022 语义）
+     */
     @Override
     public void deregisterDevice(String deviceId) {
         try {
