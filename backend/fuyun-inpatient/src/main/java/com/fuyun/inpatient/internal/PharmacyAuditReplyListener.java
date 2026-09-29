@@ -96,6 +96,7 @@ public class PharmacyAuditReplyListener {
         // 驳回必附药师意见（医生站重提修改依据——缺失定性不合规帧）
         String rejectReason = textOrNull(payload, "rejectReason");
         if (rejectReason == null || rejectReason.isBlank()) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "审方驳回回执载荷不合规（缺 rejectReason 药师意见）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -117,6 +118,7 @@ public class PharmacyAuditReplyListener {
     private static String requireTarget(EventEnvelope envelope, JsonNode payload) {
         String orderNo = textOrNull(payload, "target");
         if (orderNo == null || orderNo.isBlank()) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "审方回执载荷不合规（缺 target 医嘱号）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }

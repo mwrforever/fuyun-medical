@@ -120,6 +120,7 @@ public class BillingEventListener {
         String visitId = requireVisitId(envelope, payload);
         String approvalNo = textOrNull(payload, "approvalNo");
         if (approvalNo == null) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "挂账审批放行回执载荷不合规（缺 approvalNo 审批单号）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -142,6 +143,7 @@ public class BillingEventListener {
         // balance 为变动后余额（分）——GC18 零金额输入红线：金额仅为事件载荷消费面
         JsonNode balance = payload.path("balance");
         if (!balance.isNumber()) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "押金变动回执载荷不合规（缺 balance 变动后余额）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -158,6 +160,7 @@ public class BillingEventListener {
     private static String requireVisitId(EventEnvelope envelope, JsonNode payload) {
         String visitId = textOrNull(payload, "visitId");
         if (visitId == null) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "billing 回执载荷不合规（缺 visitId 就诊号）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }

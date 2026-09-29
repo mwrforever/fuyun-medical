@@ -412,6 +412,7 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
                             .atZone(NursingTimeConstants.HEALTHCARE_TZ)
                             .toOffsetDateTime());
         } catch (DateTimeParseException e) {
+            // EX-19 C 类收口留痕：内部断言（班次时刻为 V801 迁移种子配置，损坏属服务端数据异常，非用户输入路径），保留 ISE
             throw new IllegalStateException("病区配置班次时刻解析失败：shift=" + definition.code(), e);
         }
     }

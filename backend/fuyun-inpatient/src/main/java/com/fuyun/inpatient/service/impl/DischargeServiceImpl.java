@@ -709,6 +709,7 @@ public class DischargeServiceImpl implements IDischargeService {
         InpatientVisit visit =
                 visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitNo));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部断言（billing 回执消费面数据不一致 fail-closed 进死信留痕，非用户输入路径），保留 ISE
             throw new IllegalStateException("billing 回执载荷 visitId 无法定位住院就诊（数据不一致）：" + visitNo);
         }
         return requestMapper.selectOne(Wrappers.<DischargeRequest>lambdaQuery()

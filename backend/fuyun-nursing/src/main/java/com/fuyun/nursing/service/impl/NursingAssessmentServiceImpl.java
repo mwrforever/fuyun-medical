@@ -357,6 +357,7 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
         try {
             return objectMapper.writeValueAsString(answers);
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（Map 结构固定，序列化失败仅可能为序列化器故障，非用户输入路径），保留 ISE
             throw new IllegalStateException("评估应答快照序列化失败：visitId=" + visitId, e);
         }
     }
@@ -373,6 +374,7 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
         try {
             return objectMapper.readValue(row.getAnswers(), new TypeReference<LinkedHashMap<String, Integer>>() {});
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（自写 JSONB 快照损坏属服务端数据异常，显式暴露不吞，非用户输入路径），保留 ISE
             throw new IllegalStateException("评估应答快照解析失败（服务端数据异常）：assessNo=" + row.getAssessNo(), e);
         }
     }

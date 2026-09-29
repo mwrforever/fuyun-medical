@@ -373,6 +373,7 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（结构化值序列化失败仅可能为序列化器故障，非用户输入路径），保留 ISE
             throw new IllegalStateException("交接班快照序列化失败：handoverNo=" + handoverNo, e);
         }
     }
@@ -391,6 +392,7 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
         try {
             return objectMapper.readValue(json, type);
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（自写 JSONB 快照损坏属服务端数据异常，显式暴露不吞，非用户输入路径），保留 ISE
             throw new IllegalStateException("交接班 JSONB 列解析失败（服务端数据异常）：handoverNo=" + handoverNo, e);
         }
     }

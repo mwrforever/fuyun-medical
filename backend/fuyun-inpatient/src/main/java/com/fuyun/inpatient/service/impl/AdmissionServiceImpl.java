@@ -346,6 +346,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         String visitId = seqGate.nextVisitId();
         // 事务链③：结构自检（发号器异常防线——失败抛 IllegalStateException 回滚全事务，红线护栏）
         if (!VisitIdValidator.isValid(visitId)) {
+            // EX-19 C 类收口留痕：内部断言（自签发 visit_id 结构自检属发号器异常红线护栏，非用户输入路径），保留 ISE
             throw new IllegalStateException("visit_id 结构自检失败（发号器异常），本次登记回滚：" + visitId);
         }
         InpatientVisit row = new InpatientVisit();

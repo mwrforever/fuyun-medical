@@ -598,6 +598,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
             }
             return !now.isBefore(start) || now.isBefore(end);
         } catch (DateTimeParseException e) {
+            // EX-19 C 类收口留痕：内部断言（班次时刻为 V801 迁移种子配置，损坏属服务端数据异常，非用户输入路径），保留 ISE
             throw new IllegalStateException("病区配置班次时刻解析失败：shift=" + shift.code(), e);
         }
     }
@@ -618,6 +619,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
             return objectMapper.readValue(
                     config.getVitalFreqConfig(), new TypeReference<LinkedHashMap<String, Integer>>() {});
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（病区配置 JSONB 为迁移种子数据无写端点，损坏属服务端数据异常），保留 ISE
             throw new IllegalStateException("病区配置体征频次解析失败：wardId=" + wardId, e);
         }
     }
@@ -627,6 +629,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         try {
             return objectMapper.readValue(config.getShiftDefinitions(), new TypeReference<List<ShiftDefinition>>() {});
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（病区配置 JSONB 为迁移种子数据无写端点，损坏属服务端数据异常），保留 ISE
             throw new IllegalStateException("病区配置班次定义解析失败：wardId=" + wardId, e);
         }
     }
