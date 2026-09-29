@@ -140,6 +140,17 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         this.settlementQueryPort = settlementQueryPort;
     }
 
+    /**
+     * 缴费放行（outpatient.order.charged 消费业务，Spec §5 流程 1；裁决 4 单据精确放行）：
+     * 按结算覆盖的处方号精确清单逐 rxNo 收敛——处方号键集一次 IN 批查（A.4.3-14 批查化）→
+     * 逐号三守卫分流（缺号脏差异 warn 跳过 / 非门诊急诊通道 warn 跳过 / CAS PENDING_FEE→
+     * PENDING_DISPENSE 0 行重读定性：已达放行态幂等跳过、其余 warn 跳过不阻断消费位）→
+     * 放行成功者建 CREATED 发药单与明细入队（uk_dispense_rx_active 兜底重投并发建单）。
+     * 空清单=该结算无药品行（纯检查/检验结算），合法帧 info 跳过零查询。
+     *
+     * @param rxNos 本次结算覆盖的处方号精确清单，非 null（空清单=合法跳过面）；来源：
+     *              outpatient.order.charged 载荷 rxNos（V204 id 25 冻结契约）
+     */
     @Override
     @Transactional
     public void releaseByRxNos(List<String> rxNos) {
@@ -187,6 +198,17 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         }
     }
 
+    /**
+     * 费用回执（billing.fee.created 消费业务，Spec R2-14）：billingKey 第三段守卫——仅
+     * trigger_point=PRESCRIPTION_EFFECTIVE（处方通道，sourceRef=rx_no）触达本方法，开单/
+     * 日切等其他通道直接返回零查询；定位处方后 CAS 迁移 APPROVED→PENDING_FEE（0 行重读
+     * 定性：已迁移幂等跳过、其余状态漂移 warn 跳过）。缺号（脏数据）warn 留痕不阻断通道。
+     * 本方法自身无业务异常抛出面（消费侧口径：定性跳过不上抛）。
+     *
+     * @param billingKey 计费唯一键（patientId|sourceRef|triggerPoint|chargeItemId|billingDate
+     *                   五段竖线分隔，sourceRef 取第二段），非空；来源：billing.fee.created
+     *                   载荷（经 PharmacyBillingSyncListener 转发）
+     */
     @Override
     @Transactional
     public void markPendingFee(String billingKey) {
@@ -214,6 +236,21 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         }
     }
 
+    /**
+     * 配药（调剂三段第一段，CREATED→PICKING / 处方 PENDING_DISPENSE→DISPENSING，Spec :132/:134）：
+     * 双 CAS 进配药中 → 逐 NORMAL 明细行匹配采集面（缺行 PH-1006；追溯码空集违「无码不结」
+     * PH-1006）→ FEFO 选批并条件锁定（选批 null 或锁定 0 行=并发超发/缺量 PH-1010 整事务
+     * 回滚）→ 批次与追溯码 JSON 回填明细行 → 调配人留痕回填。适用场景：M06 药师工作站
+     * 配药采集提交。任何一环拒绝整事务回滚（批次锁不残留）。
+     *
+     * @param dispenseNo 调剂单号（uk 唯一），非空；来源：工作站单据列表/扫码
+     * @param lines      逐行采集面（prescriptionItemId 字符串化匹配 + 追溯码集），非空且须
+     *                   覆盖单据全部 NORMAL 明细行；来源：M06 药师工作站逐盒采集提交
+     * @throws BizException PH-1008（404 调剂单缺单）/ PH-1004（404 处方缺单）/
+     *                      PH-1009（409 调剂单状态违例或 CAS 并发被抢）/ PH-1005（409 处方
+     *                      状态违例）/ PH-1006（400 采集缺行或追溯码空集）/ PH-1010（409 批次
+     *                      不足或锁定 0 行——建议处理：整事务已回滚，补货/换批后重提）
+     */
     @Override
     @Transactional
     public void pick(String dispenseNo, List<PickLine> lines) {
@@ -271,6 +308,22 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         log.info("配药锁定完成：dispenseNo={}，picker={}，行数={}", dispenseNo, operator, items.size());
     }
 
+    /**
+     * 扫码核对（调剂三段第二段，PICKING→PICKED）：可选凭证核验前置（PR-5 裁决 8——凭证=
+     * settlementNo，非空时经 billing SettlementQueryPort 反查该结算单下须有本处方 SETTLED
+     * 费用行，不一致 PH-1018；空凭证跳过核验，追溯码逐码采集维持防回流主道）→ 双签分权
+     * 硬守卫（核对人=当前登录者 ≠ 调配人，同人 PH-1011，Spec :226 法定留痕）→ CAS
+     * PICKING→PICKED（0 行 PH-1009 并发被抢）→ 核对人留痕回填。适用场景：M06 药师工作
+     * 站扫码核对提交。
+     *
+     * @param dispenseNo 调剂单号（uk 唯一），非空；来源：工作站单据列表/扫码
+     * @param credential 取药凭证（结算单号 settlementNo），可空/空白（跳过核验面）；来源：
+     *                   M06 药师工作站扫码/手工录入（患者缴费小票）
+     * @throws BizException PH-1008（404 调剂单缺单）/ PH-1018（409 凭证与处方归属不一致——
+     *                      建议处理：核对小票与处方归属后重录凭证）/ PH-1011（409 调配核对
+     *                      同人双签——分权守卫硬拒，须换人核对）/ PH-1009（409 状态违例或
+     *                      CAS 并发被抢）
+     */
     @Override
     @Transactional
     public void verify(String dispenseNo, String credential) {
@@ -304,6 +357,20 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 credential == null ? "无" : "已核验");
     }
 
+    /**
+     * 发药签名（调剂三段第三段，PICKED→ISSUED / 处方 DISPENSING→DISPENSED 终态基点）：
+     * 前置守卫（非 PICKED PH-1009；核对留痕缺失或同人双签重申定性 PH-1009）→ 发药签名
+     * CAS（发药人/时刻一并落行）→ 逐明细批次锁定转扣减（0 行=未锁先发违例 PH-1010 整
+     * 事务回滚）+ 出库流水同事务落账（红线 2：负数量 ISSUE 行与扣减勾稽）→ 处方 CAS 转
+     * DISPENSED → 事务内发布 dispense.completed（批次摘要携追溯码，M03/billing 消费面，
+     * AFTER_COMMIT 出线）。适用场景：M06 药师工作站发药确认。
+     *
+     * @param dispenseNo 调剂单号（uk 唯一），非空；来源：工作站单据列表/扫码
+     * @throws BizException PH-1008（404 调剂单缺单）/ PH-1004（404 处方缺单）/ PH-1009
+     *                      （409 状态违例/双签守卫失败/发药签名并发被抢）/ PH-1010（409 批次
+     *                      锁定扣减失败——建议处理：整事务已回滚，按库存对账排查）/ PH-1005
+     *                      （409 处方状态不允许发药收敛）
+     */
     @Override
     @Transactional
     public void issue(String dispenseNo) {
@@ -377,6 +444,29 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         log.info("发药签名完成：dispenseNo={}，issuer={}，rxNo={}，行数={}", dispenseNo, operator, d.getRxNo(), items.size());
     }
 
+    /**
+     * 退药受理（R2-13 两时点分流）：
+     * <ul>
+     * <li>mode=DISPENSING_CANCEL（时点②发药中明细退场）：仅 PICKING 单可受理——逐行释放
+     * 锁定批次（锁定数非数量流水，不落 stock_ledger）+ 明细 CANCELLED 退场；处方保持
+     * DISPENSING 继续剩余明细调配，不发 returned 事件。</li>
+     * <li>mode=ISSUED_RETURN（时点①发药后实物退）：ISSUED/PART_RETURNED 态受理——逐明细
+     * 缺行/数量守卫（≤0 或超可退余额 PH-1013）→ 追溯码逐码与发药采集核验（缺码/不一致
+     * PH-1012 防回流药）→ 批次回补 + RETURN_RESTOCK 正数流水同事务（红线 2 勾稽）→
+     * 处方明细已退数量原子累加回写 → 发药单 ISSUED/PART_RETURNED→PART/FULL_RETURNED
+     * （受理完成即置终态，Spec :134）→ 发布 dispense.returned（lines 摘要非空，id 29
+     * 冻结——billing 占用回退/退费联动读此面）。处方终态归 refund.approved 镜像
+     * （Spec :132），本方法不触处方状态。</li>
+     * </ul>
+     * 适用场景：M06 药师工作站退药受理 / M05 病区退药发起。任一环拒绝整事务回滚零写面。
+     *
+     * @param req 退药受理入参（dispenseNo/mode/逐行 prescriptionItemId+returnQuantity+
+     *            traceCodes），非空；来源：M06 工作站/M05 病区提交
+     * @throws BizException PH-1008（404 调剂单缺单）/ PH-1016（400 退药数量非数字串）/
+     *                      PH-1013（400 模式未知；409 状态违例/缺行/超可退余额/回补或释放
+     *                      条件更新 0 行——并发竞争，重试或对账后重提）/ PH-1012（409 追溯码
+     *                      不一致或缺码，防回流拒——建议处理：核对实物与发药记录）
+     */
     @Override
     @Transactional
     public void acceptReturn(DispenseReturnRequest req) {
@@ -520,6 +610,19 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         log.warn("发药中明细退场：dispenseNo={}，处方保持 DISPENSING 继续剩余明细；operator={}", d.getDispenseNo(), operator);
     }
 
+    /**
+     * 退费终态收敛（billing.refund.approved 消费业务，PR-5 单据化收口——注记⑦误伤面闭合）：
+     * 按退费涉及处方号清单两级键集批查（处方 IN 批查 + DISPENSED 键集活动发药单 IN 批查，
+     * 2N 查收敛为恒 2 查）后逐 rxNo 分流——DISPENSED 态处方按发药单受理终态镜像
+     * PART/FULL_RETURNED（Spec :132「billing.refund.approved 后终态」，M13 回执为退费权威）；
+     * 已终态幂等跳过；缺号/无活动单/发药单受理未终态（跨队列乱序）warn 跳过待重投收敛；
+     * 未发药退费 warn 跳过（终态确认归 order.cancelled 作废通道，注记⑥）。本方法自身无
+     * 业务异常抛出面（消费侧口径：定性跳过不上抛），CAS 0 行静默交由重投收敛。
+     *
+     * @param rxNos 退费涉及的处方号精确清单，非 null 且按调用方契约非空（空清单零查询零
+     *              日志兜底直返）；来源：billing SettlementQueryPort.sourceRefsOfSettlement
+     *              反查 rxRefs（PharmacyRefundApprovedListener 承载）
+     */
     @Override
     @Transactional
     public void confirmRefundTerminalByRx(List<String> rxNos) {
@@ -593,6 +696,24 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         }
     }
 
+    /**
+     * 未发药作废（outpatient.order.cancelled 消费业务，PR-5 注记⑥回切）：按退费逆向处方号
+     * 清单三级键集批查（处方/活动发药单/NORMAL 明细）后逐 rxNo 分流——已发药终态
+     * （DISPENSED/PART/FULL_RETURNED）info 幂等跳过（归 refund.approved 双通道）；已
+     * CANCELLED 幂等直返；状态域外（未缴费 APPROVED/PENDING_FEE 等）warn 跳过（归 cancel
+     * API 通道）；PENDING_DISPENSE/DISPENSING 态处方 CAS 作废先行（0 行重读定性：终态
+     * 幂等跳过/漂移 warn 跳过；禁半程写面）→ 活动发药单同步退场（明细批次锁释放、明细
+     * CANCELLED、单据 CANCELLED，复用 DISPENSING_CANCEL 退场段形态）。脏数据显式暴露：
+     * 未发药处方挂 ISSUED 活动单抛 PH-1009 拒整单静默作废。
+     *
+     * @param rxNos  退费逆向涉及的处方号精确清单，非 null 且按调用方契约非空（空清单零查询
+     *               兜底直返）；来源：outpatient.order.cancelled 载荷 rxNos（V204 id 31
+     *               冻结契约）经 billing 反查扇出
+     * @param reason 退费原因（载荷透传，作废留痕日志锚点），可空
+     * @throws BizException PH-1009（409 未发药处方遇已发药活动单——脏数据禁静默，建议处理：
+     *                      人工对账处方与发药单状态）/ PH-1013（409 批次锁定释放 0 行——
+     *                      批次漂移整事务回滚，重投再定性）
+     */
     @Override
     @Transactional
     public void voidUndispensedByRx(List<String> rxNos, String reason) {
@@ -721,6 +842,20 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         }
     }
 
+    /**
+     * 执行占用查询（只读事务，供 M13 退费前置校验调用位，Spec :172；billing 不切——
+     * BILL-1017 维持 exec_occupancy_status 列口径，本 API 为 P3 切换面）：读侧患者归一
+     * （merged 从档经主数据缓存映射主档，未命中原样返回）→ 处方清单批查（visitId 可选
+     * 过滤）→ 明细一次 IN 批装载（itemCode 可选过滤，拒绝 N+1）→ 活动发药单一次 IN 批
+     * 取（排除 CANCELLED，一处方一张活动单）→ 处方×明细×发药单三维投影出网。未配药
+     * 处方发药单维度 null（占用行仍出，退费前置语义）。空集短路零明细/发药单批查。
+     *
+     * @param patientId 患者 id（merged 从档入参经缓存归一主档），非空；来源：M13 退费
+     *                  校验按结算患者定位
+     * @param visitId   就诊号（O 型 14 位），可空（空=不过滤全就诊）；来源：结算单归属就诊
+     * @param itemCode  收费项目 code，可空/空白（空=不过滤全部项目）；来源：结算单费用行
+     * @return 占用行集（每行=处方明细投影携发药单状态），非空；无命中返回空集
+     */
     @Override
     @Transactional(readOnly = true)
     public List<OccupancyVO> occupancy(long patientId, String visitId, String itemCode) {
@@ -767,6 +902,16 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         return rows;
     }
 
+    /**
+     * 按处方号查活动发药单（只读事务，前端工作台回显）：uk_dispense_rx_active 一处方一张
+     * 活动单语义定位，排除 CANCELLED 取消态历史行（W-24——order.cancelled 作废单与重建
+     * 活动单允许共存，selectOne 禁多行歧义）→ 全状态明细随行装载（itemStatus 直出供
+     * 工作台辨识退场行）→ VO 组装。无活动单返回 null（调用方组空集），本方法自身无业务
+     * 异常抛出面。
+     *
+     * @param rxNo 处方号（uk_rx_no 唯一），非空；来源：工作站按处方号检索
+     * @return 发药单出参（单据头+全状态明细）；无活动单返回 null
+     */
     @Override
     @Transactional(readOnly = true)
     public DispenseVO getByRxNo(String rxNo) {

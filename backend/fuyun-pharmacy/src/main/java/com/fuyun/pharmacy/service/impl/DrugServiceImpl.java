@@ -52,6 +52,19 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         this.events = events;
     }
 
+    /**
+     * 药品建档（FU-M06-01）：uk_drug_code 应用层前置查 + 唯一索引兜底并发（双防线，与
+     * billing charge_item 同型）→ 请求面字段应用（对照三列不入建档面，insuredSettleable
+     * 派生恒 false）→ 状态缺省 ENABLED（新建即启用）→ 落库 → info 留痕 → 事务内发布
+     * drug.changed 广播（changeType=CREATE，AFTER_COMMIT 出 fy.topic，M05 病区药疗主数据
+     * 缓存消费面）。适用场景：药品字典管理建档。
+     *
+     * @param req 建档请求（drugCode/genericName/routeCodes/splitRatio 等，splitRatio 为
+     *            DECIMAL string 经 PH-1016 守卫解析），非空；来源：药品字典管理表单
+     * @return 已建档药品 VO（含生成 id、status=ENABLED、insuredSettleable=false），非空
+     * @throws BizException PH-1002（409 药品编码已存在——uk 前置查命中；并发穿透由
+     *                      uk_drug_code 数据库层兜底）/ PH-1016（400 拆分比例非数字串）
+     */
     @Override
     @Transactional
     public DrugVO create(DrugSaveRequest req) {
@@ -80,6 +93,18 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         return DrugVO.from(row);
     }
 
+    /**
+     * 药品档案变更（FU-M06-01）：存在性校验（404）→ 请求面字段覆写（对照三列与 status
+     * 不在覆盖面——applyRequest 不触碰，禁变更通道改对照/停启用）→ 落库 → info 留痕 →
+     * 事务内发布 drug.changed 广播（changeType=UPDATE，AFTER_COMMIT 出线，M05 主数据
+     * 缓存失效消费面）。适用场景：药品字典管理档案维护（规格/途径集/警示级别等）。
+     *
+     * @param id  药品行 id，非空；来源：字典管理列表
+     * @param req 变更请求（与 create 同面，对照三列与 status 入参被忽略），非空；来源：
+     *            药品字典管理表单
+     * @return 变更后药品 VO（status 维持库内原值），非空
+     * @throws BizException PH-1001（404 药品不存在）/ PH-1016（400 拆分比例非数字串）
+     */
     @Override
     @Transactional
     public DrugVO update(long id, DrugSaveRequest req) {
@@ -98,6 +123,14 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         return DrugVO.from(row);
     }
 
+    /**
+     * 药品详情（只读事务，字典管理/开方选药回显）：按 id 定位并转 VO，缺行显式 404。
+     * 注意本查询不滤停用面（停用药品详情仍可回显，选药检索面由 search 默认启用面承载）。
+     *
+     * @param id 药品行 id，非空；来源：字典管理列表/开方回显
+     * @return 药品 VO（含对照三列与 status 全量面），非空
+     * @throws BizException PH-1001（404 药品不存在——建议处理：核对 id 或引导建档）
+     */
     @Override
     @Transactional(readOnly = true)
     public DrugVO get(long id) {
@@ -108,6 +141,17 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         return DrugVO.from(row);
     }
 
+    /**
+     * 医保对照维护（FU-M06-01 独立入口）：存在性校验（404）→ 对照三列（nhsa_code/
+     * nhsa_catalog_version/nhsa_pay_type）落行（目录版本随对照维护动态更新口径，Spec :154；
+     * insuredSettleable 由计费引擎按对照派生，本入口不触）→ info 留痕 → 事务内发布
+     * drug.changed 广播（changeType=MAPPING，独立类型使消费方可区分对照变更与档案变更）。
+     * 适用场景：医保对照管理台。
+     *
+     * @param id  药品行 id，非空；来源：对照管理列表
+     * @param req 对照请求（nhsaCode/catalogVersion/payType），非空；来源：医保对照管理表单
+     * @throws BizException PH-1001（404 药品不存在）
+     */
     @Override
     @Transactional
     public void mapInsurance(long id, InsuranceMappingRequest req) {
@@ -132,6 +176,24 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
                 new DrugChangedPayload(String.valueOf(row.getId()), row.getDrugCode(), "MAPPING")));
     }
 
+    /**
+     * 药品检索（只读事务，选药场景默认启用面——停用药品不进结果）：谓词组装收敛
+     * buildSearchWrapper（keyword 非空时通用名/商品名/拼音/医保码四列 OR 前缀匹配；
+     * id 升序 A.4.3-17 唯一顺序约束）→ MP 分页（0 基请求转 1 基 current）→ VO 投影。
+     * 适用场景：M03 开方选药 / 字典管理检索。
+     *
+     * @param keyword         关键词（四列 OR 前缀匹配），可空/空白（空=不加关键词谓词）；
+     *                        来源：选药搜索框
+     * @param essential       基药过滤（true 仅基药/false 仅非基药），可空（空=不过滤）；
+     *                        来源：选药筛选器
+     * @param antibioClass    抗菌药分级过滤 code（UNRESTRICTED/RESTRICTED/SPECIAL），可空/
+     *                        空白（空=不过滤）；来源：选药筛选器
+     * @param insuranceMapped 医保对照过滤（true 仅已对照 nhsa_code 非空），可空（null/false
+     *                        不过滤）；来源：选药筛选器
+     * @param page            页码（0 基），&ge;0；来源：分页组件
+     * @param size            页大小，&gt;0；来源：分页组件
+     * @return 分页结果（启用面药品 VO，id 升序），非空；无命中为空 content 页
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<DrugVO> search(

@@ -114,6 +114,30 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         this.events = events;
     }
 
+    /**
+     * 开方主链（CREATED→APPROVED 同事务，Spec :132）：① 执业授权纵深第一段（运行态
+     * userId 直作 employeeId 查处方权，未过 PH-1017 零写）→ 就诊号/类型守卫 → 请求面
+     * 数量解析（PH-1006，结果随行复用禁二次 parse）→ 处方主行落库并 CAS 放行 APPROVED
+     * （预检占位恒通过级，主控裁决 5——P3 审方引擎接入前固定 PASS）→ 药品去重键集一次
+     * IN 批查（OPT-05 拒 N+1）→ 逐明细行守卫（停用/未对照/途径集外）+ 皮试/毒麻/抗菌
+     * 命中集聚合 + 计费行快照装配 → ② 纵深第二段（命中集追加抗菌最高分级与麻精权校验，
+     * 未过 PH-1017）→ 明细一次批插 → 皮试/类别标志回写主行 → 事务内发布
+     * prescription.created（计费行携 usageSummary，M-4 裁决唯一携带源；Modulith
+     * event_publication 同事务落库保证可靠投递）。适用场景：M03 医生工作站开方 /
+     * PrescriptionOpenPort 跨模块转调。
+     *
+     * @param req 开方请求（visitId O 型 14 位、rxType 白名单 OUTPATIENT/EMERGENCY、items
+     *            逐行 quantity DECIMAL string），非空；来源：M03 开方提交/端口镜像映射
+     * @return 处方 VO（status=APPROVED 终态口径、明细清单、skinTestRequired/rxCategory
+     *         聚合面），非空
+     * @throws BizException PH-1017（403 处方权/抗菌最高分级/麻精授权未过——文案工号脱敏，
+     *                      建议处理：联系医务授权管理，禁重试直发）/ PH-1016（400 操作者
+     *                      标识非数字）/ PH-1007（400 就诊号非 O 型 14 位）/ PH-1006（400
+     *                      类型白名单外/数量非数字串或 ≤0/药品未关联收费项目）/ PH-1003
+     *                      （409 药品不存在或已停用）/ PH-1015（400 途径不在药品途径集）
+     * @throws IllegalStateException CREATED→APPROVED 并发被抢改或抗菌分级词表外脏数据
+     *                      （数据异常显式暴露，人工对账）
+     */
     @Override
     @Transactional
     public PrescriptionVO create(PrescriptionCreateRequest req) {
@@ -229,6 +253,22 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         return PrescriptionVO.from(rx, toItemVOs(items));
     }
 
+    /**
+     * 处方作废（仅未缴费 APPROVED/PENDING_FEE 两态）：按 rx_no 定位（uk 唯一）→ 状态守卫
+     * （PENDING_DISPENSE/DISPENSING 已缴费 PH-1014 拒并引导退费/退药链；其余状态机外
+     * PH-1005 拒）→ 无条件联动 billing PENDING 费用行同事务作废（主控裁决 7 幂等——
+     * 堵读态与 CAS 间 TOCTOU 资金窗口：fee.created 消费可落在其间，按读态跳过会留
+     * 「处方已作废而费用仍可结算」漏洞；port 仅作废 PENDING 行，无费用行时 no-op）→
+     * CAS 终态 CANCELLED（0 行 PH-1005 并发被抢拒）→ 事务内发布 prescription.cancelled
+     * （M03 引用联动；billing 不订阅——费用已同事务作废）。适用场景：M03 医生站作废 /
+     * PrescriptionCancelPort 跨模块转调。
+     *
+     * @param rxNo   处方号（uk_rx_no 唯一），非空；来源：医生站处方列表
+     * @param reason 作废原因（留痕与 cancelled 事件透传），可空
+     * @throws BizException PH-1004（404 处方不存在）/ PH-1014（409 已缴费拒作废——建议
+     *                      处理：收费窗口退费后走退药受理收敛终态）/ PH-1005（409 状态
+     *                      机外或 CAS 并发被抢——刷新状态后重试）
+     */
     @Override
     @Transactional
     public void cancel(String rxNo, String reason) {
@@ -268,6 +308,22 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         log.info("处方作废：rxNo={}，原状态={}，原因={}", rxNo, status, reason);
     }
 
+    /**
+     * 处方分页检索（只读事务，工作台回显）：四条件任意组合等值过滤（visitId/patientId/
+     * rxNo/status，空白/空不过滤）+ id 升序（A.4.3-17 唯一顺序约束）→ MP 分页（0 基转
+     * 1 基）→ 空页短路 → 本页明细一次 IN 批装载（A.4.3-14 拒 N+1，prescription_id+id
+     * 升序保每处方内明细相对序）→ VO 组装（全状态处方含 CANCELLED 历史行）。适用场景：
+     * M03 医生站处方列表 / M06 药房处方查询。
+     *
+     * @param visitId   就诊号（O 型 14 位等值过滤），可空/空白（不过滤）；来源：工作台筛选
+     * @param patientId 患者 id 等值过滤，可空（不过滤）；来源：工作台筛选/患者维度查询
+     * @param rxNo      处方号等值过滤（uk 精确定位），可空/空白（不过滤）；来源：扫码/检索
+     * @param status    处方状态 code 等值过滤（PrescriptionStatus 词表），可空/空白（不过滤）；
+     *                  来源：工作台状态筛选
+     * @param page      页码（0 基），&ge;0；来源：分页组件
+     * @param size      页大小，&gt;0；来源：分页组件
+     * @return 分页结果（处方 VO 含明细清单），非空；无命中为空 content 页
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<PrescriptionVO> list(

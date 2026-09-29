@@ -2,6 +2,29 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（pharmacy 组，第 3/6）：fuyun-pharmacy 药事核心链路公开方法 Javadoc 补齐（BE-A4-04，零行为变化）
+
+- **根因（BE-A4-04 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：药事核心链路
+  （DispenseServiceImpl:207 等，组量 17——报告行号基于 OPT-07/08/09 批查化改造前快照，
+  本次按语义实扫定位）公开方法行级注释完整而方法级 Javadoc 缺——参数可空性/来源与
+  PH-xxxx 异常码口径无 impl 侧契约锚点。
+- **补齐（纯注释，零代码行变化）**：实扫 fuyun-pharmacy src/main/java 公开方法，按
+  BE-A4-04 语义范围补齐 20 方法 / 4 文件——DispenseServiceImpl 10（缴费放行/费用回执/
+  调剂三段 pick·verify·issue/退药受理两时点/退费终态收敛/未发药作废/占用查询/工作台
+  回显：状态机前后态、PH-1008~1021 异常口径与建议处理、参数可空性与来源）+
+  PrescriptionServiceImpl 3（create/cancel/list：执业授权纵深两段 PH-1017、TOCTOU 费用
+  联动裁决 7、四条件分页口径）+ DrugServiceImpl 5（建档/变更/详情/医保对照/检索：uk
+  双防线、changed 广播 changeType 语义、默认启用面）+ BatchSelectServiceImpl 1（FEFO
+  选批单批足量约束、无批次=null 由调用方 PH-1010 定性）。**多退**：接口层（IDispenseService
+  等 5 接口）、controller 层 4、MedicationReviewServiceImpl（{@inheritDoc}+自有 Javadoc）、
+  PrescriptionCancelPortImpl/PrescriptionOpenPortImpl 实扫方法级 Javadoc 均已合规（含
+  参数/返回值/PH 码粒度）；internal 8 监听器入口方法（onXxx(Message)）有简短方法级
+  Javadoc 且业务语义在包级 handleXxx 完整承载，超出 BE-A4-04 点名语义不动，条目外
+  文件零改动。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（fuyun-pharmacy 167 用例，
+  reactor 全 SUCCESS）+ `mvn -B -ntp -pl fuyun-pharmacy spotless:check` 通过；
+  `git diff` 复核 280 行全为 Javadoc 新增、零删除、零代码行/签名/import 变化。
+
 ## 2026-09-29 · 注释补齐环 EX-01（ward 组，第 2/6）：fuyun-ward 病区呼叫/冷链/输液板状态机迁移公开方法 Javadoc 补齐（BE-A4-03，零行为变化）
 
 - **根因（BE-A4-03 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：病房呼叫/冷链/
