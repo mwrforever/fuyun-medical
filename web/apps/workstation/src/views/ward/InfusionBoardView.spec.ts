@@ -2,7 +2,7 @@
 // 床卡列表与 15/10/5ml 三档着色（fuy-infusion-card--{level} 机器判据，档位判定归后端）、
 // 挂载即建连并订阅遥测/告警双主题（路径精确等于契约值）、遥测摘要帧热刷新与残缺载荷毒帧
 // 零刷新零异常、输液告急告警帧联动提示条渲染、WS 断开 REST 轮询降级（30s 周期）与连接后
-// 停止轮询、病区切换退旧订新并重查。
+// 停止轮询、页面隐藏暂停轮询与订阅消费（EX-41，恢复可见立即刷一轮）、病区切换退旧订新并重查。
 // vi.mock('@/composables/useIotStomp') 桩化连接层（真实 ref 供 watch 触发），
 // vi.mock('@/api/ward') 承载零出网，断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -96,9 +96,17 @@ function frameHandler(destination: string) {
   return handler.onFrame;
 }
 
+/** 当前在挂看板实例（EX-41 后组件持有 document 级 visibilitychange 监听：用例不退挂会跨
+ * 用例串扰事件分发——mountBoard 统一先退挂上一实例，保证任一时刻单实例在挂） */
+let activeBoard: VueWrapper | null = null;
+
 /** 挂载并等待首屏加载完成（统一入口，返回持引用供换病区用例操作） */
 async function mountBoard(): Promise<VueWrapper> {
+  // 先退挂上一用例残留实例（清其 visibilitychange 监听与轮询定时器，防事件分发串扰）
+  activeBoard?.unmount();
+  activeBoard = null;
   const wrapper = mount(InfusionBoardView);
+  activeBoard = wrapper;
   await flushPromises();
   return wrapper;
 }
@@ -209,6 +217,74 @@ describe('病区输液看板', () => {
       expect(infusionBoard.byWard).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('页面隐藏暂停轮询降级出网，恢复可见立即刷一轮再续（EX-41）', async () => {
+    vi.useFakeTimers();
+    // jsdom document.hidden 为原型 getter（默认 false）：spyOn get 换桩控制隐藏态
+    const hiddenSpy = vi.spyOn(document, 'hidden', 'get');
+    try {
+      await mountBoard();
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(1);
+      // 隐藏：两拍 30s 轮询周期均不再出网（后台标签页零请求）
+      hiddenSpy.mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(1);
+      // 恢复可见：立即刷一轮（不等下一拍轮询兜底）
+      hiddenSpy.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await flushPromises();
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(2);
+      // 再续：下一拍 30s 轮询恢复出网
+      await vi.advanceTimersByTimeAsync(30000);
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(3);
+    } finally {
+      hiddenSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('页面隐藏暂停订阅消费：遥测/告警帧零热刷新（告急提示条仍落），恢复可见立即刷一轮', async () => {
+    // 隐藏态换桩同上：真实时间轴（帧驱动刷新走节流时钟，不用假定时器）
+    const hiddenSpy = vi.spyOn(document, 'hidden', 'get');
+    try {
+      const wrapper = await mountBoard();
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(1);
+      const onTelemetry = frameHandler('/topic/iot/telemetry/1001');
+      const onAlarm = frameHandler('/topic/iot/alarm/1001');
+      hiddenSpy.mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      // 合法遥测摘要帧到达：隐藏态丢弃信号零热刷新
+      onTelemetry({
+        count: 1,
+        occurredAtUpperBound: '2026-09-26T02:00:00Z',
+        items: [{ deviceId: 'dev-red', metricCode: 'INFUSION_SHORTAGE' }],
+      });
+      // 输液告急帧到达：热刷新暂停但联动提示条仍落（恢复可见即见，告警不因隐藏丢失）
+      onAlarm({
+        alarmNo: 'AL20260926002',
+        deviceId: 'dev-red',
+        patientId: null,
+        visitId: null,
+        wardId: '1001',
+        alarmLevel: 'CRITICAL',
+        metricCode: 'INFUSION_SHORTAGE',
+        triggerValue: '3.5',
+        ruleId: '901',
+        occurredAt: '2026-09-26T02:00:00Z',
+      });
+      await flushPromises();
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(1);
+      expect(wrapper.find('[data-test="call-linkage-banner"]').exists()).toBe(true);
+      // 恢复可见：立即刷一轮补齐隐藏期变更
+      hiddenSpy.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      await flushPromises();
+      expect(infusionBoard.byWard).toHaveBeenCalledTimes(2);
+    } finally {
+      hiddenSpy.mockRestore();
     }
   });
 

@@ -3,8 +3,9 @@
 // 设备床卡列表：余量/滴速最新值与告警档位，档位判定归后端 mapAlertLevel：YELLOW ≤15ml/
 // ORANGE ≤10ml/RED ≤5ml）+ WS 增量（useIotStomp 订阅遥测摘要与病区告警双主题——摘要帧作为
 // "有新遥测"信号触发热刷新拉取最新快照，告急帧渲染呼叫联动提示条）+ WS 不可用时 REST 轮询
-// 降级（30s 周期，连接落地自动停止）。三档着色一律 --fuy-color-* 语义 token（M16 增量别名），
-// 声音提示本批次未接入（静默提示面）。
+// 降级（30s 周期，连接落地自动停止）+ 页面隐藏暂停轮询/订阅消费（EX-41：恢复可见立即刷
+// 一轮）。三档着色一律 --fuy-color-* 语义 token（M16 增量别名），声音提示本批次未接入
+// （静默提示面）。
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { StompSubscription } from '@stomp/stompjs';
 import { INFUSION_ALERT_LABELS, WARD_OPTIONS, infusionBoard } from '@/api/ward';
@@ -87,12 +88,17 @@ let lastFrameRefreshAt = 0;
 
 /**
  * 遥测摘要帧处理：摘要帧不含数值载荷，仅作为"该病区有新遥测"信号——节流后热刷新拉取最新
- * 快照（WS 感知 + REST 取数的增量形态）；残缺载荷毒帧 warn 留痕零刷新。
+ * 快照（WS 感知 + REST 取数的增量形态）；残缺载荷毒帧 warn 留痕零刷新。页面隐藏期间暂停
+ * 订阅消费（EX-41）：帧信号丢弃零出网，恢复可见由立刷兜底，隐藏期变更一次补齐。
  */
 function handleTelemetryFrame(payload: unknown): void {
   const summary: TelemetrySummary | null = parseTelemetrySummary(payload);
   if (summary === null) {
     warn('遥测摘要帧载荷不合法，已忽略本帧', telemetryTopicPath(wardId.value));
+    return;
+  }
+  if (document.hidden) {
+    // 隐藏态丢帧：不出网（后台标签页零请求），节流时钟也不推进
     return;
   }
   const now = Date.now();
@@ -117,7 +123,11 @@ function handleAlarmFrame(payload: unknown): void {
   if (alarm.metricCode === 'INFUSION_SHORTAGE') {
     // 输液告急与病区呼叫联动（ward 侧消费者同源判定口径）：提示条 + 快照热刷新
     lastShortageAlarm.value = alarm;
-    void loadBoard();
+    // 页面隐藏暂停热刷新出网（EX-41）：提示条状态仍落（恢复可见即见，告警不因隐藏丢失），
+    // 隐藏期快照变更由恢复立刷兜底
+    if (!document.hidden) {
+      void loadBoard();
+    }
   }
 }
 
@@ -146,7 +156,10 @@ function startPolling(): void {
     return;
   }
   pollTimer = setInterval(() => {
-    void loadBoard();
+    // 页面隐藏暂停轮询出网（EX-41）：定时器保持空转，恢复可见续拍（同分诊台看板范式）
+    if (!document.hidden) {
+      void loadBoard();
+    }
   }, POLL_INTERVAL_MS);
 }
 
@@ -194,17 +207,30 @@ async function onWardChange(): Promise<void> {
   stompConnect();
 }
 
+/**
+ * 页面隐藏暂停自动刷新、可见恢复立即刷一轮（web 宪法 B.3-4/EX-41：visibilityState 隐藏时
+ * 暂停轮询/订阅消费，释放后端扇出压力；暂停语义归各驱动点 document.hidden 守卫承载）。
+ */
+function onVisibilityChange(): void {
+  if (document.hidden) {
+    return;
+  }
+  void loadBoard();
+}
+
 onMounted(() => {
   void loadBoard();
   stompConnect();
   subscribeWard();
+  document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
 onUnmounted(() => {
-  // web B.3-3 卸载清理条款：先退订双主题再断连，轮询定时器同步清掉
+  // web B.3-3 卸载清理条款：先退订双主题再断连，轮询定时器与可见性监听同步清掉
   unsubscribeWard();
   stopPolling();
   void stompDisconnect();
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
 
