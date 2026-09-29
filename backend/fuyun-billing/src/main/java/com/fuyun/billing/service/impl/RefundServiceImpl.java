@@ -525,6 +525,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             }
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             // 落库文本解析失败=数据不一致显式暴露（禁静默跳过退回）
+            // 内部断言：非用户输入路径——payment_details 系本模块 settle 写入的自有数据，破损即
+            // 数据完整性违约（编程契约）；execute 端点入参仅 refundId，用户不可达此分支（BE-C3-05 C 类）
             throw new IllegalStateException("payment_details 解析失败，settleNo=" + st.getSettleNo(), e);
         }
         // W-16 读回侧守卫（F6）：卡行原付金额必须为正；退款额不得超卡侧原付合计

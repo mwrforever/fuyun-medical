@@ -97,6 +97,8 @@ public class InpatientChargeServiceImpl implements IInpatientChargeService {
             JsonNode quantityNode = item.path("quantity");
             if (itemCode == null || itemCode.isBlank() || !(quantityNode.isNumber() || quantityNode.isTextual())) {
                 // 计价两要素缺失即不合规帧：显式抛出交容器拒收进 fy.dlx（禁静默零费用）
+                // 内部断言：非用户输入路径——本方法仅由 MQ 监听器 BillingInpatientEventListener 派发调用，
+                // 载荷源于上游住院模块发布帧（编程契约），ISE 死信留痕（BE-C3-05 C 类）
                 throw new IllegalStateException("医嘱开立明细缺 itemCode/quantity 计价要素，无法计价：m04OrderNo=" + m04OrderNo);
             }
             BigDecimal quantity = new BigDecimal(quantityNode.asText());

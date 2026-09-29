@@ -2,6 +2,9 @@ package com.fuyun.billing.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.billing.api.BillingErrorCode;
+import com.fuyun.common.exception.BizException;
+import org.springframework.http.HttpStatus;
 
 /**
  * 支付方式（deposit_txn.payment_method / settlement.payment_details JSON method 字段值域，Spec §4）：
@@ -51,7 +54,8 @@ public enum PaymentMethod {
      *
      * @param code 存储值，来源：DB 列读取；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据），建议上游按数据异常处置
+     * @throws BizException BILL-1034（400）：code 无对应枚举常量（外部输入/存储值词表外，
+     *      显式拒禁静默兜底——BE-C3-05 收口，改抛前为裸 IllegalArgumentException 出 500）
      */
     public static PaymentMethod fromCode(String code) {
         for (PaymentMethod method : values()) {
@@ -59,6 +63,6 @@ public enum PaymentMethod {
                 return method;
             }
         }
-        throw new IllegalArgumentException("未知的支付方式 code: " + code);
+        throw new BizException(BillingErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的支付方式 code: " + code);
     }
 }

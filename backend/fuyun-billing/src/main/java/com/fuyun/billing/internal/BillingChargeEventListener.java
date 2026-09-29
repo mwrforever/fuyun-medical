@@ -94,6 +94,8 @@ public class BillingChargeEventListener {
         String visitId = payload.path("visitId").asText(null);
         JsonNode lines = payload.path("lines");
         if (sourceRef == null || patientId == 0L || visitId == null || !lines.isArray() || lines.isEmpty()) {
+            // 内部断言：非用户输入路径——上游模块发布帧契约违约（MQ 编程契约），保留 ISE
+            // 走容器有界重试→fy.dlx 死信留痕（BE-C3-05 C 类留痕，非 HTTP 面无 500 语义）
             throw new IllegalStateException(
                     "开单事件载荷不合规（CF-5 占位契约）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
