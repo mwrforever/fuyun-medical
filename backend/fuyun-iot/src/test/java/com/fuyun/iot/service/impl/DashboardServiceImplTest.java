@@ -10,6 +10,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -42,6 +46,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
@@ -454,6 +459,45 @@ class DashboardServiceImplTest {
         assertThat(wall.items().get(0).latestValues()).hasSize(1);
         assertThat(wall.items().get(0).latestValues().get(0).metricCode()).isEqualTo("MDC_ECG_HEART_RATE");
         assertThat(wall.items().get(0).latestValues().get(0).value()).isEqualByComparingTo("76");
+    }
+
+    @Test
+    @DisplayName("数值段非法降级留痕（EX-31）：warn 含设备/指标定位，跳过契约与健康行解析不变")
+    void wardWallLogsWarnWhenLatestValueNumericParseFails() {
+        // 挂 ListAppender 捕获数值解析降级留痕（EX-31 断言锚点；局部挂载 try/finally 摘除防串扰，
+        // TelemetryIngestServiceImplTest ListAppender 同款先例）
+        Logger serviceLogger = (Logger) LoggerFactory.getLogger(DashboardServiceImpl.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        serviceLogger.addAppender(appender);
+        try {
+            when(bindingService.listByWard(WARD_ID)).thenReturn(List.of(binding(DEVICE_ID, 2001L)));
+            when(deviceMapper.selectList(any()))
+                    .thenReturn(List.of(device(DEVICE_ID, DeviceStatus.ONLINE, "prod-ecg")));
+            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+            when(valueOperations.multiGet(anyCollection()))
+                    .thenReturn(java.util.Arrays.asList((String) null))
+                    .thenReturn(java.util.Arrays.asList("abc|notanumber", "76|1758892800000"));
+            when(metricMappingMapper.selectList(any()))
+                    .thenReturn(List.of(mapping("prod-ecg", "MDC_A"), mapping("prod-ecg", "MDC_ECG_HEART_RATE")));
+
+            WardDeviceWallVO wall = service.wardWall(WARD_ID);
+
+            // 契约保持（对外零变化）：非法数值行跳过，健康行照常解析入墙
+            assertThat(wall.items().get(0).latestValues()).hasSize(1);
+            assertThat(wall.items().get(0).latestValues().get(0).metricCode()).isEqualTo("MDC_ECG_HEART_RATE");
+            // 静默变可观测：恰一条 warn 留痕，含设备与指标定位（快照写入面同源键可对账）
+            List<ILoggingEvent> warnEvents = appender.list.stream()
+                    .filter(event -> event.getLevel() == Level.WARN)
+                    .toList();
+            assertThat(warnEvents).as("数值非法行恰一条 warn 留痕").hasSize(1);
+            String message = warnEvents.get(0).getFormattedMessage();
+            assertThat(message).as("留痕含设备定位").contains("deviceId=" + DEVICE_ID);
+            assertThat(message).as("留痕含指标定位").contains("metricCode=MDC_A");
+            assertThat(message).as("留痕含异常摘要").contains("原因=");
+        } finally {
+            serviceLogger.detachAppender(appender);
+        }
     }
 
     @Test

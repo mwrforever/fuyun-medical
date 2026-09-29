@@ -421,7 +421,8 @@ public class DashboardServiceImpl implements IDashboardService {
 
     /**
      * 解析单条最新值快照（「值|毫秒时间戳」管道文本，AlarmEngine 写入面同源）：缺席/形态损坏
-     * 返回 null 跳过（快照为辅助面，单行损坏不阻断整墙装配）。
+     * 返回 null 跳过（快照为辅助面，单行损坏不阻断整墙装配）；数值段解析失败降级时 warn
+     * 留痕设备/指标定位与原因（写入面同源键可对账）。
      *
      * @param deviceId   设备标识，非空
      * @param metricCode 指标编码，非空
@@ -444,6 +445,14 @@ public class DashboardServiceImpl implements IDashboardService {
                     OffsetDateTime.ofInstant(
                             Instant.ofEpochMilli(Long.parseLong(payload.substring(separator + 1))), ZoneOffset.UTC));
         } catch (NumberFormatException e) {
+            // 数值段非法降级跳过（契约保持：损坏行不阻断整墙）；静默改 warn 留痕（EX-31）。
+            // 不采用 isNumeric 前置守卫：BigDecimal 合法接受负数/小数/科学计数文本，守卫口径
+            // 与其不一致将误杀合法值改变出网契约，故保留 catch + 留痕收口（择优结论）
+            log.warn(
+                    "最新值快照数值解析失败（跳过该行，快照写入面同源键可对账）：deviceId={}，metricCode={}，原因={}",
+                    deviceId,
+                    metricCode,
+                    e.getMessage());
             return null;
         }
     }
