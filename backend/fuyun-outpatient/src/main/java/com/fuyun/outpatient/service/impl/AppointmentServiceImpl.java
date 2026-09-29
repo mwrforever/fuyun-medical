@@ -415,6 +415,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
             throw new IllegalStateException("预约取号失败：号源池/排班定位失败，apptNo=" + apptNo);
         }
         Visit visit = buildVisit(appointment, visitId, pool, schedule, OperatorContextHolder.get());
+        // 数据库写操作：预约取号 visit 落库（初始态 REGISTERED，visit_id 锚已由 casTake 回填）
         visitMapper.insert(visit);
         // 缓存操作：删除支付占位键（删除失败不阻断取号，TTL 兜底自然过期）
         deletePayHoldQuietly(apptNo);
@@ -933,11 +934,13 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private AppointmentVO registerVisitAndTake(
             Appointment appointment, ApptNumberPool pool, Schedule schedule, String operator) {
         String visitId = visitIdIssuer.issue();
+        // 数据库写操作：当日挂号一步取号 CAS（新建行 RESERVED→TAKEN+visit_id 同步回填）
         if (appointmentMapper.casTake(appointment.getId(), visitId) == 0) {
             // 新建行 CAS 落败属数据异常（行状态被并发篡改），fail-fast 回滚整单（含 visit 签发流水跳号，无副作用）
             throw new IllegalStateException("当日挂号 casTake 落败（新建行状态异常）：apptNo=" + appointment.getApptNo());
         }
         Visit visit = buildVisit(appointment, visitId, pool, schedule, operator);
+        // 数据库写操作：当日挂号 visit 落库（初始态 REGISTERED，与预约单取号同事务签发）
         visitMapper.insert(visit);
         appointment.setStatus(ApptStatus.TAKEN);
         appointment.setVisitId(visitId);
@@ -1054,11 +1057,13 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private String issueApptNo() {
         String today = LocalDate.now().format(SEQ_DATE);
         String seqKey = APPT_SEQ_KEY_PREFIX + today;
+        // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
             throw new IllegalStateException("预约单号签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {
+            // 首签续期 48h TTL（禁无过期键；后续签发不重复设置，保持 TTL 单次语义）
             redisTemplate.expire(seqKey, APPT_SEQ_KEY_TTL);
         }
         return "AP" + today + String.format("%06d", seq);
@@ -1077,6 +1082,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
             return;
         }
         try {
+            // 缓存写操作：预约失败回补池键余量（Lua 单步原子+越界封顶；-1=键缺失已跳过）
             long remain =
                     poolRedisGate.release(pool.getId(), pool.getTotalQuota(), poolKeyTtl(schedule.getSchedDate()));
             log.info("预约失败回补 Redis 持有：poolId={}，池键余量={}（-1=键缺失已跳过）", pool.getId(), remain);
@@ -1095,6 +1101,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
      */
     private void releasePoolKeyQuietly(long poolId, long total, LocalDate schedDate, String apptNo) {
         try {
+            // 缓存写操作：超时/退号回池后池键余量同步回补（快路径立即可约；-1=键缺失已跳过）
             long remain = poolRedisGate.release(poolId, total, poolKeyTtl(schedDate));
             log.info("超时回池 Redis 快路径已回补：apptNo={}，poolId={}，池键余量={}（-1=键缺失已跳过）", apptNo, poolId, remain);
         } catch (DataAccessException e) {
@@ -1109,6 +1116,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
      */
     private void deletePayHoldQuietly(String apptNo) {
         try {
+            // 缓存写操作：删除支付占位键（取号完成/占位失效路径；TTL 兜底自然过期）
             redisTemplate.delete(payHoldKey(apptNo));
         } catch (DataAccessException e) {
             log.error("支付占位键删除失败（TTL 兜底自然过期）：apptNo={}，原因={}", apptNo, e.getMessage(), e);
@@ -1388,6 +1396,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
             log.warn("回池跳过（池行不存在）：apptNo={}，poolId={}", apptNo, poolId);
             return;
         }
+        // 数据库写操作：池行条件回池（version 乐观锁防并发双回补；used_count 回减 1）
         int released = apptNumberPoolMapper.casRelease(pool.getId(), pool.getVersion() == null ? 0 : pool.getVersion());
         if (released != 1) {
             ApptNumberPool latest = apptNumberPoolMapper.selectById(poolId);

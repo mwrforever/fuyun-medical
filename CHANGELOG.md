@@ -2,6 +2,33 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（outpatient 组，第 6/6 a 路）：fuyun-outpatient 门诊排班方法级与预约/分诊关键行注释补齐（BE-A4-06 门诊侧+BE-A4-09/10，零行为变化）
+
+- **根因（BE-A4-06/09/10 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：门诊
+  排班公开方法无方法级 Javadoc（ScheduleServiceImpl:103 锚点，组量约 10 跨门诊/计价，
+  本组收口门诊侧）；预约挂号 AppointmentServiceImpl:417 等 4 处缓存读写与 4 处数据库写
+  缺行级注释（行号基于 OPT 批查化改造前快照，按语义实扫定位）；实扫另得分诊链路
+  TriageServiceImpl 6 处库写+ScheduleServiceImpl 模板 insert 1 处缺行级，属 BE-A4-10
+  「数据库写行级缺失」同类（N1 统计 45 处写操作行缺注范围），经主控裁量按宪法收拢
+  总裁决一并补齐。
+- **补齐（纯注释，零代码行变化）**：方法级 8 方法+行级 16 处 / 3 文件——
+  ScheduleServiceImpl 8（saveTemplate 登记 ACTIVE/号段倒挂 OP-1019、generate T+N 放号
+  week_pattern 展开两段幂等、stop/resume CAS 状态迁移+整池联动+AFTER_COMMIT 事件面、
+  availablePools 余量谓词、extraQuota 加号 CAS+池键 INCRBY 快路径）+ AppointmentServiceImpl
+  行级 9（BE-A4-09 缓存 5：当日流水键 INCR 原子计数/首签 48h TTL 禁无过期键/预约失败
+  Lua 原子回补越界封顶/回池余量同步/支付占位键删除；BE-A4-10 库写 4：取号 visit 落库
+  初始 REGISTERED/当日挂号 RESERVED→TAKEN CAS+visit 同事务落库/池行条件回池 version
+  防双回补）+ TriageServiceImpl 行级 6（报到回写仅同值列/建票初始 WAITING/分级快照仅
+  triage_level 列不落状态机列 BUG-07 纪律/RE_TRIAGE 票面指派/调级分值不改号 Spec/跨队列
+  转接新队建票唯一键区分）+ ScheduleServiceImpl 模板 insert 行级 1。**多退**：7 个 MQ
+  监听器 onXxx 人工核实在 @RabbitListener 上方已有 Javadoc（扫描跨行注解误报）；
+  take/releaseCredit 邻近写语句已有语义覆盖行级注释未动；fuyun-billing 计价侧归同组
+  b 路另行提交。
+- **验证**：`mvn -B -ntp -pl fuyun-outpatient -am test` 全绿（fuyun-outpatient 295
+  用例，reactor 八模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-outpatient spotless:check`
+  通过（154 文件 clean）；`git diff` 复核 84 行全为注释新增、零删除、零代码行/签名/
+  import 变化。
+
 ## 2026-09-29 · 注释补齐环 EX-01（integration 组，第 5/6）：fuyun-integration 消费幂等与事件基础设施公开方法 Javadoc 补齐（BE-A4-02 本体补位，零行为变化）
 
 - **根因（BE-A4-02 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：全仓消费幂等

@@ -99,6 +99,15 @@ public class ScheduleServiceImpl implements IScheduleService {
         this.poolRedisGate = poolRedisGate;
     }
 
+    /**
+     * 保存排班模板（id 空=登记 ACTIVE 模板；非空=按 id 全量覆盖请求面字段，契约见接口 javadoc）。
+     * 实现要点：号段起止倒挂服务端显式拒绝（OP-1019，库端 CHECK 为最终防线）；更新 0 行=模板
+     * 不存在判 OP-1004。
+     *
+     * @param request 保存请求，非空；来源：ScheduleController 模板维护端点（已过 JSR-303 校验）
+     * @return 保存后的模板出参（登记路径含回填 id），非空
+     * @throws BizException OP-1019/400 slotStart 不早于 slotEnd；OP-1004/409 更新时模板不存在
+     */
     @Override
     @Transactional
     public ScheduleTemplateVO saveTemplate(ScheduleTemplateSaveRequest request) {
@@ -126,6 +135,7 @@ public class ScheduleServiceImpl implements IScheduleService {
             template.setStatus(TEMPLATE_STATUS_ACTIVE);
             template.setCreatedBy(operator);
             template.setUpdatedBy(operator);
+            // 数据库写操作：排班模板登记落库（id 空=登记路径，新建初始态 ACTIVE；放号展开取此为母本）
             scheduleTemplateMapper.insert(template);
             log.info(
                     "排班模板已创建：templateId={}，deptCode={}，doctorId={}，weekPattern={}",
@@ -153,6 +163,14 @@ public class ScheduleServiceImpl implements IScheduleService {
         return ScheduleConverter.INSTANCE.toTemplateVO(template);
     }
 
+    /**
+     * 排班模板分页清单（id 升序唯一顺序，契约见接口 javadoc）。实现要点：API 契约 0 基页码与
+     * MP Page 1 基归一（入参 +1 平移、出参回显 0 基）。
+     *
+     * @param page 页码（0 基），来源：清单端点查询参数（缺省 0）
+     * @param size 单页条数，来源：清单端点查询参数（缺省 20）
+     * @return 分页出参 {content,page,size,total}，非空；无数据返回空 content
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<ScheduleTemplateVO> listTemplates(int page, int size) {
@@ -169,6 +187,16 @@ public class ScheduleServiceImpl implements IScheduleService {
                 result.getTotal());
     }
 
+    /**
+     * T+N 放号生成（契约见接口 javadoc）：ACTIVE 模板按 week_pattern 位串×日期窗口
+     * [endDate-(days-1), endDate] 展开排班日历+号源池行+池键预热。实现要点：窗口内已存在
+     * 排班键循环前预过滤幂等跳过（warn 留痕，重放零插入）；预过滤后并发 uk 冲突抛 OP-1004
+     * 整批回滚（PG 事务 aborted 语义禁循环内捕获续跑）。
+     *
+     * @param request 放号请求，非空；endDate 为窗口截止日、days 为窗口天数
+     * @return 本次实际生成排班行数（预过滤跳过不计入）
+     * @throws BizException OP-1004/409 并发放号冲突（整批已回滚，重试即幂等）
+     */
     @Override
     @Transactional
     public int generate(ScheduleGenerateRequest request) {
@@ -252,6 +280,13 @@ public class ScheduleServiceImpl implements IScheduleService {
         return generated;
     }
 
+    /**
+     * 排班日历分页清单（sched_date+id 双列升序保证跨页唯一顺序，契约见接口 javadoc）；
+     * deptCode/dateFrom/dateTo 均为可选过滤。
+     *
+     * @param query 查询对象（过滤条件+分页参数），非空
+     * @return 分页出参 {content,page,size,total}，非空；无匹配返回空 content
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<ScheduleVO> listSchedules(SchedulePageQuery query) {
@@ -277,6 +312,14 @@ public class ScheduleServiceImpl implements IScheduleService {
                 result.getTotal());
     }
 
+    /**
+     * 停诊（契约见接口 javadoc）：schedule CAS NORMAL→STOPPED + 整池行批量 STOPPED + 事务内
+     * 发布 schedule.stopped（AFTER_COMMIT 出 MQ，已约患者改期/退费联动依据）。
+     *
+     * @param scheduleId 排班主键；来源：stop 端点路径参数
+     * @param reason     停诊原因（事件与 stop_reason 留痕载体），非空
+     * @throws BizException OP-1004/409 排班不存在或状态违例（CAS 0 行）
+     */
     @Override
     @Transactional
     public void stop(long scheduleId, String reason) {
@@ -312,6 +355,14 @@ public class ScheduleServiceImpl implements IScheduleService {
                 operator);
     }
 
+    /**
+     * 恢复停诊（契约见接口 javadoc）：过期排班（sched_date 早于当日）拒绝——号源已无业务价值；
+     * schedule CAS STOPPED→NORMAL + 整池行批量迁回 ACTIVE。恢复无事件面（schedule.stopped
+     * 仅停诊方向发布）。
+     *
+     * @param scheduleId 排班主键；来源：resume 端点路径参数
+     * @throws BizException OP-1004/409 排班不存在、已过期或状态违例（CAS 0 行）
+     */
     @Override
     @Transactional
     public void resume(long scheduleId) {
@@ -344,6 +395,15 @@ public class ScheduleServiceImpl implements IScheduleService {
                 operator);
     }
 
+    /**
+     * 可约号源查询（余量对外查询，供全渠道与 M18 复用，契约见接口 javadoc）：仅 ACTIVE 且
+     * used_count&lt;total_quota 行（谓词由 mapper 注解 SQL 承载），slot_start 升序。
+     *
+     * @param deptCode 开诊科室编码，非空；来源：可约号源查询端点入参
+     * @param date     排班日期，非空；来源：可约号源查询端点入参
+     * @param apptType 号别过滤，可空（null=全部号别）；来源：可约号源查询端点入参
+     * @return 可约池行出参集（含服务端计算余量 remaining），非空；无可约号源返回空列表
+     */
     @Override
     @Transactional(readOnly = true)
     public List<NumberPoolVO> availablePools(String deptCode, LocalDate date, ApptType apptType) {
@@ -363,6 +423,15 @@ public class ScheduleServiceImpl implements IScheduleService {
                 .toList();
     }
 
+    /**
+     * 加号授权（契约见接口 javadoc）：池行 total_quota 增量 count（CAS 条件更新，预约余量谓词
+     * 自然放行加号段），加号占用计数走 extra_used；CAS 命中后同步对池键 INCRBY count 并续期
+     * TTL（快路径立即可约，键缺失跳过不造凭空键）。
+     *
+     * @param poolId 池行主键；来源：extra-quota 端点路径参数
+     * @param count  加号数量（1~50，契约与服务端双层校验）
+     * @throws BizException OP-1019/400 count 越界；OP-1002/404 池行不存在或非 ACTIVE
+     */
     @Override
     @Transactional
     public void extraQuota(long poolId, int count) {

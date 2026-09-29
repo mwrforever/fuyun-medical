@@ -197,6 +197,7 @@ public class TriageServiceImpl implements ITriageService {
         visit.setStatus(VisitStatus.WAITING);
         visit.setCheckedInAt(OffsetDateTime.now());
         visit.setUpdatedBy(OperatorContextHolder.get());
+        // 数据库写操作：visit 报到回写（checked_in_at+审计列；状态列仅同值 WAITING 回显，REGISTERED→WAITING 真迁移由上方 CAS 完成）
         visitMapper.updateById(visit);
         // 建票：当日序签发→票别派生（复诊→RETURN 携类别分 300）→冻结公式算分→落库
         int queueSeq = issueQueueSeq(visit.getDeptCode());
@@ -213,6 +214,7 @@ public class TriageServiceImpl implements ITriageService {
         ticket.setStatus(TicketStatus.WAITING);
         ticket.setCreatedBy(OperatorContextHolder.get());
         ticket.setUpdatedBy(OperatorContextHolder.get());
+        // 数据库写操作：候诊票落库（新建无前态，初始态 WAITING；携冻结公式分+当日序，queue_ticket 为队列权威行）
         queueTicketMapper.insert(ticket);
         insertTriageRecord(
                 visit.getVisitId(),
@@ -308,6 +310,7 @@ public class TriageServiceImpl implements ITriageService {
             patch.setId(visit.getId());
             patch.setTriageLevel(request.triageLevel());
             patch.setUpdatedBy(OperatorContextHolder.get());
+            // 数据库写操作：visit 分级快照回写（仅 triage_level+审计列进 SET，状态机列不落库——BUG-07 指定列纪律）
             visitMapper.updateById(patch);
         }
         // 动作分流（CHECK_IN 已前置守卫拒绝，枚举四值穷举其余三值——switch 语句无需 default 死分支）
@@ -322,6 +325,7 @@ public class TriageServiceImpl implements ITriageService {
                 patch.setTicketNo(ticket.getTicketNo());
                 patch.setDoctorId(request.doctorId());
                 patch.setUpdatedBy(OperatorContextHolder.get());
+                // 数据库写操作：票面医生指派回写（仅 doctor_id+审计列进 SET，票态/叫号计数列不携——BUG-07 指定列纪律）
                 queueTicketMapper.updateById(patch);
             }
             case LEVEL_ADJUST -> adjustLevel(ticket, visit, factors);
@@ -619,6 +623,7 @@ public class TriageServiceImpl implements ITriageService {
         patch.setTicketNo(ticket.getTicketNo());
         patch.setPriorityScore(newScore);
         patch.setUpdatedBy(OperatorContextHolder.get());
+        // 数据库写操作：调级分值回写（仅 priority_score+票号同值+审计列进 SET，票态列不携——调级不改号 Spec :106）
         queueTicketMapper.updateById(patch);
         // 缓存写操作：ZSET 重排（同 member 换分——票号不变，Spec :106）
         queueZsetStore.remove(ticket.getQueueId(), ticket.getId());
@@ -669,6 +674,7 @@ public class TriageServiceImpl implements ITriageService {
         fresh.setStatus(TicketStatus.WAITING);
         fresh.setCreatedBy(OperatorContextHolder.get());
         fresh.setUpdatedBy(OperatorContextHolder.get());
+        // 数据库写操作：新队候诊票落库（新建无前态，初始态 WAITING；旧票已 CAS→CANCELLED，新旧票按 (visit_id, queue_seq) 唯一键区分）
         queueTicketMapper.insert(fresh);
         queueZsetStore.enqueue(request.targetQueue(), fresh.getId(), encodedScore(newScore, queueSeq));
         log.info(
