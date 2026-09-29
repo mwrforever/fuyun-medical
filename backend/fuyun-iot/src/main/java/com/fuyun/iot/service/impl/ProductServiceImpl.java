@@ -2,6 +2,7 @@ package com.fuyun.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -195,8 +196,11 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
         requireProduct(productId);
         // 全量替换第一环：逻辑删该产品全部旧行（部分唯一索引只约束未删行，@TableLogic 软删）
         commandMapper.delete(lambdaQueryOfCommands(productId));
-        // 全量替换第二环：落新行（allowed 缺省按级别：SAFETY=true/TREATMENT=false，显式指定覆盖）
-        List<CommandVO> result = new ArrayList<>();
+        // 全量替换第二环：落新行（allowed 缺省按级别：SAFETY=true/TREATMENT=false，显式指定覆盖）——
+        //   EX-37：逐行 insert 改 Db.saveBatch 一次批插（A.4.3-16 JDBC 批处理 + ASSIGN_ID 自动
+        //   填充；本方法 @Transactional 事务内承载），落库行集与行序不变；VO 在批插后组装——
+        //   id 由 saveBatch 填充，先组装会回出 null id（CommandVO id 契约非空）
+        List<IotProductCommandEntity> rows = new ArrayList<>(request.commands().size());
         for (UpdateCommandsRequest.CommandItem item : request.commands()) {
             IotProductCommandEntity entity = new IotProductCommandEntity();
             entity.setProductId(productId);
@@ -205,9 +209,10 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
             entity.setSafetyLevel(item.safetyLevel());
             entity.setAllowed(
                     item.allowed() != null ? item.allowed() : item.safetyLevel().defaultAllowed());
-            commandMapper.insert(entity);
-            result.add(CommandVO.from(entity));
+            rows.add(entity);
         }
+        Db.saveBatch(rows);
+        List<CommandVO> result = rows.stream().map(CommandVO::from).toList();
         log.info("命令安全等级标注完成：productId={}，commandCount={}", productId, result.size());
         return result;
     }
@@ -255,9 +260,12 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
                         IotErrorCode.METRIC_DICT_NOT_FOUND, HttpStatus.NOT_FOUND, "MDC 字典编码不存在：" + item.metricCode());
             }
         }
-        // 全量替换：逻辑删旧行 + 落新行（mismatchStrategy 缺省 RAW_PASSTHROUGH——失配原文透传红线）
+        // 全量替换：逻辑删旧行 + 落新行（mismatchStrategy 缺省 RAW_PASSTHROUGH——失配原文透传红线）——
+        //   EX-37：逐行 insert 改 Db.saveBatch 一次批插（A.4.3-16 JDBC 批处理 + ASSIGN_ID 自动
+        //   填充；本方法 @Transactional 事务内承载），落库行集与行序不变；VO 在批插后组装——
+        //   id 由 saveBatch 填充，先组装会回出 null id（MetricMappingVO id 契约非空）
         metricMappingMapper.delete(lambdaQueryOfMappings(productId));
-        List<MetricMappingVO> result = new ArrayList<>();
+        List<IotMetricMappingEntity> rows = new ArrayList<>(request.mappings().size());
         for (UpdateMappingsRequest.MappingItem item : request.mappings()) {
             IotMetricMappingEntity entity = new IotMetricMappingEntity();
             entity.setProductId(productId);
@@ -265,9 +273,10 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
             entity.setMetricCode(item.metricCode());
             entity.setMismatchStrategy(
                     item.mismatchStrategy() != null ? item.mismatchStrategy() : MismatchStrategy.RAW_PASSTHROUGH);
-            metricMappingMapper.insert(entity);
-            result.add(MetricMappingVO.from(entity));
+            rows.add(entity);
         }
+        Db.saveBatch(rows);
+        List<MetricMappingVO> result = rows.stream().map(MetricMappingVO::from).toList();
         log.info("属性 MDC 映射编辑完成：productId={}，mappingCount={}", productId, result.size());
         return result;
     }
@@ -287,7 +296,8 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
 
     /**
      * 失配检测：提取模型快照全部属性名（services[].properties[].name），比对映射表已配置面——
-     * 存在未映射属性即失配（遥测按原文透传并告警，不静默丢弃）。
+     * 存在未映射属性即失配（遥测按原文透传并告警，不静默丢弃）。比对仅消费映射行的属性名列，
+     * .select 精确投影免映射宽行全列入内存（A.4.3-14；行集不变仅列收敛，失配判定结果等价）。
      *
      * @param productId 产品标识（映射表查询键），非空
      * @param modelJson 模型 JSON 快照，非空（畸形快照按失配兜底，warn 留痕对账）
@@ -312,8 +322,11 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
             log.warn("物模型快照 JSON 解析失败，按失配置位：productId={}，原因={}", productId, e.getMessage());
             return true;
         }
+        // 数据库读操作：仅消费 property_name 列，.select 精确投影免映射宽行全列入内存
+        //   （A.4.3-14；行集不变仅列收敛，属性名集合与全列取回完全等价）
         Set<String> mappedNames = metricMappingMapper
                 .selectList(new LambdaQueryWrapper<IotMetricMappingEntity>()
+                        .select(IotMetricMappingEntity::getPropertyName)
                         .eq(IotMetricMappingEntity::getProductId, productId))
                 .stream()
                 .map(IotMetricMappingEntity::getPropertyName)

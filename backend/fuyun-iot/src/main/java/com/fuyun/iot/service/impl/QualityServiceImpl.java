@@ -262,7 +262,8 @@ public class QualityServiceImpl implements IQualityService {
 
     /**
      * 装载设备产品的最大标称频率（批级两次查询：产品映射 → 字典标称频率）：未挂产品/无映射/无
-     * 登记标称频率返回 null（期望记 0，缺数率恒 0 防误报）。
+     * 登记标称频率返回 null（期望记 0，缺数率恒 0 防误报）。产品映射查询仅消费指标编码列，
+     * .select 精确投影免映射宽行全列入内存（A.4.3-14；行集不变仅列收敛，distinct 语义等价）。
      *
      * @param productId 设备产品标识，可空（未挂产品）
      * @return 最大标称频率（次/分钟）；无可定位登记返回 null
@@ -271,9 +272,12 @@ public class QualityServiceImpl implements IQualityService {
         if (productId == null || productId.isBlank()) {
             return null;
         }
-        // 数据库读操作：产品已映射指标编码单次 IN 前置查询（@TableLogic 自动过滤已删映射）
+        // 数据库读操作：产品已映射指标编码单次 IN 前置查询（@TableLogic 自动过滤已删映射）——
+        //   仅消费 metric_code 列，.select 精确投影免映射宽行全列入内存（A.4.3-14；行集不变
+        //   仅列收敛，指标编码集合与全列取回完全等价）
         List<String> metricCodes = metricMappingMapper
                 .selectList(Wrappers.<IotMetricMappingEntity>lambdaQuery()
+                        .select(IotMetricMappingEntity::getMetricCode)
                         .eq(IotMetricMappingEntity::getProductId, productId))
                 .stream()
                 .map(IotMetricMappingEntity::getMetricCode)
