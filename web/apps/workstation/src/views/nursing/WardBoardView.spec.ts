@@ -23,7 +23,7 @@ import {
   vitalSigns,
   wardPatients,
 } from '@/api/nursing';
-import type { WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
+import type { VitalSignVO, WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
 import WardBoardView from './WardBoardView.vue';
 
 vi.mock('@/api/nursing', () => ({
@@ -46,7 +46,11 @@ vi.mock('@/api/nursing', () => ({
     { code: 'SURGERY', label: '手术' },
     { code: 'DELIVERY', label: '分娩' },
   ],
-  SPECIAL_EVENT_OPTIONS: [{ code: 'ADMISSION', label: '入院' }],
+  // 特殊事件词表替身含 SURGERY（对齐 api 层真实导出值域：换患者草稿复位用例需第二类型可切）
+  SPECIAL_EVENT_OPTIONS: [
+    { code: 'ADMISSION', label: '入院' },
+    { code: 'SURGERY', label: '手术' },
+  ],
   WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
   SHIFT_OPTIONS: [
     { code: 'DAY', label: '白班' },
@@ -572,6 +576,123 @@ describe('护士工作站', () => {
       '存在未作答条目，请完成全部条目后提交',
     );
     expect(vi.mocked(assessments.create)).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('切换患者复位特殊事件草稿，类型/备注不跨患者滞留（BUG-15 同类）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([
+      patientMock({ bedNo: '01', visitId: 'I20260923000000001' }),
+      patientMock({ bedNo: '02', visitId: 'I20260923000000002' }),
+    ]);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await selectFirstBed(wrapper);
+    // 01 床留草稿：类型切「手术」+ 备注填值，不提交
+    const evtTypeSelect = wrapper
+      .findAllComponents({ name: 'ElSelect' })
+      .find((node) => node.classes().includes('ward-chart-event-type'));
+    if (!evtTypeSelect) {
+      throw new Error('未找到特殊事件类型选择器');
+    }
+    await evtTypeSelect.vm.$emit('update:modelValue', 'SURGERY');
+    await wrapper.find('input[placeholder="备注（选填）"]').setValue('术前准备完毕');
+    // 切换 02 床患者：草稿回初始态（类型 ADMISSION + 备注清空）
+    await wrapper.findAll('.ward-bed-card')[1].trigger('click');
+    await flushPromises();
+    const evtTypeAfter = wrapper
+      .findAllComponents({ name: 'ElSelect' })
+      .find((node) => node.classes().includes('ward-chart-event-type'));
+    if (!evtTypeAfter) {
+      throw new Error('未找到特殊事件类型选择器');
+    }
+    expect(evtTypeAfter.props('modelValue')).toBe('ADMISSION');
+    expect(
+      (wrapper.find('input[placeholder="备注（选填）"]').element as HTMLInputElement).value,
+    ).toBe('');
+    wrapper.unmount();
+  });
+
+  it('切换患者清空评估结果条残留，前次患者判级不滞留新患者名下', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([
+      patientMock({ bedNo: '01', visitId: 'I20260923000000001' }),
+      patientMock({ bedNo: '02', visitId: 'I20260923000000002' }),
+    ]);
+    vi.mocked(assessments.scales).mockResolvedValue([
+      {
+        scaleType: 'BRADEN',
+        itemCodes: ['PERCEPTION'],
+        itemLabels: ['知觉感受'],
+        choices: { PERCEPTION: [1, 2, 3, 4] },
+        totalRule: 'SUM',
+      },
+    ]);
+    vi.mocked(assessments.create).mockResolvedValue({
+      id: '9301',
+      visitId: 'I20260923000000001',
+      scaleType: 'BRADEN',
+      totalScore: 50,
+      riskLevel: 'HIGH',
+      assessedAt: '2026-09-23T10:00:00',
+    });
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await selectFirstBed(wrapper);
+    for (const group of wrapper.findAllComponents({ name: 'ElRadioGroup' })) {
+      await group.vm.$emit('update:modelValue', 3);
+    }
+    await clickButton(wrapper, '提交评估');
+    await flushPromises();
+    // 01 床提交后结果条在册（高风险展示契约 §3.9）
+    expect(wrapper.find('.ward-assess-result').exists()).toBe(true);
+    // 切换 02 床患者：结果条必须随上下文清空（「高风险」挂他人名下=误导判级）
+    await wrapper.findAll('.ward-bed-card')[1].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.ward-assess-result').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('切换患者后在途回包比对当前选中患者，过期回包丢弃（EX-45/FE-A1-04）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([
+      patientMock({ bedNo: '01', visitId: 'I20260923000000001' }),
+      patientMock({ bedNo: '02', visitId: 'I20260923000000002' }),
+    ]);
+    // 详情按 visitId 区分患者（patientId 随之对齐，体征查询窗口锚定各自患者）
+    vi.mocked(wardPatients.detail).mockImplementation((visitId) =>
+      Promise.resolve(
+        detailMock({
+          visitId,
+          patientId: visitId === 'I20260923000000001' ? '1932000000000000001' : '1932000000000000002',
+        }),
+      ),
+    );
+    // 体征查询按患者挂起：手动放行制造「旧患者慢回包晚到」竞态窗口
+    const resolvers: Record<string, Array<(rows: VitalSignVO[]) => void>> = {};
+    vi.mocked(vitalSigns.list).mockImplementation(
+      (params) =>
+        new Promise((resolve) => {
+          const key = String(params.patientId);
+          (resolvers[key] ??= []).push(resolve);
+        }),
+    );
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await wrapper.find('.ward-bed-card').trigger('click');
+    await flushPromises();
+    // 立即切换 02 床：两患者在途请求并存
+    await wrapper.findAll('.ward-bed-card')[1].trigger('click');
+    await flushPromises();
+    // 02 床回包先到（近 24h 空列表 + 月窗空列表）：详情面板无 01 床体温值
+    for (const resolve of resolvers['1932000000000000002'] ?? []) {
+      resolve([]);
+    }
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('38.9');
+    // 01 床慢回包后到：过期回包必须丢弃，不得覆盖 02 床的体征简报
+    for (const resolve of resolvers['1932000000000000001'] ?? []) {
+      resolve([{ id: '9001', temperature: 38.9, tempSite: 'AXILLARY', pulse: 90 }]);
+    }
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('38.9');
     wrapper.unmount();
   });
 
