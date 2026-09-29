@@ -2,6 +2,29 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-30 · EX-19 裸 IAE 模式级收口全量闭环（BE-C3-05，11 模块两波，三态口径确立）
+
+- **根因**：BE-C3-05 全仓 209 处裸 IllegalArgumentException/IllegalStateException 绕过
+  双层错误模型（宪法 A.3-3/4）——枚举 fromCode 词表外值直接 500、内部断言与用户可达
+  路径混用同一通道。
+- **三态收口口径（本项确立）**：A 枚举 fromCode 用户可达→转 BizException 新码最小化
+  （400+errorCode）；B 用户可达 DTO 前置校验 400；C 内部断言（编程错误/环境异常/数据
+  不一致/MQ 契约）保留+「EX-19 C 类收口留痕」行级注释；断言 IAE→BizException 测试
+  迁移按 D-21 四边界放行且提交 body 留痕。
+- **第一波六模块**：iot 24 枚举→IOT-1026（1f25efb）/billing 24→BILL-1034（83d3342）/
+  pharmacy 15→PH-1022（3f46f42）/outpatient 8 复用 OP-1019 零新增码（725f18e）/
+  system 13→SYS-1031（0d47ec4）/ward 6→WD-1007/1008+IOT 手工入口守卫迁移（Jackson
+  探针实证 record 构造器异常 errorCode 无法出网）（9b0dda4）；B 类普遍 0（既有守卫
+  已覆盖）、fromCode 多无生产调用点=契约级 500→400 预留。
+- **第二波五模块**：nursing 9+inpatient 8 全 C 类留痕（两模块 fromCode 本为「null+
+  调用方判空」形态无转码面，22a8949）；patient A 类 1 点 PAT-1025+D-21 断言迁移两测
+  （cccea1f）；integration 9+common 11 全 C 类留痕（common 共享底座无业务错误码
+  体系全保留，36031d4）。
+- **验证**：11 模块局部门禁全绿（iot 560/billing 293/pharmacy 169/outpatient 323/
+  system 163/ward 85/patient 242/inpatient 195/nursing 211/integration 83）+各模块
+  spotless 过；对外行为变化（各新码点 500→400、ward 守卫次序提前）入 N5 行为变化
+  清单汇总。
+
 ## 2026-09-29 · 批次 C 宪法 C3/C1 轨总收口（EX-14~18+20：分层下沉/异常可观测/审计全量/for 头形态，五路并行+专项）
 
 - **根因**：BE-C3-03/04/06/07/10/12（分层/审计/异常口径——「自述边界/契约留痕不构成
