@@ -23,6 +23,7 @@ import com.fuyun.patient.vo.UnmaskVO;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.factory.Mappers;
 import org.slf4j.MDC;
@@ -34,7 +35,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 隐私明文查阅与留痕实现（FU-M02-06）：unmask 为全仓唯一明文出口——角色豁免 + 诊疗关系
  * D-16 三态双道校验 403 前置（不落台账、不返明文），解密取值仅在本方法生命周期与响应体内
  * 存活；成功由 @AuditLog SENSITIVE_QUERY 审计行 + privacy_access_log 台账行双留痕，失败由
- * 审计 FAIL 行留痕。豁免判定复用 PrivacyMaskService isExempt（禁复制判定逻辑，A.4.3-21）。
+ * 审计 FAIL 行留痕。豁免判定复用 PrivacyMaskService 批量面 exemptFields（禁复制判定逻辑，
+ * A.4.3-21；单字段面 isExempt 保留供单查场景）。
  *
  * <p>诊疗关系第二道（{@link CareRelationQuery} SPI，D-16 冻结语义）：容器无实现时跳过维持
  * 角色豁免单门禁现状（ObjectProvider 空安全，不 NPE）；任一实现（M03 门诊在途诊疗关系）
@@ -95,11 +97,13 @@ public class PrivacyServiceImpl implements PrivacyService {
     @Transactional
     public UnmaskVO unmask(UnmaskRequest request) {
         // ①角色豁免判定：全字段豁免=角色单门禁直接放行；存在非豁免字段时进入 ② 诊疗关系第二道
+        //   批量判定面（OPT-11）：规则单次装载内存复用，豁免判定查询数与请求字段数解耦
         List<String> roles = RoleContextHolder.get();
+        Set<String> exemptFields = privacyMaskService.exemptFields(roles, request.fields());
         boolean exemptAll = true;
         String firstUnexemptField = null;
         for (String field : request.fields()) {
-            if (!privacyMaskService.isExempt(roles, field)) {
+            if (!exemptFields.contains(field)) {
                 exemptAll = false;
                 firstUnexemptField = field;
                 break;

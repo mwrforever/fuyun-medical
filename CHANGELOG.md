@@ -2,6 +2,40 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-11：patient 脱敏豁免判定批量面收敛查询 + 精确投影（性能，行为保持）
+
+- **根因（OPT-11 / BE-C4-21 + BE-C4-22 ↔ BE-B1-09 + BE-C2-15 归并组，四报并一，
+  2026-09-28 全仓性能与代码质量优化清单，评分 80，A.4.3-14 + A.4.3-17 点名）**：
+  `PrivacyServiceImpl.unmask`（明文查阅 sensitive 操作路径）循环逐字段调
+  `PrivacyMaskService.isExempt`，而 `PrivacyMaskServiceImpl.isExempt` 每次调用执行一次
+  无 WHERE 全表查询 `ruleMapper.selectList(null)`——unmask 请求数字段数 = 全表查询次数
+  （循环内单查放大），且 isExempt 仅消费 3 列（target_field/enabled/exempt_roles）却全列
+  取回（投影缺失）。规则表种子 5 行当前实害小，但 sensitive 路径每请求必放大。
+- **修复（行为保持，方案 a：接口增批量判定面）**：`PrivacyMaskService` 增
+  `exemptFields(roles, targetFields)` 批量豁免判定——内部规则单次装载（请求内内存复用）
+  + 逐字段判定纯内存，判定面查询数与请求字段数解耦（N 字段 N 查 → 恒 1 查）；装载查询
+  补 `.select` 精确投影仅取判定消费 3 列（A.4.3-14）；既有单字段 `isExempt` 保留（判定体
+  逐字下沉私有 `isExemptAgainst` 共享，其余调用方零扰动）并同样走投影装载。`unmask` ①段
+  豁免判定改用批量结果，exemptAll 聚合、firstUnexemptField 取值、诊疗关系第二道与异常
+  语义零变化（判定纯函数，批量=同一规则快照上逐字段单查的逐词等价）。选择方案 a 而非
+  unmask 端装载：A.4.3-21 要求豁免判定逻辑单点收口在脱敏引擎（禁复制判定逻辑），方案 b
+  必然把词匹配+角色交集逻辑复制进 PrivacyServiceImpl 或暴露实体级装载面，违反该约束。
+  **设计豁免消化**：类注释原「规则每次请求加载、禁提前缓存」口径更新为「每请求从库装载、
+  同请求内复用、禁跨请求缓存」——请求内单次装载不跨请求、管理面变更下轮请求即生效，
+  不违反原豁免意图；全量 @Cacheable（跨请求缓存）仍禁、须另行评审。applyAll/listRules
+  全列取回按清单结论保留（applyAll 完整字段消费、listRules 对外契约）。行为锚定测试
+  「四字段混合面批量判定恰一次查询+逐字段与单查口径等价（豁免/角色未命中/空豁免集/未登记
+  四形态）」与「投影契约（wrapper .select 仅 3 列，非消费列不入投影）」「unmask 恰一次批量
+  调用+逐字段单查零触达」先红后绿交付（红基线=委托版逐字段实现上恰一次断言失败，
+  4 字段 4 查被拦截，1 用例红 10 绿）。
+- **D-21 桩更新留痕**：既有用例桩面随实现机械迁移——PrivacyMaskServiceImplTest 的
+  `selectList(null)` 放宽为 `selectList(any())`（豁免判定改经投影 wrapper 查询）、
+  PrivacyServiceImplTest/PrivacyCareRelationGateTest 的 `isExempt(anyList(), anyString())`
+  换 `exemptFields(anyList(), anyCollection())`（thenAnswer 全字段统一豁免/空集 = 原
+  恒 true/false 语义的批量等价）；业务断言零改动；范围单点单次、与实现同 PR 原子交付。
+- **验证**：`mvn -B -ntp -pl fuyun-patient -am test` 全绿（240 用例，+3 新锚定）+
+  `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-10：outpatient 退费回执逐单号查询改清单键集一次 IN 批查（性能，行为保持）
 
 - **根因（OPT-10 / BE-C4-18 ↔ BE-B1-05 归并组，2026-09-28 全仓性能与代码质量优化清单，

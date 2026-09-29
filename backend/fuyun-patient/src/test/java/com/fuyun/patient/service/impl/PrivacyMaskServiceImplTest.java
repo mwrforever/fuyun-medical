@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +22,7 @@ import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +48,8 @@ class PrivacyMaskServiceImplTest {
     void setUp() {
         ruleMapper = mock(PrivacyMaskRuleMapper.class);
         maskService = new PrivacyMaskServiceImpl(ruleMapper);
-        when(ruleMapper.selectList(null))
+        // 豁免判定经投影 wrapper 查询（OPT-11）：桩面由 selectList(null) 机械放宽为 any()
+        when(ruleMapper.selectList(any()))
                 .thenReturn(List.of(
                         rule("MASK_NAME", "name", "ADMIN", true),
                         rule("MASK_ID_CARD_NO", "idCardNo", "ADMIN", true),
@@ -90,7 +93,7 @@ class PrivacyMaskServiceImplTest {
     @Test
     @DisplayName("规则停用（enabled=false）字段保持原值透传")
     void disabledRuleKeepsFieldUntouched() {
-        when(ruleMapper.selectList(null)).thenReturn(List.of(rule("MASK_NAME_OFF", "name", "ADMIN", false)));
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule("MASK_NAME_OFF", "name", "ADMIN", false)));
         PatientVO out = maskService.applyAll(new ArrayList<>(List.of(vo()))).get(0);
         assertThat(out.getName()).isEqualTo("张三丰");
     }
@@ -131,7 +134,7 @@ class PrivacyMaskServiceImplTest {
                 maskService.applyAll(new ArrayList<>(List.of(nullBirth))).get(0);
         assertThat(out.getBirthDate()).isNull();
         // 未识别 target_field：规则跳过（warn 留痕），字段保持原值
-        when(ruleMapper.selectList(null)).thenReturn(List.of(rule("MASK_UNKNOWN", "unknownField", "ADMIN", true)));
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule("MASK_UNKNOWN", "unknownField", "ADMIN", true)));
         PatientVO untouched =
                 maskService.applyAll(new ArrayList<>(List.of(vo()))).get(0);
         assertThat(untouched.getName()).isEqualTo("张三丰");
@@ -150,9 +153,44 @@ class PrivacyMaskServiceImplTest {
     }
 
     @Test
+    @DisplayName("批量豁免判定：四字段混合面规则查询恰一次（与字段数解耦），逐字段结果与单查口径等价")
+    void exemptFieldsLoadsRulesOnceAndMatchesSingleQueryDecisionPerField() {
+        when(ruleMapper.selectList(any()))
+                .thenReturn(List.of(
+                        rule("MASK_NAME", "name", "ADMIN", true),
+                        rule("MASK_MOBILE", "mobile", "NURSE", true),
+                        rule("MASK_ID_CARD_NO", "idCardNo", "", true)));
+        // 混合面：ADMIN 视角下 name 豁免；mobile 豁免集归 NURSE 不命中；idCardNo 空豁免集；unknownField 未登记词
+        Set<String> exempt =
+                maskService.exemptFields(List.of("ADMIN"), List.of("name", "mobile", "idCardNo", "unknownField"));
+        // 批量面规则查询恰一次：OPT-11 放大消除锚定（旧逐字段判定 4 字段即 4 次全表查询）
+        verify(ruleMapper, times(1)).selectList(any());
+        verify(ruleMapper, never()).selectOne(any());
+        assertThat(exempt).containsExactlyInAnyOrder("name");
+        // 逐字段等价：批量结果与单查 isExempt 口径逐词对照（豁免/不豁免/空豁免集/未登记四形态）
+        assertThat(maskService.isExempt(List.of("ADMIN"), "name")).isTrue();
+        assertThat(maskService.isExempt(List.of("ADMIN"), "mobile")).isFalse();
+        assertThat(maskService.isExempt(List.of("ADMIN"), "idCardNo")).isFalse();
+        assertThat(maskService.isExempt(List.of("ADMIN"), "unknownField")).isFalse();
+    }
+
+    @Test
+    @DisplayName("豁免判定查询投影契约：wrapper 仅取判定消费 3 列，禁全列取回")
+    void exemptQueryProjectsOnlyThreeConsumedColumns() {
+        maskService.isExempt(List.of("ADMIN"), "name");
+        ArgumentCaptor<Wrapper<PrivacyMaskRule>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(ruleMapper).selectList(captor.capture());
+        // 判定实际消费列=target_field/enabled/exempt_roles（A.4.3-14 按需取列）
+        assertThat(captor.getValue().getSqlSelect()).contains("target_field", "enabled", "exempt_roles");
+        // 非消费列（mask_pattern/rule_code/审计列）不得入投影（禁 SELECT * 语义）
+        assertThat(captor.getValue().getSqlSelect())
+                .doesNotContain("mask_pattern", "rule_code", "created_at", "updated_at");
+    }
+
+    @Test
     @DisplayName("规则清单 VO 化：exemptRoles 拆分清单输出，空串豁免为空清单")
     void listRulesSplitsExemptRolesToList() {
-        when(ruleMapper.selectList(null))
+        when(ruleMapper.selectList(any()))
                 .thenReturn(List.of(
                         rule("MASK_NAME", "name", "ADMIN, DOCTOR", true),
                         rule("MASK_BIRTH_DATE", "birthDate", "", true)));

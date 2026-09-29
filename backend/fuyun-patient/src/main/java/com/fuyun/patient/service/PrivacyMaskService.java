@@ -3,7 +3,9 @@ package com.fuyun.patient.service;
 import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
 import com.fuyun.patient.vo.PatientVO;
 import com.fuyun.patient.vo.PrivacyMaskRuleVO;
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 隐私脱敏引擎（FU-M02-06 展示侧）：privacy_mask_rule 集中规则 + SensitiveMasker 组合 +
@@ -27,6 +29,16 @@ public interface PrivacyMaskService {
      * @return true=存在豁免角色（可见明文）；false=无豁免（明文查阅 403）
      */
     boolean isExempt(List<String> roles, String targetField);
+
+    /**
+     * 批量豁免判定（明文查阅多字段场景）：规则单次装载内存复用，判定面规则查询数
+     * 与请求字段数解耦（OPT-11，A.4.3-14）；逐字段判定口径与 {@link #isExempt} 完全一致。
+     *
+     * @param roles        角色编码清单（RoleContextHolder 取值），非空
+     * @param targetFields 目标字段词清单（来自明文查阅请求 fields），非空、可含重复词
+     * @return 豁免字段词集合（清单中判定为豁免的词去重；空集=无任何字段豁免）
+     */
+    Set<String> exemptFields(List<String> roles, Collection<String> targetFields);
 
     /**
      * 规则清单（GET /privacy-mask-rules 数据源；VO 化：exemptRoles 拆分清单输出）。

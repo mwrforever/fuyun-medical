@@ -3,8 +3,8 @@ package com.fuyun.patient.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,6 +28,7 @@ import com.fuyun.patient.service.PrivacyMaskService;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -111,7 +112,8 @@ class PrivacyCareRelationGateTest {
     @DisplayName("角色豁免命中：豁免短路第二道不触发，诊疗关系 SPI 零探测")
     void unmaskPassesOnRoleExemptWithoutCareRelationProbe() {
         PrivacyServiceImpl privacyService = serviceWithRegisteredSpi();
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(true);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
         when(patientService.getById(PATIENT_ID)).thenReturn(patient());
 
         UnmaskVO vo = privacyService.unmask(new UnmaskRequest(PATIENT_ID, List.of("name"), "临床核验"));
@@ -126,7 +128,7 @@ class PrivacyCareRelationGateTest {
     @DisplayName("无豁免但 SPI 命中在途诊疗关系：放行明文查阅，台账照落（操作者标识入探测）")
     void unmaskPassesOnCareRelationWhenNotExempt() {
         PrivacyServiceImpl privacyService = serviceWithRegisteredSpi();
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(false);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection())).thenReturn(Set.of());
         when(careRelationQuery.hasCareRelation(eq(PATIENT_ID), eq("op-001"))).thenReturn(true);
         when(patientService.getById(PATIENT_ID)).thenReturn(patient());
         when(crypto.decrypt("mobile-cipher")).thenReturn("13800001234");
@@ -145,7 +147,7 @@ class PrivacyCareRelationGateTest {
     @DisplayName("无豁免且无在途诊疗关系：PAT-1018/403（无豁免角色且无在途诊疗关系），不落查阅台账")
     void unmaskRejectsWhenNeitherExemptNorCareRelation() {
         PrivacyServiceImpl privacyService = serviceWithRegisteredSpi();
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(false);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection())).thenReturn(Set.of());
         when(careRelationQuery.hasCareRelation(eq(PATIENT_ID), eq("op-001"))).thenReturn(false);
 
         assertThatThrownBy(() -> privacyService.unmask(new UnmaskRequest(PATIENT_ID, List.of("mobile"), "临床核验")))
@@ -166,7 +168,7 @@ class PrivacyCareRelationGateTest {
         // 不桩 getIfAvailable：容器无实现语义（Mockito 默认返回 null），构造期取值不得 NPE
         PrivacyServiceImpl privacyService = new PrivacyServiceImpl(
                 privacyMaskService, patientService, privacyAccessLogMapper, crypto, careRelationProvider);
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(false);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection())).thenReturn(Set.of());
 
         assertThatThrownBy(() -> privacyService.unmask(new UnmaskRequest(PATIENT_ID, List.of("mobile"), "临床核验")))
                 .isInstanceOfSatisfying(BizException.class, ex -> {

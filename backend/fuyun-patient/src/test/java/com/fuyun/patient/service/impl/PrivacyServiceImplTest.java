@@ -3,9 +3,11 @@ package com.fuyun.patient.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -31,6 +33,7 @@ import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -107,7 +110,7 @@ class PrivacyServiceImplTest {
     @Test
     @DisplayName("明文查阅无豁免角色：PAT-1018 403 前置拒绝，不触档案不落查阅台账（留痕归审计 FAIL 行）")
     void unmaskWithoutExemptRoleRejectedBeforeAnyTrace() {
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(false);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection())).thenReturn(Set.of());
 
         assertThatThrownBy(() -> privacyService.unmask(new UnmaskRequest(5L, List.of("idCardNo"), "临床核验")))
                 .isInstanceOf(BizException.class)
@@ -122,7 +125,9 @@ class PrivacyServiceImplTest {
     @Test
     @DisplayName("明文查阅豁免放行：全词表五字段解密直出，台账落 UNMASK_QUERY 行（操作人/目的/字段/traceId null 安全）")
     void unmaskWithExemptRoleReturnsPlaintextAndWritesLedger() {
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(true);
+        // 桩面机械迁移（OPT-11）：全字段统一豁免=原 isExempt 恒 true 语义的批量等价
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
         when(patientService.getById(5L)).thenReturn(patient());
         when(crypto.decrypt("card-cipher")).thenReturn("110101199003077890");
         when(crypto.decrypt("mobile-cipher")).thenReturn("13800001234");
@@ -156,7 +161,8 @@ class PrivacyServiceImplTest {
     @Test
     @DisplayName("明文查阅档案不存在：PAT-1001 404 拒绝且不落台账（无查阅事实）")
     void unmaskMissingArchiveRejectedAndNoLedgerRow() {
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(true);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
         when(patientService.getById(5L)).thenReturn(null);
 
         assertThatThrownBy(() -> privacyService.unmask(new UnmaskRequest(5L, List.of("name"), "临床核验")))
@@ -165,6 +171,21 @@ class PrivacyServiceImplTest {
                 .isEqualTo(PatientErrorCode.PATIENT_NOT_FOUND);
 
         verify(privacyAccessLogMapper, never()).insert(any(PrivacyAccessLog.class));
+    }
+
+    @Test
+    @DisplayName("豁免判定恰一次批量调用：多字段查阅与字段数解耦（不再逐字段单查 isExempt）")
+    void unmaskResolvesExemptionInSingleBatchCallRegardlessOfFieldCount() {
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
+        when(patientService.getById(5L)).thenReturn(patient());
+
+        privacyService.unmask(
+                new UnmaskRequest(5L, List.of("name", "idCardNo", "mobile", "address", "birthDate"), "临床核验"));
+
+        // 五字段批量豁免判定恰一次（OPT-11 解耦锚定）；逐字段单查面零触达
+        verify(privacyMaskService, times(1)).exemptFields(anyList(), anyCollection());
+        verify(privacyMaskService, never()).isExempt(anyList(), anyString());
     }
 
     @Test
