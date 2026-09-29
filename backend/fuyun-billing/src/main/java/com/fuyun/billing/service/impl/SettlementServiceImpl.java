@@ -245,8 +245,12 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
             log.warn("支付勾稽不平：settleNo={}，支付合计={}，结算总额={}", settleNo, paySum, st.getTotalAmount());
             throw new BizException(BillingErrorCode.AMOUNT_MISMATCH, HttpStatus.CONFLICT, "支付明细合计与结算总额不符，禁止结算");
         }
-        // 三层勾稽第一层前置（纯读校验先于一切写动作）：明细合计=结算总额，不平零写拒绝
+        // 三层勾稽第一层前置（纯读校验先于一切写动作）：明细合计=结算总额，不平零写拒绝。
+        //   EX-39 精确投影：本查询仅消费 id（迁移 id 集与排序键）+amount（求和勾稽）恰 2 列，费用行
+        //   宽列（费用项/数量/单价/医保快照/来源单等）禁入投影免全列入内存；谓词、行序与求和算式
+        //   不因投影而变（preview 同形查询消费 chargedAt/医保快照等宽列，维持全列取回不在本收口范围）
         List<FeeRecord> fees = feeRecordMapper.selectList(Wrappers.<FeeRecord>lambdaQuery()
+                .select(FeeRecord::getId, FeeRecord::getAmount)
                 .eq(FeeRecord::getVisitId, st.getVisitId())
                 .eq(FeeRecord::getStatus, FeeStatus.PENDING)
                 .orderByAsc(FeeRecord::getId));
