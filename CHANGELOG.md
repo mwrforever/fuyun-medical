@@ -2,6 +2,34 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（integration 组，第 5/6）：fuyun-integration 消费幂等与事件基础设施公开方法 Javadoc 补齐（BE-A4-02 本体补位，零行为变化）
+
+- **根因（BE-A4-02 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：全仓消费幂等
+  基础设施 true/false 语义缺方法级说明——本体 MessageIdempotencyServiceImpl 位于
+  fuyun-integration（EX-01 原登记模块列表漏列，本组补位；iot 侧灶位已随第 1/6 组收口），
+  锚点 :71 等，组量约 19。
+- **补齐（纯注释，零代码行变化）**：19 方法 / 7 文件（均 service/impl）——
+  MessageIdempotencyServiceImpl 3（tryAcquire 消费幂等前置判定：**true/false 语义
+  单独成段写实底**——true=放行执行业务（NX 抢占首次/前置键残留台账无 PROCESSED 的
+  上次中断/仅 FAILED 行的有界重投/Redis 故障降级四来源）、false=确认重复投递（台账已有
+  PROCESSED 行）调用方 return 即 AUTO 确认；幂等键构成含 consumerModule 要素隔离同事件
+  多模块消费、同帧并发业务可能重复执行由 recordProcessed 唯一索引兜底的 at-least-once
+  边界；recordProcessed PROCESSED 事实登记与 DuplicateKeyException 分流；settleFailure
+  释放前置键+FAILED 留痕、异常 addSuppressed 挂回不改变控制流）+ QueueGovernorImpl 2
+  （消费者/延迟队列声明，先登记后订阅阻断启动）+ EventRegistryServiceImpl 4（幂等登记
+  不覆盖冻结契约、清单 CAS 自旋 3 次上界、isRegistered true 含 DEPRECATED 已废止须另判
+  状态）+ DeadLetterServiceImpl 4（replay PENDING→REPLAYED 状态机 CAS 抢先/超限/不可
+  路由/失败回退 INT-1002~1005、close 终态敏感备注只记长度）+ 查询面 3（死信列表/消费
+  台账/发布台账只读分页，零写语义）+ MdmSubscriptionServiceImpl 4（(topic,subscriber)
+  幂等、逻辑删保对账、空清单≠null）。**多退**：5 控制器/5 服务接口/2 监听器入口/
+  MessagingGovernance/config/Converter/TypeHandler 实扫均已合规；MessageIdempotencyService
+  接口本体在 fuyun-common 且 Javadoc 已完整覆盖 true/false 语义（D-7 段落），越界未动；
+  iot 模块零触碰。
+- **验证**：`mvn -B -ntp -pl fuyun-integration -am test` 全绿（fuyun-integration 83
+  用例，reactor 三模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-integration spotless:check`
+  通过（72 文件 clean）；`git diff` 复核 241 行全为 Javadoc 新增、零删除、零代码行/
+  签名/import 变化。
+
 ## 2026-09-29 · 注释补齐环 EX-01（system 组，第 4/6）：fuyun-system 认证域与字典域公开方法 Javadoc 补齐（BE-A4-05，零行为变化）
 
 - **根因（BE-A4-05 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：认证域

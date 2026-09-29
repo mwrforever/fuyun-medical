@@ -67,6 +67,30 @@ public class MessageIdempotencyServiceImpl implements MessageIdempotencyService 
         this.messagingProperties = messagingProperties;
     }
 
+    /**
+     * 消费幂等前置判定（标准消费范式第①步，两层去重的第一执行点）：Redis SET NX PX 原子抢占
+     * 前置键；抢占失败不直接判重复，回查 received_event 台账确认是否真已处理（D-7 裁决），
+     * 调用方据返回值决定执行或跳过业务。
+     *
+     * <p>返回值语义（调用方分支依据）：true=放行执行业务（涵盖四种来源：NX 抢占成功的首次
+     * 消费、前置键残留但台账无 PROCESSED 行的上次中断、仅 FAILED 行的有界重投、Redis 故障
+     * 降级放行）；false=确认重复投递（台账已有 status=PROCESSED 行），调用方直接 return 跳过
+     * 业务，由容器 AUTO 确认该帧。
+     *
+     * <p>幂等键构成：{@code fy:integration:idempotency:<consumerModule>:<eventId>}——同一事件
+     * 可被多模块各自消费一次，键以消费者模块为第二要素隔离互不干扰；TTL 取
+     * fuyun.messaging.idempotency-redis-ttl（默认 24h，仅覆盖常态重复投递窗口，非幂等正确性依据）。
+     *
+     * <p>并发与故障边界：①同帧并发投递多实例竞争，NX 后到者回查时先行者尚未登记（无
+     * PROCESSED 行）也会放行——业务可能并发重复执行，最终由 recordProcessed 命中唯一索引
+     * 分流，消费方按 at-least-once 语义设计业务处理；②Redis 异常降级放行返回 true（故障
+     * 不得放大为消费不可用，唯一索引兜底最终幂等）；③回查仅认 PROCESSED 行，FAILED 行不
+     * 拦截重投（失败留痕状态机见类说明）。
+     *
+     * @param eventId        事件信封 eventId（UUID 字符串），非空；来源：消费消息解析出的信封
+     * @param consumerModule 消费者模块域标识（如 it/integration），非空；幂等键第二要素
+     * @return true=放行执行业务；false=确认重复投递（已处理），调用方跳过业务即 AUTO 确认
+     */
     @Override
     public boolean tryAcquire(String eventId, String consumerModule) {
         String key = buildKey(eventId, consumerModule);
@@ -103,6 +127,22 @@ public class MessageIdempotencyServiceImpl implements MessageIdempotencyService 
         return true;
     }
 
+    /**
+     * 消费成功登记（标准消费范式第②步）：向 received_event 台账插入 status=PROCESSED 行，
+     * 落立该 (event_id, consumer_module) 组合「已消费」的最终事实，供 tryAcquire 回查与
+     * D-7 判重。
+     *
+     * <p>执行流程：直插 PROCESSED 行（processed_at=now()）；命中 (event_id, consumer_module)
+     * 唯一索引时按既有行状态分流——FAILED 行（前次失败后重试成功）单语句升级为 PROCESSED
+     * （清 fail_reason、写 processed_at）；已是 PROCESSED 行（并发重复投递后到者）影响 0 行
+     * 幂等跳过，不刷新 processed_at（保留首次成功时刻）。
+     *
+     * <p>边界条件：仅 DuplicateKeyException 被分流消化；其余 DB 异常原样上抛（真故障必须暴露，
+     * 交容器有界重试，耗尽进 fy.dlx，禁止吞为已处理）。
+     *
+     * @param record 信封五要素登记记录（eventId/eventType/producer/occurredAt/consumerModule），
+     *               非空；来源：消费消息解析出的信封字段
+     */
     @Override
     public void recordProcessed(ReceivedEventRecord record) {
         ReceivedEvent entity = new ReceivedEvent();
@@ -143,6 +183,20 @@ public class MessageIdempotencyServiceImpl implements MessageIdempotencyService 
                 record.eventType());
     }
 
+    /**
+     * 消费失败收尾（标准消费范式第③步，catch 分支唯一调用点）：释放 Redis 前置键 + 登记
+     * status=FAILED 留痕行——前者放行重投时 NX 可重新抢占，后者供 tryAcquire 回查区分
+     * 「已处理 / 曾失败」并承载有界重试计数。
+     *
+     * <p>执行流程：①删前置键；②失败留痕（首次失败插 FAILED 行 retry_count=1，重试再失败
+     * 命中唯一索引时单语句原子累加 retry_count 并刷新 fail_reason，STATUS 守卫防竞态回退，
+     * 见 {@link #registerFailed}）。两步各自的运行时异常均不上抛也不吞没，一律
+     * addSuppressed 挂回 businessFailure（W-6③ 双保留语义）——原始业务异常保持主异常地位，
+     * 由调用方上抛交容器有界重试；本方法自身不改变控制流、正常返回即收尾完成。
+     *
+     * @param record          信封五要素记录，非空；FAILED 行的键与信封列取自本对象
+     * @param businessFailure 原始业务异常，非空；作为主异常保留（被挂 suppressed 并由调用方上抛）
+     */
     @Override
     public void settleFailure(ReceivedEventRecord record, RuntimeException businessFailure) {
         // ① 释放前置键：Redis 异常不吞（原「释放失败必须暴露」语义不变），以 suppressed 挂回业务异常

@@ -37,6 +37,18 @@ public class EventPublicationQueryServiceImpl implements IEventPublicationQueryS
         this.converter = converter;
     }
 
+    /**
+     * 分页查询投递台账（只读事务）：按事件类型等值 + 完成态 + 发布时间闭区间（ge/le）过滤，
+     * 发布时刻倒序 + 主键兜底排序（深翻页防漏行）。
+     *
+     * <p>边界条件：完成态无独立列——INCOMPLETE/COMPLETED 以 completion_date 空/非空派生
+     * （与 VO 派生口径同源）；status 非法值已在端点层 @Pattern 拦截（400）；本类零写语义，
+     * 未完成记录重投与已完成清理归 EventOpsJob。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200；status 仅 COMPLETED/INCOMPLETE；
+     *              来源：投递台账端点参数对象
+     * @return 分页出参（0 基页码），非空；无匹配时 content 为空清单
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<EventPublicationVO> query(EventPublicationQuery query) {

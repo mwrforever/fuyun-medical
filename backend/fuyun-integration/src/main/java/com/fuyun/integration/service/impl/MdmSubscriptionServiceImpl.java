@@ -45,6 +45,13 @@ public class MdmSubscriptionServiceImpl extends ServiceImpl<MdmSubscriptionMappe
         this.converter = converter;
     }
 
+    /**
+     * 分页查询订阅矩阵（只读事务）：主题 × 订阅方 × 版本 × 对账状态，主题升序 + 主键兜底
+     * 排序（矩阵阅读顺序，深翻页防漏行）；逻辑删行经 @TableLogic 自动排除。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200；来源：订阅治理端点参数对象
+     * @return 分页出参（0 基页码），非空；无匹配时 content 为空清单
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<MdmSubscriptionVO> query(MdmSubscriptionQuery query) {
@@ -62,6 +69,18 @@ public class MdmSubscriptionServiceImpl extends ServiceImpl<MdmSubscriptionMappe
                 page.getTotal());
     }
 
+    /**
+     * 登记订阅关系（方法级写事务，(topic, subscriber_module) 幂等）：主题合法性校验 →
+     * 查无既有行则插入（对账状态初值 PENDING 待对账）→ 已存在时返回既有行不覆盖——对账
+     * 进度属既有事实，静默改写会让对账结论失真。
+     *
+     * <p>边界条件：并发首登记竞态由 uk_mdm_subscription_topic_subscriber 兜底，后到者命中
+     * DuplicateKeyException 后回读既有行返回（与前置查询同语义幂等）。
+     *
+     * @param request 登记请求，非空；topic 须在 MdmConstants.TOPICS 内；来源：订阅治理端点
+     * @return 登记后的订阅出参（新登记行或幂等命中的既有行），非空
+     * @throws BizException 未知主数据主题（INT-1012，400）时触发；建议处理策略：修正 topic 后重试
+     */
     @Override
     @Transactional
     public MdmSubscriptionVO register(MdmSubscriptionCreateRequest request) {
@@ -108,6 +127,15 @@ public class MdmSubscriptionServiceImpl extends ServiceImpl<MdmSubscriptionMappe
         return converter.toMdmSubscriptionVO(entity);
     }
 
+    /**
+     * 注销订阅关系（方法级写事务，@TableLogic 逻辑删 deleted=1）：物理行保留以维持
+     * 对账历史可追溯。
+     *
+     * <p>边界条件：removeById 影响 0 行（含重复注销与已注销行）即视为不存在抛 404。
+     *
+     * @param id 订阅记录 ID，非空；来源：订阅治理端点路径参数
+     * @throws BizException 记录不存在（INT-1011，404）时触发；建议处理策略：前端提示并刷新矩阵
+     */
     @Override
     @Transactional
     public void unregister(Long id) {
@@ -118,6 +146,13 @@ public class MdmSubscriptionServiceImpl extends ServiceImpl<MdmSubscriptionMappe
         log.info("主数据订阅注销完成（逻辑删）：id={}", id);
     }
 
+    /**
+     * 取指定主题的订阅方模块清单（只读事务，精确投影 subscriber_module 单列，按 id 升序）：
+     * 分发流水 target_modules 列的数据源；逻辑删行经 @TableLogic 自动排除。
+     *
+     * @param topic 主数据主题，非空；取值见 MdmConstants.TOPICS；来源：MdmDispatchListener 消费链路
+     * @return 订阅方模块标识清单，非 null；无订阅方时为空清单（广播事件分发流水仍照记）
+     */
     @Override
     @Transactional(readOnly = true)
     public List<String> listSubscriberModules(String topic) {

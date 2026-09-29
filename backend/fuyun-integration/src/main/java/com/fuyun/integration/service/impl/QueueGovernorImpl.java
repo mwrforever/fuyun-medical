@@ -42,6 +42,24 @@ public class QueueGovernorImpl implements MessagingGovernance {
         this.eventRegistryService = eventRegistryService;
     }
 
+    /**
+     * 声明消费队列并绑定主交换机（订阅方模块装配期调用，「事件先登记后订阅」治理的执行点）：
+     * 命名审查 → event_registry 订阅登记（声明副作用，未登记/已废止在此抛出阻断启动）→
+     * 组装 {@code q.<consumerModule>.<eventType>} 队列与 fy.topic 绑定（key=eventType）。
+     *
+     * <p>队列姿态：durable + 显式 quorum + 死信指向 fy.dlx 且不设死信路由键（死信保留原始
+     * 路由键，死信侧据此溯源事件）；RabbitAdmin 幂等声明，重复声明无副作用。
+     *
+     * <p>边界条件：命名不合规（eventType 非小写点分 ≥3 段、consumerModule 非空小写）抛
+     * IllegalArgumentException（装配期失败暴露，修正装配代码）；事件未登记/已废止时登记服务
+     * 抛 IllegalStateException（发布方须先登记契约）。
+     *
+     * @param spec 消费队列声明契约，非空；来源：订阅方模块装配代码
+     * @return 声明集合（队列 + 绑定）；由调用方以 @Bean 暴露交 RabbitAdmin 幂等声明
+     * @throws IllegalArgumentException 命名审查失败时触发；建议处理策略：修正装配代码命名
+     * @throws IllegalStateException    事件未登记或已废止时触发（登记服务抛出）；建议处理策略：
+     *                                  发布方先在 event_registry 登记事件契约后再订阅
+     */
     @Override
     public Declarables declareConsumerQueue(ConsumerQueueSpec spec) {
         validateName("consumerModule", spec.consumerModule(), MODULE_NAME_PATTERN);
@@ -59,6 +77,23 @@ public class QueueGovernorImpl implements MessagingGovernance {
         return new Declarables(queue, binding);
     }
 
+    /**
+     * 声明延迟档位队列并绑定延迟交换机（一条队列一个档位，A.5-7，不引入 delayed-message
+     * 插件）：命名审查 → TTL/目标路由键参数校验 → 组装 {@code delay.<business>} 队列与
+     * fy.delay 绑定（key=队列名）。
+     *
+     * <p>到期语义：消息驻留 x-message-ttl 档位时长后经死信参数回投 fy.topic 目标路由键
+     * （targetRoutingKey），消费侧按普通事件消费。
+     *
+     * <p>边界条件：ttl 非正或毫秒值超出 int 上界（x-message-ttl 服务端为 int 毫秒，超界必须
+     * 显式拒绝而非静默溢出）、targetRoutingKey 空白时抛 IllegalArgumentException（装配期
+     * 失败暴露）。
+     *
+     * @param spec 延迟队列声明契约，非空；来源：声明方模块装配代码
+     * @return 声明集合（队列 + 绑定）；由调用方以 @Bean 暴露交 RabbitAdmin 幂等声明
+     * @throws IllegalArgumentException 命名审查失败、ttl ≤ 0 或超出 int 毫秒上界、目标路由键
+     *                                  空白时触发；建议处理策略：修正装配代码参数
+     */
     @Override
     public Declarables declareDelayQueue(DelayQueueSpec spec) {
         validateName("business", spec.business(), MODULE_NAME_PATTERN);

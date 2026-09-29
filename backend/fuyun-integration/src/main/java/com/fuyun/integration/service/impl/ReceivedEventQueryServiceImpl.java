@@ -37,6 +37,17 @@ public class ReceivedEventQueryServiceImpl implements IReceivedEventQueryService
         this.converter = converter;
     }
 
+    /**
+     * 分页查询消费台账（只读事务）：按事件类型/事件 ID/消费者模块/状态等值 + 接收时间
+     * 闭区间（ge/le）过滤，接收时间倒序 + 主键兜底排序（深翻页防漏行）。
+     *
+     * <p>边界条件：本类零写语义——received_event 写路径唯一入口是两层幂等构件
+     * （MessageIdempotencyServiceImpl），查询面不得出现第二条写入语义；status 取值
+     * PROCESSED/FAILED（消费失败留痕状态机两态）。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200；来源：消费台账端点参数对象
+     * @return 分页出参（0 基页码），非空；无匹配时 content 为空清单
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<ReceivedEventVO> query(ReceivedEventQuery query) {

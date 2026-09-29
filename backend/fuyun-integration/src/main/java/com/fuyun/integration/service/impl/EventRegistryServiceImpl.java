@@ -54,6 +54,19 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
         this.converter = converter;
     }
 
+    /**
+     * 登记事件契约（幂等，方法级写事务）：查无既有行则插入 status=ACTIVE 契约行；同
+     * event_type 已存在（任意状态，含 DEPRECATED）warn 跳过不覆盖——契约一经冻结禁止
+     * 静默改写，重复登记只提示。
+     *
+     * <p>边界条件：①并发首登记 check-then-insert 竞态由 uk_event_registry_event_type 兜底，
+     * 后到者命中 DuplicateKeyException 与前置查询同语义幂等跳过（唯一索引为最终保证）；
+     * ②broadcast 标记行以 subscriber_modules=broadcast 落库（零订阅广播，W-6②），非广播
+     * 事件空清单记空串（待订阅）；③时间戳与操作人列由数据库默认值维护，应用层不写。
+     *
+     * @param spec 登记参数对象（eventType/producerModule/payloadDesc/broadcast/subscriberModules），
+     *             非空；来源：发布方模块装配代码或种子迁移
+     */
     @Override
     @Transactional
     public void register(EventRegistrationSpec spec) {
@@ -92,6 +105,22 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                 entity.getSubscriberModules());
     }
 
+    /**
+     * 登记订阅模块（追加式幂等，方法级写事务；declareConsumerQueue 的声明副作用，启动期
+     * 调用）：读契约行（精确投影）→ 校验已登记且未废止 → 逗号清单追加订阅模块 → 以「读取的
+     * 旧清单」为 CAS 条件单语句条件更新。
+     *
+     * <p>边界条件与并发：事件未登记/已废止抛 IllegalStateException 阻断订阅方启动（先登记
+     * 后订阅）；broadcast 标记行拒订（零订阅广播不承载订阅清单，W-6②）；模块已在清单时
+     * 幂等跳过（防声明重放产生冗余写）；并发追加后到者 CAS 影响 0 行（丢更新防线）自旋
+     * 重读重算，超过 3 次上界 fail-fast 拒绝静默丢订阅——多实例安全且零新增锁。
+     *
+     * @param eventType      事件类型，非空；须已登记且 status=ACTIVE；来源：声明构件装配链路
+     * @param consumerModule 消费者模块域标识，非空；来源：订阅方模块装配代码
+     * @throws IllegalStateException 事件未登记或已废止、broadcast 行拒订、并发竞争超自旋上界时
+     *                               触发；建议处理策略：发布方先登记契约 / 修正契约行 /
+     *                               重启装配进程重试
+     */
     @Override
     @Transactional
     public void registerSubscriber(String eventType, String consumerModule) {
@@ -142,6 +171,13 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                 "事件类型 " + eventType + " 订阅登记并发竞争超过 " + SUBSCRIBER_CAS_MAX_ATTEMPTS + " 次重试，拒绝静默丢订阅（请重启装配进程重试）");
     }
 
+    /**
+     * 判定事件类型是否已在台账登记（治理校验查询，只读事务，精确投影 id 列）。
+     *
+     * @param eventType 事件类型，非空；来源：发布/订阅装配代码的治理校验
+     * @return true=已登记；false=未登记。注意：已登记含 DEPRECATED 已废止状态——判可订阅
+     *         须另行校验状态（registerSubscriber 才是订阅放行的完整校验入口）
+     */
     @Override
     @Transactional(readOnly = true)
     public boolean isRegistered(String eventType) {
@@ -151,6 +187,14 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                 .exists();
     }
 
+    /**
+     * 分页查询事件契约台账（管理面只读，只读事务）：按事件类型/生产方/状态等值过滤，
+     * 事件类型名升序 + 主键兜底排序（深翻页防漏行）；契约 0 基页码与 MP 分页器 1 基在
+     * 服务层唯一转换点互转。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200；来源：契约台账端点参数对象
+     * @return 分页出参（0 基页码），非空；无匹配时 content 为空清单
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<EventRegistryVO> query(EventRegistryQuery query) {
