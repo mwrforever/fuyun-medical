@@ -1,10 +1,12 @@
 package com.fuyun.inpatient.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.inpatient.dto.AdmissionCreateRequest;
 import com.fuyun.inpatient.dto.AdmissionScheduleRequest;
 import com.fuyun.inpatient.dto.VisitRegisterRequest;
 import com.fuyun.inpatient.dto.WardAdmitRequest;
+import com.fuyun.inpatient.entity.Admission;
 import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.ArrearsAlarmVO;
@@ -20,8 +22,14 @@ import java.util.List;
  * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——均同事务联动（IBedService 同源 CAS 权威，
  * 联动失败整体回滚）。Task 10 追加住院计费入口欠费面：押金变动回执驱动的 arrears_flag 本地
  * 标识刷新与病区欠费清单聚合（FU-M04-08——欠费标识为 visit 行本地属性，归本域承载）。
+ * 配对纪律（宪法 A.4.3-20）：本服务以 admission 为主表（实现侧已 extends
+ * ServiceImpl&lt;AdmissionMapper, Admission&gt;），接口侧对应 extends IService&lt;Admission&gt;——
+ * 主表通用能力（分页/批量/链式查询等默认方法集）复用 IService 契约面，属契约面扩展，
+ * 既有业务方法签名零变更。IService 通用写面（save/updateById 等）不承载本域状态迁移——
+ * 住院证状态机迁移一律走实现侧 casSchedule/casCancel/casComplete CAS 权威入口，
+ * 禁经通用写面绕过 CAS。
  */
-public interface IAdmissionService {
+public interface IAdmissionService extends IService<Admission> {
 
     /**
      * 住院证登记（登记即建单入 WAITING 候床队列）：来源/类型词表校验 → 患者归一/拦截（FROZEN

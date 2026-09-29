@@ -85,9 +85,12 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedS
     @Override
     @Transactional(readOnly = true)
     public List<BedMapVO> bedMap(String wardId) {
-        // 数据库读操作：病区床位全量（床号升序——床位图排序键）
-        List<Bed> beds = baseMapper.selectList(
-                Wrappers.<Bed>lambdaQuery().eq(Bed::getWardId, wardId).orderByAsc(Bed::getBedNo));
+        // 数据库读操作：病区床位全量（床号升序——床位图排序键；主表查询走 ServiceImpl 内置
+        // lambdaQuery 链式（宪法 A.4.3-13），条件/排序谓词与链式化前逐字等价）
+        List<Bed> beds = lambdaQuery()
+                .eq(Bed::getWardId, wardId)
+                .orderByAsc(Bed::getBedNo)
+                .list();
         if (beds.isEmpty()) {
             return List.of();
         }
@@ -100,7 +103,8 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedS
         if (occupiedVisitIds.isEmpty()) {
             return beds.stream().map(bed -> BedMapVO.from(bed, null)).toList();
         }
-        // 数据库读操作：占用就诊批量解析（visit_id 唯一索引承载 in 查询）
+        // 数据库读操作：占用就诊批量解析（visit_id 唯一索引承载 in 查询；visit 非本服务主表，
+        // Wrappers 手构保留——A.4.3-13 副表面）
         Map<String, InpatientVisit> visits = visitMapper
                 .selectList(Wrappers.<InpatientVisit>lambdaQuery().in(InpatientVisit::getVisitId, occupiedVisitIds))
                 .stream()
@@ -143,7 +147,8 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedS
     @Override
     @Transactional
     public void assign(Long bedId, BedAssignRequest req) {
-        // 占用主体资格先行：就诊在位且待入科/在院（已出院床位禁再分配）
+        // 占用主体资格先行：就诊在位且待入科/在院（已出院床位禁再分配；visit 非本服务主表，
+        // Wrappers 手构保留——A.4.3-13 副表面）
         InpatientVisit visit = visitMapper.selectOne(
                 Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, req.visitId()));
         if (visit == null) {

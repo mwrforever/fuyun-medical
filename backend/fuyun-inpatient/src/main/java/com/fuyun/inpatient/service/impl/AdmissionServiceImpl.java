@@ -218,13 +218,12 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     public PageResult<AdmissionVO> queue(AdmissionStatus status, int page, int size) {
         // 状态条件缺席即全状态（null.getCode() 惰性求值防护：先取值再进条件）
         String statusCode = status == null ? null : status.getCode();
-        // 数据库读操作：队列分页（0 基请求转 MP 1 基 current；Wrappers 直构避免链式查询对
-        // mapper 代理的反射依赖，WardMetaServiceImpl 同款形态）
-        Page<Admission> result = baseMapper.selectPage(
-                new Page<>(page + 1, size),
-                Wrappers.<Admission>lambdaQuery()
-                        .eq(statusCode != null, Admission::getStatus, statusCode)
-                        .last(QUEUE_ORDER_BY));
+        // 数据库读操作：队列分页（0 基请求转 MP 1 基 current；主表查询走 ServiceImpl 内置
+        // lambdaQuery 链式（宪法 A.4.3-13），条件/排序谓词与链式化前逐字等价）
+        Page<Admission> result = lambdaQuery()
+                .eq(statusCode != null, Admission::getStatus, statusCode)
+                .last(QUEUE_ORDER_BY)
+                .page(new Page<>(page + 1, size));
         return PageResult.of(
                 result.getRecords().stream().map(AdmissionVO::from).toList(), page, size, result.getTotal());
     }
@@ -507,7 +506,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     @Transactional(readOnly = true)
     public List<ArrearsAlarmVO> arrearsList(String wardId) {
         // 数据库读操作：病区欠费在院行聚合（current_ward_id 定位 + 本地欠费标识 + 在院三态限定；
-        // REGISTERED 未入科无病区归属，天然不进清单——语义兜底而非过滤依赖）
+        // REGISTERED 未入科无病区归属，天然不进清单——语义兜底而非过滤依赖；visit 非本服务主表，
+        // Wrappers 手构保留——A.4.3-13 副表面）
         List<InpatientVisit> visits = visitMapper.selectList(Wrappers.<InpatientVisit>lambdaQuery()
                 .eq(InpatientVisit::getCurrentWardId, wardId)
                 .eq(InpatientVisit::getArrearsFlag, true)
@@ -517,7 +517,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             // 空集直过（病区无欠费在院患者）——零二次取数
             return List.of();
         }
-        // 床位号批量映射（current_bed_id 一次取数；床位行缺失兜底 null——转科窗口等数据滞后容错）
+        // 床位号批量映射（current_bed_id 一次取数；床位行缺失兜底 null——转科窗口等数据滞后容错；
+        // bed 非本服务主表，Wrappers 手构保留——A.4.3-13 副表面）
         Set<Long> bedIds = visits.stream()
                 .map(InpatientVisit::getCurrentBedId)
                 .filter(Objects::nonNull)
@@ -543,10 +544,10 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
                 .toList();
     }
 
-    /** 按住院证号定位行（未命中定性 IP-1001；逻辑删由 @TableLogic 自动过滤）。 */
+    /** 按住院证号定位行（未命中定性 IP-1001；逻辑删由 @TableLogic 自动过滤；主表链式——A.4.3-13）。 */
     private Admission requireByNo(String admissionNo) {
         Admission admission =
-                baseMapper.selectOne(Wrappers.<Admission>lambdaQuery().eq(Admission::getAdmissionNo, admissionNo));
+                lambdaQuery().eq(Admission::getAdmissionNo, admissionNo).one();
         if (admission == null) {
             throw new BizException(
                     InpatientErrorCode.ADMISSION_NOT_FOUND, HttpStatus.NOT_FOUND, "住院证不存在：" + admissionNo);
@@ -554,7 +555,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         return admission;
     }
 
-    /** 按就诊号定位行（未命中返回 null 交调用方定性 IP-1007/IP-1023）。 */
+    /** 按就诊号定位行（未命中返回 null 交调用方定性 IP-1007/IP-1023；visit 非本服务主表，Wrappers 手构——A.4.3-13 副表面）。 */
     private InpatientVisit requireByVisitId(String visitId) {
         return visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
     }

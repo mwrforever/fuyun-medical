@@ -1,6 +1,8 @@
 package com.fuyun.inpatient.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.inpatient.dto.BedAssignRequest;
+import com.fuyun.inpatient.entity.Bed;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.vo.BedMapVO;
 import java.util.List;
@@ -12,8 +14,14 @@ import java.util.List;
  * （bed_assign 只增表）与床位图聚合同源本服务；入院登记域（IAdmissionService）的床位联动
  * 面（reserveForAdmission/releaseForAdmission/occupyForAdmission）与转科/转床编排
  * （ITransferService）的床位流转面（transferOut/occupyForTransfer）均由本服务承载。
+ * 配对纪律（宪法 A.4.3-20）：本服务以 bed 为主表（实现侧已 extends
+ * ServiceImpl&lt;BedMapper, Bed&gt;），接口侧对应 extends IService&lt;Bed&gt;——主表通用能力
+ * （分页/批量/链式查询等默认方法集）复用 IService 契约面，属契约面扩展，既有 CAS 方法
+ * （casReserve/casRelease/casOccupy 等，实现侧 mapper）零触碰。床位占用为 CAS 高并发域：
+ * IService 通用写面（save/updateById/update 等无条件写）禁承载床位状态迁移——五态迁移
+ * 一律走本接口 CAS 语义方法，禁经通用写面绕过 CAS 直写床行。
  */
-public interface IBedService {
+public interface IBedService extends IService<Bed> {
 
     /**
      * 病区床位图聚合（GET /beds/map?wardId=）：床位五态 + 包床标记 + 性别限制 + 占用 visit
