@@ -7,8 +7,10 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.pharmacy.entity.DrugBatch;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
+import com.fuyun.pharmacy.service.IBatchSelectService;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
@@ -36,6 +38,8 @@ class BatchSelectServiceImplTest {
     private BatchSelectServiceImpl newService() {
         BatchSelectServiceImpl impl = new BatchSelectServiceImpl(drugBatchMapper);
         ReflectionTestUtils.setField(impl, "baseMapper", drugBatchMapper);
+        // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
+        ReflectionTestUtils.setField(impl, "entityClass", DrugBatch.class);
         return impl;
     }
 
@@ -87,5 +91,18 @@ class BatchSelectServiceImplTest {
                                 .getParamNameValuePairs()
                                 .values())
                 .contains("OUTP_PHARM", "IN_STOCK");
+    }
+
+    @Test
+    @DisplayName("配对纪律（A.4.3-20）：IBatchSelectService 两侧继承 IService/ServiceImpl——契约面扩展不触碰选批语义")
+    void serviceCarriesIServicePairingContract() {
+        // CRUD 单表服务强制配对：接口缺 extends IService / 实现缺 extends ServiceImpl 即本用例红；
+        // 选批为 FEFO 只读域：配对仅扩展默认方法集，选批权威仍走本接口 selectForDispense 入口
+        assertThat(IService.class.isAssignableFrom(IBatchSelectService.class))
+                .as("接口侧配对：IBatchSelectService extends IService<DrugBatch>")
+                .isTrue();
+        assertThat(newService())
+                .as("实现侧配对：BatchSelectServiceImpl extends ServiceImpl")
+                .isInstanceOf(IService.class);
     }
 }

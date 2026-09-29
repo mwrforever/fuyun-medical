@@ -49,6 +49,8 @@ import org.springframework.transaction.annotation.Transactional;
  * practice/check 执业授权校验已接线（PR-5 Task 9，裁决 9 纵深防御，Spec :226）：落库前处方权
  * （PRESCRIPTION）一次，明细聚合后按命中集追加抗菌药最高分级与麻精类（至多两次）——任一未过
  * PH-1017（403，工号脱敏出文案），与 M03 开方入口校验（OP-1017）构成纵深两层。
+ * 查询形态（宪法 A.4.3-13）：主表（prescription）查询统一走 ServiceImpl 内置 lambdaQuery 链式；
+ * 子表查询（prescription_item/drug）不经本服务继承链，保留 Wrappers 手构——副表面无继承面可复用。
  */
 @Slf4j
 public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Prescription>
@@ -272,9 +274,9 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     @Override
     @Transactional
     public void cancel(String rxNo, String reason) {
-        // 数据库读操作：按业务号定位（uk 唯一）
-        Prescription rx =
-                baseMapper.selectOne(Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
+        // 数据库读操作：按业务号定位（uk 唯一）；主表查询走 ServiceImpl 内置 lambdaQuery 链式
+        //   （宪法 A.4.3-13），条件谓词与链式化前逐字等价
+        Prescription rx = lambdaQuery().eq(Prescription::getRxNo, rxNo).one();
         if (rx == null) {
             throw new BizException(PharmacyErrorCode.PRESCRIPTION_NOT_FOUND, HttpStatus.NOT_FOUND, "处方不存在：" + rxNo);
         }
@@ -328,15 +330,15 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
     @Transactional(readOnly = true)
     public PageResult<PrescriptionVO> list(
             String visitId, Long patientId, String rxNo, String status, int page, int size) {
-        // 数据库读操作：四条件任意组合 + id 升序（A.4.3-17 唯一顺序约束）
-        Page<Prescription> result = baseMapper.selectPage(
-                new Page<>(page + 1, size),
-                Wrappers.<Prescription>lambdaQuery()
-                        .eq(visitId != null && !visitId.isBlank(), Prescription::getVisitId, visitId)
-                        .eq(patientId != null, Prescription::getPatientId, patientId)
-                        .eq(rxNo != null && !rxNo.isBlank(), Prescription::getRxNo, rxNo)
-                        .eq(status != null && !status.isBlank(), Prescription::getStatus, status)
-                        .orderByAsc(Prescription::getId));
+        // 数据库读操作：四条件任意组合 + id 升序（A.4.3-17 唯一顺序约束）；主表查询走 ServiceImpl
+        //   内置 lambdaQuery 链式（宪法 A.4.3-13），条件/序键与链式化前逐字等价
+        Page<Prescription> result = lambdaQuery()
+                .eq(visitId != null && !visitId.isBlank(), Prescription::getVisitId, visitId)
+                .eq(patientId != null, Prescription::getPatientId, patientId)
+                .eq(rxNo != null && !rxNo.isBlank(), Prescription::getRxNo, rxNo)
+                .eq(status != null && !status.isBlank(), Prescription::getStatus, status)
+                .orderByAsc(Prescription::getId)
+                .page(new Page<>(page + 1, size));
         List<Prescription> records = result.getRecords();
         if (records.isEmpty()) {
             // 空页短路：不发起明细 in 批查（空 id 集不出网）

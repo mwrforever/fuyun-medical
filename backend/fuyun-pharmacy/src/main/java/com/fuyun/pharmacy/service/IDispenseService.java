@@ -1,7 +1,9 @@
 package com.fuyun.pharmacy.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.dto.PickLine;
+import com.fuyun.pharmacy.entity.Dispense;
 import com.fuyun.pharmacy.vo.DispenseVO;
 import com.fuyun.pharmacy.vo.OccupancyVO;
 import java.util.List;
@@ -12,8 +14,23 @@ import java.util.List;
  * （acceptReturn）与 refund.approved 终态收敛；Task 10 追加执行占用查询（occupancy，供 M13 位）；
  * PR-5 Task 11 放行链回切——放行/退费收口按单据精确清单承载、verify 增可选凭证核验、
  * order.cancelled 未发药作废路径实装（接口方法只增不改形）。
+ * 配对纪律（宪法 A.4.3-20）：本服务以 dispense 为主表（实现侧已 extends
+ * ServiceImpl&lt;DispenseMapper, Dispense&gt;），接口侧对应 extends IService&lt;Dispense&gt;——
+ * 主表通用能力（分页/批量/链式查询等默认方法集）复用 IService 契约面，属契约面扩展；自有
+ * 方法与 IService 默认方法无同名同参冲突（getByRxNo 与 getById/getOne 系列不同名）。本服务
+ * 状态机浓度高：处方/发药单双状态机 CAS 与跨表编排（prescription、prescription_item、
+ * dispense_item、drug_batch 条件锁定/扣减/回补、stock_ledger 出入库流水）全为自有方法承载——
+ * IService 通用写面（save/updateById/removeById 等）不承载状态语义，PH-1xxx 状态迁移一律走
+ * 自有 CAS/编排方法，禁经通用写面直写绕开 CAS 并发守卫（0 行=并发被抢显式拒绝）与消费幂等
+ * 收敛。状态迁移入口清单：处方侧 APPROVED→PENDING_FEE（markPendingFee）、PENDING_FEE→
+ * PENDING_DISPENSE+建单入队（releaseByRxNos）、CAS 作废（voidUndispensedByRx）、DISPENSED→
+ * PART/FULL_RETURNED 退费终态镜像（confirmRefundTerminalByRx）；发药单侧调剂三段 pick
+ * （CREATED→PICKING）→ verify（PICKING→PICKED，双签守卫）→ issue（PICKED→ISSUED，处方同步
+ * 转 DISPENSED）、退药受理 acceptReturn（ISSUED/PART_RETURNED→PART/FULL_RETURNED 终态与
+ * DISPENSING_CANCEL 明细退场两时点）及未发药作废（voidUndispensedByRx 同步发药单 CANCELLED
+ * 与批次锁定释放）。
  */
-public interface IDispenseService {
+public interface IDispenseService extends IService<Dispense> {
 
     /**
      * 缴费放行（charged 消费业务）：按结算覆盖的处方号精确清单放行——逐 rxNo 定位

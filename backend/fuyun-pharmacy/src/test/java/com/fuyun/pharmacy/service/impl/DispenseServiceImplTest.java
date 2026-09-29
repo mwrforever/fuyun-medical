@@ -130,6 +130,8 @@ class DispenseServiceImplTest {
                 masterDataCache,
                 settlementQueryPort);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
+        // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
+        ReflectionTestUtils.setField(impl, "entityClass", Dispense.class);
         return impl;
     }
 

@@ -11,6 +11,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
@@ -18,6 +19,7 @@ import com.fuyun.pharmacy.dto.DrugSaveRequest;
 import com.fuyun.pharmacy.dto.InsuranceMappingRequest;
 import com.fuyun.pharmacy.entity.Drug;
 import com.fuyun.pharmacy.mapper.DrugMapper;
+import com.fuyun.pharmacy.service.IDrugService;
 import com.fuyun.pharmacy.vo.DrugVO;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -49,6 +51,8 @@ class DrugServiceImplTest {
         // 构造器注入 collaborator；ServiceImpl 继承字段 baseMapper 由反射注入（Global Constraints 单测范式）
         DrugServiceImpl impl = new DrugServiceImpl(drugMapper, events);
         ReflectionTestUtils.setField(impl, "baseMapper", drugMapper);
+        // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
+        ReflectionTestUtils.setField(impl, "entityClass", Drug.class);
         return impl;
     }
 
@@ -288,5 +292,16 @@ class DrugServiceImplTest {
         assertThat(wrapper.getParamNameValuePairs().values()).contains("ENABLED");
         assertThat(sql).doesNotContain("LIKE");
         assertThat(sql).doesNotContain("IS NOT NULL");
+    }
+
+    @Test
+    @DisplayName("配对纪律（A.4.3-20）：IDrugService 两侧继承 IService/ServiceImpl——契约面扩展不触碰字典语义")
+    void serviceCarriesIServicePairingContract() {
+        // CRUD 单表服务强制配对：接口缺 extends IService / 实现缺 extends ServiceImpl 即本用例红；
+        // 字典为单表 CRUD 域：配对仅扩展默认方法集，建档/变更/对照权威仍走本接口自有方法入口
+        assertThat(IService.class.isAssignableFrom(IDrugService.class))
+                .as("接口侧配对：IDrugService extends IService<Drug>")
+                .isTrue();
+        assertThat(newService()).as("实现侧配对：DrugServiceImpl extends ServiceImpl").isInstanceOf(IService.class);
     }
 }

@@ -61,6 +61,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 事件消费幂等双层：eventId 构件幂等之外，业务级「CAS 0 行→重读定性：已达目标态幂等跳过、
  * 其余状态 warn 跳过不上抛」（charged 重复投递仅放行一次，Spec §10 异常项）。uk_dispense_rx_active
  * 兜底防重复建单。装配归 PharmacyWebConfig @Import。
+ * 查询形态（宪法 A.4.3-13）：主表（dispense）查询统一走 ServiceImpl 内置 lambdaQuery 链式；
+ * 跨表/子表查询（prescription/prescription_item/dispense_item，另有 drug_batch/stock_ledger
+ * 走条件更新与插入通道）不经本服务继承链，保留 Wrappers 手构——副表面无继承面可复用。
  */
 @Slf4j
 public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> implements IDispenseService {
@@ -650,13 +653,14 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 .toList();
         // 数据库读操作：活动发药单按 DISPENSED 键集一次 IN 批查（排除 CANCELLED——uk_dispense_rx_active
         //   允许取消态历史行共存，每号至多一行活动单=原逐号 selectOne 语义；缺号不出结果集→映射缺位即
-        //   原无活动单分支）；空键集短路零查询（空 id 集不出网）——2N 查收敛为恒 2 查
+        //   原无活动单分支）；空键集短路零查询（空 id 集不出网）——2N 查收敛为恒 2 查；
+        //   主表查询走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），条件谓词与链式化前逐字等价
         Map<String, Dispense> activeByRxNo = dispensedRxNos.isEmpty()
                 ? Map.of()
-                : baseMapper
-                        .selectList(Wrappers.<Dispense>lambdaQuery()
-                                .in(Dispense::getRxNo, dispensedRxNos)
-                                .ne(Dispense::getStatus, "CANCELLED"))
+                : lambdaQuery()
+                        .in(Dispense::getRxNo, dispensedRxNos)
+                        .ne(Dispense::getStatus, "CANCELLED")
+                        .list()
                         .stream()
                         .collect(Collectors.toMap(
                                 Dispense::getRxNo,
@@ -736,14 +740,15 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         // 数据库读操作：活动发药单按「全部命中处方 rxNo 集」IN 批查（排除 CANCELLED——
         //   uk_dispense_rx_active 允许取消态历史行共存；id 升序保每处方内单据序与原逐处方单查
         //   一致）按 rxNo 分组遇序保序。键集含守卫将跳过行：守卫在批查后按原循环序逐行判定，
-        //   跳过行不消费自身分组（只扩大读面不改写面）；空集短路零查询（空 id 集不出网）
+        //   跳过行不消费自身分组（只扩大读面不改写面）；空集短路零查询（空 id 集不出网）；
+        //   主表查询走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），条件/序键与链式化前逐字等价
         Map<String, List<Dispense>> activesByRxNo = rxByNo.isEmpty()
                 ? Map.of()
-                : baseMapper
-                        .selectList(Wrappers.<Dispense>lambdaQuery()
-                                .in(Dispense::getRxNo, rxByNo.keySet())
-                                .ne(Dispense::getStatus, "CANCELLED")
-                                .orderByAsc(Dispense::getId))
+                : lambdaQuery()
+                        .in(Dispense::getRxNo, rxByNo.keySet())
+                        .ne(Dispense::getStatus, "CANCELLED")
+                        .orderByAsc(Dispense::getId)
+                        .list()
                         .stream()
                         .collect(Collectors.groupingBy(Dispense::getRxNo, LinkedHashMap::new, Collectors.toList()));
         // 数据库读操作：NORMAL 明细行按「全部涉及发药单 id 集」IN 批查（退场行/取消行不重复处置；
@@ -884,13 +889,14 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         // 数据库读操作：本集发药单一次 in 批取，谓词排除 CANCELLED 与 uk_dispense_rx_active 配套互锁
         //   （V703 部分唯一索引仅约束活动行唯一，status<>CANCELLED 排除「取消单+重建活动单」共存的
         //   取消态历史行——一处方一张活动单，每 rxNo 至多 1 行命中，不重蹈原逐行 selectOne 多行抛错），
-        //   按 rxNo 建映射供投影消费；未配药处方映射缺位→null（占用行仍出，退费前置）
+        //   按 rxNo 建映射供投影消费；未配药处方映射缺位→null（占用行仍出，退费前置）；
+        //   主表查询走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），条件/序键与链式化前逐字等价
         List<String> rxNos = rxs.stream().map(Prescription::getRxNo).toList();
-        Map<String, Dispense> dispenseByRxNo = baseMapper
-                .selectList(Wrappers.<Dispense>lambdaQuery()
-                        .in(Dispense::getRxNo, rxNos)
-                        .ne(Dispense::getStatus, "CANCELLED")
-                        .orderByAsc(Dispense::getId))
+        Map<String, Dispense> dispenseByRxNo = lambdaQuery()
+                .in(Dispense::getRxNo, rxNos)
+                .ne(Dispense::getStatus, "CANCELLED")
+                .orderByAsc(Dispense::getId)
+                .list()
                 .stream()
                 .collect(Collectors.toMap(Dispense::getRxNo, Function.identity(), (first, duplicate) -> first));
         List<OccupancyVO> rows = new ArrayList<>();
@@ -917,9 +923,12 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     public DispenseVO getByRxNo(String rxNo) {
         // 数据库读操作：一处方一张活动单（uk_dispense_rx_active），按 rx_no 定位且排除 CANCELLED
         //   取消态历史行（W-24——order.cancelled 作废单与重建活动单允许共存，selectOne 禁多行歧义）；
-        //   无活动单返回 null（调用方组空集）
-        Dispense d = baseMapper.selectOne(
-                Wrappers.<Dispense>lambdaQuery().eq(Dispense::getRxNo, rxNo).ne(Dispense::getStatus, "CANCELLED"));
+        //   无活动单返回 null（调用方组空集）；主表查询走 ServiceImpl 内置 lambdaQuery 链式
+        //   （宪法 A.4.3-13），条件谓词与链式化前逐字等价
+        Dispense d = lambdaQuery()
+                .eq(Dispense::getRxNo, rxNo)
+                .ne(Dispense::getStatus, "CANCELLED")
+                .one();
         if (d == null) {
             return null;
         }
@@ -974,7 +983,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
      * @throws BizException PH-1008（404，dispense_no 无命中）
      */
     private Dispense requireByNo(String dispenseNo) {
-        Dispense d = baseMapper.selectOne(Wrappers.<Dispense>lambdaQuery().eq(Dispense::getDispenseNo, dispenseNo));
+        // 主表查询走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），条件谓词与链式化前逐字等价
+        Dispense d = lambdaQuery().eq(Dispense::getDispenseNo, dispenseNo).one();
         if (d == null) {
             throw new BizException(PharmacyErrorCode.DISPENSE_NOT_FOUND, HttpStatus.NOT_FOUND, "调剂单不存在：" + dispenseNo);
         }

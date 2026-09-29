@@ -110,6 +110,8 @@ class PrescriptionServiceImplTest {
         PrescriptionServiceImpl impl = new PrescriptionServiceImpl(
                 prescriptionMapper, prescriptionItemMapper, drugMapper, prescriptionFeePort, practiceCheckPort, events);
         ReflectionTestUtils.setField(impl, "baseMapper", prescriptionMapper);
+        // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
+        ReflectionTestUtils.setField(impl, "entityClass", Prescription.class);
         return impl;
     }
 

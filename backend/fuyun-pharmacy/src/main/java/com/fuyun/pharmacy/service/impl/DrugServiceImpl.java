@@ -68,8 +68,9 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
     @Override
     @Transactional
     public DrugVO create(DrugSaveRequest req) {
-        // 数据库读操作：uk 前置查（唯一索引兜底并发，双防线与 billing charge_item 同型）
-        Long exists = drugMapper.selectCount(Wrappers.<Drug>lambdaQuery().eq(Drug::getDrugCode, req.drugCode()));
+        // 数据库读操作：uk 前置查（唯一索引兜底并发，双防线与 billing charge_item 同型）；
+        //   主表查询走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），条件谓词与链式化前逐字等价
+        Long exists = lambdaQuery().eq(Drug::getDrugCode, req.drugCode()).count();
         if (exists != null && exists > 0) {
             throw new BizException(
                     PharmacyErrorCode.DRUG_CODE_EXISTS, HttpStatus.CONFLICT, "药品编码已存在：" + req.drugCode());
@@ -208,7 +209,9 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
     /**
      * 检索谓词组装（包级可见供单测对 getSqlSegment 做 contains 断言；keyword 非空时
      * 通用名/商品名/拼音/医保码四列 OR 前缀匹配，insuranceMapped=true 附加 IS NOT NULL 谓词；
-     * 默认启用面——停用药品不进选药场景）。
+     * 默认启用面——停用药品不进选药场景）。主表（drug）谓词面本应链式化（A.4.3-13），但
+     * 单测对返回形态强转 LambdaQueryWrapper 断言锚定，链式化须随断言现代化专项一并迁移
+     * （回归红线出口），暂保留 Wrappers 手构。
      *
      * @param keyword         关键词，可空
      * @param essential       基药过滤，可空

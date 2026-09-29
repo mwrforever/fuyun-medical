@@ -1,6 +1,5 @@
 package com.fuyun.pharmacy.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.pharmacy.entity.DrugBatch;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
@@ -44,14 +43,15 @@ public class BatchSelectServiceImpl extends ServiceImpl<DrugBatchMapper, DrugBat
     @Override
     @Transactional(readOnly = true)
     public DrugBatch selectForDispense(long drugId, String storehouse, BigDecimal quantity) {
-        // 数据库读操作：FEFO 序候选全查（近效期先出、同效期先产先出），可用量过滤后取首个足量批次
-        return baseMapper
-                .selectList(Wrappers.<DrugBatch>lambdaQuery()
-                        .eq(DrugBatch::getDrugId, drugId)
-                        .eq(DrugBatch::getStorehouse, storehouse)
-                        .eq(DrugBatch::getStatus, "IN_STOCK")
-                        .orderByAsc(DrugBatch::getExpireDate)
-                        .orderByAsc(DrugBatch::getProductionDate))
+        // 数据库读操作：FEFO 序候选全查（近效期先出、同效期先产先出），可用量过滤后取首个足量批次；
+        //   主表查询走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），条件/排序谓词与链式化前逐字等价
+        return lambdaQuery()
+                .eq(DrugBatch::getDrugId, drugId)
+                .eq(DrugBatch::getStorehouse, storehouse)
+                .eq(DrugBatch::getStatus, "IN_STOCK")
+                .orderByAsc(DrugBatch::getExpireDate)
+                .orderByAsc(DrugBatch::getProductionDate)
+                .list()
                 .stream()
                 .filter(b -> b.getQuantity().subtract(b.getLockedQty()).compareTo(quantity) >= 0)
                 .findFirst()
