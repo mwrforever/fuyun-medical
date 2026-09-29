@@ -3,6 +3,7 @@ package com.fuyun.patient.controller;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.dto.CardTxnQuery;
 import com.fuyun.patient.entity.CardAccount;
 import com.fuyun.patient.service.ICardAccountService;
@@ -55,8 +56,7 @@ public class CardAccountController {
         if (account == null) {
             throw new BizException(PatientErrorCode.CARD_ACCOUNT_NOT_FOUND, HttpStatus.NOT_FOUND, "一卡通账户不存在");
         }
-        return Mappers.getMapper(com.fuyun.patient.convert.PatientConverter.class)
-                .toVO(account);
+        return Mappers.getMapper(PatientConverter.class).toVO(account);
     }
 
     /**

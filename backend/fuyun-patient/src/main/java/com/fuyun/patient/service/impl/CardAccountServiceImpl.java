@@ -7,6 +7,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.CardTxnRecord;
 import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.entity.CardAccount;
 import com.fuyun.patient.entity.CardTxn;
 import com.fuyun.patient.mapper.CardAccountMapper;
@@ -197,8 +198,7 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
                         .eq(CardTxn::getAccountId, accountId)
                         .orderByDesc(CardTxn::getOccurredAt));
         List<CardTxnVO> rows = result.getRecords().stream()
-                .map(row -> Mappers.getMapper(com.fuyun.patient.convert.PatientConverter.class)
-                        .toVO(row))
+                .map(row -> Mappers.getMapper(PatientConverter.class).toVO(row))
                 .toList();
         return PageResult.of(rows, page, size, result.getTotal());
     }
@@ -218,8 +218,7 @@ public class CardAccountServiceImpl extends ServiceImpl<CardAccountMapper, CardA
         if (account == null) {
             throw new BizException(PatientErrorCode.CARD_ACCOUNT_NOT_FOUND, HttpStatus.NOT_FOUND, "一卡通账户不存在");
         }
-        return Mappers.getMapper(com.fuyun.patient.convert.PatientConverter.class)
-                .toVO(account);
+        return Mappers.getMapper(PatientConverter.class).toVO(account);
     }
 
     /**

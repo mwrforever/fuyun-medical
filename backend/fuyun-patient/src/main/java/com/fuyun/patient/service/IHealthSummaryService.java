@@ -1,6 +1,7 @@
 package com.fuyun.patient.service;
 
 import com.baomidou.mybatisplus.spring.service.IService;
+import com.fuyun.patient.api.AllergyChecker;
 import com.fuyun.patient.dto.HealthItemCorrectRequest;
 import com.fuyun.patient.dto.HealthItemCreateRequest;
 import com.fuyun.patient.entity.HealthSummary;
@@ -10,7 +11,7 @@ import com.fuyun.patient.vo.HealthSummaryVO;
 /**
  * 健康档案服务（FU-M02-05）：摘要/明细维护 + 纠错留痕 + api 过敏校验实现。
  */
-public interface IHealthSummaryService extends IService<HealthSummary>, com.fuyun.patient.api.AllergyChecker {
+public interface IHealthSummaryService extends IService<HealthSummary>, AllergyChecker {
 
     /**
      * 取患者健康档案（无聚合行返回空摘要非 null）。

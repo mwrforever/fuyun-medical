@@ -2,6 +2,7 @@ package com.fuyun.patient.service;
 
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.api.CardAccountLedger;
 import com.fuyun.patient.entity.CardAccount;
 import com.fuyun.patient.vo.CardAccountVO;
 import com.fuyun.patient.vo.CardTxnVO;
@@ -9,7 +10,7 @@ import com.fuyun.patient.vo.CardTxnVO;
 /**
  * 一卡通账户服务（FU-M02-04 台账侧）：开户（发卡联动）/冻结/销户/流水查询 + api 记账登记实现。
  */
-public interface ICardAccountService extends IService<CardAccount>, com.fuyun.patient.api.CardAccountLedger {
+public interface ICardAccountService extends IService<CardAccount>, CardAccountLedger {
 
     /**
      * 按患者开户（启用开关关闭时返回 null 不建户——发卡联动入口）。
