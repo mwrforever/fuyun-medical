@@ -2,6 +2,7 @@ package com.fuyun.iot.internal;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.common.exception.BizException;
 import com.fuyun.common.messaging.StandardTelemetryMessage;
 import com.fuyun.iot.api.DeviceStatusEvent;
 import com.fuyun.iot.constants.IotMessagingConstants;
@@ -431,7 +432,8 @@ public final class TelemetryFrameParser {
         DeviceStatus status;
         try {
             status = DeviceStatus.fromCode(statusCode);
-        } catch (IllegalArgumentException e) {
+        } catch (BizException e) {
+            // fromCode 词表外已收口 BizException（BE-C3-05），此处就地包装为毒丸保持解析失败语义
             throw new FrameParseException("status 值域越界（非设备状态枚举合法值）", e);
         }
         return new ParsedFrame.StatusFrame(new DeviceStatusEvent(
@@ -487,8 +489,9 @@ public final class TelemetryFrameParser {
         }
         try {
             return TelemetryQuality.fromCode(quality);
-        } catch (IllegalArgumentException e) {
-            // 值域越界属毒丸（统一收口为 FrameParseException），不得静默降级为默认质量
+        } catch (BizException e) {
+            // 值域越界属毒丸（统一收口为 FrameParseException），不得静默降级为默认质量；
+            // fromCode 词表外已收口 BizException（BE-C3-05），此处就地包装为毒丸
             throw new FrameParseException("quality 值域越界（要求 GOOD/SUSPECT/BAD）", e);
         }
     }
@@ -507,8 +510,9 @@ public final class TelemetryFrameParser {
         }
         try {
             return TelemetrySource.fromCode(source);
-        } catch (IllegalArgumentException e) {
-            // 值域越界属毒丸（统一收口为 FrameParseException），不得静默降级为默认来源
+        } catch (BizException e) {
+            // 值域越界属毒丸（统一收口为 FrameParseException），不得静默降级为默认来源；
+            // fromCode 词表外已收口 BizException（BE-C3-05），此处就地包装为毒丸
             throw new FrameParseException("source 值域越界（要求 IOTDA/HL7）", e);
         }
     }

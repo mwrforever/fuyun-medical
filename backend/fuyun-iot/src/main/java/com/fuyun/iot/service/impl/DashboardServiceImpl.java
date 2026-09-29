@@ -282,7 +282,8 @@ public class DashboardServiceImpl implements IDashboardService {
                         .build())) {
                     return cursor.hasNext();
                 } catch (Exception e) {
-                    // SCAN 游走异常包装为运行时上抛，由外层统一降级
+                    // 内部断言：受检异常→运行时桥接（RedisCallback 签名约束），外层 catch 即时捕获
+                    // 降级为非风暴，非用户输入路径；保留 ISE 包装语义
                     throw new IllegalStateException("风暴键扫描失败：" + e.getMessage(), e);
                 }
             });

@@ -613,7 +613,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 // 命令结果帧（Task 8 结果回推消费源）：交命令域监听器（终态迁移+事件发布），成功后即时确认
                 handleCommandResultFrame(commandFrame, message);
             } else {
-                // sealed 五形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
+                // 内部断言：sealed 五形态穷尽兜底，新增形态未接线即显性暴露（编译器穷尽性保障的
+                // 不可达防御，非用户输入路径），保留 ISE 语义
                 throw new IllegalStateException("未接线的帧解析形态：" + frame.getClass().getName());
             }
         } catch (InterruptedException e) {

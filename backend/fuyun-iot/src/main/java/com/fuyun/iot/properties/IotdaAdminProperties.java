@@ -66,6 +66,8 @@ public record IotdaAdminProperties(
             String detail = violations.stream()
                     .map(violation -> violation.getPropertyPath() + " " + violation.getMessage())
                     .collect(Collectors.joining("；"));
+            // 内部断言：启动期配置 fail-fast（运维侧环境变量缺失，非用户输入路径），
+            // 保留 ISE 阻断 Bean 装配的 Spring 惯用语义
             throw new IllegalStateException("fuyun.iot.admin.enabled=true 但 IoTDA 管理面参数缺失：" + detail);
         }
     }

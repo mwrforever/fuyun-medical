@@ -127,12 +127,15 @@ public record IotProperties(
                 String detail = violations.stream()
                         .map(violation -> violation.getPropertyPath() + " " + violation.getMessage())
                         .collect(Collectors.joining("；"));
+                // 内部断言：启动期配置 fail-fast（运维侧环境变量缺失/不合法，非用户输入路径），
+                // 保留 ISE 阻断 AMQP Bean 装配的 Spring 惯用语义
                 throw new IllegalStateException("fuyun.iot.amqp.enabled=true 但 AMQP 连接参数缺失或不合法：" + detail);
             }
             // 空段队列名防御（2026-09-11 终审修复）：relaxed binding 对逗号分隔清单保留空段/空白项
             // （实测 "q1,,q2" 绑定为含空串元素列表），@NotEmpty 只拦整体缺失——显式拒绝无效元素，
             // 防消费者以空地址建链产生无意义连接
             if (queues != null && queues.stream().anyMatch(queue -> queue == null || queue.isBlank())) {
+                // 内部断言：启动期配置 fail-fast（环境变量清单空段防御，非用户输入路径），保留 ISE 语义
                 throw new IllegalStateException(
                         "fuyun.iot.amqp.queues 含空白队列名（FUYUN_IOT_AMQP_QUEUES 为逗号分隔清单，" + "禁止空段与空白项，请与 IoTDA 推送队列逐一对齐）");
             }

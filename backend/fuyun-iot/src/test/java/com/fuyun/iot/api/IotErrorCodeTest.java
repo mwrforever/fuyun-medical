@@ -15,7 +15,8 @@ import org.springframework.http.HttpStatus;
  * M14 模块错误码枚举契约测试（backend 宪法 A.3-4：格式 {@code <模块助记>-<4位数字>}，全项目唯一）。
  * P2 PR-2 Task 1 随 GC12 骨架扩段同步扩断言：IOT-1001~IOT-1022 逐位连续 + HTTP 状态映射全量
  * 精确匹配（新契约全量冻结，严格度不降）；Task 11 网关管理域三码接续顺延扩至 IOT-1025
- * （同款扩段断言形态——逐位连续与全量映射严格度不变，仅冻结全集扩容）。
+ * （同款扩段断言形态——逐位连续与全量映射严格度不变，仅冻结全集扩容）；EX-19 词表外收口
+ * 接续顺延扩至 IOT-1026（BE-C3-05，严格度不变仅冻结全集扩容）。
  */
 class IotErrorCodeTest {
 
@@ -45,7 +46,8 @@ class IotErrorCodeTest {
             Map.entry(IotErrorCode.REGISTRY_UNAVAILABLE, HttpStatus.SERVICE_UNAVAILABLE),
             Map.entry(IotErrorCode.GATEWAY_NOT_FOUND, HttpStatus.NOT_FOUND),
             Map.entry(IotErrorCode.GATEWAY_ALREADY_EXISTS, HttpStatus.CONFLICT),
-            Map.entry(IotErrorCode.GATEWAY_STANDBY_INVALID, HttpStatus.CONFLICT));
+            Map.entry(IotErrorCode.GATEWAY_STANDBY_INVALID, HttpStatus.CONFLICT),
+            Map.entry(IotErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST));
 
     @Test
     @DisplayName("全部错误码格式为 IOT-4位数字且枚举内无重复")
@@ -71,13 +73,13 @@ class IotErrorCodeTest {
     }
 
     @Test
-    @DisplayName("错误码全集 IOT-1001~IOT-1025 逐位连续，总数二十五无重号（GC12 扩段 + Task 11 网关域顺延）")
+    @DisplayName("错误码全集 IOT-1001~IOT-1026 逐位连续，总数二十六无重号（GC12 扩段 + Task 11 网关域 + EX-19 词表外收口顺延）")
     void errorCodesFollowFrozenSequenceWithoutDuplicates() {
         List<String> codes =
                 Arrays.stream(IotErrorCode.values()).map(IotErrorCode::getCode).toList();
         assertThat(codes).as("错误码存在重号").doesNotHaveDuplicates();
-        assertThat(codes).as("错误码总数偏离冻结全集（应为 25 条）").hasSize(25);
-        for (int i = 0; i < 25; i++) {
+        assertThat(codes).as("错误码总数偏离冻结全集（应为 26 条）").hasSize(26);
+        for (int i = 0; i < 26; i++) {
             // 逐位连续断言：全部枚举码必须恰为 IOT-(1001+i)，插码/跳号/改号任一漂移即红灯
             assertThat(codes.get(i))
                     .as("第 %d 个错误码偏离接续序列（期望 IOT-%04d）", i + 1, 1001 + i)
@@ -98,6 +100,7 @@ class IotErrorCodeTest {
                 .isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(EXPECTED_HTTP_STATUS.get(IotErrorCode.TELEMETRY_QUERY_INVALID))
                 .isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(EXPECTED_HTTP_STATUS.get(IotErrorCode.ENUM_CODE_INVALID)).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(EXPECTED_HTTP_STATUS.get(IotErrorCode.REGISTRY_UNAVAILABLE))
                 .isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
     }
