@@ -1,7 +1,9 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.IoRecordCreateRequest;
 import com.fuyun.nursing.dto.IoSummaryCreateRequest;
+import com.fuyun.nursing.entity.IoRecord;
 import com.fuyun.nursing.vo.IoRecordVO;
 import com.fuyun.nursing.vo.IoSummaryVO;
 import java.time.LocalDate;
@@ -16,8 +18,13 @@ import java.util.List;
  * 承载、落库 BigDecimal NUMERIC（D-18）；业务时间一律服务器时间（GC25）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：主表 io_record 与实现侧 {@code ServiceImpl<IoRecordMapper,
+ * IoRecord>} 配对，接口侧收拢 {@code extends IService<IoRecord>}——主表通用 CRUD 直接复用
+ * IService 契约面；小结链（io_summary 行落库 + 体温单条目同事务回填）为跨链编排，由自有
+ * 方法 {@link #summarize} 承载，守卫链与幂等语义在自有方法内收口（禁经 IService 通用面绕行）。
  */
-public interface IIoRecordService {
+public interface IIoRecordService extends IService<IoRecord> {
 
     /**
      * 出入量明细录入：类型/项目/数据源词表校验（非法或项目与类型不一致 NS-1019）→ 数量解析

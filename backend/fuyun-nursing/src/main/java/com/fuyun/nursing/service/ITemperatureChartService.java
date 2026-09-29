@@ -1,6 +1,8 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.SpecialEventRequest;
+import com.fuyun.nursing.entity.TemperatureChartPage;
 import com.fuyun.nursing.vo.ChartEntryVO;
 import com.fuyun.nursing.vo.TemperatureChartVO;
 import java.time.Instant;
@@ -14,8 +16,15 @@ import java.time.YearMonth;
  * 一律 NS-1016 幂等拒绝（不覆盖首值）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：主表 temperature_chart_page（月页）与实现侧
+ * {@code ServiceImpl<TemperatureChartPageMapper, TemperatureChartPage>} 配对，接口侧收拢
+ * {@code extends IService<TemperatureChartPage>}——月页通用 CRUD 直接复用 IService 契约面；
+ * 条目表（temperature_chart_entry）写入为同事务跨链编排，由 ensurePage + 自有写入方法
+ * （addSpecialEvent/appendVitalEntry/appendDailyValue）承载，type_key 服务端权威与唯一冲突
+ * 幂等语义在自有方法内收口（禁经 IService 通用面绕行）。
  */
-public interface ITemperatureChartService {
+public interface ITemperatureChartService extends IService<TemperatureChartPage> {
 
     /**
      * 体温单月页查询：月页定位 + 三类条目三段分组（各段按 entryTime 升序，服务端排序）。

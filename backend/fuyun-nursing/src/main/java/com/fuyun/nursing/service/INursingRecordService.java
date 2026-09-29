@@ -1,7 +1,9 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.NursingRecordCreateRequest;
 import com.fuyun.nursing.dto.NursingRecordReviseRequest;
+import com.fuyun.nursing.entity.NursingRecord;
 import com.fuyun.nursing.vo.NursingRecordVO;
 import java.time.LocalDate;
 import java.util.List;
@@ -13,8 +15,14 @@ import java.util.List;
  * GC25 护理文书红线）；文书业务时间一律服务器时间。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：单主表 nursing_record 与实现侧
+ * {@code ServiceImpl<NursingRecordMapper, NursingRecord>} 配对，接口侧收拢
+ * {@code extends IService<NursingRecord>}——主表通用 CRUD 直接复用 IService 契约面；
+ * 状态机迁移（submit/revise）与观察行归集（appendObservation）为带守卫链的自有方法承载
+ * （CAS 行数判定与修订留痕语义在自有方法内收口，禁经 IService 通用面绕行）。
  */
-public interface INursingRecordService {
+public interface INursingRecordService extends IService<NursingRecord> {
 
     /**
      * 创建护理记录（草稿）：在区校验（查无 → NS-1004）→ NursingSeqGate 取号（NR 前缀）→

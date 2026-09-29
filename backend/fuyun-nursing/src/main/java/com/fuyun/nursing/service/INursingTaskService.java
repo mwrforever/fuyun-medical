@@ -1,7 +1,9 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.NursingTaskCancelRequest;
 import com.fuyun.nursing.dto.NursingTaskCreateRequest;
+import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.vo.NursingTaskVO;
 import java.time.LocalDate;
@@ -19,8 +21,14 @@ import java.util.Map;
  * 判定单次递增，P1 不发布 nursing.task.overdue（V800 占位登记，发布随 P2 延迟队列）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：单主表 nursing_task 与实现侧
+ * {@code ServiceImpl<NursingTaskMapper, NursingTask>} 配对，接口侧收拢
+ * {@code extends IService<NursingTask>}——主表通用 CRUD 直接复用 IService 契约面；
+ * 终态流转（complete/cancel 的 CAS 行数判定 + 事件发布）与读时惰性逾期写为带守卫链的
+ * 自有方法承载（禁经 IService 通用面绕行——通用面不盖操作者审计列、不发领域事件）。
  */
-public interface INursingTaskService {
+public interface INursingTaskService extends IService<NursingTask> {
 
     /**
      * 护理任务创建（手工开立）：①taskType/source/priority code 显式校验（非法 NS-1019）→

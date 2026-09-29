@@ -1,8 +1,10 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.NurseAssignmentRequest;
 import com.fuyun.nursing.dto.WardPatientRegisterRequest;
 import com.fuyun.nursing.dto.WardPatientRemoveRequest;
+import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.vo.NurseAssignmentVO;
 import com.fuyun.nursing.vo.WardConfigVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
@@ -16,8 +18,15 @@ import java.util.List;
  * 床位主数据维护、出院业务状态变更等任何 ADT 写能力（M05 对住院业务状态零权威）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：主表 nursing_ward_patient（在区视图行，register/remove/
+ * 风险标识回写的唯一写落点）与实现侧 {@code ServiceImpl<NursingWardPatientMapper,
+ * NursingWardPatient>} 配对，接口侧收拢 {@code extends IService<NursingWardPatient>}——
+ * 主表通用 CRUD 直接复用 IService 契约面；责任分配（nurse_assignment）与配置读取
+ * （nursing_ward_config）为同域相邻表，各写方法仍经带守卫链的自有方法承载（床位占用/
+ * 班次唯一查重在自有方法内收口，禁经 IService 通用面绕行）。
  */
-public interface IWardMetaService {
+public interface IWardMetaService extends IService<NursingWardPatient> {
 
     /**
      * 入区登记（P1 过渡通道，幂等 upsert）：VisitIdValidator 结构校验（NS-1003）→
