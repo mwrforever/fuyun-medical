@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.slf4j.Logger;
@@ -25,9 +27,10 @@ import org.slf4j.LoggerFactory;
  * REMOVED 词表）可解析为 SUCCESS/FAILED 终态的回执来源。
  *
  * <p><b>线程纪律</b>：Paho 同步客户端禁止在 messageArrived 回调线程内阻塞发布（等待完成令牌
- * 与回执确认同线程，存在死锁风险），命令处理移交单线程命名执行器（daemon——优雅停机由
- * IotdaMqttClient.close 断链收口，daemon 线程不阻塞 JVM 退出）；单线程保证命令按到达序执行，
- * 暂停/恢复等状态变更与上报周期线程的并发由剧本侧 synchronized 兜底。
+ * 与回执确认同线程，存在死锁风险），命令处理移交单线程命名执行器（daemon——daemon 属性为
+ * JVM 退出双保险而非依赖项，优雅停机经 {@link #close()} 显式收口，由 IotSimulatorApplication
+ * 停机钩子在断链前调用）；单线程保证命令按到达序执行，暂停/恢复等状态变更与上报周期线程的
+ * 并发由剧本侧 synchronized 兜底。
  *
  * <p><b>异常口径</b>：命令帧畸形/缺 command_name/剧本拒绝 → 回执 result_code=1（可定位回执
  * 主题时尽力闭合命令，平台归 FAILED 而非无限等待）；request_id 缺失（主题非命令形态）→ 无法
@@ -76,6 +79,9 @@ public class CommandSubscriber {
 
     /** 下行命令处理线程名（单线程命名执行器，宪法 B.3-4 线程纪律） */
     private static final String COMMAND_THREAD_NAME = "iot-simulator-command";
+
+    /** 停机等待在途命令处理限时（秒）：命令处理与回执发布为毫秒级（本地执行 + 单帧 qos=1 发布），5s 富余 */
+    private static final long STOP_AWAIT_SECONDS = 5L;
 
     private static final Logger log = LoggerFactory.getLogger(CommandSubscriber.class);
 
@@ -131,12 +137,45 @@ public class CommandSubscriber {
      * 注册命令下行订阅（qos=1，启动期调用一次）：订阅失败即受检上抛交启动方 fail-fast
      * （命令下行是演示链路组成，静默缺失只会把故障后移到平台命令超时）。
      *
+     * <p>提交守卫（EX-33 配套）：停机窗口内（close 已关执行器、断链尚未完成）到达的命令帧
+     * 提交被拒，捕获留痕丢弃——保持「回调线程零外抛」不变量（外抛即 Paho 断开连接），
+     * 平台侧按超时归终态兜底。
+     *
      * @throws MqttException 订阅失败（断链中等）；由调用方决定终止启动或重试
      */
     public void subscribe() throws MqttException {
         String filter = String.format(TOPIC_COMMAND_FILTER_TEMPLATE, deviceId);
-        client.subscribe(filter, 1, (topic, message) -> commandExecutor.submit(() -> handleCommand(topic, message)));
+        client.subscribe(filter, 1, (topic, message) -> {
+            try {
+                commandExecutor.submit(() -> handleCommand(topic, message));
+            } catch (RejectedExecutionException e) {
+                // 停机窗口内到达的命令：执行器已关闭（close 先于断链调用），丢弃留痕不外抛
+                log.warn("命令执行器已停机，丢弃停机窗口内命令帧（平台按超时归终态）：deviceId={}，topic={}", deviceId, topic);
+            }
+        });
         log.info("命令下行订阅已注册：deviceId={}，filter={}，qos=1", deviceId, filter);
+    }
+
+    /**
+     * 优雅停机（EX-33 生命周期收口，IotSimulatorApplication 停机钩子在断链前调用）：shutdown
+     * 停收新命令 → 限时等待在途命令处理与回执发出（命令处理毫秒级，5s 限时富余）→ 超时
+     * shutdownNow 中断兜底。daemon 线程本不阻塞 JVM 退出，显式收口收敛停机窗口内的线程驻留
+     * 并尽量发出在途回执（残余丢失由平台侧超时归终态兜底）。
+     */
+    public void close() {
+        log.info("命令执行器停机开始：deviceId={}", deviceId);
+        commandExecutor.shutdown();
+        try {
+            if (!commandExecutor.awaitTermination(STOP_AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                log.warn("命令执行器停机等待超时（{}s），中断兜底：在途回执由平台超时终态兜底", STOP_AWAIT_SECONDS);
+                commandExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("命令执行器停机等待被中断，中断兜底");
+            commandExecutor.shutdownNow();
+        }
+        log.info("命令执行器已停机：deviceId={}", deviceId);
     }
 
     /**

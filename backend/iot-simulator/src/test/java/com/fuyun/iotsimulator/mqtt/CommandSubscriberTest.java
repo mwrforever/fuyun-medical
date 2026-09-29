@@ -193,4 +193,37 @@ class CommandSubscriberTest {
         verify(mqttClient, timeout(AWAIT_MILLIS).times(0)).publishTo(anyString(), anyString());
         assertThat(receivedCommands).as("自回投帧不挂剧本回调").isEmpty();
     }
+
+    @Test
+    @DisplayName("生命周期收口（EX-33）：close 等待在途命令回执发出后终止，停机窗口新帧零外抛不挂剧本回调")
+    void closeAwaitsInFlightCommandThenRejectsShutdownWindowFrames() throws Exception {
+        subscriber.subscribe();
+        verify(mqttClient).subscribe(anyString(), anyInt(), listenerCaptor.capture());
+
+        // 在途命令：close 限时等待其处理与回执发出后再终止（在途回执不因收口丢失）
+        listenerCaptor
+                .getValue()
+                .messageArrived(
+                        COMMAND_TOPIC,
+                        new MqttMessage(
+                                "{\"command_name\":\"PAUSE_INFUSION\",\"paras\":{}}".getBytes(StandardCharsets.UTF_8)));
+        subscriber.close();
+
+        // close 返回即在途任务已终止（awaitTermination 生效），回执必已发出（任务先发布后完成）
+        verify(mqttClient).publishTo(eq(RESPONSE_TOPIC), payloadCaptor.capture());
+        assertThat(MAPPER.readTree(payloadCaptor.getValue()).path("result_code").asInt())
+                .as("close 前在途命令的回执已发出（平台可归终态）")
+                .isZero();
+
+        // 停机窗口守卫：close 后到达的帧提交被拒——回调线程零外抛（外抛即 Paho 断连）、不挂剧本回调
+        assertThatCode(() -> listenerCaptor
+                        .getValue()
+                        .messageArrived(
+                                COMMAND_TOPIC,
+                                new MqttMessage(
+                                        "{\"command_name\":\"RESUME_INFUSION\"}".getBytes(StandardCharsets.UTF_8))))
+                .as("停机窗口内命令帧不得向 Paho 回调线程外抛")
+                .doesNotThrowAnyException();
+        assertThat(receivedCommands).as("停机窗口帧被拒收（仅 close 前在途命令挂接剧本回调）").containsExactly("PAUSE_INFUSION");
+    }
 }
