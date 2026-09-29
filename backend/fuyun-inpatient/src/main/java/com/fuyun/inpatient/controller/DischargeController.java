@@ -2,7 +2,7 @@ package com.fuyun.inpatient.controller;
 
 import com.fuyun.inpatient.dto.DischargeConfirmRequest;
 import com.fuyun.inpatient.dto.DischargeRequestCreate;
-import com.fuyun.inpatient.service.DischargeService;
+import com.fuyun.inpatient.service.IDischargeService;
 import com.fuyun.inpatient.vo.ClearanceVO;
 import com.fuyun.inpatient.vo.DischargeRequestVO;
 import com.fuyun.system.api.AuditActionType;
@@ -32,7 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class DischargeController {
 
-    private final DischargeService dischargeService;
+    private final IDischargeService dischargeService;
 
     /**
      * 出院申请（「预出院/明日出院」模式：在途清理编排三动作+费用预审单事务；预审 BLOCKED

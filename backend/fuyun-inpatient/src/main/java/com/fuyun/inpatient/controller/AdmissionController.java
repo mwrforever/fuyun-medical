@@ -6,7 +6,7 @@ import com.fuyun.inpatient.dto.AdmissionScheduleRequest;
 import com.fuyun.inpatient.dto.VisitRegisterRequest;
 import com.fuyun.inpatient.dto.WardAdmitRequest;
 import com.fuyun.inpatient.enums.AdmissionStatus;
-import com.fuyun.inpatient.service.AdmissionService;
+import com.fuyun.inpatient.service.IAdmissionService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 审计（@AuditLog 注解 + AuditLogAspect 上下文内拦截落 system.audit_log）。
  * 类级 @RequestMapping 不承载（方法级全路径自文档，WardController 同款）。
  * 床位联动三处已随 Task 4 V903 bed 落地（schedule 预占/cancel 释放/admit-ward 占床——服务层
- * BedService 同事务联动）；床位域端点归 BedController。
+ * IBedService 同事务联动）；床位域端点归 BedController。
  */
 @Tag(name = "M04 入院登记", description = "住院证登记/候床队列/预约/作废/登记确认/入科确认")
 @RestController
@@ -45,7 +45,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class AdmissionController {
 
-    private final AdmissionService admissionService;
+    private final IAdmissionService admissionService;
 
     /**
      * 住院证登记（登记即建单入 WAITING 候床队列）。

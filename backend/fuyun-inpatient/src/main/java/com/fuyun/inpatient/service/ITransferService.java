@@ -9,11 +9,11 @@ import com.fuyun.inpatient.vo.TransferResultVO;
  * 轻量路径。转科/转床均非 visit 状态变更（ADMITTED 内属性变更，独立于就诊状态机），单
  * @Transactional 编排事务内完成并发布 inpatient.visit.transferred（V800 id 49）。
  */
-public interface TransferService {
+public interface ITransferService {
 
     /**
      * 转科四阶段编排（单事务，时序冻结）：①转出病区全部长期医嘱自动停嘱
-     * （MedicalOrderService.stopAllForTransfer，Task 5 impl）②在途三分（医嘱停嘱由①承载；
+     * （IMedicalOrderService.stopAllForTransfer，Task 5 impl）②在途三分（医嘱停嘱由①承载；
      * 计划三分数据面操作归 Task 7/8 计划服务补挂转科钩子——本编排只留钩子面；费用不改写归
      * M13）③床位流转（转出床→DISINFECTING 闭合流水、目标床 CAS 占床开新流水、visit
      * current_ward/current_bed/current_dept 原子更新）④发布 inpatient.visit.transferred

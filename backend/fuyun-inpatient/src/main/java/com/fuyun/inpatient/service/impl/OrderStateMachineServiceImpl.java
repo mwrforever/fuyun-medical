@@ -7,7 +7,7 @@ import com.fuyun.inpatient.entity.OrderStatusLog;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import java.time.OffsetDateTime;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -22,7 +22,7 @@ import org.springframework.http.HttpStatus;
  * 线程安全：无状态 singleton；CAS 保并发迁移互斥。
  */
 @Slf4j
-public class OrderStateMachineServiceImpl implements OrderStateMachineService {
+public class OrderStateMachineServiceImpl implements IOrderStateMachineService {
 
     private final MedicalOrderMapper orderMapper;
 

@@ -19,7 +19,7 @@ import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.BedAssignMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.BedMapVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -46,7 +46,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
-public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedService {
+public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedService {
 
     /** 无登录上下文场景的操作者回退值（与 V903 审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
@@ -394,6 +394,16 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
                     HttpStatus.CONFLICT,
                     "床位占用流水未闭合行唯一冲突（并发开账，本次操作回滚）：bedId=" + bed.getId() + "，visitId=" + visitId);
         }
+        // 写操作留痕：开账 insert 成功（bed 为 CAS 前快照，其状态即迁移前态；后态已由 casOccupy 落为 OCCUPIED）
+        log.info(
+                "占用流水开账写库：bedId={}，bedNo={}，visitId={}，assignType={}，床位状态迁移={}→{}，operator={}",
+                bed.getId(),
+                bed.getBedNo(),
+                visitId,
+                type.getCode(),
+                bed.getStatus(),
+                BedStatus.OCCUPIED.getCode(),
+                operator);
     }
 
     /** 床位定位（未命中定性 IP-1004；逻辑删由 @TableLogic 自动过滤）。 */

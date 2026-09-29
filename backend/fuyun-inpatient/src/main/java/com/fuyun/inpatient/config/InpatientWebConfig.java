@@ -31,7 +31,7 @@ import org.springframework.context.annotation.Import;
  * @MapperScan 按注解自动覆盖，不入本清单）。Task 3 交付：住院号段发号器、入院登记域服务、
  * OngoingVisitQuery SPI 实现（patient 合并前置检查按接口类型收集，与 nursing 实现并存——
  * 任一命中即阻断）与入院登记六端点控制器。Task 4 追加：床位管理服务（五态状态机与占用
- * 流水权威）、转科/转床编排服务（构造注入 MedicalOrderService——实现归 Task 5，其
+ * 流水权威）、转科/转床编排服务（构造注入 IMedicalOrderService——实现归 Task 5，其
  * MedicalOrderServiceImpl 落地前装配链待闭合）、床位七端点与转科转床两端点控制器，及
  * AdmissionServiceImpl 的床位联动注入。Task 5 追加：医嘱开立域（V904 三表业务面）——医嘱
  * 状态机服务（八态合法迁移表唯一裁决面）与医嘱开立服务（四层校验/开立/查询/停嘱，

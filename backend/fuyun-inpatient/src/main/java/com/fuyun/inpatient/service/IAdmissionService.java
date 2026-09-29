@@ -17,11 +17,11 @@ import java.util.List;
  * 结构自检与就诊落库同事务成败与共（M02 Spec 红线 1：I 型唯一签发主体 = 本模块）。
  * 床位联动三处（Task 4 随 V903 bed 落地补齐）：schedule 预约目标床位置 RESERVED、cancel
  * 宽容联动释放（回读床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
- * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——均同事务联动（BedService 同源 CAS 权威，
+ * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——均同事务联动（IBedService 同源 CAS 权威，
  * 联动失败整体回滚）。Task 10 追加住院计费入口欠费面：押金变动回执驱动的 arrears_flag 本地
  * 标识刷新与病区欠费清单聚合（FU-M04-08——欠费标识为 visit 行本地属性，归本域承载）。
  */
-public interface AdmissionService {
+public interface IAdmissionService {
 
     /**
      * 住院证登记（登记即建单入 WAITING 候床队列）：来源/类型词表校验 → 患者归一/拦截（FROZEN
@@ -48,7 +48,7 @@ public interface AdmissionService {
 
     /**
      * 预约入院/预住院（WAITING→SCHEDULED）：记录目标病区/床位与预约日期；携目标床位时同事务
-     * 联动床位预占（BedService.reserveForAdmission 置 RESERVED——预占失败整体预约事务回滚；
+     * 联动床位预占（IBedService.reserveForAdmission 置 RESERVED——预占失败整体预约事务回滚；
      * 预住院模式无床不联动）。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
@@ -63,7 +63,7 @@ public interface AdmissionService {
     /**
      * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）。床位联动②取宽容语义：作废 CAS 命中后
      * 回读住院证行权威 target_bed_id 与床行实态，仅 RESERVED 才同事务联动释放预占床位
-     * （BedService.releaseForAdmission 置 FREE）；非预占态（预占床已被登记台手工释放/流转
+     * （IBedService.releaseForAdmission 置 FREE）；非预占态（预占床已被登记台手工释放/流转
      * 其他态/床位缺失）warn 留痕后放行作废——预占缺失不得阻断住院证终态落定。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
@@ -94,7 +94,7 @@ public interface AdmissionService {
 
     /**
      * 入科确认（visit REGISTERED→ADMITTED）：登记当前科室/病区/床位、主治医生与护理级别
-     * （入科时点库端 now()）→ 床位联动（BedService.occupyForAdmission：床位 RESERVED→OCCUPIED
+     * （入科时点库端 now()）→ 床位联动（IBedService.occupyForAdmission：床位 RESERVED→OCCUPIED
      * CAS + bed_assign 开 ADMISSION 流水，占床失败整体入科事务回滚）→ 事务内发布
      * inpatient.visit.admitted（M05 病区患者视图维护、M14 设备待绑定提醒）。
      *

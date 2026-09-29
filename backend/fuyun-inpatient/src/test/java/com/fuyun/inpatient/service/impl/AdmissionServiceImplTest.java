@@ -39,7 +39,7 @@ import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
@@ -114,7 +114,7 @@ class AdmissionServiceImplTest {
     private PatientNameQuery patientNameQuery;
 
     @Mock
-    private BedService bedService;
+    private IBedService bedService;
 
     @Mock
     private ApplicationEventPublisher events;
@@ -304,7 +304,7 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.CANCELLED.getCode());
         assertThat(vo.admissionNo()).isEqualTo(ADMISSION_NO);
-        // 床位联动②锚：床实态预占时作废同事务联动释放（BedService.releaseForAdmission）
+        // 床位联动②锚：床实态预占时作废同事务联动释放（IBedService.releaseForAdmission）
         verify(bedService).releaseForAdmission(BED_ID);
         // GC26 锚：作废 CAS 限定候床/预约两态 + 显式 deleted=0
         String sql = recordSql(AdmissionMapper.class, "casCancel", String.class, String.class);
@@ -376,7 +376,7 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.SCHEDULED.getCode());
         assertThat(vo.targetBedId()).isEqualTo(BED_ID);
-        // 床位联动①锚：携目标床位即同事务联动预占（BedService.reserveForAdmission 置 RESERVED）
+        // 床位联动①锚：携目标床位即同事务联动预占（IBedService.reserveForAdmission 置 RESERVED）
         verify(bedService).reserveForAdmission(BED_ID);
         // GC26 锚：预约 CAS 限定 WAITING 态 + 显式 deleted=0
         String sql = recordSql(
@@ -428,7 +428,7 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(VisitStatus.ADMITTED.getCode());
         assertThat(vo.currentBedId()).isEqualTo(BED_ID);
-        // 床位联动③锚：床位 RESERVED→OCCUPIED + bed_assign 开 ADMISSION 流水（BedService 同源 CAS）
+        // 床位联动③锚：床位 RESERVED→OCCUPIED + bed_assign 开 ADMISSION 流水（IBedService 同源 CAS）
         verify(bedService).occupyForAdmission(BED_ID, VISIT_ID, PATIENT_ID);
         verify(events).publishEvent(eventCaptor.capture());
         InpatientDomainEvent event = eventCaptor.getValue();

@@ -36,8 +36,8 @@ import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.OrderPlanService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderPlanService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
 import java.lang.reflect.Method;
@@ -109,10 +109,10 @@ class OrderTransferServiceImplTest {
     private InpatientSeqGate seqGate;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
-    private OrderPlanService orderPlanService;
+    private IOrderPlanService orderPlanService;
 
     /** 住院域参数（默认值实例——准备窗口 60 分钟/欠费阈值 0/随访 14 日，与应用缺省同源） */
     private final InpatientProperties properties = new InpatientProperties(0L, 14, 60);

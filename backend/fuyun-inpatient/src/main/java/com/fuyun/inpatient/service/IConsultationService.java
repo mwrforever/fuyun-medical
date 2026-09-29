@@ -14,11 +14,11 @@ import com.fuyun.inpatient.vo.ConsultationVO;
  * 取消（REQUESTED/ACCEPTED→CANCELLED，发布 cancelled）与列表查询（<b>读时惰性逾期</b>：
  * REQUESTED 且越过响应截止且未标记行——置 overdue_flag[CAS] + 发布 overdue 动作事件一次
  * [DB 标记防重发] + 升级动作 warn 留痕；状态停留 REQUESTED 仍可被响应——动作非状态迁移）。
- * 会诊为模块内独立小状态机（不经 OrderStateMachineService），迁移唯一经 ConsultationMapper
+ * 会诊为模块内独立小状态机（不经 IOrderStateMachineService），迁移唯一经 ConsultationMapper
  * CAS 条件更新 + 影响行数判定（GC23）。CONSULT 类医嘱审核自动建草稿钩子归
  * OrderAuditServiceImpl（业务流转归会诊流程——审核域收口，本服务不反向承载）。
  */
-public interface ConsultationService {
+public interface IConsultationService {
 
     /**
      * 会诊申请（POST /consultations，独立申请路径）：守卫（就诊在院 ADMITTED 且已入科——

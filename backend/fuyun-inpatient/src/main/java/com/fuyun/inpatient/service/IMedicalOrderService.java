@@ -11,13 +11,13 @@ import com.fuyun.inpatient.vo.OrderDetailVO;
  * 消费面 stopAllForTransfer），实现归 Task 5（MedicalOrderServiceImpl）随 V904 医嘱三表
  * 落地；停嘱面 stop（Task 6 端点消费）与 stopAllForTransfer（转科编排消费）共用实现。
  */
-public interface MedicalOrderService {
+public interface IMedicalOrderService {
 
     /**
      * 医嘱开立（POST /visits/{visitId}/orders）：就诊在院校验 → 开立校验四层（执业授权→
      * 过敏→明细/频次有效性→嘱托限定）→ 发 MO 号主子表同事务落库（CREATED）→ 事务内发布
      * inpatient.order.created（routing key 携带类型子键，drug 子键驱动 M06 审方任务）→
-     * 审核链收口（FU-M04-05 全员必经，OrderAuditService.audit：非用药类系统自动过审
+     * 审核链收口（FU-M04-05 全员必经，IOrderAuditService.audit：非用药类系统自动过审
      * AUDITED、用药类停留 CREATED 待药师审）。
      *
      * @param visitId 住院就诊号（I 型 14 位），非空；来源：路径参数
@@ -85,7 +85,7 @@ public interface MedicalOrderService {
     MedicalOrderVO resubmit(String orderNo, OrderCreateRequest req);
 
     /**
-     * 转科自动停嘱（转科编排阶段①，调用方 TransferService.transfer 编排事务内）：转出病区
+     * 转科自动停嘱（转科编排阶段①，调用方 ITransferService.transfer 编排事务内）：转出病区
      * 该就诊全部长期医嘱（order_class=long、非终态）置 STOPPED（stop_reason=转科，停嘱时间=
      * 服务器时间），联动发布 inpatient.order.stopped（M13 按转科时间线截断转出侧持续性费用、
      * M05 撤销未执行执行单）；待执行长期计划随停嘱作废归计划服务（Task 7/8 转科钩子）。

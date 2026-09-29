@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.service.AdmissionService;
-import com.fuyun.inpatient.service.DischargeService;
+import com.fuyun.inpatient.service.IAdmissionService;
+import com.fuyun.inpatient.service.IDischargeService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -13,10 +13,10 @@ import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * M13 计费联动消费侧（V605 id 19/21 与 V1002 id 73 冻结载荷，FU-M04-07/08 承载面）：
- * 结算完成回执（visitId/settleType=IN 出院结算分支）驱动 DischargeService.onSettlementCompleted
+ * 结算完成回执（visitId/settleType=IN 出院结算分支）驱动 IDischargeService.onSettlementCompleted
  * 落 settlement_completed_at 标记（离院确认双条件之一）；挂账审批放行回执（visitId/approvalNo）
  * 驱动 onArrearsApproved 将 BLOCKED 申请转 READY（放行唯一驱动）；押金变动回执
- * （accountId/patientId/visitId/balance/status）驱动 AdmissionService.onDepositChanged 欠费标识
+ * （accountId/patientId/visitId/balance/status）驱动 IAdmissionService.onDepositChanged 欠费标识
  * 本地裁决与 CAS 刷新（Task 10 落地——余额与押金下限阈值的比较归服务层，阈值全局一份）。
  * 幂等两层：eventId 构件幂等（IdempotentConsumerSupport 三段式）+ 业务级 CAS 限定幂等
  * （IS NULL/BLOCKED/目标值异值条件更新零行直返）。载荷以 JsonNode 读（消费侧禁依赖 producer
@@ -31,9 +31,9 @@ public class BillingEventListener {
 
     private final IdempotentConsumerSupport consumerSupport;
 
-    private final DischargeService dischargeService;
+    private final IDischargeService dischargeService;
 
-    private final AdmissionService admissionService;
+    private final IAdmissionService admissionService;
 
     /**
      * 全参构造器（装配归 InpatientMessagingConfig @Import；消费模板多候选 @Qualifier 定绑
@@ -45,8 +45,8 @@ public class BillingEventListener {
      */
     public BillingEventListener(
             @Qualifier("inpatientConsumerSupport") IdempotentConsumerSupport consumerSupport,
-            DischargeService dischargeService,
-            AdmissionService admissionService) {
+            IDischargeService dischargeService,
+            IAdmissionService admissionService) {
         this.consumerSupport = consumerSupport;
         this.dischargeService = dischargeService;
         this.admissionService = admissionService;
@@ -129,7 +129,7 @@ public class BillingEventListener {
     /**
      * 押金变动回执业务体（包级直驱可测）：载荷读 visitId/balance（V605 id 21 冻结契约——
      * accountId/patientId/visitId/balance/status 五组件，本面按需取 visitId/balance），透传
-     * 欠费标识刷新服务（余额与押金下限阈值的比较、CAS 与幂等归 AdmissionService——Task 10
+     * 欠费标识刷新服务（余额与押金下限阈值的比较、CAS 与幂等归 IAdmissionService——Task 10
      * 落地）；status（NORMAL/ARREARS）为 billing 侧自身预警判定，M04 以本地阈值独立裁决
      * 不采信该字段。
      *

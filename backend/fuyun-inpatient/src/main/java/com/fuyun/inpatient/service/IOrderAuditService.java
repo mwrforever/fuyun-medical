@@ -7,11 +7,11 @@ import java.time.Instant;
 /**
  * 医嘱审核与控制服务（FU-M04-05）：开立后系统自动审核（全员必经）+ 药师审方回执驱动迁移
  * （M06 id 53/54）+ 作废/撤回重审/重整/口头医嘱补录确认。停嘱不在本接口（归
- * MedicalOrderService.stop——Task 5 冻结面）；一切状态迁移唯一经 OrderStateMachineService
+ * IMedicalOrderService.stop——Task 5 冻结面）；一切状态迁移唯一经 IOrderStateMachineService
  * （GC17：迁移即写 order_status_log，调用方不另写留痕）。用药类医嘱 CREATED 停留期语义=
  * 「待药师审」（以 order_audit.stage 区分，不新增状态，04 Spec 红线 2）。
  */
-public interface OrderAuditService {
+public interface IOrderAuditService {
 
     /**
      * 系统自动审核（开立后全员必经，create/resubmit 审核链收口）：非用药类

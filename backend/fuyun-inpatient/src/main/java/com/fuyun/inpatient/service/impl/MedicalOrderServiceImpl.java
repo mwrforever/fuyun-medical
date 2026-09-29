@@ -27,9 +27,9 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
-import com.fuyun.inpatient.service.MedicalOrderService;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IMedicalOrderService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
 import com.fuyun.inpatient.vo.OrderItemVO;
@@ -59,14 +59,14 @@ import org.springframework.transaction.annotation.Transactional;
  * 驳回重提面（resubmit，Task 6）：作废重开路径的轻量变体——头值面与明细行直接更新 + 状态机
  * 回 CREATED + 重发 order.created（M06 重开审方任务）+ 审核链重入；仅限 AUDIT_REJECTED 态。
  * 停嘱面（stop/stopAllForTransfer 共用 stopInternal）：状态机迁移 STOPPED（唯一执行面
- * OrderStateMachineService，合法态 AUDITED/TRANSFERRED/EXECUTING）+ 停嘱时点/原因落值 +
+ * IOrderStateMachineService，合法态 AUDITED/TRANSFERRED/EXECUTING）+ 停嘱时点/原因落值 +
  * 未来计划批量作废（V906 order_execute_plan 落库——Task 7 回接：停嘱时点后的 PENDING 计划
  * 批量置 CANCELLED）+ stopped 事件（V800 id 44 载荷）。
  * 转科停嘱失败异常传播整体回滚编排事务（接口契约）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
-public class MedicalOrderServiceImpl implements MedicalOrderService {
+public class MedicalOrderServiceImpl implements IMedicalOrderService {
 
     /** 执业授权类型：开单类（pharmacy 开方链同口径——PracticeCheckPort grantType 词表首值） */
     private static final String GRANT_PRESCRIPTION = "PRESCRIPTION";
@@ -94,11 +94,11 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     private final AllergyChecker allergyChecker;
 
-    private final OrderStateMachineService stateMachine;
+    private final IOrderStateMachineService stateMachine;
 
     private final ApplicationEventPublisher events;
 
-    private final OrderAuditService orderAuditService;
+    private final IOrderAuditService orderAuditService;
 
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import——Task 5 落地后闭合 Task 4 预注入的
@@ -126,9 +126,9 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             InpatientSeqGate seqGate,
             PracticeCheckPort practiceCheckPort,
             AllergyChecker allergyChecker,
-            OrderStateMachineService stateMachine,
+            IOrderStateMachineService stateMachine,
             ApplicationEventPublisher events,
-            OrderAuditService orderAuditService) {
+            IOrderAuditService orderAuditService) {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
         this.frequencyMapper = frequencyMapper;

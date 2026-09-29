@@ -2,6 +2,28 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-03/EX-02（A 路）：fuyun-inpatient 十服务接口 I 前缀重命名+占用流水开账写库补日志（BE-C2-10/BE-A4-13，纯命名层+日志新增）
+
+- **根因（BE-C2-10 评分 75 / BE-A4-13 评分 70，2026-09-28 全仓高风险问题清单低置信节）**：
+  inpatient 十个服务接口无 I 前缀（backend 宪法 A.4.3-20 点名，纯命名层机械重命名无外部
+  契约）；BedServiceImpl:378 锚点方法体含数据库写操作而方法内零日志（占用流水开账
+  insert 无审计锚点）。
+- **修复**：①十接口重命名——AdmissionService/BedService/ConsultationService/
+  DischargeService/MedicalOrderService/OrderAuditService/OrderPlanService/
+  OrderStateMachineService/OrderTransferService/TransferService → 各加 I 前缀（文件重命名+
+  声明/引用/javadoc/@link 全量机械替换，词边界无误伤）；引用面 main 45 文件+test 10 文件，
+  旧名全模块 grep 零残留（迁移 SQL 注释 V902:5/V904:4/39/V905:6 四处提及旧类名按
+  A.4.1-3 迁移禁改红线冻结——Flyway checksum 保护）；test 十文件纯重命名引用替换、断言
+  零改动。②EX-02 日志——BedServiceImpl 实扫全文件 9 个写语句，唯一「方法体含写且方法内
+  零日志」为 openAssign 的 assignMapper.insert（占用流水开账，原 :390；报告锚点 :378 即
+  该方法声明）；补一行 info（床位号/就诊 ID/占用类型/FREE→OCCUPIED 状态迁移/操作人）。
+  **口径差异说明**：报告「等 3 处」实扫仅 1 处成立——其余 8 个写语句所在方法均已有业务
+  完成日志，疑将 assign/occupyForAdmission 等无直接写语句的委托入口误计，给其补日志将与
+  同路径主方法日志逐笔重复，按精准修改不扩。
+- **验证**：`mvn -B -ntp -pl fuyun-inpatient -am test` 全绿（193 用例=基线，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-inpatient spotless:check` 通过（159 文件 clean）；
+  44/45 改动文件与「HEAD+机械替换」零差异，唯 BedServiceImpl 额外差异恰为 1 条日志。
+
 ## 2026-09-29 · 注释补齐环 EX-01（billing 组，第 6/6 b 路）：fuyun-billing 计价方法级与退费资金口径行注释补齐（BE-A4-06 计价侧+BE-A4-08，零行为变化）
 
 - **根因（BE-A4-06/08 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：计价语义

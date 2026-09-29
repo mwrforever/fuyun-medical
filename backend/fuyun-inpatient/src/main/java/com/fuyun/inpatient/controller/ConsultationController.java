@@ -4,7 +4,7 @@ import com.fuyun.common.web.PageResult;
 import com.fuyun.inpatient.dto.ConsultationCreateRequest;
 import com.fuyun.inpatient.dto.ConsultationOpinionRequest;
 import com.fuyun.inpatient.enums.ConsultationStatus;
-import com.fuyun.inpatient.service.ConsultationService;
+import com.fuyun.inpatient.service.IConsultationService;
 import com.fuyun.inpatient.vo.ConsultationVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -37,7 +37,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class ConsultationController {
 
-    private final ConsultationService consultationService;
+    private final IConsultationService consultationService;
 
     /**
      * 会诊申请（独立申请路径；CONSULT 类医嘱审核钩子自动建草稿不经本端点）。

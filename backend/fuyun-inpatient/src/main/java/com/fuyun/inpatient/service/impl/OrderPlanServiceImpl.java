@@ -30,8 +30,8 @@ import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
-import com.fuyun.inpatient.service.OrderPlanService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderPlanService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import java.time.LocalDate;
@@ -84,7 +84,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * decomposeNextDay 分批编程式事务；事件一律事务内 publishEvent → AFTER_COMMIT 出 MQ（GC8）。
  */
 @Slf4j
-public class OrderPlanServiceImpl implements OrderPlanService {
+public class OrderPlanServiceImpl implements IOrderPlanService {
 
     /** 日切分批事务的批量上界（brief 冻结：每 500 医嘱一事务，可断点续跑） */
     private static final int DECOMPOSE_BATCH_SIZE = 500;
@@ -137,7 +137,7 @@ public class OrderPlanServiceImpl implements OrderPlanService {
 
     private final InpatientSeqGate seqGate;
 
-    private final OrderStateMachineService stateMachine;
+    private final IOrderStateMachineService stateMachine;
 
     private final ApplicationEventPublisher events;
 
@@ -169,7 +169,7 @@ public class OrderPlanServiceImpl implements OrderPlanService {
             OrderTransferLogMapper transferLogMapper,
             InpatientVisitMapper visitMapper,
             InpatientSeqGate seqGate,
-            OrderStateMachineService stateMachine,
+            IOrderStateMachineService stateMachine,
             ApplicationEventPublisher events,
             TransactionTemplate transactionTemplate) {
         this.orderMapper = orderMapper;

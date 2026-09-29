@@ -13,10 +13,10 @@ import java.util.List;
  * 台账 + transferred 事件 + 临时医嘱同步单次计划，双人核对强制高危/输血类第二核对人）；
  * ③ 执行计划查询（按日期/病区分页）；④ 嘱托按需触发单次计划（多次触发多次台账）；
  * ⑤ 转科编排计划三分钩子（临时 PENDING 保留随患者重定向病区、长期 PENDING 作废——
- * TransferServiceImpl 阶段②回接面）。一切医嘱状态迁移唯一经 OrderStateMachineService
+ * TransferServiceImpl 阶段②回接面）。一切医嘱状态迁移唯一经 IOrderStateMachineService
  * （GC17）；事件事务内发布 AFTER_COMMIT 出 MQ（GC8）。
  */
-public interface OrderTransferService {
+public interface IOrderTransferService {
 
     /**
      * 转抄工作台待转抄列表：病区内在院就诊（ADMITTED）的 AUDITED 医嘱聚合，开立时间倒序；
@@ -38,7 +38,7 @@ public interface OrderTransferService {
      * 转抄台账落行（转抄护士/时点/结论/第二核对人）→ 事务内发布 inpatient.order.transferred
      * （V800 id 42 载荷）→ 临时医嘱（STAT）同步按明细行生成单次执行计划（plan_time=转抄
      * 时点+默认准备窗口，plan_no=PL 流水）；长期医嘱（LONG）即时补生成当日剩余时点计划
-     * （OrderPlanService.compensateToday 衔接面——Task 8，转抄事务内加入）。已 TRANSFERRED
+     * （IOrderPlanService.compensateToday 衔接面——Task 8，转抄事务内加入）。已 TRANSFERRED
      * 医嘱幂等跳过（零副作用）；任一条守卫不过整批回滚。
      *
      * @param req 批量转抄核对入参，非空；来源：POST /api/v1/inpatient/orders/transfer-check

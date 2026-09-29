@@ -10,7 +10,7 @@ import lombok.Setter;
 
 /**
  * 住院医嘱主实体（inpatient.medical_order，V904）——医嘱开立域主体：开立即落 CREATED
- * （待审核；用药类此期语义=待药师审），状态迁移唯一经 OrderStateMachineService（八态合法
+ * （待审核；用药类此期语义=待药师审），状态迁移唯一经 IOrderStateMachineService（八态合法
  * 迁移表驱动 + CAS + 影响行数判定，04 Spec 红线 2）。visit_id 为 inpatient_visit 主键引用
  * （转科停嘱查询键，非 I 型号——I 型号经就诊行关联取）；成组医嘱多行共用 group_no（单条
  * 医嘱 group_no 缺省=order_no）；standby_flag 嘱托标记仅 LONG 可 true（应用层四层校验守卫）。

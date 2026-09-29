@@ -9,11 +9,11 @@ import java.util.List;
  * 床位管理域服务（FU-M04-02）：床位五态状态机（BedStatus）权威面——全部状态迁移一律 CAS
  * 条件更新 + 影响行数判定（防重复占床硬防线：仅 FREE/RESERVED 可占床，IP-1006；消毒/维修
  * 中分配拒绝 IP-1005），每次迁移事务内广播 inpatient.bed.changed（V800 id 52）。占用流水
- * （bed_assign 只增表）与床位图聚合同源本服务；入院登记域（AdmissionService）的床位联动
+ * （bed_assign 只增表）与床位图聚合同源本服务；入院登记域（IAdmissionService）的床位联动
  * 面（reserveForAdmission/releaseForAdmission/occupyForAdmission）与转科/转床编排
- * （TransferService）的床位流转面（transferOut/occupyForTransfer）均由本服务承载。
+ * （ITransferService）的床位流转面（transferOut/occupyForTransfer）均由本服务承载。
  */
-public interface BedService {
+public interface IBedService {
 
     /**
      * 病区床位图聚合（GET /beds/map?wardId=）：床位五态 + 包床标记 + 性别限制 + 占用 visit
@@ -89,7 +89,7 @@ public interface BedService {
     void maintainDone(Long bedId);
 
     /**
-     * 预约入院床位预占联动（AdmissionService.schedule 面，Task 3 联动①）：住院证预约
+     * 预约入院床位预占联动（IAdmissionService.schedule 面，Task 3 联动①）：住院证预约
      * （WAITING→SCHEDULED）同事务内将目标床位置 RESERVED；预占失败（被占/消毒/维修）则
      * 整体预约事务回滚——预约到不可用床必须整体失败。
      *
@@ -110,7 +110,7 @@ public interface BedService {
     String bedStatus(Long bedId);
 
     /**
-     * 预约作废床位释放联动（AdmissionService.cancel 面，Task 3 联动②）：住院证作废流程
+     * 预约作废床位释放联动（IAdmissionService.cancel 面，Task 3 联动②）：住院证作废流程
      * 回读床实态为 RESERVED 时同事务内释放预占床位（RESERVED→FREE）。宽容判定（读实态/
      * 非预占放行/warn 留痕）归调用方 cancel 流程；本方法保留严格 CAS 语义——释放瞬间床位
      * 被并发流转（CAS 0 行）仍抛 IP-1005，交调用方重试自愈。
@@ -121,7 +121,7 @@ public interface BedService {
     void releaseForAdmission(Long bedId);
 
     /**
-     * 入科确认占床联动（AdmissionService.admitWard 面，Task 3 联动③）：visit
+     * 入科确认占床联动（IAdmissionService.admitWard 面，Task 3 联动③）：visit
      * REGISTERED→ADMITTED 同事务内目标床位 RESERVED→OCCUPIED（CAS 防重）并开 bed_assign
      * 占用流水（assign_type=ADMISSION），广播 inpatient.bed.changed；占床失败整体入科
      * 事务回滚。
@@ -134,7 +134,7 @@ public interface BedService {
     void occupyForAdmission(Long bedId, String visitId, long patientId);
 
     /**
-     * 转出床流转（TransferService 编排面）：OCCUPIED→DISINFECTING 终末消毒流转（占用主体
+     * 转出床流转（ITransferService 编排面）：OCCUPIED→DISINFECTING 终末消毒流转（占用主体
      * 双条件校验防误流转他人床位），闭合 bed_assign 未继行（ended_at=转移时点），广播
      * inpatient.bed.changed（patientId=null）。
      *
@@ -146,7 +146,7 @@ public interface BedService {
     void transferOut(Long bedId, String visitId);
 
     /**
-     * 目标床占床（TransferService 编排面）：FREE/RESERVED→OCCUPIED（CAS 防重）并开
+     * 目标床占床（ITransferService 编排面）：FREE/RESERVED→OCCUPIED（CAS 防重）并开
      * bed_assign 占用流水（assign_type 按 TransferType 取 BED_CHANGE/WARD_TRANSFER），
      * 广播 inpatient.bed.changed（patientId=转移患者）。
      *

@@ -8,10 +8,10 @@ import java.time.LocalDate;
 /**
  * 医嘱执行计划服务（FU-M04-06 下，Task 8 业务面）：长期医嘱日切批量分解 + 当日增量补偿 +
  * CF-6/W-33 执行回签实装 + 闭环追溯聚合。计划行状态迁移为计划域自有面（CAS 条件更新，
- * brief SQL 语义）；医嘱头状态迁移唯一经 {@link OrderStateMachineService}（GC17，自动写
+ * brief SQL 语义）；医嘱头状态迁移唯一经 {@link IOrderStateMachineService}（GC17，自动写
  * order_status_log）；事件事务内发布 AFTER_COMMIT 出 fy.topic（GC8）。
  */
-public interface OrderPlanService {
+public interface IOrderPlanService {
 
     /**
      * 日切批量分解：全院在院（ADMITTED）就诊下 TRANSFERRED/EXECUTING 长期医嘱 × 频次时点

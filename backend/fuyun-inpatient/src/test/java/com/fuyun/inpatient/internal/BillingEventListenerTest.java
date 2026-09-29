@@ -11,8 +11,8 @@ import static org.mockito.Mockito.verify;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
-import com.fuyun.inpatient.service.AdmissionService;
-import com.fuyun.inpatient.service.DischargeService;
+import com.fuyun.inpatient.service.IAdmissionService;
+import com.fuyun.inpatient.service.IDischargeService;
 import java.time.Clock;
 import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
@@ -25,7 +25,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * M13 计费联动消费监听器单测：settlement.completed（settleType=IN 出院结算分支才驱动标记，
  * OUT 门诊结算直返）/arrears.approved（visitId/approvalNo 逐字段透传放行服务）两业务体的
  * 载荷解析与守卫（缺 visitId/缺 approvalNo 不合规帧抛出死信留痕）；deposit.changed 欠费
- * 标识刷新面（Task 10 落地：visitId/balance 逐字段透传 AdmissionService——阈值裁决与 CAS
+ * 标识刷新面（Task 10 落地：visitId/balance 逐字段透传 IAdmissionService——阈值裁决与 CAS
  * 归服务层，缺 visitId/缺 balance 不合规帧抛出死信留痕）。业务体为包级 handle 方法，
  * @RabbitListener 入口仅做 consume 委托（模板三段式幂等归 IdempotentConsumerSupport，IT 面
  * 验证），单测直驱 handle 等价路径（PharmacyAuditReplyListenerTest 同款形态）。
@@ -43,10 +43,10 @@ class BillingEventListenerTest {
     private IdempotentConsumerSupport consumerSupport;
 
     @Mock
-    private DischargeService dischargeService;
+    private IDischargeService dischargeService;
 
     @Mock
-    private AdmissionService admissionService;
+    private IAdmissionService admissionService;
 
     /** 构造 billing 回执信封（producer=billing，载荷 JSON 直构）。 */
     private EventEnvelope envelope(String eventType, String payloadJson) throws Exception {

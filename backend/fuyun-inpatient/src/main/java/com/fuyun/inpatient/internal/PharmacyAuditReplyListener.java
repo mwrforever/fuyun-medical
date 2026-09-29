@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.service.OrderAuditService;
+import com.fuyun.inpatient.service.IOrderAuditService;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +25,7 @@ public class PharmacyAuditReplyListener {
 
     private final IdempotentConsumerSupport consumerSupport;
 
-    private final OrderAuditService orderAuditService;
+    private final IOrderAuditService orderAuditService;
 
     /**
      * 全参构造器（装配归 InpatientMessagingConfig @Import；消费模板多候选 @Qualifier 定绑
@@ -36,7 +36,7 @@ public class PharmacyAuditReplyListener {
      */
     public PharmacyAuditReplyListener(
             @Qualifier("inpatientConsumerSupport") IdempotentConsumerSupport consumerSupport,
-            OrderAuditService orderAuditService) {
+            IOrderAuditService orderAuditService) {
         this.consumerSupport = consumerSupport;
         this.orderAuditService = orderAuditService;
     }

@@ -9,7 +9,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
  * REQUESTED/ACCEPTED → CANCELLED 取消（终态）。<b>逾期升级不在状态机内</b>——超时为动作
  * 广播（inpatient.consultation.overdue，overdue_flag 承载），状态停留 REQUESTED 仍可被响应
  * （Spec FU-M04-09 冻结口径）；状态迁移唯一经 ConsultationMapper CAS 条件更新 + 影响行数
- * 判定（GC23——会诊为模块内独立小状态机，不经 OrderStateMachineService）。
+ * 判定（GC23——会诊为模块内独立小状态机，不经 IOrderStateMachineService）。
  */
 public enum ConsultationStatus {
 

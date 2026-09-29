@@ -4,7 +4,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import com.fuyun.inpatient.service.OrderPlanService;
+import com.fuyun.inpatient.service.IOrderPlanService;
 import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -22,7 +22,7 @@ class OrderPlanDecomposeJobTest {
 
     /** 日切批量分解业务面（候选查询/分批事务/幂等兜底全归服务层） */
     @Mock
-    private OrderPlanService orderPlanService;
+    private IOrderPlanService orderPlanService;
 
     private OrderPlanDecomposeJob job;
 

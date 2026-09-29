@@ -9,7 +9,7 @@ import org.apache.ibatis.annotations.Update;
 /**
  * 住院就诊 mapper：单表链式能力 + 状态条件更新注解 SQL 全集（GC26：条件更新一律 @Update +
  * 影响行数判定，显式补 deleted=0；状态字面量与 V902 列值域、VisitStatus code 逐字同源）。
- * 床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账的权威归 BedService（V903，Task 4
+ * 床位 RESERVED→OCCUPIED 流转与 bed_assign 占用流水开账的权威归 IBedService（V903，Task 4
  * 已补齐联动）；本层承载 visit 自身状态面与转科/转床的 current_* 原子更新；欠费标识刷新
  * （Task 10 billing.deposit.changed 消费面）为就诊行本地属性 CAS，与五态状态机无涉。
  */
@@ -68,7 +68,7 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
             @Param("updatedBy") String updatedBy);
 
     /**
-     * 出院申请 CAS（ADMITTED→DISCHARGE_REQUESTED，DischargeService.createRequest 面）：
+     * 出院申请 CAS（ADMITTED→DISCHARGE_REQUESTED，IDischargeService.createRequest 面）：
      * 申请时点取库端 now()（禁应用时钟）；限定在院态（并发重复申请/已出院/已作废一律 0 行，
      * 与 discharge_request 的 uk_visit_active 双防线）。
      *
@@ -82,7 +82,7 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
     int casRequestDischarge(@Param("visitId") String visitId, @Param("updatedBy") String updatedBy);
 
     /**
-     * 取消出院 CAS（DISCHARGE_REQUESTED→ADMITTED，DischargeService.cancel 面）：取消申请回
+     * 取消出院 CAS（DISCHARGE_REQUESTED→ADMITTED，IDischargeService.cancel 面）：取消申请回
      * 在院（Spec §5 状态机冻结边）；申请时点保留（历史留痕不清抹）。
      *
      * @param visitId   住院就诊号（I 型 14 位），非空
@@ -94,7 +94,7 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
     int casCancelDischarge(@Param("visitId") String visitId, @Param("updatedBy") String updatedBy);
 
     /**
-     * 离院确认 CAS（DISCHARGE_REQUESTED→DISCHARGED 终态，DischargeService.confirm 面）：
+     * 离院确认 CAS（DISCHARGE_REQUESTED→DISCHARGED 终态，IDischargeService.confirm 面）：
      * 出院完成时点取库端 now()（禁应用时钟）并落离院方式（病案首页代码誊写面）；离院确认
      * 双条件（申请 READY+结算标记）已由服务层 GC19 校验裁决，本 CAS 兜底并发窗口。
      *
@@ -112,7 +112,7 @@ public interface InpatientVisitMapper extends BaseMapper<InpatientVisit> {
             @Param("updatedBy") String updatedBy);
 
     /**
-     * 欠费标识 CAS（billing.deposit.changed 消费面，AdmissionService.onDepositChanged）：
+     * 欠费标识 CAS（billing.deposit.changed 消费面，IAdmissionService.onDepositChanged）：
      * 目标值异于现值才更新（arrears_flag &lt;&gt; 目标值限定），updated_at 由 V902 触发器刷新
      * （近似承载标识时点——无专用置位列，零新迁移红线）。不限定状态面：欠费标识为就诊行本地
      * 属性，与五态状态机无涉（护士站清单聚合侧再限在院态）。

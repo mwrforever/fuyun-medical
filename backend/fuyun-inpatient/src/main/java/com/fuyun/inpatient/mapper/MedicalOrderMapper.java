@@ -10,7 +10,7 @@ import org.apache.ibatis.annotations.Update;
 /**
  * 住院医嘱主表 mapper：单表链式能力 + 状态条件更新注解 SQL（GC26：条件更新一律 @Update +
  * 影响行数判定，显式补 deleted=0；状态字面量与 V904 列值域、OrderStatus code 逐字同源）。
- * 状态迁移唯一执行面为 OrderStateMachineService（casTransferStatus）——模块外直写医嘱状态
+ * 状态迁移唯一执行面为 IOrderStateMachineService（casTransferStatus）——模块外直写医嘱状态
  * 为 04 Spec 红线 2 违例；停嘱值面（end_at/stop_reason）由业务服务在状态迁移后同事务补写
  * （updateStopValues，非状态面更新）。
  */
@@ -18,7 +18,7 @@ import org.apache.ibatis.annotations.Update;
 public interface MedicalOrderMapper extends BaseMapper<MedicalOrder> {
 
     /**
-     * 状态迁移 CAS（OrderStateMachineService 唯一执行面）：from 态限定更新至 to 态，
+     * 状态迁移 CAS（IOrderStateMachineService 唯一执行面）：from 态限定更新至 to 态，
      * 0 行定性状态机违例（并发迁移/终态/行缺失），调用方按 IP-1010 处置。
      *
      * @param orderNo   医嘱号，非空

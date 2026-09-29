@@ -46,8 +46,8 @@ import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import com.fuyun.patient.api.AllergyChecker;
@@ -150,13 +150,13 @@ class OrderPlanServiceImplTest {
     private InpatientSeqGate seqGate;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
     private ApplicationEventPublisher events;
 
     @Mock
-    private OrderAuditService orderAuditService;
+    private IOrderAuditService orderAuditService;
 
     @Mock
     private PracticeCheckPort practiceCheckPort;

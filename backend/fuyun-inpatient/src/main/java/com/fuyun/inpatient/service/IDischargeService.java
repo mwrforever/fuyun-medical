@@ -17,12 +17,12 @@ import java.time.Instant;
  * BillingEventListener 委托承载，幂等三段式的业务体）。金额红线（04 Spec 红线 3）：本域只存
  * 预审状态与欠费额快照，DTO/请求面零金额输入。
  */
-public interface DischargeService {
+public interface IDischargeService {
 
     /**
      * 出院申请（POST /visits/{visitId}/discharge-request，「预出院/明日出院」模式）：
      * 守卫（就诊在院 ADMITTED/离院方式词表）→ 在途清理编排三动作（①长期医嘱批量停嘱——
-     * 复用 MedicalOrderService.stopAllForTransfer 停嘱面[reason=出院]；②无合法停嘱边的停留
+     * 复用 IMedicalOrderService.stopAllForTransfer 停嘱面[reason=出院]；②无合法停嘱边的停留
      * 医嘱[CREATED/AUDIT_REJECTED]与临时在途医嘱逐条入清理结果追踪清单供人工处置；
      * ③未执行计划全量作废）→ 费用预审（BillingAccountQueryPort.precheck：结清→READY /
      * 欠费→BLOCKED 附欠费额快照）→ visit CAS DISCHARGE_REQUESTED + 申请行落库

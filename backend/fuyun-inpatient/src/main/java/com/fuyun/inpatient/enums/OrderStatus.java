@@ -12,7 +12,7 @@ import java.util.Set;
  * （驳回↔修改重提）；AUDITED → CREATED（撤回重审）；AUDITED/TRANSFERRED → CANCELLED
  * （作废，终态）；AUDITED/TRANSFERRED/EXECUTING → STOPPED（停嘱，终态）。
  * 合法迁移表（LEGAL_TRANSITIONS）为唯一裁决面——医嘱状态迁移一律经
- * OrderStateMachineService 按本表校验（04 Spec 红线 2），模块外直写医嘱状态为红线违例。
+ * IOrderStateMachineService 按本表校验（04 Spec 红线 2），模块外直写医嘱状态为红线违例。
  */
 public enum OrderStatus {
 
@@ -70,7 +70,7 @@ public enum OrderStatus {
     }
 
     /**
-     * 迁移合法性裁决（合法迁移表唯一查询入口——OrderStateMachineService 消费）。
+     * 迁移合法性裁决（合法迁移表唯一查询入口——IOrderStateMachineService 消费）。
      *
      * @param to 目标态，非空
      * @return true=from→to 在合法迁移表内（可达非自身）；终态（COMPLETED/CANCELLED/STOPPED）

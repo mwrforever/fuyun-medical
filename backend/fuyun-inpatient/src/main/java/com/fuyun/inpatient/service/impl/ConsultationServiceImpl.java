@@ -20,7 +20,7 @@ import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
 import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
-import com.fuyun.inpatient.service.ConsultationService;
+import com.fuyun.inpatient.service.IConsultationService;
 import com.fuyun.inpatient.vo.ConsultationVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -33,7 +33,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 会诊管理域服务实现（FU-M04-09，V908 consultation 业务面）。会诊为模块内独立小状态机
- * （REQUESTED/ACCEPTED/COMPLETED/CANCELLED，不经 OrderStateMachineService）——迁移唯一经
+ * （REQUESTED/ACCEPTED/COMPLETED/CANCELLED，不经 IOrderStateMachineService）——迁移唯一经
  * ConsultationMapper CAS 条件更新 + 影响行数判定（GC23），零行定性 IP-1020。<b>超时升级为
  * 动作非状态迁移</b>：列表读路径对 REQUESTED 且越过响应截止且未标记行做惰性判定——置
  * overdue_flag（CAS 旧值限定兜底并发双读）+ 事务内发布 inpatient.consultation.overdue 动作
@@ -44,7 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 须经事务内 publishEvent 承载 AFTER_COMMIT——只读事务无法满足发布面）。
  */
 @Slf4j
-public class ConsultationServiceImpl implements ConsultationService {
+public class ConsultationServiceImpl implements IConsultationService {
 
     /** 无登录上下文场景的操作者回退值（读路径置标记的审计列兜底，与审计默认同源） */
     private static final String SYSTEM_OPERATOR = "system";

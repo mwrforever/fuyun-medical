@@ -28,8 +28,8 @@ import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.AdmissionService;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IAdmissionService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
@@ -59,7 +59,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 状态迁移一律 @Update CAS + 影响行数判定（GC26，显式 deleted=0）；床位联动三处（Task 4
  * 补齐）：schedule 预约目标床位置 RESERVED、cancel 宽容联动释放（作废 CAS 命中后回读
  * 权威 target_bed_id 与床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
- * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（BedService 同源
+ * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（IBedService 同源
  * CAS 权威）。
  * Task 10 追加住院计费入口欠费面（FU-M04-08）：押金变动回执驱动的欠费标识本地裁决与 CAS
  * 刷新（InpatientProperties.depositFloorFen 阈值全局一份）+ 病区欠费清单聚合（患者摘要经
@@ -67,7 +67,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
-public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission> implements AdmissionService {
+public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission> implements IAdmissionService {
 
     /** 无登录上下文场景的操作者回退值（与 V902 审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
@@ -97,7 +97,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     private final InpatientProperties properties;
 
-    private final BedService bedService;
+    private final IBedService bedService;
 
     private final ApplicationEventPublisher events;
 
@@ -123,7 +123,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             PatientContextResolver patientContextResolver,
             PatientNameQuery patientNameQuery,
             InpatientProperties properties,
-            BedService bedService,
+            IBedService bedService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
         this.bedMapper = bedMapper;
@@ -231,7 +231,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     /**
      * 预约入院/预住院（WAITING→SCHEDULED）：目标床位/预约日期 CAS 同语句落值；携目标床位时
-     * 同事务联动床位预占（Task 4 联动①——BedService.reserveForAdmission 置 RESERVED，预占
+     * 同事务联动床位预占（Task 4 联动①——IBedService.reserveForAdmission 置 RESERVED，预占
      * 失败整体预约事务回滚：预约到不可用床必须整体失败；预住院模式无床不联动）。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
@@ -272,7 +272,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     /**
      * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）；床位联动②取<b>宽容语义</b>——作废
      * CAS 命中后回读住院证行权威 target_bed_id（并发预约窗口下 CAS 前快照可滞后），再回读
-     * 床行实态：仅 RESERVED 才同事务联动释放（Task 4 联动②——BedService.releaseForAdmission
+     * 床行实态：仅 RESERVED 才同事务联动释放（Task 4 联动②——IBedService.releaseForAdmission
      * 置 FREE）；非预占态（预占床已被登记台手工释放为 FREE/流转其他态/床位缺失）warn 留痕
      * 后放行作废——预占缺失不得阻断住院证终态落定。
      *
@@ -393,7 +393,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     /**
      * 入科确认（visit REGISTERED→ADMITTED）：科室/病区/床位/护理级别 CAS 同语句落值（入科时点
-     * 库端 now()）→ 回读行取入科时点 → 床位联动③（Task 4 补齐——BedService.occupyForAdmission
+     * 库端 now()）→ 回读行取入科时点 → 床位联动③（Task 4 补齐——IBedService.occupyForAdmission
      * 床位 RESERVED→OCCUPIED CAS + bed_assign 开 ADMISSION 流水，占床失败整体入科事务回滚）→
      * 事务内发布入科事件。
      *

@@ -2,7 +2,7 @@ package com.fuyun.inpatient.controller;
 
 import com.fuyun.inpatient.dto.BedAssignRequest;
 import com.fuyun.inpatient.dto.BedReserveRequest;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.BedMapVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -32,7 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class BedController {
 
-    private final BedService bedService;
+    private final IBedService bedService;
 
     /**
      * 病区床位图（五态色标 + 包床标记 + 性别限制 + 占用 visit 摘要）。

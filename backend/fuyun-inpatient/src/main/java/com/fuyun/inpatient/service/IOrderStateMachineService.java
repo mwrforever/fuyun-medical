@@ -11,7 +11,7 @@ import com.fuyun.inpatient.enums.OrderStatus;
  * 亦归业务服务。order_status_log 只增留痕数据面归 Task 6 V905 建表后回接（当前版本以
  * 结构化日志承载迁移留痕，回接点见 impl appendStatusLog）。
  */
-public interface OrderStateMachineService {
+public interface IOrderStateMachineService {
 
     /**
      * 医嘱状态迁移（合法迁移表校验 + CAS + 留痕）。

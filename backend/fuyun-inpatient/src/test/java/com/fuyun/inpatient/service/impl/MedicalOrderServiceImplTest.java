@@ -37,8 +37,8 @@ import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
 import com.fuyun.patient.api.AllergyChecker;
@@ -74,7 +74,7 @@ import org.springframework.http.HttpStatus;
  * 就诊行单次取数 N+1 消解）、查询面与守卫补充面（操作者非数字/非在院/词表外/号冲突）、
  * 停嘱三态合法（Task 6 冻结用例⑥）、驳回重提面（Task 6：内容重写+状态回 CREATED+重发
  * 开立事件+审核链重入）。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册
- * 表信息。OrderStateMachineService/OrderAuditService 按冻结接口 mock（状态面/审核面语义
+ * 表信息。IOrderStateMachineService/IOrderAuditService 按冻结接口 mock（状态面/审核面语义
  * 由各自独立测试承载）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -120,13 +120,13 @@ class MedicalOrderServiceImplTest {
     private AllergyChecker allergyChecker;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
     private ApplicationEventPublisher events;
 
     @Mock
-    private OrderAuditService orderAuditService;
+    private IOrderAuditService orderAuditService;
 
     @Captor
     private ArgumentCaptor<MedicalOrder> orderCaptor;
