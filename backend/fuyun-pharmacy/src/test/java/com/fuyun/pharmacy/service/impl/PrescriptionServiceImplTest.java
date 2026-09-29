@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -141,7 +142,7 @@ class PrescriptionServiceImplTest {
     @DisplayName("开方成功：rx_no 按 R+yyyyMMdd+流水签发、CREATED→APPROVED 同事务、计费行快照落明细")
     void createSignsBusinessNoAndApprovesInSameTransaction() {
         PrescriptionServiceImpl impl = newService();
-        when(drugMapper.selectById(11L)).thenReturn(drug());
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(drug()));
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
             inv.getArgument(0, Prescription.class).setId(100L);
             return 1;
@@ -212,7 +213,7 @@ class PrescriptionServiceImplTest {
     @DisplayName("开方守卫：给药途径不在 drug.route_codes 院内集拒 PH-1015")
     void createRejectsRouteOutsideDrugRouteSetAsPh1015() {
         PrescriptionServiceImpl impl = newService();
-        when(drugMapper.selectById(11L)).thenReturn(drug());
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(drug()));
         // 药品行守卫在主行落库/放行迁移之后触发（同事务，异常即整体回滚）：机械补齐前置写桩
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
             inv.getArgument(0, Prescription.class).setId(100L);
@@ -231,7 +232,7 @@ class PrescriptionServiceImplTest {
         PrescriptionServiceImpl impl = newService();
         Drug unmapped = drug();
         unmapped.setItemCode(null);
-        when(drugMapper.selectById(11L)).thenReturn(unmapped);
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(unmapped));
         // 药品行守卫在主行落库/放行迁移之后触发（同事务，异常即整体回滚）：机械补齐前置写桩
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
             inv.getArgument(0, Prescription.class).setId(100L);
@@ -359,7 +360,7 @@ class PrescriptionServiceImplTest {
         PrescriptionServiceImpl impl = newService();
         Drug disabled = drug();
         disabled.setStatus("DISABLED");
-        when(drugMapper.selectById(11L)).thenReturn(disabled);
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(disabled));
         // 药品行守卫在主行落库/放行迁移之后触发（同事务，异常即整体回滚）：机械补齐前置写桩
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
             inv.getArgument(0, Prescription.class).setId(100L);
@@ -378,7 +379,7 @@ class PrescriptionServiceImplTest {
         PrescriptionServiceImpl impl = newService();
         Drug narcotic = drug();
         narcotic.setNarcoticClass("NARCOTIC");
-        when(drugMapper.selectById(11L)).thenReturn(narcotic);
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(narcotic));
         // 麻精命中 → 纵深防御 ② 追加 NARCOTIC 授权校验（Task 9 接线后既有用例同步演进）
         when(practiceCheckPort.check(3L, "NARCOTIC")).thenReturn(new PracticeCheckResult(true, "执业授权有效：NARCOTIC"));
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
@@ -454,8 +455,7 @@ class PrescriptionServiceImplTest {
     @DisplayName("开方纵深防御②：按命中集三次校验（PRESCRIPTION/ANTIBIO_RESTRICT/NARCOTIC）全过放行，任一未过拒 PH-1017")
     void createChecksAntibioAndNarcoticGrantsByTopClass() {
         PrescriptionServiceImpl impl = newService();
-        when(drugMapper.selectById(11L)).thenReturn(antibioDrug());
-        when(drugMapper.selectById(12L)).thenReturn(narcoticDrug());
+        when(drugMapper.selectByIds(List.of(11L, 12L))).thenReturn(List.of(antibioDrug(), narcoticDrug()));
         when(practiceCheckPort.check(3L, "ANTIBIO_RESTRICT"))
                 .thenReturn(new PracticeCheckResult(true, "执业授权有效：ANTIBIO_RESTRICT"));
         when(practiceCheckPort.check(3L, "NARCOTIC")).thenReturn(new PracticeCheckResult(true, "执业授权有效：NARCOTIC"));
@@ -492,14 +492,13 @@ class PrescriptionServiceImplTest {
         PrescriptionServiceImpl impl = newService();
         Drug unrestricted = drug();
         unrestricted.setAntibioClass("UNRESTRICTED");
-        when(drugMapper.selectById(11L)).thenReturn(unrestricted);
-        when(drugMapper.selectById(13L)).thenReturn(specialAntibioDrug());
         // 低分级后置：严重序比较 false 分支（候选低于已聚合最高级时保持不降级）
         Drug restricted = drug();
         restricted.setId(14L);
         restricted.setDrugCode("D-IT-004");
         restricted.setAntibioClass("RESTRICTED");
-        when(drugMapper.selectById(14L)).thenReturn(restricted);
+        when(drugMapper.selectByIds(List.of(11L, 13L, 14L)))
+                .thenReturn(List.of(unrestricted, specialAntibioDrug(), restricted));
         when(practiceCheckPort.check(3L, "ANTIBIO_SPECIAL"))
                 .thenReturn(new PracticeCheckResult(true, "执业授权有效：ANTIBIO_SPECIAL"));
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
@@ -531,12 +530,130 @@ class PrescriptionServiceImplTest {
     }
 
     @Test
+    @DisplayName("开方批查锚定：多药品处方药品恰一次批查（键集=请求 drugId 去重遇序）且逐行 selectById 零触达（A.4.3-14）")
+    void createLoadsAllDrugsInExactlyOneBatchedQueryWithoutRowLevelPointLookups() {
+        PrescriptionServiceImpl impl = newService();
+        Drug second = drug();
+        second.setId(12L);
+        second.setDrugCode("D-IT-002");
+        when(drugMapper.selectByIds(List.of(11L, 12L))).thenReturn(List.of(drug(), second));
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+        PrescriptionCreateRequest twoLine = new PrescriptionCreateRequest(
+                700101L,
+                VISIT,
+                "OUTPATIENT",
+                "NEIKE",
+                List.of("J06.900"),
+                false,
+                List.of(
+                        new RxItemRequest(11L, "2", "盒", "0.5g", "ORAL", "TID", 3, "饭后服"),
+                        new RxItemRequest(12L, "1", "盒", "0.25g", "ORAL", "BID", 5, null)));
+
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            impl.create(twoLine);
+        }
+        // N+1 消除锚定：两行明细恰一次批查（键集=请求 drugId 去重遇序），旧逐行点查通道零触达
+        verify(drugMapper, times(1)).selectByIds(List.of(11L, 12L));
+        verify(drugMapper, never()).selectById(any());
+    }
+
+    @Test
+    @DisplayName("同药多行等价锚定：重复 drugId 恰一次装载，两行明细快照逐字段与单查装载一致（行序/数量/用法分行保持）")
+    void createKeepsPerLineSnapshotEquivalenceWhenSameDrugAppearsInMultipleLines() {
+        PrescriptionServiceImpl impl = newService();
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(drug()));
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+        // 同药不同频次两行：第二行 unit 缺省验证 drug.unit 兜底（批查 Map 取行与单查同源快照）
+        PrescriptionCreateRequest dup = new PrescriptionCreateRequest(
+                700101L,
+                VISIT,
+                "OUTPATIENT",
+                "NEIKE",
+                List.of("J06.900"),
+                false,
+                List.of(
+                        new RxItemRequest(11L, "2", "盒", "0.5g", "ORAL", "TID", 3, "饭后服"),
+                        new RxItemRequest(11L, "1", null, "0.25g", "IV", "BID", 5, null)));
+
+        PrescriptionVO vo;
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            vo = impl.create(dup);
+        }
+
+        assertThat(vo.items()).hasSize(2);
+        // 两行共享同一药品快照（drugCode/itemCode 快照与 unit 兜底来源一致），请求面字段分行保持
+        assertThat(vo.items().get(0).drugId()).isEqualTo(11L);
+        assertThat(vo.items().get(0).drugCode()).isEqualTo("D-IT-001");
+        assertThat(vo.items().get(0).itemCode()).isEqualTo("C0131230900157");
+        assertThat(vo.items().get(0).quantity()).isEqualTo("2");
+        assertThat(vo.items().get(0).unit()).isEqualTo("盒");
+        assertThat(vo.items().get(0).frequency()).isEqualTo("TID");
+        assertThat(vo.items().get(1).drugId()).isEqualTo(11L);
+        assertThat(vo.items().get(1).drugCode()).isEqualTo("D-IT-001");
+        assertThat(vo.items().get(1).itemCode()).isEqualTo("C0131230900157");
+        assertThat(vo.items().get(1).quantity()).isEqualTo("1");
+        assertThat(vo.items().get(1).unit()).isEqualTo("盒"); // unit 缺省行兜底取 drug.unit（同源快照）
+        assertThat(vo.items().get(1).frequency()).isEqualTo("BID");
+        // 重复 drugId 恰一次装载（键集去重天然覆盖同药多行）
+        verify(drugMapper, times(1)).selectByIds(List.of(11L));
+        // created 事件计费行：两行各自数量与用法摘要（不因同药合并）
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(eventCaptor.capture());
+        PharmacyDomainEvent published = (PharmacyDomainEvent) eventCaptor.getValue();
+        PrescriptionCreatedPayload payload = (PrescriptionCreatedPayload) published.payload();
+        assertThat(payload.lines()).hasSize(2);
+        assertThat(payload.lines().get(0).quantity()).isEqualTo("2");
+        assertThat(payload.lines().get(1).quantity()).isEqualTo("1");
+        assertThat(payload.lines().get(0).usageSummary())
+                .isNotEqualTo(payload.lines().get(1).usageSummary());
+    }
+
+    @Test
+    @DisplayName("批查缺行错误语义等价：部分药品缺行拒 PH-1003（409）+ 文案逐字等于逐行点查口径（drugId 取请求行）")
+    void createRejectsMissingDrugRowFromBatchLoadWithIdenticalErrorSemantics() {
+        PrescriptionServiceImpl impl = newService();
+        // 批查仅回 11 号药：12 号行缺行（Map 无键取 null 行）须走与逐行点查缺行同一分支
+        when(drugMapper.selectByIds(List.of(11L, 12L))).thenReturn(List.of(drug()));
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+        PrescriptionCreateRequest partial = new PrescriptionCreateRequest(
+                700101L,
+                VISIT,
+                "OUTPATIENT",
+                "NEIKE",
+                List.of("J06.900"),
+                false,
+                List.of(
+                        new RxItemRequest(11L, "2", "盒", "0.5g", "ORAL", "TID", 3, null),
+                        new RxItemRequest(12L, "1", "盒", "0.25g", "ORAL", "BID", 5, null)));
+
+        // 错误码→HTTP 态→文案三重逐字等价：与旧 selectById 返回 null 同一分支（行序不变，首
+        // 个无效行报错——第 1 行命中后第 2 行缺行仍精确报 12 号行）
+        assertThatThrownBy(() -> impl.create(partial)).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(PharmacyErrorCode.DRUG_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+            assertThat(e.getMessage()).isEqualTo("药品不存在或已停用：drugId=12");
+        });
+    }
+
+    @Test
     @DisplayName("开方纵深防御守卫：抗菌药分级词表外（主数据脏数据）fail-closed 拒开——IllegalStateException 数据异常显式暴露，禁静默跳过授权校验")
     void createRejectsUnknownAntibioClassAsDataAnomaly() {
         PrescriptionServiceImpl impl = newService();
         Drug dirty = drug();
         dirty.setAntibioClass("WIDE_SPECTRUM"); // 词表外（AntibacterialClass 四值外）
-        when(drugMapper.selectById(11L)).thenReturn(dirty);
+        when(drugMapper.selectByIds(List.of(11L))).thenReturn(List.of(dirty));
         // 聚合发生在主行落库/放行迁移之后（同事务，异常即整体回滚）：机械补齐前置写桩
         when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
             inv.getArgument(0, Prescription.class).setId(100L);

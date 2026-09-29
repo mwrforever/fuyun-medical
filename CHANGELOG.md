@@ -2,6 +2,26 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-05：pharmacy 处方开立逐药品 N+1 改 drugIds 去重批查（性能，行为保持）
+
+- **根因（OPT-05 / BE-C4-14 ↔ BE-B1-03 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 85）**：`PrescriptionServiceImpl.create` 明细装配循环内逐行
+  `drugMapper.selectById(itemReq.drugId())` 点查后 `validateLine`——多药品处方（常见 3-10 行）
+  即 3-10 次单查，开方为医生工作站高频操作、全院并发时往返线性放大（A.4.3-14 直接命中）；
+  同方法写侧已 `Db.saveBatch` 而读侧逐行，形态不一致。
+- **修复（行为保持）**：循环前收集全部 `itemReq.drugId()` 去重 → `drugMapper.selectByIds`
+  一次批查（MP BaseMapper 自带；selectByIds 为 3.5.17 非过时形态——selectBatchIds 已标
+  deprecated，与 pharmacy 模块 MedicationReviewServiceImpl 既有批查口径一致）→ 按 id 建
+  Map，循环内改 Map 取行；批查缺行（Map 无键）取 null 行进 `validateLine`，与旧逐行点查
+  缺行同一分支——PH-1003（409）+ 文案「药品不存在或已停用：drugId=请求行 id」逐字等价，
+  行序不变、首个无效行报错语义保持，`validateLine` 本体零触碰；键集空集零查询（空明细属
+  契约外形态，HTTP 面 @NotEmpty 已拒，与旧空循环零药品查询语义对齐）。N 行明细 N 查 → 恒
+  1 查，同药多行（不同频次）去重批查天然共享装载。行为锚定测试「多药品处方批查恰一次 +
+  逐行 selectById 零触达 + 重复药品多行明细/事件计费行逐字段等价 + 缺行错误码/HTTP 态/
+  文案三重逐字等价」先红后绿交付；既有 8 个开方用例桩面随实现机械换至批查面（断言零
+  改动，D-21 裁量：单点单次、严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（163 用例）+ `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-04：billing 划价链预计价逐行 2N~3N 单查链改键集批查 + 逐行补偿校验（性能，行为保持）
 
 - **根因（OPT-04 / BE-C4-13，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：

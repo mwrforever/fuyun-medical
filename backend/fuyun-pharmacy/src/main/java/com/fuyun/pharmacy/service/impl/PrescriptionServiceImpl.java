@@ -33,6 +33,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -94,7 +95,7 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
      *
      * @param prescriptionMapper     处方 mapper（ServiceImpl 继承 baseMapper 同源），非空
      * @param prescriptionItemMapper 明细 mapper，非空
-     * @param drugMapper             药品 mapper（开方逐行取药），非空
+     * @param drugMapper             药品 mapper（开方明细 drugIds 去重批查装载），非空
      * @param prescriptionFeePort    billing 费用作废端口（未缴费作废联动），非空
      * @param practiceCheckPort      执业授权校验端口（system api），非空；处方权/抗菌/麻精纵深校验
      * @param events                 应用事件发布器，非空
@@ -152,9 +153,19 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         // ② 纵深防御命中集聚合：抗菌药最高分级对应授权（null=纯非抗菌药不追加）+ 麻精命中标记
         String topAntibioGrant = null;
         boolean narcoticHit = false;
+        // 数据库读操作：本方全部药品一次批查（A.4.3-14 循环内行级点查禁 N+1，OPT-05；selectByIds
+        //   为 MP 3.5.17 非过时形态）——drugIds 去重后单次往返装载、按 id 建 Map 供逐行取用，同药
+        //   多行（不同频次）共享一次装载；批查缺行（Map 无键）取 null 行进 validateLine，与旧逐行
+        //   点查缺行同一分支同文案；键集空集零查询（空明细属契约外形态——HTTP 面 @NotEmpty 已拒，
+        //   与旧空循环零药品查询语义对齐）
+        List<Long> drugIds =
+                req.items().stream().map(RxItemRequest::drugId).distinct().toList();
+        Map<Long, Drug> drugById = drugIds.isEmpty()
+                ? Map.of()
+                : drugMapper.selectByIds(drugIds).stream().collect(Collectors.toMap(Drug::getId, Function.identity()));
         for (int i = 0; i < req.items().size(); i++) {
             RxItemRequest itemReq = req.items().get(i);
-            Drug drug = drugMapper.selectById(itemReq.drugId());
+            Drug drug = drugById.get(itemReq.drugId());
             validateLine(drug, itemReq);
             PrescriptionItem row = new PrescriptionItem();
             row.setPrescriptionId(rx.getId());
