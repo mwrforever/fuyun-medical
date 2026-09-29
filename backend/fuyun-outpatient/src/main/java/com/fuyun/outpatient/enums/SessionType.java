@@ -2,6 +2,9 @@ package com.fuyun.outpatient.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.outpatient.api.OutpatientErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 门诊时段枚举（outpatient.schedule_template.session 与 outpatient.schedule.session 列值域，
@@ -44,7 +47,8 @@ public enum SessionType {
      *
      * @param code 存储值，来源：DB 列读取或外部入参；非空（列 NOT NULL）
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或词表外入参），建议上游按参数校验处置
+     * @throws BizException code 无对应枚举常量（词表外入参显式 400 拒绝，OP-1019；EX-19 A 类
+     *                      收口：裸 IAE 全局渲染 500 无业务码，外部入参失败前置 400+错误码）
      */
     public static SessionType fromCode(String code) {
         for (SessionType session : values()) {
@@ -52,6 +56,6 @@ public enum SessionType {
                 return session;
             }
         }
-        throw new IllegalArgumentException("未知的门诊时段 code: " + code);
+        throw new BizException(OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "门诊时段词表外：" + code);
     }
 }

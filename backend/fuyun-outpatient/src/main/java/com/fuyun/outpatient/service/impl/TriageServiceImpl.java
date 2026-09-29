@@ -251,14 +251,9 @@ public class TriageServiceImpl implements ITriageService {
     @Override
     @Transactional
     public QueueTicketVO adjust(TriageAdjustRequest request) {
-        // 动作词表校验（词表外/报到动作误入本端点均 OP-1019——报到走 /triage/check-in 专用端点）
-        TriageAction action;
-        try {
-            action = TriageAction.fromCode(request.action());
-        } catch (IllegalArgumentException e) {
-            throw new BizException(
-                    OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "分诊动作词表外：" + request.action());
-        }
+        // 动作词表校验（词表外/报到动作误入本端点均 OP-1019——报到走 /triage/check-in 专用端点；
+        // 词表外由 TriageAction.fromCode 枚举内直接抛 OP-1019——EX-19 A 类收口，转换点上移）
+        TriageAction action = TriageAction.fromCode(request.action());
         if (action == TriageAction.CHECK_IN) {
             throw new BizException(
                     OutpatientErrorCode.PARAM_FORMAT_INVALID,
@@ -522,13 +517,8 @@ public class TriageServiceImpl implements ITriageService {
                 .orderByDesc(QueueTicket::getPriorityScore)
                 .orderByAsc(QueueTicket::getQueueTime);
         if (status != null && !status.isBlank()) {
-            TicketStatus statusEnum;
-            try {
-                statusEnum = TicketStatus.fromCode(status);
-            } catch (IllegalArgumentException e) {
-                throw new BizException(
-                        OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "票据状态词表外：" + status);
-            }
+            // 状态词表校验：词表外由 TicketStatus.fromCode 枚举内直接抛 OP-1019（EX-19 A 类收口，转换点上移）
+            TicketStatus statusEnum = TicketStatus.fromCode(status);
             wrapper.eq(QueueTicket::getStatus, statusEnum);
         }
         List<QueueTicket> tickets = queueTicketMapper.selectList(wrapper);
@@ -658,6 +648,7 @@ public class TriageServiceImpl implements ITriageService {
                         TicketStatus.CANCELLED.getCode(),
                         OperatorContextHolder.get())
                 == 0) {
+            // EX-19 C 类收口留痕：并发 CAS 落败断言（服务端并发竞争，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("跨队列转接失败：旧票并发状态迁移（CAS 落败）：ticketId=" + ticket.getId());
         }
         // 缓存写操作：旧队移除（CAS 命中后放票，防旧队继续叫到已转票）
@@ -813,6 +804,7 @@ public class TriageServiceImpl implements ITriageService {
         String seqKey = QUEUE_SEQ_KEY_PREFIX + deptCode + QUEUE_SEQ_KEY_SUFFIX;
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
+            // EX-19 C 类收口留痕：基础设施异常断言（Redis 流水缺失，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("队列当日序签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {

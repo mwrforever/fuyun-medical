@@ -2,6 +2,9 @@ package com.fuyun.outpatient.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.outpatient.api.OutpatientErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 预约渠道枚举（outpatient.appointment.channel 列值域，M03 Spec §4 六渠道词表）：P1 实装
@@ -54,8 +57,8 @@ public enum ApptChannel {
      *
      * @param code 存储值，来源：DB 列读取或预约请求入参；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或词表外入参），调用方按
-     *                                  OP-1019 参数格式校验处置
+     * @throws BizException code 无对应枚举常量（词表外入参显式 400 拒绝，OP-1019；EX-19 A 类
+     *                      收口：裸 IAE 全局渲染 500 无业务码，外部入参失败前置 400+错误码）
      */
     public static ApptChannel fromCode(String code) {
         for (ApptChannel channel : values()) {
@@ -63,6 +66,6 @@ public enum ApptChannel {
                 return channel;
             }
         }
-        throw new IllegalArgumentException("未知的预约渠道 code: " + code);
+        throw new BizException(OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "预约渠道词表外：" + code);
     }
 }

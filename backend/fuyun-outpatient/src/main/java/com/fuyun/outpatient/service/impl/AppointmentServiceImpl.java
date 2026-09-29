@@ -215,14 +215,9 @@ public class AppointmentServiceImpl implements IAppointmentService {
     @Override
     @Transactional
     public AppointmentVO book(AppointmentCreateRequest request) {
-        // ① 渠道解析与 P1 开放面校验：词表外或预留位渠道显式 400（禁裸 parse，W-22⑦ 口径）
-        ApptChannel channel;
-        try {
-            channel = ApptChannel.fromCode(request.channel());
-        } catch (IllegalArgumentException e) {
-            throw new BizException(
-                    OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "预约渠道词表外：" + request.channel());
-        }
+        // ① 渠道解析与 P1 开放面校验：词表外或预留位渠道显式 400（禁裸 parse，W-22⑦ 口径；
+        //    词表外由 ApptChannel.fromCode 枚举内直接抛 OP-1019——EX-19 A 类收口，转换点上移）
+        ApptChannel channel = ApptChannel.fromCode(request.channel());
         if (!P1_BOOK_CHANNELS.contains(channel)) {
             throw new BizException(
                     OutpatientErrorCode.PARAM_FORMAT_INVALID,
@@ -412,6 +407,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Schedule schedule = pool == null ? null : scheduleMapper.selectById(pool.getScheduleId());
         if (pool == null || schedule == null) {
             // 取号 CAS 已成功但关联行缺失属数据异常（uk 外键语义由业务维护），fail-fast 回滚整单
+            // EX-19 C 类收口留痕：内部数据异常断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("预约取号失败：号源池/排班定位失败，apptNo=" + apptNo);
         }
         Visit visit = buildVisit(appointment, visitId, pool, schedule, OperatorContextHolder.get());
@@ -441,6 +437,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Appointment appointment = appointmentMapper.selectOne(
                 Wrappers.<Appointment>lambdaQuery().eq(Appointment::getApptNo, payload.apptNo()));
         if (appointment == null) {
+            // EX-19 C 类收口留痕：MQ 超时回调驱动的数据异常断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("预约支付超时释放失败：预约单不存在，apptNo=" + payload.apptNo());
         }
         // 业务态校验幂等守卫：RESERVED→NO_SHOW 影响 1 行才执行释放面——0 行=已取号 TAKEN/已取消 CANCELLED/
@@ -649,6 +646,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 == 0) {
             releaseRedisHoldQuietly(newPool, newSchedule, redisHeld);
             deletePayHoldQuietly(fresh.getApptNo());
+            // EX-19 C 类收口留痕：并发 CAS 落败断言（服务端并发竞争，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("改期失败：旧单并发状态迁移（CAS 落败）：apptNo=" + apptNo);
         }
         // ⑥ 旧池回池+旧占位键清理（version 谓词条件回池，与超时释放/退号取消共用释放面）
@@ -937,6 +935,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         // 数据库写操作：当日挂号一步取号 CAS（新建行 RESERVED→TAKEN+visit_id 同步回填）
         if (appointmentMapper.casTake(appointment.getId(), visitId) == 0) {
             // 新建行 CAS 落败属数据异常（行状态被并发篡改），fail-fast 回滚整单（含 visit 签发流水跳号，无副作用）
+            // EX-19 C 类收口留痕：并发 CAS 落败断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("当日挂号 casTake 落败（新建行状态异常）：apptNo=" + appointment.getApptNo());
         }
         Visit visit = buildVisit(appointment, visitId, pool, schedule, operator);
@@ -1060,6 +1059,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
+            // EX-19 C 类收口留痕：基础设施异常断言（Redis 流水缺失，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("预约单号签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {
@@ -1153,6 +1153,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private Schedule scheduleOf(Appointment appointment) {
         Schedule schedule = scheduleMapper.selectById(appointment.getScheduleId());
         if (schedule == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("booked 事件组装失败：排班定位缺失，scheduleId=" + appointment.getScheduleId());
         }
         return schedule;
@@ -1176,6 +1177,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Visit visit =
                 visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, appointment.getVisitId()));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（TAKEN 单必有 visit 锚，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("退号失败：就诊记录缺失（数据异常）：apptNo=" + appointment.getApptNo());
         }
         if (visit.getStatus() != VisitStatus.REGISTERED) {
@@ -1269,6 +1271,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 .map(fee -> new VisitRefundCommand.Line(fee.feeId(), REGISTRATION_REFUND_QUANTITY))
                 .toList();
         if (lines.isEmpty()) {
+            // EX-19 C 类收口留痕：内部数据异常断言（已支付单必有可退费用行，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("已支付预约单无可退费用行（数据异常）：apptNo=" + appointment.getApptNo() + "，settlementId="
                     + appointment.getFeeSettlementId());
         }
@@ -1360,6 +1363,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Visit visit =
                 visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, appointment.getVisitId()));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（TAKEN 单必有 visit，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("退号回执回滚失败：就诊记录缺失（数据异常）：apptNo=" + appointment.getApptNo());
         }
         // visit 状态机合法迁移 REGISTERED→CANCELLED：CAS 命中才记日志与事件（并发已迁移幂等跳过）

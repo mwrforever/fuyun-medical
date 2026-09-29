@@ -2,6 +2,9 @@ package com.fuyun.outpatient.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.outpatient.api.OutpatientErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 候诊票据状态枚举（outpatient.queue_ticket.status 列值域，M03 候诊队列）：
@@ -60,7 +63,8 @@ public enum TicketStatus {
      *
      * @param code 存储值，来源：API 入参/DB 列读取；可空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（调用方转 OP-1019 入参词表外拒绝）
+     * @throws BizException code 无对应枚举常量（词表外入参显式 400 拒绝，OP-1019；EX-19 A 类
+     *                      收口：裸 IAE 全局渲染 500 无业务码，外部入参失败前置 400+错误码）
      */
     public static TicketStatus fromCode(String code) {
         for (TicketStatus status : values()) {
@@ -68,6 +72,6 @@ public enum TicketStatus {
                 return status;
             }
         }
-        throw new IllegalArgumentException("未知的候诊票据状态 code: " + code);
+        throw new BizException(OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "票据状态词表外：" + code);
     }
 }

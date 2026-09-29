@@ -121,6 +121,7 @@ public class ChargingServiceImpl implements IChargingService {
         }
         requireSettlementAnchors(payload);
         // 0 元/负额结算拒绝（W-20 两问澄清前沿用既有 400 拒绝语义，不放开不收窄；缺失值落 0 同口径）
+        // EX-19 C 类收口留痕：MQ 结算回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 死信留痕
         if (payload.totalAmount() == null || payload.totalAmount() <= 0) {
             throw new IllegalStateException("结算完成载荷金额违例（0 元/负额结算拒绝，W-20 澄清前维持拒绝口径）：settleNo=" + payload.settleNo()
                     + "，totalAmount=" + payload.totalAmount());
@@ -336,6 +337,7 @@ public class ChargingServiceImpl implements IChargingService {
                 || payload.visitId().isBlank()
                 || payload.patientId() == null
                 || payload.patientId() == 0L) {
+            // EX-19 C 类收口留痕：MQ 结算回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 死信留痕
             throw new IllegalStateException("结算完成载荷不合规（缺 settlementId/settleNo/visitId/patientId 锚）：settleNo="
                     + payload.settleNo() + "，settlementId=" + payload.settlementId() + "，visitId=" + payload.visitId());
         }
@@ -351,6 +353,7 @@ public class ChargingServiceImpl implements IChargingService {
      */
     private static void requireRxRef(String rxNo, String eventType, String bizNo) {
         if (rxNo == null || rxNo.isBlank()) {
+            // EX-19 C 类收口留痕：MQ 回流载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 死信留痕
             throw new IllegalStateException("回流载荷不合规（缺 rxNo 锚）：" + eventType + "，bizNo=" + bizNo);
         }
     }
@@ -366,6 +369,7 @@ public class ChargingServiceImpl implements IChargingService {
         // 数据库读操作：就诊号定位就诊记录
         Visit visit = visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, visitId));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（非用户输入路径），保留 ISE 死信留痕零行为变化
             throw new IllegalStateException("结算完成消费失败：就诊记录缺失（数据异常，人工对账）：visitId=" + visitId);
         }
         return visit;
@@ -383,6 +387,7 @@ public class ChargingServiceImpl implements IChargingService {
             return settlementQueryPort.sourceRefsOfSettlement(settlementId);
         } catch (RuntimeException e) {
             log.error("结算单反查端口调用异常，拒绝消费编排进死信对账：settlementId={}", settlementId, e);
+            // EX-19 C 类收口留痕：外部端口异常转译断言（非用户输入路径），保留 ISE 死信留痕零行为变化
             throw new IllegalStateException("结算单反查失败（M13 端口异常），拒绝放行/回滚编排：settlementId=" + settlementId);
         }
     }

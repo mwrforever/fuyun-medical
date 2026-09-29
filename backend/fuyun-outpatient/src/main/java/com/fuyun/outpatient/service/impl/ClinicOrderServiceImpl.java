@@ -454,6 +454,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
         ClinicOrder order =
                 clinicOrderMapper.selectOne(Wrappers.<ClinicOrder>lambdaQuery().eq(ClinicOrder::getOrderNo, orderNo));
         if (order == null) {
+            // EX-19 C 类收口留痕：MQ 回执驱动的数据异常断言（非用户输入路径），保留 ISE 死信留痕零行为变化
             throw new IllegalStateException("缴费回执推进失败：申请单缺失（数据异常，人工对账）：orderNo=" + orderNo);
         }
         // 数据库写操作：单据 CAS CREATED→PENDING_FEE；0 行=重投幂等/竞态，重读定性
@@ -570,6 +571,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
         // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
+            // EX-19 C 类收口留痕：基础设施异常断言（Redis 流水缺失，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("申请单号签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {
@@ -577,6 +579,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
             redisTemplate.expire(seqKey, ORDER_SEQ_KEY_TTL);
         }
         if (seq > DAILY_SEQ_CAP) {
+            // EX-19 C 类收口留痕：签发上限防御断言（违例值禁落库，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("申请单号签发失败：当日流水超 6 位上限（seq=" + seq + "），seqKey=" + seqKey);
         }
         return "OP" + today + String.format("%0" + SEQ_WIDTH + "d", seq);

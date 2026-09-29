@@ -53,6 +53,7 @@ public class OutpatientAppointmentTimeoutListener {
             long patientId = envelope.payload().path("patientId").asLong(0L);
             long poolId = envelope.payload().path("poolId").asLong(0L);
             if (apptNo.isBlank() || patientId == 0L || poolId == 0L) {
+                // EX-19 C 类收口留痕：MQ 回调载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
                 throw new IllegalStateException("预约超时回调载荷不合规（缺 apptNo/patientId/poolId）：eventType="
                         + envelope.eventType() + "，payload=" + envelope.payload());
             }
