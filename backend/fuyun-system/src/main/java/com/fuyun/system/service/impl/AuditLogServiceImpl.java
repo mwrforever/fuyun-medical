@@ -4,15 +4,18 @@ import com.fuyun.system.entity.AuditLogEntity;
 import com.fuyun.system.mapper.AuditLogMapper;
 import com.fuyun.system.record.AuditLogEntry;
 import com.fuyun.system.service.IAuditLogService;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 审计日志服务实现（system.audit_log 只增表唯一写入口，BRIEF-PR3-01 §3.3）。
  *
  * <p>写入形态：append 直接 mapper.insert 单语句（自原子，不开方法级事务——A.4.2-7 最小边界；
  * 切面已在 controller 层事务外调用，审计写入与业务事务天然解耦）。只增红线：本类不提供任何
- * UPDATE/DELETE 路径。落库失败的告警由调用方（审计切面）统一 error 记录，本类不落日志。
+ * UPDATE/DELETE 路径。成功落库由本类 info 记录摘要标识（禁止打 detail 原文——敏感红线）；
+ * 落库失败的告警由调用方（审计切面）统一 error 记录。
  * 装配归 SystemWebConfig @Import（com.fuyun.system 不在组件扫描范围）。
  */
+@Slf4j
 public class AuditLogServiceImpl implements IAuditLogService {
 
     /** 审计只增表数据访问：唯一写通道 */
@@ -48,5 +51,14 @@ public class AuditLogServiceImpl implements IAuditLogService {
         entity.setDetail(entry.detail());
         entity.setOccurredAt(entry.occurredAt());
         auditLogMapper.insert(entity);
+        // 数据库写操作 info 留痕（全局 §二）：仅打事件摘要标识；detail 可能残留敏感字段（身份证/手机号等），禁止打原文
+        log.info(
+                "审计留痕已落库：actionType={}，operatorId={}，resource={}，bizNo={}，result={}，traceId={}",
+                entry.actionType(),
+                entry.operatorId(),
+                entry.resource(),
+                entry.bizNo(),
+                entry.result(),
+                entry.traceId());
     }
 }

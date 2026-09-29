@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-02（C 路 a）：fuyun-system 审计写库补 info 日志（BE-A4-12，日志新增零逻辑变化）
+
+- **根因（BE-A4-12 评分 55，2026-09-28 全仓高风险问题清单低置信节）**：AuditLogServiceImpl
+  :37-51 审计写库无 info——原「审计表即日志载体」豁免申报按宪法收拢总裁决不采信（全局
+  §二「数据库写操作必须 info」显式条款可锚定）。
+- **修复**：append 落库成功后补一行中文 info（actionType/operatorId/resource/bizNo/
+  result/traceId 六摘要字段）；**敏感红线**：detail 原文与 failReason 不入日志（detail
+  可能残留身份证/手机号脱敏残留，行级注释标明）；类补 Lombok @Slf4j。**必要注释修正
+  （1 行）**：类 javadoc 原「本类不落日志」条款与新日志直接矛盾，保留即成失实注释（违
+  全局 §一），改写为准确口径（成功落库本类 info 摘要；失败告警由审计切面 error 统一
+  承担）。
+- **验证**：`mvn -B -ntp -pl fuyun-system -am test` 全绿（161 用例=基线）+
+  `spotless:check` 通过；代码既有行零改动，新增 @Slf4j/import/日志块+1 行 javadoc 修正。
+
 ## 2026-09-29 · 机械组 EX-03（B 路 a）：fuyun-patient 五服务接口 I 前缀重命名（BE-C2-10，纯命名层零行为变化）
 
 - **根因（BE-C2-10 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：patient 五个
