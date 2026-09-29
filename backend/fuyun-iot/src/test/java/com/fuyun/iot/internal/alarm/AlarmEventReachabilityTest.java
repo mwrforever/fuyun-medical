@@ -2,6 +2,7 @@ package com.fuyun.iot.internal.alarm;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -162,12 +163,17 @@ class AlarmEventReachabilityTest {
         when(context.getBean(IotSeqGate.class).nextAlarmNo()).thenReturn(ALARM_NO);
         when(context.getBean(IotAlarmMapper.class).insert(any(IotAlarmEntity.class)))
                 .thenReturn(1);
-        // 越限回合标记已起算 60s（≥ 持续 30s）：本批评估即触发
+        // 越限回合标记已起算 60s（≥ 持续 30s）：Lua 原子迁移返回 2（达标清标记），本批评估即触发
         StringRedisTemplate redisTemplate = context.getBean(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get("fy:iot:alarm:breach:" + RULE_ID + ":" + DEVICE_ID + ":" + METRIC_CODE))
-                .thenReturn(Instant.now().minusSeconds(60).toString());
+        when(redisTemplate.execute(
+                        any(),
+                        eq(List.of("fy:iot:alarm:breach:" + RULE_ID + ":" + DEVICE_ID + ":" + METRIC_CODE)),
+                        anyString(),
+                        anyString(),
+                        anyString()))
+                .thenReturn(2L);
         when(valueOperations.increment("fy:iot:alarm:rate:" + RULE_ID)).thenReturn(1L);
     }
 

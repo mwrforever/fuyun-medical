@@ -36,9 +36,13 @@ import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.core.script.RedisScript;
+import org.springframework.scripting.support.ResourceScriptSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Propagation;
@@ -53,7 +57,9 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p><b>三类规则源评估语义</b>：①阈值规则（THRESHOLD）=当前值越阈值且持续 duration_secs（越限
  * 回合标记 {@code fy:iot:alarm:breach:{ruleId}:{deviceId}:{metricCode}} 承载持续时长累计，批次频度
- * 逐次核算）；恢复带内（含已恢复侧）不重复触发——回合复位仅在值回到恢复带边界内时发生，活跃期内
+ * 逐次核算；起算/累计/达标清标记三态判定与写删经 Lua 原子脚本单步迁移——EX-27/BE-B5-06 收口原
+ * 「GET→判定→SET/DEL」三步竞态，标记承载值编码为 epoch 毫秒，键语义与 TTL 口径不变）；恢复带内
+ * （含已恢复侧）不重复触发——回合复位仅在值回到恢复带边界内时发生，活跃期内
  * 越恢复带的重复触发仅聚合计数；②透传规则（DEVICE_ALARM）=IoTDA device.alarm 帧命中（经
  * {@code evaluateDeviceAlarm}，消费侧第四形态解析产物直入）；③离线规则（OFFLINE）=
  * {@link OfflineDetector} 惰性扫描随 evaluate 调起（ONLINE 设备最后在线超时即断流）。
@@ -87,6 +93,13 @@ public class AlarmEngine {
 
     /** 越限回合标记键前缀：fy:iot:alarm:breach:（A.5-1 命名，拼 ruleId:deviceId:metricCode） */
     private static final String BREACH_KEY_PREFIX = "fy:iot:alarm:breach:";
+
+    /**
+     * 越限回合标记原子迁移脚本位置（EX-27/BE-B5-06）：classpath resources/lua/ 装载
+     * DefaultRedisScript（对齐 fuyun-outpatient PoolRedisGate 先例形态）——「GET→判定→SET/DEL」
+     * 三步序列收进单脚本原子边界，判定与写删不再分离（脚本头注释载明原子性边界与入参契约）
+     */
+    private static final String BREACH_TRANSITION_SCRIPT_LOCATION = "lua/breach_marker_transition.lua";
 
     /** 最新值快照键前缀：fy:iot:snapshot:latest:（brief 冻结形态，实测 P0 无写入方——本类补写） */
     private static final String LATEST_SNAPSHOT_KEY_PREFIX = "fy:iot:snapshot:latest:";
@@ -124,6 +137,13 @@ public class AlarmEngine {
     private final StringRedisTemplate redisTemplate;
 
     private final AlarmProperties properties;
+
+    /**
+     * 越限回合标记原子迁移脚本（构造期一次性装载，只读共享线程安全；Long 对齐脚本整数回包）：
+     * 键语义、TTL（持续时长+60s 余量）与判定口径逐字保持，标记承载值编码改 epoch 毫秒
+     * （见 {@link #BREACH_TRANSITION_SCRIPT_LOCATION} 与脚本头注释）。
+     */
+    private final RedisScript<Long> breachTransitionScript;
 
     /**
      * 单条告警独立事务载体（REQUIRES_NEW 写模板）：PostgreSQL 下唯一索引冲突即中止当前事务
@@ -176,6 +196,8 @@ public class AlarmEngine {
         this.offlineDetector = offlineDetector;
         this.redisTemplate = redisTemplate;
         this.properties = properties;
+        // Lua 脚本构造期装载（资源缺失经 ResourceScriptSource 装载期抛出，fail-fast）
+        this.breachTransitionScript = loadScript(BREACH_TRANSITION_SCRIPT_LOCATION);
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         // 单条落行须挂起外层批事务独立提交：PG 唯一冲突中止的是本条事务（25P02），不污染同批评估
         template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -318,23 +340,18 @@ public class AlarmEngine {
         }
         String breachKey = BREACH_KEY_PREFIX + rule.getId() + ":" + row.getDeviceId() + ":" + rule.getMetricCode();
         if (!isBeyondThreshold(rule, value)) {
-            // 值回到阈值内：回合复位（删标记，恢复带内不重复触发的复位面）
+            // 值回到阈值内：回合复位（删标记，恢复带内不重复触发的复位面）——单 DEL 自身原子，无竞态面
             deleteBreachMarker(breachKey);
             return;
         }
-        Instant episodeStart = readBreachMarker(breachKey);
-        if (episodeStart == null) {
-            // 首越限：置标记起算持续时长，不触发
-            writeBreachMarker(breachKey, now, rule.getDurationSecs());
+        // 越限回合标记原子迁移（EX-27）：起算/累计/达标清标记三态判定与写删收进同一 Lua 脚本，
+        // 并发评估同键仅一方置标记起算、仅一方消费达标回合（检查与生效不再两步分离）
+        BreachTransition transition = transitionBreachMarker(breachKey, now, rule.getDurationSecs());
+        if (transition != BreachTransition.DURATION_MET) {
+            // 首越限已置标记起算 或 持续时长未达标：静默等待（不触发）
             return;
         }
-        int durationSecs = rule.getDurationSecs() == null ? 0 : rule.getDurationSecs();
-        if (Duration.between(episodeStart, now).getSeconds() < durationSecs) {
-            // 持续时长未达标：静默等待（保留标记继续累计）
-            return;
-        }
-        // 持续达标：清标记（触发后回合归零，重复触发需重新起算——聚合面由抑制①承接）
-        deleteBreachMarker(breachKey);
+        // 持续达标：标记已在脚本内原子清除（触发后回合归零，重复触发需重新起算——聚合面由抑制①承接）
         // 恢复带内不重复触发：活跃告警在挂且值仍在恢复带边界内 → 忽略本次聚合计数（防阈值附近抖动反复计数）
         if (stormGuard.hasActiveAlarm(rule.getId(), row.getDeviceId()) && isWithinRecoveryBand(rule, value)) {
             log.info(
@@ -651,41 +668,83 @@ public class AlarmEngine {
     }
 
     /**
-     * 越限回合标记读取：标记值承载回合起算时刻（ISO-8601 文本）。
-     *
-     * @param breachKey 回合标记键，非空
-     * @return 回合起算时刻；标记缺席或解析失败返回 null（解析失败按缺席复位，warn 留痕）
-     */
-    private Instant readBreachMarker(String breachKey) {
-        try {
-            String marker = redisTemplate.opsForValue().get(breachKey);
-            return marker == null || marker.isBlank() ? null : Instant.parse(marker);
-        } catch (RuntimeException e) {
-            // Redis 降级：回合标记读取失败按缺席处理（warn 留痕，跳过本回合评估）
-            log.warn("越限回合标记读取失败（按缺席复位）：key={}，原因={}", breachKey, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 越限回合标记写入：TTL=持续时长+60s 余量（覆盖批次间隔抖动）。
+     * 越限回合标记原子迁移（EX-27/BE-B5-06 修复）：原「GET→判定→SET/DEL」三步应用层序列存在
+     * 检查与生效非原子竞态——并发评估同键可双触发或互覆起算点。现收进
+     * lua/breach_marker_transition.lua 单脚本原子边界（脚本内完成判定与写删），键前缀、TTL
+     * （持续时长+60s 余量）与判定口径（持续未达标静默等待）逐字保持；标记承载值编码由
+     * ISO-8601 文本改为 epoch 毫秒——Lua 无 ISO 解析能力，数值承载是判定入原子边界的前提，
+     * 历史残留值在脚本内按既有「解析失败按缺席复位」口径重起回合。
      *
      * @param breachKey    回合标记键，非空
-     * @param startedAt    回合起算时刻，非空
-     * @param durationSecs 规则持续时长秒（可空按 0），可空
+     * @param now          评估基准时刻（脚本内兼作新回合起算承载值），非空
+     * @param durationSecs 规则持续时长秒，可空（入参前按 0 归一）
+     * @return 迁移结果（脚本回包码映射）：FIRST_BREACH=首越限（已置标记起算，不触发）；
+     *         SUSTAINING=持续未达标（保留标记静默等待）；DURATION_MET=持续达标（标记已清，走触发链）
      */
-    private void writeBreachMarker(String breachKey, Instant startedAt, Integer durationSecs) {
+    private BreachTransition transitionBreachMarker(String breachKey, Instant now, Integer durationSecs) {
+        int effectiveDurationSecs = durationSecs == null ? 0 : durationSecs;
+        long ttlSeconds = effectiveDurationSecs + BREACH_TTL_GRACE.getSeconds();
         try {
-            long ttlSeconds = (durationSecs == null ? 0 : durationSecs) + BREACH_TTL_GRACE.getSeconds();
-            redisTemplate.opsForValue().set(breachKey, startedAt.toString(), Duration.ofSeconds(ttlSeconds));
+            Long result = redisTemplate.execute(
+                    breachTransitionScript,
+                    List.of(breachKey),
+                    // 入参序与脚本 ARGV 逐一对应：评估时刻毫秒（兼承载值）、TTL 秒、持续时长秒
+                    String.valueOf(now.toEpochMilli()),
+                    String.valueOf(ttlSeconds),
+                    String.valueOf(effectiveDurationSecs));
+            return BreachTransition.fromCode(result);
         } catch (RuntimeException e) {
-            // Redis 降级：标记写入失败本回合无法累计持续时长，warn 留痕（下批重试起算）
-            log.warn("越限回合标记写入失败（本回合起算缺失）：key={}，原因={}", breachKey, e.getMessage());
+            // Redis 降级：迁移失败按首越限处理（不触发本回合，下批重试起算），与原读失败降级同口径
+            log.warn("越限回合标记迁移失败（按首越限降级，不触发本回合）：key={}，原因={}", breachKey, e.getMessage());
+            return BreachTransition.FIRST_BREACH;
         }
     }
 
     /**
-     * 越限回合标记删除（回合复位）。
+     * 越限回合标记原子迁移结果（breach_marker_transition.lua 回包码映射）。
+     */
+    private enum BreachTransition {
+
+        /** 0：首越限——脚本内置标记起算（TTL=持续时长+60s 余量），本回合不触发 */
+        FIRST_BREACH,
+
+        /** 1：持续时长未达标——脚本保留标记继续累计，本回合静默等待 */
+        SUSTAINING,
+
+        /** 2：持续达标——脚本已原子清标记（回合归零），调用方走触发链 */
+        DURATION_MET;
+
+        /**
+         * 脚本回包码映射（脚本恒返回 0/1/2 整数；null 仅出现在测试桩未装载场景，显式 NPE 暴露桩误配）。
+         *
+         * @param code 脚本回包码，非空
+         * @return 对应迁移结果；未知码归一为 FIRST_BREACH（不触发面，宁漏报不误报）
+         */
+        static BreachTransition fromCode(Long code) {
+            return switch (code.intValue()) {
+                case 1 -> SUSTAINING;
+                case 2 -> DURATION_MET;
+                default -> FIRST_BREACH;
+            };
+        }
+    }
+
+    /**
+     * 装载 Lua 原子脚本（构造期一次性，PoolRedisGate 同款形态；结果类型 Long 对齐 Redis 整数回包）。
+     *
+     * @param classpathLocation 脚本类路径位置，非空
+     * @return 只读脚本对象，非空；脚本文件缺失经 ResourceScriptSource 装载期抛出（fail-fast）
+     */
+    private static RedisScript<Long> loadScript(String classpathLocation) {
+        DefaultRedisScript<Long> script = new DefaultRedisScript<>();
+        script.setScriptSource(new ResourceScriptSource(new ClassPathResource(classpathLocation)));
+        script.setResultType(Long.class);
+        return script;
+    }
+
+    /**
+     * 越限回合标记删除（回合复位：值回落恢复带内的唯一残留写面——越限三态判定与写删已收进
+     * {@link #transitionBreachMarker} Lua 原子边界，本删除单语句自身原子，无竞态面）。
      *
      * @param breachKey 回合标记键，非空
      */
