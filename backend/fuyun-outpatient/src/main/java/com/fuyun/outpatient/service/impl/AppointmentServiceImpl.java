@@ -88,6 +88,13 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private static final Set<ApptChannel> P1_BOOK_CHANNELS =
             Set.of(ApptChannel.WINDOW, ApptChannel.KIOSK, ApptChannel.PORTAL);
 
+    /** portal 匿名通道单患者活跃预约数上限（临时缓解①，EX-29，BE-A3-02 裁决③）：同日同科限购
+     * （uk_appt_patient）仅拦同科重复、跨科占位无总量约束，匿名冒名可对单证件号刷量占号——按
+     * 三级医院实名患者正常就医路径（当日多科复诊）取 3 为异常判界，与爽约阈值 noShowThreshold=3
+     * 同量级保守取值；仅作用免登录 PORTAL 面（WINDOW/KIOSK 已鉴权渠道不受限）。
+     * 临时缓解：M18 患者账号体系上线后由归属校验取代。 */
+    private static final int PORTAL_ACTIVE_APPT_LIMIT = 3;
+
     /** 线上渠道面（P1 唯一线上预约渠道 PORTAL；退号时限 OP-1010 判定域——窗口/自助渠道不受限） */
     private static final Set<ApptChannel> ONLINE_CHANNELS = Set.of(ApptChannel.PORTAL);
 
@@ -206,11 +213,13 @@ public class AppointmentServiceImpl implements IAppointmentService {
     }
 
     /**
-     * 统一预约/当日挂号（主流程七步锁死，步骤注释即执行序）。
+     * 统一预约/当日挂号（主流程七步锁死，步骤注释即执行序）。临时缓解①（EX-29，BE-A3-02 裁决③）：
+     * PORTAL 渠道入口先做单患者活跃预约数上限拦截（防免登录冒名刷量占号，M18 后由归属校验取代）。
      *
      * @param request 预约请求，非空；来源：多渠道统一入口（portal 经介质解析换 patientId 后进入）
      * @return 预约单出参，非空；窗口/自助直达 TAKEN 携 visit_id
-     * @throws BizException OP-1002/OP-1003/OP-1004/OP-1005/OP-1006/OP-1007/OP-1019（语义见接口 javadoc）
+     * @throws BizException OP-1002/OP-1003/OP-1004/OP-1005/OP-1006/OP-1007/OP-1019（语义见接口 javadoc）/
+     *                      OP-1022（409 PORTAL 单患者活跃预约数超上限，临时缓解①）
      */
     @Override
     @Transactional
@@ -236,6 +245,23 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     OutpatientErrorCode.PATIENT_BLOCKED, HttpStatus.CONFLICT, "患者冻结中禁止挂号：" + context.blockReason());
         }
         long patientId = context.resolvedPatientId();
+        // 临时缓解①（EX-29，BE-A3-02 裁决③）：portal 匿名通道单患者活跃预约数上限——免登录面
+        // 可冒用他人证件号刷量占号，单患者 RESERVED/TAKEN 在约数达上限即拒（409 OP-1022）；
+        // 仅作用 PORTAL 渠道（已鉴权渠道不受限），M18 患者账号体系上线后由归属校验取代
+        if (channel == ApptChannel.PORTAL) {
+            // 数据库读操作：患者维度活跃预约计数（跨科累计，池行读取前 fail-fast 拒绝省读）
+            Long activeAppts = appointmentMapper.selectCount(Wrappers.<Appointment>lambdaQuery()
+                    .eq(Appointment::getPatientId, patientId)
+                    .in(Appointment::getStatus, ApptStatus.RESERVED, ApptStatus.TAKEN));
+            if (activeAppts != null && activeAppts >= PORTAL_ACTIVE_APPT_LIMIT) {
+                log.warn(
+                        "portal 匿名预约上限拦截：patientId={}，活跃在约={}，上限={}", patientId, activeAppts, PORTAL_ACTIVE_APPT_LIMIT);
+                throw new BizException(
+                        OutpatientErrorCode.PORTAL_APPT_LIMIT_EXCEEDED,
+                        HttpStatus.CONFLICT,
+                        "该证件号活跃预约数已达上限（" + PORTAL_ACTIVE_APPT_LIMIT + "），请先退号或到院窗口办理");
+            }
+        }
         // 限约/限购判定与单据冗余列依赖：池行与排班先行读（业务校验序不变）
         ApptNumberPool pool = apptNumberPoolMapper.selectById(request.poolId());
         if (pool == null) {

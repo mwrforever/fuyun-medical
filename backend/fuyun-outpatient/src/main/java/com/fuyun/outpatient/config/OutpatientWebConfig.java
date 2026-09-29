@@ -1,6 +1,7 @@
 package com.fuyun.outpatient.config;
 
 import com.fuyun.outpatient.cache.PoolRedisGate;
+import com.fuyun.outpatient.cache.PortalCredentialRateGuard;
 import com.fuyun.outpatient.cache.QueueZsetStore;
 import com.fuyun.outpatient.controller.AppointmentController;
 import com.fuyun.outpatient.controller.ApptCreditController;
@@ -30,11 +31,13 @@ import org.springframework.context.annotation.Import;
  * Task 7 追加：队列 ZSET 存储、分诊台服务与分诊/队列两控制器（WS 面经 fuyun-app OutpatientConfig
  * 直挂 OutpatientWebSocketConfig，不入本清单）。Task 8 追加：医生站 visit/开单两服务、CareRelationQuery
  * SPI 实现（patient unmask 第二道门禁 D-16 收紧）与医生站/申请单两控制器（fee.created 监听器归
- * OutpatientMessagingConfig）。
+ * OutpatientMessagingConfig）。EX-29 追加：portal 匿名预约证件号频控守卫（临时缓解②，
+ * M18 患者账号体系上线后随归属校验退役）。
  */
 @Configuration
 @Import({
     PoolRedisGate.class,
+    PortalCredentialRateGuard.class,
     QueueZsetStore.class,
     ScheduleServiceImpl.class,
     ScheduleController.class,

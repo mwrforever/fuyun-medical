@@ -18,14 +18,17 @@ import java.util.List;
 public interface IAppointmentService {
 
     /**
-     * 统一预约/当日挂号。
+     * 统一预约/当日挂号。临时缓解①（EX-29，BE-A3-02 裁决③）：PORTAL 渠道先做单患者活跃预约数
+     * 上限拦截（防免登录冒名刷量占号），M18 患者账号体系上线后由归属校验取代。
      *
      * @param request 预约请求（patientId/poolId/channel），非空；契约校验由 @Valid 承载
      * @return 预约单出参（窗口/自助直达 TAKEN 携 visit_id；portal 为 RESERVED+payDeadline），非空
      * @throws com.fuyun.common.exception.BizException OP-1002（404 号源池不存在）/ OP-1003（409 号源不足）/
      *                                                 OP-1004（409 停诊或排班状态违例）/ OP-1005（409 同日同科限购）/
      *                                                 OP-1006（409 爽约限约期内）/ OP-1007（409 患者冻结拦截）/
-     *                                                 OP-1019（400 渠道词表外或 P1 未开放）时触发；
+     *                                                 OP-1019（400 渠道词表外或 P1 未开放）/
+     *                                                 OP-1022（409 PORTAL 单患者活跃预约数超上限，
+     *                                                 临时缓解①，仅 PORTAL 渠道）时触发；
      *                                                 建议处理策略：按 errorCode 提示用户
      */
     AppointmentVO book(AppointmentCreateRequest request);

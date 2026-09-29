@@ -2,6 +2,7 @@ package com.fuyun.outpatient.controller;
 
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
+import com.fuyun.outpatient.cache.PortalCredentialRateGuard;
 import com.fuyun.outpatient.dto.AppointmentCreateRequest;
 import com.fuyun.outpatient.dto.CancelAppointmentRequest;
 import com.fuyun.outpatient.dto.PortalAppointmentRequest;
@@ -10,6 +11,7 @@ import com.fuyun.outpatient.service.IAppointmentService;
 import com.fuyun.outpatient.service.IScheduleService;
 import com.fuyun.outpatient.vo.AppointmentVO;
 import com.fuyun.outpatient.vo.NumberPoolVO;
+import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.api.PatientIdentityQuery;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -33,7 +35,9 @@ import org.springframework.web.bind.annotation.RestController;
  * portal 患者匿名预约端点（/api/v1/outpatient/portal/**，裁决 13 免登录白名单通道）：服务端经介质
  * 解析（就诊卡号/证件号 → patient/api PatientIdentityQuery）定 patientId 后进入统一预约主流程，
  * <b>不经 OperatorContextHolder</b>（操作者留痕取哨兵值 PORTAL）；portal 患者账号体系随 M18/P6
- * 完整化（P1 演示口径注记），<b>限流/风控随 M18 注记</b>（本通道免登录，P1 依赖白名单最小暴露面）。
+ * 完整化（P1 演示口径注记）；<b>限流/风控随 M18 注记</b>——EX-29 已加临时缓解（book 链路证件号
+ * 频控+单患者活跃预约上限，BE-A3-02 裁决③），M18 患者账号体系上线后由归属校验取代（本通道
+ * 免登录，P1 依赖白名单最小暴露面）。
  * portal 退号端点随 Task 6 与退号四分支统一交付。职责边界：仅 @Valid 校验+介质解析+调用 service，
  * 禁业务逻辑与事务（宪法 B.1/A.1-8）。
  */
@@ -53,6 +57,10 @@ public class PortalAppointmentController {
 
     private final PatientIdentityQuery patientIdentityQuery;
 
+    /** portal 匿名预约证件号频控守卫（EX-29 临时缓解②，BE-A3-02 裁决③）：判定与计数下沉本守卫，
+     * 控制器仅编排（B.1 分层）；M18 患者账号体系上线后由归属校验取代 */
+    private final PortalCredentialRateGuard credentialRateGuard;
+
     /**
      * 可约号源查询（免登录聚合面）：复用号源余量查询（ACTIVE 且有余量行，slot_start 升序）。
      *
@@ -71,9 +79,15 @@ public class PortalAppointmentController {
     /**
      * portal 预约（免登录）：介质解析换 patientId（PAT-1001 无命中/已失效由 patient 契约异常透出），
      * channel 固定 PORTAL 进入统一预约主流程（爽约限约/限购/冻结拦截全渠道一致）。
+     * 临时缓解（EX-29，BE-A3-02 裁决③）：②证件号频控——冷却期内前置 429 OP-1023 拒绝（不触达
+     * 介质解析，枚举面收敛），解析未命中计入连续失败计数、成功清零（判定与计数下沉
+     * PortalCredentialRateGuard）；①单患者活跃预约上限由 service.book 内判定（B.1：查数下沉），
+     * 超限 409 OP-1022 透传。M18 患者账号体系上线后由归属校验取代。
      *
      * @param request portal 预约请求（credentialType/credentialNo/poolId），非空
      * @return 预约单出参（RESERVED+payDeadline 支付时限占位），非空
+     * @throws BizException OP-1023（429 频控冷却中）/ OP-1022（409 活跃预约数超上限，服务层
+     *                      判定透传）时触发；建议处理策略：冷却提示稍后重试，超限引导先退号或到院办理
      */
     @Operation(summary = "portal 预约（免登录）")
     @PostMapping("/appointments")
@@ -85,8 +99,23 @@ public class PortalAppointmentController {
                     HttpStatus.BAD_REQUEST,
                     "介质类型仅支持 ID_CARD/VISIT_CARD：" + request.credentialType());
         }
-        // 介质解析（M02 身份解析面）：明文仅本调用生命周期内存活，禁入日志（敏感字段脱敏红线）
-        long patientId = patientIdentityQuery.resolveActivePatientId(request.credentialType(), request.credentialNo());
+        // 临时缓解②：冷却期前置拒绝（429 OP-1023，判定归守卫）——匿名枚举试错在介质解析前即被阻断
+        credentialRateGuard.checkNotCoolingDown(request.credentialType(), request.credentialNo());
+        // 介质解析（M02 身份解析面）：明文仅本调用生命周期内存活，禁入日志（敏感字段脱敏红线）；
+        // 解析未命中（PAT-1001 与档案不符）计入该证件号连续失败计数（临时缓解②的计数编排面）
+        long patientId;
+        try {
+            patientId = patientIdentityQuery.resolveActivePatientId(request.credentialType(), request.credentialNo());
+        } catch (BizException e) {
+            if (PatientErrorCode.PATIENT_NOT_FOUND == e.getErrorCode()) {
+                // 频控判定与 Redis 计数归守卫（B.1 下沉），本层只编排「与档案不符即计数」
+                credentialRateGuard.recordResolutionFailure(request.credentialType(), request.credentialNo());
+            }
+            throw e;
+        }
+        // 解析成功清零连续失败计数（「连续」语义的成功打断面）；临时缓解①活跃预约上限查数与
+        // 判定在 service.book 统一入口内执行（B.1 分层），本层仅编排
+        credentialRateGuard.clearFailureCount(request.credentialType(), request.credentialNo());
         return appointmentService.book(
                 new AppointmentCreateRequest(patientId, request.poolId(), ApptChannel.PORTAL.getCode()));
     }

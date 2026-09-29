@@ -15,15 +15,15 @@ import org.junit.jupiter.api.Test;
 class OutpatientErrorCodeTest {
 
     @Test
-    @DisplayName("错误码全集 OP-1001~OP-1021 逐位连续无重号，总数二十一")
+    @DisplayName("错误码全集 OP-1001~OP-1023 逐位连续无重号，总数二十三")
     void errorCodesAreContinuousFromOp1001WithoutDuplicates() {
         List<String> codes = Arrays.stream(OutpatientErrorCode.values())
                 .map(OutpatientErrorCode::getCode)
                 .toList();
         assertThat(codes).as("错误码存在重号").doesNotHaveDuplicates();
         assertThat(codes)
-                .as("错误码总数偏离 Global Constraints 全集（应为 21 条，含 BUG-01 新增 OP-1021）")
-                .hasSize(21);
+                .as("错误码总数偏离 Global Constraints 全集（应为 23 条，含 EX-29 新增 OP-1022/OP-1023）")
+                .hasSize(23);
         for (int i = 0; i < codes.size(); i++) {
             // 逐位连续断言：第 i 个枚举码必须恰为 OP-(1001+i)，插码/跳号/改号任一漂移即红灯
             assertThat(codes.get(i))
