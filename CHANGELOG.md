@@ -2,6 +2,19 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-02（C 路 b）：fuyun-iot 遥测推送生命周期测试隐式断言显式化（BE-A4-15，只补不改）
+
+- **根因（BE-A4-15 评分 50，2026-09-28 全仓高风险问题清单低置信节）**：
+  TelemetryPushServiceImplLifecycleTest:107-119 隐式断言（不抛异常即通过）与
+  @DisplayName「兜底排空失败吞错：发送异常捕获留痕不上抛（不打断调度周期）」声称不符。
+- **修复（11 行纯新增，既有断言零改动——D-21 红线）**：flushDueWindowsSwallowsSendFailures
+  补两组显式断言锚定 DisplayName 声称：①verify convertAndSend 命中 doThrow 桩且执行流
+  越过吞错点=「捕获不上抛」；②二次 flushDueWindowsQuietly 后 times(1) 恒定=「不打断
+  调度周期、失败帧不补推」。「留痕」维度（log.error）未断言——测试类无日志捕获设施，
+  引入属过度设计，锚定两个可观测语义。
+- **验证**：`mvn -B -ntp -pl fuyun-iot -am test` 全绿（523 用例=基线，用例数不变）+
+  `spotless:check` 通过；git diff 11 insertions/0 deletions/0 modifications。
+
 ## 2026-09-29 · 机械组 EX-02（C 路 a）：fuyun-system 审计写库补 info 日志（BE-A4-12，日志新增零逻辑变化）
 
 - **根因（BE-A4-12 评分 55，2026-09-28 全仓高风险问题清单低置信节）**：AuditLogServiceImpl
