@@ -1481,4 +1481,113 @@ class RefundServiceImplTest {
         // 部分退：已退 3000 < 结算总额 9000 → 结算单留 SETTLED
         verify(settlementMapper, never()).updateById(any(Settlement.class));
     }
+
+    // ===== OPT-12：结算维度累计已退两步查询精确投影（A.4.3-14 投影子款锚定）=====
+
+    @Test
+    @DisplayName("结算维度两步查询投影契约：第一步恰 1 列 id、第二步恰 1 列 refund_amount，谓词与求和口径零变化")
+    void totalRefundedFenStepsProjectOnlyConsumedColumns() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
+
+        service.execute(100L);
+
+        // 第一步投影契约（totalRefundedFen 结算维度 id 集查询，selectList 恰 1 次）：仅取 id 恰 1 列，
+        //   退费单宽行列（单号/金额/状态/患者）禁入投影（OPT-12 前全列取回仅 map id）；谓词零变化锚定：
+        //   settlement_id 等值 + 已决两态（防投影修复顺带动谓词）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundRequest>> settleCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundRequestMapper, times(1)).selectList(settleCaptor.capture());
+        LambdaQueryWrapper<RefundRequest> settleWrapper = (LambdaQueryWrapper<RefundRequest>) settleCaptor.getValue();
+        assertThat(settleWrapper.getSqlSegment()).contains("settlement_id");
+        assertThat(settleWrapper.getParamNameValuePairs().values())
+                .contains(900L, RefundStatus.APPROVED, RefundStatus.EXECUTED);
+        assertThat(settleWrapper.getSqlSelect().trim()).isEqualTo("id");
+        // 第二步投影契约：get(0)=本单 link 清单 eq 查询（不在 OPT-12 范围），get(1)=结算维度集内求和——
+        //   仅取 refund_amount 恰 1 列，link 宽行列（数量/费用行/退费单外键/审计列）禁入投影；
+        //   谓词零变化锚定：refund_id IN 集内 id（先取 sqlSegment 触发 IN 参数懒物化）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<RefundFeeLink>> linkCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(refundFeeLinkMapper, times(2)).selectList(linkCaptor.capture());
+        LambdaQueryWrapper<RefundFeeLink> aggWrapper =
+                (LambdaQueryWrapper<RefundFeeLink>) linkCaptor.getAllValues().get(1);
+        assertThat(aggWrapper.getSqlSegment()).contains("refund_id");
+        assertThat(aggWrapper.getParamNameValuePairs().values()).contains(100L);
+        assertThat(aggWrapper.getSqlSelect().trim()).isEqualTo("refund_amount");
+    }
+
+    @Test
+    @DisplayName("结算维度聚合空集短路：已决 id 集为空 → 第二步 link 查询零发出、聚合贡献 0 分留 SETTLED")
+    void totalRefundedFenShortCircuitsLinkQueryWhenDecidedIdSetEmpty() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 3000L);
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 3000L)));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 3000L)));
+        // 第一步已决 id 集空集 → 短路直返 0（投影修复不得改短路语义）
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of());
+        when(feeRecordMapper.selectBatchIds(List.of(1L)))
+                .thenReturn(List.of(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
+
+        service.execute(100L);
+
+        // 短路锚点：link 查询恰 1 次=本单清单（eq 谓词），结算维度第二步因空 id 集零发出
+        verify(refundFeeLinkMapper, times(1)).selectList(any());
+        // 聚合贡献 0 分 < 总额 8000 → 结算单留 SETTLED；退费单照常终态
+        verify(settlementMapper, never()).updateById(any(Settlement.class));
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+    }
+
+    @Test
+    @DisplayName("结算维度聚合多行求和等价：集内两 link 5000+3000=8000 ≥ 总额 → 结算单转 REFUNDED（漏加单行即留 SETTLED）")
+    void totalRefundedFenSumsAllLinkRowsForSettlementTerminal() {
+        RefundRequest approved = refund(100L, RefundStatus.APPROVED, APPLICANT, RefundType.DAY_CORRECTION, 8000L);
+        when(refundRequestMapper.casMarkExecuted(100L)).thenReturn(1);
+        when(refundRequestMapper.selectById(100L)).thenReturn(approved);
+        Settlement st = settlement(900L, 8000L);
+        st.setPaymentDetails("[{\"method\":\"CASH\",\"amount\":8000,\"channelRef\":null}]");
+        when(settlementMapper.selectById(900L)).thenReturn(st);
+        // 本单两 link（fee1 退 5000、fee2 退 3000）与本单清单/结算维度求和共用打桩（同值）：求和面
+        //   多行累加 5000+3000=8000（单行漏加即 5000<8000 → 结算单留 SETTLED，断言即失败）
+        when(refundFeeLinkMapper.selectList(any())).thenReturn(List.of(link(100L, 1L, 5000L), link(100L, 2L, 3000L)));
+        when(refundRequestMapper.selectList(any())).thenReturn(List.of(approved));
+        when(refundRequestMapper.sumDecidedRefundedFenByFeeIds(List.of(1L, 2L)))
+                .thenReturn(List.of(new FeeRefundedFenRow(1L, 5000L), new FeeRefundedFenRow(2L, 3000L)));
+        when(feeRecordMapper.selectBatchIds(List.of(1L, 2L)))
+                .thenReturn(List.of(
+                        fee(1L, 5000L, 5000L, LocalDate.now(), ExecOccupyStatus.NONE),
+                        fee(2L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE)));
+
+        service.execute(100L);
+
+        // 多行求和锚点：两 link 合计恰为结算总额 → 结算单转 REFUNDED（投影修复不改聚合算式）
+        ArgumentCaptor<Settlement> stCaptor = ArgumentCaptor.forClass(Settlement.class);
+        verify(settlementMapper).updateById(stCaptor.capture());
+        assertThat(stCaptor.getValue().getStatus()).isEqualTo(SettlementStatus.REFUNDED);
+        // 费用行照常判态（两行均退满 FULL_REFUND）、退费单终态 EXECUTED
+        ArgumentCaptor<FeeRecord> feeCaptor = ArgumentCaptor.forClass(FeeRecord.class);
+        verify(feeRecordMapper, times(2)).updateById(feeCaptor.capture());
+        assertThat(feeCaptor.getAllValues())
+                .extracting(FeeRecord::getId, FeeRecord::getStatus)
+                .containsExactly(tuple(1L, FeeStatus.FULL_REFUND), tuple(2L, FeeStatus.FULL_REFUND));
+        ArgumentCaptor<RefundRequest> refundCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(refundRequestMapper).updateById(refundCaptor.capture());
+        assertThat(refundCaptor.getValue().getStatus()).isEqualTo(RefundStatus.EXECUTED);
+    }
 }

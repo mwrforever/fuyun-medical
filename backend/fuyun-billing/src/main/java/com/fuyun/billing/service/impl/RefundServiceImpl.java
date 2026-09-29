@@ -733,14 +733,18 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     /**
      * 结算单累计已退金额（分；仅已决口径——APPROVED/EXECUTED 态退费单 link 负向聚合，按结算单维度
      * 归集，与 {@link #decidedRefundedFenByFeeIds(List)} 费用行判态同口径；在途单不参与结算终态判定；
-     * 单次调用非循环热路径，维持 id 集两步查询形态）。
+     * 单次调用非循环热路径，维持 id 集两步查询形态）。两步均 .select 精确投影——第一步仅消费 id 列、
+     * 第二步仅消费 refund_amount 列，宽行全列取回徒增内存占用（A.4.3-14）；谓词、空集短路与求和
+     * 算式不因投影而变。
      *
      * @param settlementId 结算单 id；来源：原路退回目标结算行
      * @return 累计已退金额（分，无历史已退为 0）
      */
     private long totalRefundedFen(long settlementId) {
-        // 数据库读操作：本结算单 APPROVED/EXECUTED 态退费单 id 集（部分退多次累计口径）
+        // 数据库读操作：本结算单 APPROVED/EXECUTED 态退费单 id 集（部分退多次累计口径）——
+        //   仅消费 id 列，.select 精确投影免退费单金额/渠道等宽行全列入内存（A.4.3-14）
         List<Long> refundIds = lambdaQuery()
+                .select(RefundRequest::getId)
                 .eq(RefundRequest::getSettlementId, settlementId)
                 .in(RefundRequest::getStatus, RefundStatus.APPROVED, RefundStatus.EXECUTED)
                 .list()
@@ -750,9 +754,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         if (refundIds.isEmpty()) {
             return 0L;
         }
-        // 数据库读操作：集内全部 link 负向金额求和（退费负向表达唯一载体=link 表）
+        // 数据库读操作：集内全部 link 负向金额求和（退费负向表达唯一载体=link 表）——
+        //   仅消费 refund_amount 列，投影不改谓词与求和语义（求和结果与全列取回完全等价）
         return refundFeeLinkMapper
-                .selectList(Wrappers.<RefundFeeLink>lambdaQuery().in(RefundFeeLink::getRefundId, refundIds))
+                .selectList(Wrappers.<RefundFeeLink>lambdaQuery()
+                        .select(RefundFeeLink::getRefundAmount)
+                        .in(RefundFeeLink::getRefundId, refundIds))
                 .stream()
                 .mapToLong(RefundFeeLink::getRefundAmount)
                 .sum();

@@ -2,6 +2,30 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-12：billing 结算维度累计已退两步查询补 .select 精确投影（性能，行为保持）
+
+- **根因（OPT-12 / BE-C4-23 ↔ BE-B1-10 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80，A.4.3-14 投影子款点名）**：`RefundServiceImpl.totalRefundedFen`（原路退回
+  execute 的结算终态判定）两步查询均全列取回仅用 1 列——第一步取回本结算单
+  APPROVED/EXECUTED 态退费单全行（金额/渠道等宽行字段）仅 map id，第二步取回集内全部
+  refund_fee_link 宽行仅取 refund_amount 求和；退费单/关联表宽行全量入内存徒增占用。
+- **修复（行为保持，方案：两步补 .select 投影）**：第一步 `.select(RefundRequest::getId)`
+  （恰 1 列）、第二步 `.select(RefundFeeLink::getRefundAmount)`（恰 1 列）；谓词、顺序、
+  空 id 集短路（isEmpty → 0 分）、求和算式零变化；javadoc 补投影口径句（本方法仅消费
+  该两列，宽行全列取回徒增内存占用）。「维持 id 集两步查询」为 javadoc 有意决策不动
+  （不合并 JOIN）。**方案裁量（.select 而非 SUM 下推）**：两步语义用 .select 承载已完全
+  等价——空 id 集短路是 Java 侧控制流，SUM 下推须折叠进 SQL（空集 SUM 为 NULL 须
+  coalesce 兜 0）且为非循环热路径新增 XML 聚合 SQL 面；本方法单次调用非循环热路径
+  （javadoc 自述），宽行内存浪费是唯一问题，.select 以最小改动消除，故不新增 XML 聚合。
+- **测试（先红后绿）**：新增 3 个行为锚定——「两步查询投影契约（第一步恰 1 列 id/
+  第二步恰 1 列 refund_amount+谓词零变化锚定）」改前红（getSqlSelect 为 null，NPE
+  断言失败）改后绿；「空集短路（第二步 link 查询零发出、聚合贡献 0 分留 SETTLED）」与
+  「多行求和等价（集内两 link 5000+3000=8000 ≥ 总额转 REFUNDED，漏加单行即失败）」
+  两用例改前改后均绿（行为锚定）。既有用例零改动（桩面 selectList(any()) 对投影不
+  敏感，业务断言零变化，无 D-21 桩更新）。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿（288 用例，RefundServiceImplTest
+  55）+ `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-11：patient 脱敏豁免判定批量面收敛查询 + 精确投影（性能，行为保持）
 
 - **根因（OPT-11 / BE-C4-21 + BE-C4-22 ↔ BE-B1-09 + BE-C2-15 归并组，四报并一，
