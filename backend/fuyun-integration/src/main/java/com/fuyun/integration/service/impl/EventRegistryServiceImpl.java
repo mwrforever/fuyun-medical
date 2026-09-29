@@ -127,15 +127,19 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                     .eq(EventRegistry::getEventType, eventType)
                     .select(EventRegistry::getId, EventRegistry::getStatus, EventRegistry::getSubscriberModules)
                     .one();
-            // 事件先登记后订阅：未登记事件拒绝订阅，阻断消费队列声明（M20 治理约定）
+            // 事件先登记后订阅：未登记事件拒绝订阅，阻断消费队列声明（M20 治理约定）；
+            // EX-19 收口 C 类：装配期治理断言（declareConsumerQueue 仅模块 @Configuration 调用，
+            // 非用户可达），保留 ISE 阻断订阅方启动，不转业务错误码
             if (registry == null) {
                 throw new IllegalStateException("事件类型 " + eventType + " 未在 event_registry 登记，禁止订阅（事件先登记后订阅）");
             }
             if (MessagingConstants.REGISTRY_STATUS_DEPRECATED.equals(registry.getStatus())) {
+                // EX-19 收口 C 类：同上装配期治理断言（契约废止属发布方治理事件），保留 ISE 阻断启动
                 throw new IllegalStateException("事件类型 " + eventType + " 已废止（DEPRECATED），禁止订阅");
             }
             String currentModules = registry.getSubscriberModules() == null ? "" : registry.getSubscriberModules();
-            // broadcast 拒订守卫（W-6②）：零订阅广播标记行不承载订阅清单，追加会破坏 R6-13 语义
+            // broadcast 拒订守卫（W-6②）：零订阅广播标记行不承载订阅清单，追加会破坏 R6-13 语义；
+            // EX-19 收口 C 类：装配期治理断言（契约行修正归发布方，非用户可达），保留 ISE 阻断启动
             if (MessagingConstants.SUBSCRIBER_BROADCAST.equals(currentModules.trim())) {
                 throw new IllegalStateException("事件类型 " + eventType
                         + " 为零订阅广播标记行（subscriber_modules=broadcast），不承载订阅清单——"
@@ -165,6 +169,8 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
             }
             log.warn("订阅清单并发变更，重读重算重试：event_type={}，consumer_module={}，attempt={}", eventType, consumerModule, attempt);
         }
+        // EX-19 收口 C 类：并发自旋上界耗尽的 fail-fast 断言（禁静默丢订阅，重启装配进程重试），
+        // 属启动期多实例竞争防御而非用户输入错误，保留 ISE 不转业务错误码
         throw new IllegalStateException(
                 "事件类型 " + eventType + " 订阅登记并发竞争超过 " + SUBSCRIBER_CAS_MAX_ATTEMPTS + " 次重试，拒绝静默丢订阅（请重启装配进程重试）");
     }

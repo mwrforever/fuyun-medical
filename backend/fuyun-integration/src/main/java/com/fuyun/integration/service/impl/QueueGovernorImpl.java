@@ -98,10 +98,13 @@ public class QueueGovernorImpl implements MessagingGovernance {
     public Declarables declareDelayQueue(DelayQueueSpec spec) {
         validateName("business", spec.business(), MODULE_NAME_PATTERN);
         Duration ttl = spec.ttl();
-        // 档位校验：TTL 必须为正；x-message-ttl 服务端为 int 毫秒值，超上界必须显式拒绝而非静默溢出
+        // 档位校验：TTL 必须为正；x-message-ttl 服务端为 int 毫秒值，超上界必须显式拒绝而非静默溢出；
+        // EX-19 收口 C 类：装配期参数 fail-fast 断言（调用方为模块 @Configuration，非用户可达输入），
+        // 保留 IAE 阻断启动暴露装配缺陷，不转业务错误码
         if (ttl == null || ttl.isZero() || ttl.isNegative() || ttl.toMillis() > Integer.MAX_VALUE) {
             throw new IllegalArgumentException("延迟队列声明失败：ttl 必须为正且不超出 int 毫秒上界，business=" + spec.business());
         }
+        // EX-19 收口 C 类：同上装配期参数 fail-fast 断言，保留 IAE（修正装配代码，非用户输入错误）
         if (spec.targetRoutingKey() == null || spec.targetRoutingKey().isBlank()) {
             throw new IllegalArgumentException("延迟队列声明失败：targetRoutingKey 不能为空，business=" + spec.business());
         }
@@ -138,6 +141,8 @@ public class QueueGovernorImpl implements MessagingGovernance {
      */
     private void validateName(String fieldName, String value, Pattern pattern) {
         if (value == null || !pattern.matcher(value).matches()) {
+            // EX-19 收口 C 类：命名治理 fail-fast 断言（装配期常量违规，非用户可达输入），保留 IAE
+            // 在启动期暴露装配代码命名缺陷，不转业务错误码
             throw new IllegalArgumentException("消息治理命名不合规：" + fieldName + "=\"" + value + "\" 不符合约定命名规则");
         }
     }
