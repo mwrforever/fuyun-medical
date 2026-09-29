@@ -205,13 +205,97 @@ class DrugServiceImplTest {
 
         DrugVO vo = impl.update(7L, request("D-IT-001"));
 
-        // 数据库写操作断言：仅可覆盖面落行，对照列与状态列不被覆盖（applyRequest 边界）
+        // 数据库写操作断言：仅可覆盖面落行，对照列与状态列不被覆盖（applyRequest 边界）。
+        // EX-24 断言现代化（D-21 回归红线出口，逐次批准单点单次）：原「nhsaCode/status 等值断言」
+        // 冻结整行回写实现细节（以携读点快照同值落库作为「未触碰」的可观测面）；指定列补丁回写下
+        // 「未触碰」由列不进 SET 承载，isNull 为更严格契约（NOT_NULL 策略 null 列不落 SET）——
+        // 断言业务意图（对照三列与 status 不被触碰）不变且强化
         ArgumentCaptor<Drug> captor = ArgumentCaptor.forClass(Drug.class);
         verify(drugMapper).updateById(captor.capture());
         assertThat(captor.getValue().getGenericName()).isEqualTo("阿莫西林胶囊");
-        assertThat(captor.getValue().getNhsaCode()).isEqualTo("XJ01CAC0130020589");
-        assertThat(captor.getValue().getStatus()).isEqualTo("ENABLED");
+        assertThat(captor.getValue().getNhsaCode()).isNull();
+        assertThat(captor.getValue().getStatus()).isNull();
         assertThat(vo.drugCode()).isEqualTo("D-IT-001");
+    }
+
+    @Test
+    @DisplayName("变更并发防覆写（EX-24）：回写补丁仅携 id+请求面列，对照三列/status/审计列读点快照不进 SET")
+    void updateWritesPatchEntityWithoutCarryingMappingOrStatusSnapshot() {
+        DrugServiceImpl impl = newService();
+        // 读点快照携并发写面已落值：对照三列（mapInsurance 通道）、status（停启用通道）、审计列
+        Drug row = new Drug();
+        row.setId(7L);
+        row.setDrugCode("D-IT-001");
+        row.setGenericName("旧通用名（读点快照）");
+        row.setNhsaCode("XJ01CAC0130020589");
+        row.setNhsaCatalogVersion("2023");
+        row.setNhsaPayType("Y");
+        row.setStatus("ENABLED");
+        row.setCreatedBy("admin-01");
+        when(drugMapper.selectById(7L)).thenReturn(row);
+
+        impl.update(7L, request("D-IT-001"));
+
+        ArgumentCaptor<Drug> captor = ArgumentCaptor.forClass(Drug.class);
+        verify(drugMapper).updateById(captor.capture());
+        Drug saved = captor.getValue();
+        // 目标面全量精确（D-21 严格度不低于原断言）：请求面列逐项落补丁 + 主键定位
+        assertThat(saved.getId()).isEqualTo(7L);
+        assertThat(saved.getDrugCode()).isEqualTo("D-IT-001");
+        assertThat(saved.getGenericName()).isEqualTo("阿莫西林胶囊");
+        assertThat(saved.getSpecification()).isEqualTo("0.25g×24粒");
+        assertThat(saved.getRouteCodes()).isEqualTo("ORAL,IV");
+        assertThat(saved.getSplitRatio()).isEqualByComparingTo("1");
+        assertThat(saved.getManufacturer()).isEqualTo("华东医药");
+        assertThat(saved.getUnit()).isEqualTo("盒");
+        assertThat(saved.getEssentialFlag()).isFalse();
+        assertThat(saved.getAntibioClass()).isEqualTo("UNRESTRICTED");
+        assertThat(saved.getHazardLevel()).isEqualTo("NONE");
+        assertThat(saved.getSkinTestFlag()).isFalse();
+        assertThat(saved.getNarcoticClass()).isEqualTo("NORMAL");
+        assertThat(saved.getItemCode()).isEqualTo("C0131230900157");
+        assertThat(saved.getTraceCodeType()).isNull();
+        assertThat(saved.getIndication()).isEqualTo("用于敏感菌所致感染");
+        assertThat(saved.getMaxDose()).isEqualTo("成人一日不超过4g");
+        assertThat(saved.getContraindication()).isEqualTo("青霉素过敏者禁用");
+        assertThat(saved.getStorageCondition()).isEqualTo("密封，置阴凉处保存");
+        // 非目标列零携带：NOT_NULL 更新策略下 null 不进 SET 子句——读改写窗口内 mapInsurance
+        //   并发提交的对照三列、停启用通道的 status 与审计列不被读点快照覆写吞掉
+        assertThat(saved.getNhsaCode()).isNull();
+        assertThat(saved.getNhsaCatalogVersion()).isNull();
+        assertThat(saved.getNhsaPayType()).isNull();
+        assertThat(saved.getStatus()).isNull();
+        assertThat(saved.getCreatedBy()).isNull();
+    }
+
+    @Test
+    @DisplayName("对照维护并发防覆写（EX-24）：回写补丁仅携 id+对照三列，档案面/status 读点快照不进 SET")
+    void mapInsuranceWritesPatchEntityWithoutCarryingProfileSnapshot() {
+        DrugServiceImpl impl = newService();
+        // 读点快照携档案面已落值：通用名/规格（update 通道）与 status
+        Drug row = new Drug();
+        row.setId(7L);
+        row.setDrugCode("D-IT-001");
+        row.setGenericName("阿莫西林胶囊");
+        row.setSpecification("0.25g×24粒");
+        row.setStatus("ENABLED");
+        when(drugMapper.selectById(7L)).thenReturn(row);
+
+        impl.mapInsurance(7L, new InsuranceMappingRequest("XJ01CAC0130020105139", "2024", "YI"));
+
+        ArgumentCaptor<Drug> captor = ArgumentCaptor.forClass(Drug.class);
+        verify(drugMapper).updateById(captor.capture());
+        Drug saved = captor.getValue();
+        // 目标面全量精确：对照三列 + 主键定位
+        assertThat(saved.getId()).isEqualTo(7L);
+        assertThat(saved.getNhsaCode()).isEqualTo("XJ01CAC0130020105139");
+        assertThat(saved.getNhsaCatalogVersion()).isEqualTo("2024");
+        assertThat(saved.getNhsaPayType()).isEqualTo("YI");
+        // 非目标列零携带：读改写窗口内 update() 并发提交的档案面变更与 status 不被快照覆写吞掉
+        assertThat(saved.getDrugCode()).isNull();
+        assertThat(saved.getGenericName()).isNull();
+        assertThat(saved.getSpecification()).isNull();
+        assertThat(saved.getStatus()).isNull();
     }
 
     @Test

@@ -338,9 +338,78 @@ class DispenseThreeStepTest {
         ArgumentCaptor<Dispense> captor = ArgumentCaptor.forClass(Dispense.class);
         verify(dispenseMapper).updateById(captor.capture());
         assertThat(captor.getValue().getVerifier()).isEqualTo("verify-02"); // 核对留痕=第二人
-        assertThat(captor.getValue().getPicker()).isEqualTo("dispenser-01"); // 调配留痕不变（分权不改写）
+        // EX-24 断言现代化（D-21 回归红线出口，逐次批准单点单次）：原「picker 等值断言」冻结整行
+        // 回写实现细节（以携读点快照同值落库作为「分权不改写」的可观测面）；指定列补丁回写下
+        // 「不改写调配留痕」由 picker 列不进 SET 承载，isNull 为更严格契约——断言业务意图不变且强化
+        assertThat(captor.getValue().getPicker()).isNull(); // 调配留痕列不携带（分权不改写）
         // 留痕实体状态与 CAS 迁移终态同步（禁携带 CAS 前旧状态落库覆写状态机——PR-4 IT 实证缺陷回归守卫）
         assertThat(captor.getValue().getStatus()).isEqualTo("PICKED");
+    }
+
+    @Test
+    @DisplayName("pick 留痕并发防覆写（EX-24）：单据头补丁回写仅携 id+状态同值+调配人，读点快照列不进 SET")
+    void pickWritesDispenseHeaderPatchWithoutSnapshotColumns() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("CREATED"));
+        when(dispenseMapper.casStatus(900L, "CREATED", "PICKING")).thenReturn(1);
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "DISPENSING"))
+                .thenReturn(1);
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(item(1L)));
+        when(batchSelectService.selectForDispense(11L, "OUTP_PHARM", new BigDecimal("2")))
+                .thenReturn(batch());
+        when(drugBatchMapper.lockQuantity(55L, new BigDecimal("2"))).thenReturn(1);
+        when(dispenseMapper.updateById(any(Dispense.class))).thenReturn(1);
+        com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
+        rx.setId(100L);
+        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+
+        impl.pick("D20260918000001", pickRequest().items());
+
+        ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
+        verify(dispenseMapper).updateById(dispenseCaptor.capture());
+        Dispense saved = dispenseCaptor.getValue();
+        // 目标面精确：id 定位 + 状态同值（上方 CAS 已置 PICKING，补写同值维持内存/DB 同步纪律）+ 调配人留痕
+        assertThat(saved.getId()).isEqualTo(900L);
+        assertThat(saved.getStatus()).isEqualTo("PICKING");
+        assertThat(saved.getPicker()).isEqualTo("dispenser-01");
+        // 非目标列零携带：NOT_NULL 更新策略下 null 不进 SET——读改写窗口内对端写面（状态机 CAS
+        //   列更新、核对/发药留痕通道）对单号/处方号/患者/库房/核对发药列的提交不被读点快照覆写吞掉
+        assertThat(saved.getDispenseNo()).isNull();
+        assertThat(saved.getRxNo()).isNull();
+        assertThat(saved.getPatientId()).isNull();
+        assertThat(saved.getVisitId()).isNull();
+        assertThat(saved.getStorehouse()).isNull();
+        assertThat(saved.getVerifier()).isNull();
+        assertThat(saved.getIssuer()).isNull();
+    }
+
+    @Test
+    @DisplayName("verify 留痕并发防覆写（EX-24）：单据头补丁回写仅携 id+状态同值+核对人，调配留痕等快照列不进 SET")
+    void verifyWritesDispenseHeaderPatchWithoutSnapshotColumns() {
+        DispenseServiceImpl impl = newService();
+        Dispense d = dispense("PICKING");
+        d.setPicker("dispenser-01");
+        when(dispenseMapper.selectOne(any())).thenReturn(d);
+        when(dispenseMapper.casStatus(900L, "PICKING", "PICKED")).thenReturn(1);
+        when(dispenseMapper.updateById(any(Dispense.class))).thenReturn(1);
+        OperatorContextHolder.set("verify-02"); // 换第二账号绕开 PH-1011 前置（双签分权）
+
+        impl.verify("D20260918000001", null);
+
+        ArgumentCaptor<Dispense> captor = ArgumentCaptor.forClass(Dispense.class);
+        verify(dispenseMapper).updateById(captor.capture());
+        Dispense saved = captor.getValue();
+        // 目标面精确：id 定位 + 状态同值（上方 CAS 已置 PICKED）+ 核对人留痕
+        assertThat(saved.getId()).isEqualTo(900L);
+        assertThat(saved.getStatus()).isEqualTo("PICKED");
+        assertThat(saved.getVerifier()).isEqualTo("verify-02");
+        // 非目标列零携带：调配留痕（picker）在补丁形态下一并不进 SET——「verify 不改写调配留痕」
+        //   由列不携带承载（禁同值覆写形态），读改写窗口内对端提交不被吞
+        assertThat(saved.getPicker()).isNull();
+        assertThat(saved.getDispenseNo()).isNull();
+        assertThat(saved.getRxNo()).isNull();
+        assertThat(saved.getPatientId()).isNull();
+        assertThat(saved.getStorehouse()).isNull();
     }
 
     @Test

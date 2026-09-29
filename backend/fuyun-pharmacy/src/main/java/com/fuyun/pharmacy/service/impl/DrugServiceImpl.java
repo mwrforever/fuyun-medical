@@ -76,7 +76,8 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
                     PharmacyErrorCode.DRUG_CODE_EXISTS, HttpStatus.CONFLICT, "药品编码已存在：" + req.drugCode());
         }
         Drug row = new Drug();
-        applyRequest(row, req);
+        // 请求面应用（splitRatio 单次解析随行复用——W-22⑦；建档面与变更面共用同款应用器）
+        applyRequest(row, req, req.splitRatio() == null ? null : parseSplitRatio(req.splitRatio()));
         // 状态缺省：新建即启用（对照字段不入建档面，insuredSettleable 派生恒 false）
         row.setStatus("ENABLED");
         // 数据库写操作：建档落库
@@ -96,7 +97,8 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
 
     /**
      * 药品档案变更（FU-M06-01）：存在性校验（404）→ 请求面字段覆写（对照三列与 status
-     * 不在覆盖面——applyRequest 不触碰，禁变更通道改对照/停启用）→ 落库 → info 留痕 →
+     * 不在覆盖面——applyRequest 不触碰，禁变更通道改对照/停启用）→ 指定列补丁落库
+     * （EX-24｜BE-A2-05 并发防覆写：仅携 id+请求面列，未携列不进 SET）→ info 留痕 →
      * 事务内发布 drug.changed 广播（changeType=UPDATE，AFTER_COMMIT 出线，M05 主数据
      * 缓存失效消费面）。适用场景：药品字典管理档案维护（规格/途径集/警示级别等）。
      *
@@ -113,9 +115,18 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         if (row == null) {
             throw new BizException(PharmacyErrorCode.DRUG_NOT_FOUND, HttpStatus.NOT_FOUND, "药品不存在：" + id);
         }
-        applyRequest(row, req);
-        // 数据库写操作：档案变更（对照三列与 status 不在覆盖面——applyRequest 不触碰）
-        updateById(row);
+        // 请求面单次解析（W-22⑦ 随行复用禁二次 parse）：读行同步与补丁回写共用同一解析结果
+        BigDecimal splitRatio = req.splitRatio() == null ? null : parseSplitRatio(req.splitRatio());
+        // 内存读行同步请求面：出参 VO/日志/广播载荷直取（对照三列与 status 保持读侧原值）
+        applyRequest(row, req, splitRatio);
+        // 数据库写操作：档案变更走指定列补丁回写（EX-24｜BE-A2-05 并发防覆写）——仅携 id+请求面列
+        //   的补丁实体落库，NOT_NULL 更新策略下未携列不进 SET 子句：读改写窗口内 mapInsurance
+        //   并发提交的对照三列、停启用通道的 status 不被读点整行快照覆写吞掉（对照三列与 status
+        //   不在覆盖面——applyRequest 不触碰；TriageServiceImpl BUG-07 补丁回写同款形态）
+        Drug patch = new Drug();
+        patch.setId(id);
+        applyRequest(patch, req, splitRatio);
+        updateById(patch);
         log.info("药品变更：drugCode={}，id={}，status={}", row.getDrugCode(), row.getId(), row.getStatus());
         // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：变更留痕广播 changeType=UPDATE
         events.publishEvent(new PharmacyDomainEvent(
@@ -144,7 +155,8 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
 
     /**
      * 医保对照维护（FU-M06-01 独立入口）：存在性校验（404）→ 对照三列（nhsa_code/
-     * nhsa_catalog_version/nhsa_pay_type）落行（目录版本随对照维护动态更新口径，Spec :154；
+     * nhsa_catalog_version/nhsa_pay_type）指定列补丁落行（EX-24｜BE-A2-05 并发防覆写：
+     * 仅携 id+对照三列，档案面/status 未携列不进 SET；目录版本随对照维护动态更新口径，Spec :154；
      * insuredSettleable 由计费引擎按对照派生，本入口不触）→ info 留痕 → 事务内发布
      * drug.changed 广播（changeType=MAPPING，独立类型使消费方可区分对照变更与档案变更）。
      * 适用场景：医保对照管理台。
@@ -160,11 +172,20 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         if (row == null) {
             throw new BizException(PharmacyErrorCode.DRUG_NOT_FOUND, HttpStatus.NOT_FOUND, "药品不存在：" + id);
         }
-        // 数据库写操作：对照三列落行（目录版本随对照维护，动态更新口径 Spec :154）
+        // 内存读行同步对照三列（日志与内存态读侧一致；drugCode 直取读点原值）
         row.setNhsaCode(req.nhsaCode());
         row.setNhsaCatalogVersion(req.catalogVersion());
         row.setNhsaPayType(req.payType());
-        updateById(row);
+        // 数据库写操作：对照三列走指定列补丁回写（EX-24｜BE-A2-05 并发防覆写，目录版本随对照
+        //   维护动态更新口径 Spec :154）——仅携 id+对照三列的补丁实体落库，NOT_NULL 更新策略下
+        //   档案面/status 未携列不进 SET 子句：读改写窗口内 update() 并发提交的档案变更不被
+        //   读点整行快照覆写吞掉（TriageServiceImpl BUG-07 补丁回写同款形态）
+        Drug patch = new Drug();
+        patch.setId(id);
+        patch.setNhsaCode(req.nhsaCode());
+        patch.setNhsaCatalogVersion(req.catalogVersion());
+        patch.setNhsaPayType(req.payType());
+        updateById(patch);
         log.info(
                 "药品医保对照维护：drugCode={}，nhsaCode={}，catalog={}，payType={}",
                 row.getDrugCode(),
@@ -255,8 +276,15 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         }
     }
 
-    /** 请求面应用到实体（对照三列与 status 不在覆盖面） */
-    private void applyRequest(Drug row, DrugSaveRequest req) {
+    /**
+     * 请求面应用到实体（对照三列与 status 不在覆盖面）。建档面与变更面（读行同步+补丁实体）共用，
+     * splitRatio 由调用方单次解析传入（W-22⑦ 随行复用禁二次 parse）。
+     *
+     * @param row        目标实体（建档新行/变更读行/指定列补丁实体），非空
+     * @param req        请求面，非空
+     * @param splitRatio 已解析拆分比例（请求缺省为 null），可空
+     */
+    private void applyRequest(Drug row, DrugSaveRequest req, BigDecimal splitRatio) {
         row.setDrugCode(req.drugCode());
         row.setGenericName(req.genericName());
         row.setTradeName(req.tradeName());
@@ -266,7 +294,7 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
         row.setManufacturer(req.manufacturer());
         row.setRouteCodes(req.routeCodes() == null ? null : String.join(ROUTE_SEPARATOR, req.routeCodes()));
         row.setUnit(req.unit());
-        row.setSplitRatio(req.splitRatio() == null ? null : parseSplitRatio(req.splitRatio()));
+        row.setSplitRatio(splitRatio);
         row.setEssentialFlag(req.essentialFlag());
         row.setAntibioClass(req.antibioClass());
         row.setHazardLevel(req.hazardLevel());

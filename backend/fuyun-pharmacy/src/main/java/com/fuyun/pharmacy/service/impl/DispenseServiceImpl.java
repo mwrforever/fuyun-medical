@@ -303,11 +303,18 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             item.setTraceCodes(toJson(line.traceCodes()));
             dispenseItemMapper.updateById(item);
         }
-        // 数据库写操作：调配留痕回填（内存态与 DB 迁移同步：上方 CAS 已置 PICKING，实体补写同值后再
-        //   update——禁携带 CAS 前旧状态落库把状态机覆写回 CREATED，PrescriptionServiceImpl.create 同款约定）
+        // 数据库写操作：调配留痕走指定列补丁回填（EX-24｜BE-A2-05 并发防覆写）——仅携 id+状态同值
+        //   +调配人的补丁实体落库，NOT_NULL 更新策略下读点快照列（单号/处方号/患者/库房/核对发药
+        //   留痕）不进 SET 子句：读改写窗口内对端写面提交不被覆写吞掉（TriageServiceImpl BUG-07
+        //   补丁回写同款形态）；内存实体同步保留（状态补写同值维持「禁携带 CAS 前旧状态落库」纪律，
+        //   PR-4 IT 实证缺陷回归守卫语义不变，后续日志/出参直取内存态）
         d.setStatus("PICKING");
         d.setPicker(operator);
-        dispenseMapper.updateById(d);
+        Dispense patch = new Dispense();
+        patch.setId(d.getId());
+        patch.setStatus("PICKING");
+        patch.setPicker(operator);
+        dispenseMapper.updateById(patch);
         log.info("配药锁定完成：dispenseNo={}，picker={}，行数={}", dispenseNo, operator, items.size());
     }
 
@@ -348,11 +355,18 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             throw new BizException(
                     PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "调剂单状态不允许核对：" + dispenseNo);
         }
-        // 数据库写操作：核对留痕回填（内存态与 DB 迁移同步：上方 CAS 已置 PICKED，实体补写同值后再
-        //   update——禁携带 CAS 前旧状态落库把状态机覆写回 PICKING，pick 调配留痕同款约定）
+        // 数据库写操作：核对留痕走指定列补丁回填（EX-24｜BE-A2-05 并发防覆写）——仅携 id+状态同值
+        //   +核对人的补丁实体落库，NOT_NULL 更新策略下读点快照列（调配留痕 picker、单号/处方号等）
+        //   不进 SET 子句：读改写窗口内对端写面提交不被覆写吞掉，「verify 不改写调配留痕」由列不
+        //   携带承载（TriageServiceImpl BUG-07 补丁回写同款形态）；内存实体同步保留（状态补写同值
+        //   维持「禁携带 CAS 前旧状态落库」纪律，pick 调配留痕同款约定，日志/出参直取内存态）
         d.setStatus("PICKED");
         d.setVerifier(operator);
-        dispenseMapper.updateById(d);
+        Dispense patch = new Dispense();
+        patch.setId(d.getId());
+        patch.setStatus("PICKED");
+        patch.setVerifier(operator);
+        dispenseMapper.updateById(patch);
         log.info(
                 "扫码核对通过：dispenseNo={}，verifier={}，credential={}",
                 dispenseNo,
