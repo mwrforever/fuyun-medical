@@ -1,7 +1,6 @@
 /**
  * 病区视图域 API（M16 前端面，一域一文件）：病区呼叫（分页/新建/应答/处理/完成/转接/取消）+
- * 冷链台账（档案分页/新建/详情/记录查询/巡检与告警处置登记）+ 输液看板（病区快照）+
- * 体征看板（病区快照）。路径前缀 /v1/ward/**（baseURL 已含 /api）；雪花 id 与 long 后端经
+ * 冷链台账（档案分页/新建/详情/记录查询/巡检与告警处置登记）+ 输液看板（病区快照）。路径前缀 /v1/ward/**（baseURL 已含 /api）；雪花 id 与 long 后端经
  * Jackson 全局以字符串输出（backend A.3-8），前端类型一律 string 承载（web A.3-6）。
  * REST 面为后端 Task 12/13 冻结契约（生成物唯一来源）；函数按资源分组导出（spec mock 面）。
  */
@@ -20,7 +19,6 @@ export type RegisterColdChainRecordRequest =
   components['schemas']['RegisterColdChainRecordRequest'];
 export type InfusionBoardVO = components['schemas']['InfusionBoardVO'];
 export type InfusionBoardDeviceVO = components['schemas']['InfusionBoardDeviceVO'];
-export type VitalBoardVO = components['schemas']['VitalBoardVO'];
 
 /** 呼叫分页出参（common PageResult 单泛型生成物：content/page/size/total） */
 export type WardCallPage = components['schemas']['PageResultWardCallVO'];
@@ -181,15 +179,6 @@ export const infusionBoard = {
   /** 病区输液看板快照（余量 latest/滴速 latest/alertLevel 档位由后端判定；无遥测设备余量为 null）。 */
   byWard: async (wardId: string): Promise<InfusionBoardVO> => {
     const resp = await http.get<InfusionBoardVO>(`/v1/ward/infusion-board/${wardId}`);
-    return resp.data;
-  },
-};
-
-/** 体征看板资源组：病区快照（在床体征异常清单——P2 病区视图只落 API 面，看板页随后续任务）。 */
-export const vitalBoard = {
-  /** 病区体征看板快照（presenceMetric 在床体征指标 + anomalies 异常清单 + note 注记）。 */
-  byWard: async (wardId: string): Promise<VitalBoardVO> => {
-    const resp = await http.get<VitalBoardVO>(`/v1/ward/vital-board/${wardId}`);
     return resp.data;
   },
 };

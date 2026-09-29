@@ -2,6 +2,18 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-06：workstation 零消费 vitalBoard API 移除（FE-Q1-14，死代码零容忍）
+
+- **根因（FE-Q1-14，2026-09-28 全仓性能与代码质量优化清单）**：workstation api/ward.ts
+  :188-195 vitalBoard 资源组 API 零消费——全局 §四死代码零容忍。
+- **修复（纯删除 10 行）**：引用核验零消费（web/ 全工作区 grep `vitalBoard|VitalBoardVO`
+  仅命中 ward.ts 自身与生成物 api.d.ts 契约声明——生成物禁改、契约存在不构成消费）；
+  删除 vitalBoard 资源组函数+VitalBoardVO 类型别名（仅 ward.ts 内部消费）+头部注释
+  「+ 体征看板（病区快照）」条目同步。nursing 域 vitalSigns 为另一资源不涉。
+- **验证**：web 根 `pnpm lint`（--max-warnings=0）通过+`pnpm --filter @fuyun/workstation
+  type-check` 通过+`test` 42 文件 217 用例全过（=基线）+改动文件 prettier --check 通过；
+  diff 纯删除无引用改写。
+
 ## 2026-09-29 · 机械组 EX-05：fuyun-app 模块边界测试裸 System.out 改 SLF4J（BE-C3-13，输出通道等效替换）
 
 - **根因（BE-C3-13 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：
