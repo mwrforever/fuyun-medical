@@ -34,7 +34,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 同样拒绝）、②禁自引用、③禁成环（沿 standby 链游走，回到保存目标即环；visited 集合防既有
  * 脏数据成环时死循环）。错误码统一 409 IOT-1025（借 404 词表不贴切：属保存请求的字段关系
  * 校验而非资源查询）。删除守卫：他网关以本网关为热备对端时拒删（防悬挂 standby_of 引用，
- * 热备关系须先行解除）。
+ * 热备关系须先行解除）——守卫反查折入置删 CAS 语句原子生效（EX-22/BE-A2-03，原 count 预检
+ * 读后写竞态窗口收口；并发删除先行按幂等成功归因）。
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1）；JaCoCo 核心包
  * （com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
@@ -123,18 +124,24 @@ public class GatewayServiceImpl extends ServiceImpl<IotGatewayMapper, IotGateway
     @Transactional
     public void delete(String gatewayId) {
         requireGateway(gatewayId);
-        // 数据库读操作：删除守卫——他网关 standby_of 反查（部分索引 idx_iot_gateway_standby 准入，链式 count）
-        Long inboundRefs = lambdaQuery()
-                .eq(IotGatewayEntity::getStandbyOf, gatewayId)
-                .ne(IotGatewayEntity::getGatewayId, gatewayId)
-                .count();
-        if (inboundRefs != null && inboundRefs > 0) {
-            throw new BizException(
-                    IotErrorCode.GATEWAY_STANDBY_INVALID, HttpStatus.CONFLICT, "存在其他网关以本网关为热备对端，须先解除热备关系：" + gatewayId);
+        // 数据库写操作：CAS 守卫软删（EX-22/BE-A2-03）——「他网关 standby_of 反查」折入置删同一
+        // UPDATE 原子边界（IotAlarmMapper CAS 同款形态），收敛原「count 预检读 → removeById 写」
+        // 方法级读后写窗口：窗口内并发挂入的热备引用不再放行（防悬挂 standby_of 引用）；反查条件
+        // 与原链式预检逐字同形（排除自身行、deleted=0 口径，idx_iot_gateway_standby 准入）。
+        // iot_device.gateway_id 历史引用留痕由设备管理域处置（口径不变）
+        if (baseMapper.casSoftDeleteIfNoInboundStandby(gatewayId) != 1) {
+            // 影响行数 0 二分归因：行仍在册=置删语句内守卫命中（409 拒删）；
+            // 行已消失=并发删除已先行（幂等成功，原 removeById 零行放行同口径）
+            if (getById(gatewayId) != null) {
+                throw new BizException(
+                        IotErrorCode.GATEWAY_STANDBY_INVALID,
+                        HttpStatus.CONFLICT,
+                        "存在其他网关以本网关为热备对端，须先解除热备关系：" + gatewayId);
+            }
+            log.info("边缘网关已被并发删除（软删幂等）：gatewayId={}", gatewayId);
+            return;
         }
-        // 数据库写操作：软删（@TableLogic 逻辑删；iot_device.gateway_id 历史引用留痕由设备管理域处置）
-        removeById(gatewayId);
-        log.info("边缘网关已删除（软删）：gatewayId={}", gatewayId);
+        log.info("边缘网关已删除（软删，守卫同语句生效）：gatewayId={}", gatewayId);
     }
 
     /**

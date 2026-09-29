@@ -1,6 +1,7 @@
 package com.fuyun.iot.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -40,7 +41,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 边缘网关管理服务单测（P2 PR-2 Task 11 Step 1，TDD 先行）：CRUD 主链（登记唯一性 IOT-1024/
  * 更新与删除存在性 IOT-1023）与 standby 校验四分支（对端不存在/自引用/双节点环/三节点环 IOT-1025）、
- * 删除守卫（他网关引用本网关为热备对端拒删）、分页缺省值。JaCoCo 核心包
+ * 删除守卫（他网关引用本网关为热备对端拒删；EX-22/BE-A2-03 起守卫反查折入置删 CAS 语句原子生效，
+ * 并发删除先行按幂等成功归因）、分页缺省值。JaCoCo 核心包
  * com.fuyun.iot.service.impl LINE=1.00 承载测试。
  *
  * <p>mapper 以 Mockito 模拟（真实 SQL 归 fuyun-app 集成面验证）；lambda 条件列名解析依赖
@@ -264,26 +266,45 @@ class GatewayServiceImplTest {
     }
 
     @Test
-    @DisplayName("删除成功：软删放行（无他网关引用本网关为热备对端）")
+    @DisplayName("删除成功：守卫 CAS 软删放行（无他网关引用本网关为热备对端）")
     void deleteSoftDeletesWhenNoInboundStandbyReference() {
         when(gatewayMapper.selectById(GATEWAY_ID)).thenReturn(gateway(GATEWAY_ID, null));
-        when(gatewayMapper.selectCount(any())).thenReturn(0L);
+        // 守卫反查与置删同一语句原子生效（EX-22）：CAS 命中即守卫通过且已软删
+        when(gatewayMapper.casSoftDeleteIfNoInboundStandby(GATEWAY_ID)).thenReturn(1);
 
         service.delete(GATEWAY_ID);
 
-        verify(gatewayMapper).deleteById(GATEWAY_ID);
+        verify(gatewayMapper).casSoftDeleteIfNoInboundStandby(GATEWAY_ID);
+        // 无守卫的 removeById 通道不再触达（守卫折入写语句，防读后写竞态面回退）
+        verify(gatewayMapper, never()).deleteById(GATEWAY_ID);
     }
 
     @Test
     @DisplayName("删除守卫：他网关引用本网关为热备对端 IOT-1025（409），热备关系先行解除")
     void deleteRejectsWhenReferencedAsStandbyByOtherGateway() {
+        // 行仍在册 + CAS 零命中 = 置删语句内守卫命中（拒删必经写语句判定路径，非预检读路径）
         when(gatewayMapper.selectById(GATEWAY_ID)).thenReturn(gateway(GATEWAY_ID, null));
-        when(gatewayMapper.selectCount(any())).thenReturn(1L);
+        when(gatewayMapper.casSoftDeleteIfNoInboundStandby(GATEWAY_ID)).thenReturn(0);
 
         assertThatThrownBy(() -> service.delete(GATEWAY_ID)).isInstanceOfSatisfying(BizException.class, ex -> {
             assertThat(ex.getErrorCode()).isEqualTo(IotErrorCode.GATEWAY_STANDBY_INVALID);
             assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
         });
+        verify(gatewayMapper, never()).deleteById(GATEWAY_ID);
+        // 守卫折入写语句（EX-22）：全程零 count 预检读——读后写通道不再存在
+        verify(gatewayMapper, never()).selectCount(any());
+    }
+
+    @Test
+    @DisplayName("删除边界：CAS 零命中且行已消失（并发删除先行）——幂等成功不误报 409")
+    void deleteTreatsConcurrentDeleteAsIdempotentSuccess() {
+        // requireGateway 时行在册，置删语句执行时行已被并发软删（分类归因读返回 null）
+        when(gatewayMapper.selectById(GATEWAY_ID))
+                .thenReturn(gateway(GATEWAY_ID, null))
+                .thenReturn(null);
+        when(gatewayMapper.casSoftDeleteIfNoInboundStandby(GATEWAY_ID)).thenReturn(0);
+
+        assertThatCode(() -> service.delete(GATEWAY_ID)).doesNotThrowAnyException();
         verify(gatewayMapper, never()).deleteById(GATEWAY_ID);
     }
 
