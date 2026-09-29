@@ -198,7 +198,9 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         }
         patientService.updateById(survivor);
         // ③从档标识整批重挂主档（原挂接在快照；is_primary 随行保留，历史业务行零改写仅改指针归属）
-        for (PatientIdentifier identifier : identifierService.listByPatient(merged.getPatientId())) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：从档标识单次装载，循环内纯迭代重挂
+        List<PatientIdentifier> identifiers = identifierService.listByPatient(merged.getPatientId());
+        for (PatientIdentifier identifier : identifiers) {
             identifier.setPatientId(survivor.getPatientId());
             identifierService.updateById(identifier);
         }
