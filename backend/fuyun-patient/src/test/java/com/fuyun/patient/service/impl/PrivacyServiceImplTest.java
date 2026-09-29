@@ -28,7 +28,7 @@ import com.fuyun.patient.enums.MaskTargetField;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.mapper.PrivacyAccessLogMapper;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.time.LocalDate;
@@ -55,7 +55,7 @@ import org.springframework.beans.factory.ObjectProvider;
 class PrivacyServiceImplTest {
 
     @Mock
-    private PrivacyMaskService privacyMaskService;
+    private IPrivacyMaskService privacyMaskService;
 
     @Mock
     private IPatientService patientService;

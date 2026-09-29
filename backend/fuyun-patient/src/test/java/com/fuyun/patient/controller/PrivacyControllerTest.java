@@ -16,8 +16,8 @@ import com.fuyun.common.web.GlobalExceptionHandler;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.service.IPrivacyAuthService;
-import com.fuyun.patient.service.PrivacyMaskService;
-import com.fuyun.patient.service.PrivacyService;
+import com.fuyun.patient.service.IPrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.PrivacyAuthVO;
 import com.fuyun.patient.vo.PrivacyMaskRuleVO;
@@ -55,10 +55,10 @@ class PrivacyControllerTest {
     private IPrivacyAuthService privacyAuthService;
 
     @Mock
-    private PrivacyMaskService privacyMaskService;
+    private IPrivacyMaskService privacyMaskService;
 
     @Mock
-    private PrivacyService privacyService;
+    private IPrivacyService privacyService;
 
     private MockMvc mockMvc;
 

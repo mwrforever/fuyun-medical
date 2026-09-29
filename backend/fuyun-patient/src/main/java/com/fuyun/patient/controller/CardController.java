@@ -3,7 +3,7 @@ package com.fuyun.patient.controller;
 import com.fuyun.patient.dto.CardBindRequest;
 import com.fuyun.patient.dto.CardIssueRequest;
 import com.fuyun.patient.dto.CardReplaceRequest;
-import com.fuyun.patient.service.VisitCardService;
+import com.fuyun.patient.service.IVisitCardService;
 import com.fuyun.patient.vo.CardVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -29,14 +29,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/patient")
 public class CardController {
 
-    private final VisitCardService visitCardService;
+    private final IVisitCardService visitCardService;
 
     /**
      * 构造器注入（A.1-7），装配归 PatientWebConfig @Import。
      *
      * @param visitCardService 就诊卡生命周期服务（发卡/绑定/挂失/补卡/解绑状态机），非空
      */
-    public CardController(VisitCardService visitCardService) {
+    public CardController(IVisitCardService visitCardService) {
         this.visitCardService = visitCardService;
     }
 

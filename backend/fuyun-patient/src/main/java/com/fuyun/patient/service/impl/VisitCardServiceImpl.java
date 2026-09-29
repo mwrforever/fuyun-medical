@@ -10,7 +10,7 @@ import com.fuyun.patient.entity.PatientIdentifier;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.ICardAccountService;
 import com.fuyun.patient.service.IPatientIdentifierService;
-import com.fuyun.patient.service.VisitCardService;
+import com.fuyun.patient.service.IVisitCardService;
 import com.fuyun.patient.vo.CardVO;
 import java.time.OffsetDateTime;
 import lombok.extern.slf4j.Slf4j;
@@ -30,7 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>敏感红线：卡号明文禁入日志，日志以患者 id + 卡号 HMAC 摘要形态定位卡片。
  */
 @Slf4j
-public class VisitCardServiceImpl implements VisitCardService {
+public class VisitCardServiceImpl implements IVisitCardService {
 
     private final IPatientIdentifierService identifierService;
 

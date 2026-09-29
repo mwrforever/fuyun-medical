@@ -11,7 +11,7 @@ import com.fuyun.patient.vo.CardVO;
  * （介质本体 = patient_identifier 的 VISIT_CARD 标识行，卡号即标识值）
  * 与一卡通账户联动（发卡开户/挂失冻结），状态变更经 identifier.changed 事件广播。
  */
-public interface VisitCardService {
+public interface IVisitCardService {
 
     /**
      * 发卡并绑定档案（新建 VISIT_CARD 标识 ACTIVE；一卡通启用时联动开户）。

@@ -8,7 +8,7 @@ import com.fuyun.patient.constants.PrivacyConstants;
 import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
 import com.fuyun.patient.entity.PrivacyMaskRule;
 import com.fuyun.patient.mapper.PrivacyMaskRuleMapper;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.vo.PatientVO;
 import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import java.time.LocalDate;
@@ -35,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 的保守收窄，已在计划范围声明显式登记。
  */
 @Slf4j
-public class PrivacyMaskServiceImpl implements PrivacyMaskService {
+public class PrivacyMaskServiceImpl implements IPrivacyMaskService {
 
     private final PrivacyMaskRuleMapper ruleMapper;
 

@@ -2,6 +2,24 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-03（B 路 a）：fuyun-patient 五服务接口 I 前缀重命名（BE-C2-10，纯命名层零行为变化）
+
+- **根因（BE-C2-10 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：patient 五个
+  服务接口无 I 前缀（backend 宪法 A.4.3-20 点名，纯命名层机械重命名无外部契约）。
+- **修复**：PatientMatchingService/PatientRegistrationService/PrivacyMaskService/
+  PrivacyService/VisitCardService → 各加 I 前缀（文件重命名+声明/import/字段/构造参数/
+  javadoc/@link 词边界机械替换，XxxServiceImpl 零误伤）；引用面 main 11 文件（3 controller+
+  7 impl+1 vo）+test 9 文件，旧名全模块 grep 零残留；spotless 连带的 import 字母序重排
+  为重命名必要配套。test 九文件断言零改动。**顺带（EX-04 双 ID 标注）**：重命名面文件
+  PossibleDuplicateServiceImpl 内 2 处全限定类名（:198 java.util.stream.Collectors、
+  :220 java.util.Arrays）一并改 import+简名，避免同文件二次触碰。
+- **跨模块注释残留说明**：fuyun-common RoleContextHolder:10 与 fuyun-system
+  AuthTokenInterceptor:77 注释中提及旧名「PrivacyMaskService」字样——纯注释非代码引用，
+  由 EX-04 追加收口任务同步（见后续条目）。
+- **验证**：`mvn -B -ntp -pl fuyun-patient -am test` 全绿（240 用例=基线，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-patient spotless:check` 通过；diff 核验全部改动行
+  含接口名替换/import 重排，无逻辑行变化。
+
 ## 2026-09-29 · 机械组 EX-02（B 路 b）：fuyun-patient 预留依赖 TODO 补版本计划格式（BE-A4-14，零功能影响）
 
 - **根因（BE-A4-14 评分 65，2026-09-28 全仓高风险问题清单低置信节）**：

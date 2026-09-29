@@ -16,8 +16,8 @@ import com.fuyun.patient.enums.MaskTargetField;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.mapper.PrivacyAccessLogMapper;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PrivacyMaskService;
-import com.fuyun.patient.service.PrivacyService;
+import com.fuyun.patient.service.IPrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.util.LinkedHashMap;
@@ -35,7 +35,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 隐私明文查阅与留痕实现（FU-M02-06）：unmask 为全仓唯一明文出口——角色豁免 + 诊疗关系
  * D-16 三态双道校验 403 前置（不落台账、不返明文），解密取值仅在本方法生命周期与响应体内
  * 存活；成功由 @AuditLog SENSITIVE_QUERY 审计行 + privacy_access_log 台账行双留痕，失败由
- * 审计 FAIL 行留痕。豁免判定复用 PrivacyMaskService 批量面 exemptFields（禁复制判定逻辑，
+ * 审计 FAIL 行留痕。豁免判定复用 IPrivacyMaskService 批量面 exemptFields（禁复制判定逻辑，
  * A.4.3-21；单字段面 isExempt 保留供单查场景）。
  *
  * <p>诊疗关系第二道（{@link CareRelationQuery} SPI，D-16 冻结语义）：容器无实现时跳过维持
@@ -44,7 +44,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 不实现（无调用方）。
  */
 @Slf4j
-public class PrivacyServiceImpl implements PrivacyService {
+public class PrivacyServiceImpl implements IPrivacyService {
 
     /** 查阅类型词表：明文查阅（ARCHIVE_EXPORT/PANORAMA_VIEW 预留不实现，V103 列注释口径） */
     private static final String ACCESS_TYPE_UNMASK_QUERY = "UNMASK_QUERY";
@@ -52,7 +52,7 @@ public class PrivacyServiceImpl implements PrivacyService {
     /** traceId 的 MDC 键：与 TraceIdFilter/GlobalExceptionHandler 默认键一致 */
     private static final String TRACE_ID_MDC_KEY = "traceId";
 
-    private final PrivacyMaskService privacyMaskService;
+    private final IPrivacyMaskService privacyMaskService;
 
     private final IPatientService patientService;
 
@@ -74,7 +74,7 @@ public class PrivacyServiceImpl implements PrivacyService {
      *                                容器无实现时解析值为 null（维持单门禁，M03 注册后自动收紧）
      */
     public PrivacyServiceImpl(
-            PrivacyMaskService privacyMaskService,
+            IPrivacyMaskService privacyMaskService,
             IPatientService patientService,
             PrivacyAccessLogMapper privacyAccessLogMapper,
             PatientFieldCrypto crypto,

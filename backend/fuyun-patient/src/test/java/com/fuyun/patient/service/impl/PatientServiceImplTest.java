@@ -27,7 +27,7 @@ import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.internal.PatientDomainEvent;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.mapper.PatientMapper;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.vo.PatientVO;
 import java.io.Serializable;
 import java.time.LocalDate;
@@ -55,7 +55,7 @@ class PatientServiceImplTest {
     private PatientFieldCrypto crypto;
 
     @Mock
-    private PrivacyMaskService privacyMaskService;
+    private IPrivacyMaskService privacyMaskService;
 
     @Mock
     private PatientCacheService cacheService;
@@ -84,7 +84,7 @@ class PatientServiceImplTest {
         TestablePatientServiceImpl(
                 Patient stored,
                 PatientFieldCrypto c,
-                PrivacyMaskService m,
+                IPrivacyMaskService m,
                 PatientCacheService ca,
                 ApplicationEventPublisher p) {
             super(c, m, ca, p);

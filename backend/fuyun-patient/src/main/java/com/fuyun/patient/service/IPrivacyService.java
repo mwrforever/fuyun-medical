@@ -8,7 +8,7 @@ import com.fuyun.patient.vo.UnmaskVO;
 /**
  * 隐私明文查阅与留痕服务（FU-M02-06 展示侧出口）：明文查阅双留痕（M01 审计 + privacy_access_log）。
  */
-public interface PrivacyService {
+public interface IPrivacyService {
 
     /**
      * 明文查阅（独立 API：角色豁免校验 → 解密取值 → 查阅台账落痕 → 返回明文）。

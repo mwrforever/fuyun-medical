@@ -9,9 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fuyun.patient.dto.PatientCreateRequest;
 import com.fuyun.patient.dto.PatientMatchCheckRequest;
+import com.fuyun.patient.service.IPatientMatchingService;
+import com.fuyun.patient.service.IPatientRegistrationService;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PatientMatchingService;
-import com.fuyun.patient.service.PatientRegistrationService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import com.fuyun.patient.vo.PatientVO;
 import java.util.List;
@@ -34,10 +34,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class PatientControllerTest {
 
     @Mock
-    private PatientRegistrationService registrationService;
+    private IPatientRegistrationService registrationService;
 
     @Mock
-    private PatientMatchingService matchingService;
+    private IPatientMatchingService matchingService;
 
     @Mock
     private IPatientService patientService;

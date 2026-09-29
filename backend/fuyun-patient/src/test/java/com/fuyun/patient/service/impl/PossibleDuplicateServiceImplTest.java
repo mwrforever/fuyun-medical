@@ -21,8 +21,8 @@ import com.fuyun.patient.entity.PossibleDuplicate;
 import com.fuyun.patient.enums.MatchOutcome;
 import com.fuyun.patient.mapper.PatientMapper;
 import com.fuyun.patient.mapper.PossibleDuplicateMapper;
+import com.fuyun.patient.service.IPatientMatchingService;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PatientMatchingService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import com.fuyun.patient.vo.PossibleDuplicateVO;
 import java.io.Serializable;
@@ -53,7 +53,7 @@ class PossibleDuplicateServiceImplTest {
     private IPatientService patientService;
 
     @Mock
-    private PatientMatchingService matchingService;
+    private IPatientMatchingService matchingService;
 
     /** 待审表链式查询触点替身（lambdaQuery/lambdaUpdate 链最终委托到该 mapper） */
     @Mock
@@ -91,7 +91,7 @@ class PossibleDuplicateServiceImplTest {
 
         private PossibleDuplicateMapper chainMapper;
 
-        TestablePossibleDuplicateService(IPatientService patientService, PatientMatchingService matchingService) {
+        TestablePossibleDuplicateService(IPatientService patientService, IPatientMatchingService matchingService) {
             super(patientService, matchingService);
         }
 

@@ -22,10 +22,10 @@ import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.internal.PatientDomainEvent;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.IPatientIdentifierService;
+import com.fuyun.patient.service.IPatientMatchingService;
 import com.fuyun.patient.service.IPatientService;
 import com.fuyun.patient.service.IPossibleDuplicateService;
 import com.fuyun.patient.service.IPrivacyAuthService;
-import com.fuyun.patient.service.PatientMatchingService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,7 +47,7 @@ import org.springframework.http.HttpStatus;
 class PatientRegistrationServiceImplTest {
 
     @Mock
-    private PatientMatchingService matchingService;
+    private IPatientMatchingService matchingService;
 
     @Mock
     private IPatientService patientService;

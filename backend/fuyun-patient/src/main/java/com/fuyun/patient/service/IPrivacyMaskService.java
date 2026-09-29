@@ -11,7 +11,7 @@ import java.util.Set;
  * 隐私脱敏引擎（FU-M02-06 展示侧）：privacy_mask_rule 集中规则 + SensitiveMasker 组合 +
  * 角色豁免判定 + 规则维护；各端展示统一经本引擎，明文只经明文查阅 API（双留痕）。
  */
-public interface PrivacyMaskService {
+public interface IPrivacyMaskService {
 
     /**
      * 就地脱敏档案出参清单（一次加载规则逐行应用；返回同引用便于链式）。

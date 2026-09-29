@@ -10,8 +10,8 @@ import com.fuyun.patient.dto.PrivacyAuthCreateRequest;
 import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.service.IPrivacyAuthService;
-import com.fuyun.patient.service.PrivacyMaskService;
-import com.fuyun.patient.service.PrivacyService;
+import com.fuyun.patient.service.IPrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.PrivacyAuthVO;
 import com.fuyun.patient.vo.PrivacyMaskRuleVO;
@@ -53,9 +53,9 @@ public class PrivacyController {
 
     private final IPrivacyAuthService privacyAuthService;
 
-    private final PrivacyMaskService privacyMaskService;
+    private final IPrivacyMaskService privacyMaskService;
 
-    private final PrivacyService privacyService;
+    private final IPrivacyService privacyService;
 
     /**
      * 构造器注入（A.1-7），装配归 PatientWebConfig @Import。
@@ -66,8 +66,8 @@ public class PrivacyController {
      */
     public PrivacyController(
             IPrivacyAuthService privacyAuthService,
-            PrivacyMaskService privacyMaskService,
-            PrivacyService privacyService) {
+            IPrivacyMaskService privacyMaskService,
+            IPrivacyService privacyService) {
         this.privacyAuthService = privacyAuthService;
         this.privacyMaskService = privacyMaskService;
         this.privacyService = privacyService;
