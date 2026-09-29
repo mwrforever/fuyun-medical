@@ -58,37 +58,46 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, UserEntity> impleme
     /**
      * 记录一次登录失败（失败计数状态机写路径，方法级事务）。
      *
-     * <p>执行流程：fail_count 以加载时值为基累加 → 连续失败达锁定阈值时计算 locked_until
-     * （now + 锁定时长，到期自动恢复）→ 仅更新 fail_count 与 locked_until 两列（锁定列条件
-     * set，未达阈值不触碰既有锁定状态），不回写口令等其他字段。
+     * <p>执行流程：单条条件 UPDATE 行内原子完成计数累加与锁定判定（EX-28）——fail_count 以
+     * 数据库当前值为基自增（setSql 原子累加，同 DeadLetterServiceImpl CAS 先例），锁定判定以
+     * SQL 侧 CASE 表达：累加后值达锁定阈值（fail_count + 1 ≥ 阈值，与原 Java 侧判定
+     * {@code 旧值+1 >= LOGIN_FAIL_LOCK_THRESHOLD} 逐字等价，PostgreSQL SET 表达式引用列取更新前
+     * 旧值）则置 locked_until = now + 锁定时长（应用时钟），未达阈值锁定列回写自身值（不触碰既有
+     * 锁定状态），不回写口令等其他字段。
      *
-     * <p>并发边界：以加载时值为基的累加在并发登录失败场景存在丢计数可能（P0 可接受，锁定兜底
-     * 为数据库行级更新）。
+     * <p>并发边界（EX-28 修复）：读-改-写在并发登录失败场景会丢计数（两并发失败基于同一陈旧快照
+     * 各写同一字面值，只计 1 次，暴力破解防护被稀释）；行内原子累加由数据库行级锁串行化，每次
+     * 失败各贡献一次 +1 且阈值判定不漏锁。阈值预警日志基于加载快照投影（并发下可能滞后），
+     * 锁定的权威判定在 SQL 侧。
      *
-     * @param user 已按登录名加载的账号实体，非空（调用方已确保存在）；fail_count 取加载时值
+     * @param user 已按登录名加载的账号实体，非空（调用方已确保存在）；fail_count 取加载时值（仅作
+     *             预警日志投影与追溯参考，累加基数为数据库当前值）
      */
     @Override
     @Transactional
     public void recordLoginFailure(UserEntity user) {
-        // 连续失败计数：以加载时值为基累加（并发登录失败存在丢计数可能，锁定兜底为数据库行级更新，P0 可接受）
-        int failCount = (user.getFailCount() == null ? FAIL_COUNT_INITIAL : user.getFailCount()) + 1;
-        OffsetDateTime lockedUntil = null;
-        if (failCount >= SecurityConstants.LOGIN_FAIL_LOCK_THRESHOLD) {
-            // 达阈值置锁定截止时刻（now + 30 分钟，自动到期恢复）
-            lockedUntil = OffsetDateTime.now().plus(SecurityConstants.LOGIN_LOCK_DURATION);
+        // 阈值预警基于加载快照投影（旧值+1 ≥ 阈值，口径与 SQL 侧 CASE 逐字一致）：并发下快照可能滞后，
+        // 锁定是否真实生效以 SQL 侧判定为准（日志仅供运维观察，不承载业务语义）
+        int projectedFailCount = (user.getFailCount() == null ? FAIL_COUNT_INITIAL : user.getFailCount()) + 1;
+        if (projectedFailCount >= SecurityConstants.LOGIN_FAIL_LOCK_THRESHOLD) {
+            // 达阈值置锁定截止时刻（now + 30 分钟，自动到期恢复；应用时钟口径与锁定校验侧一致）
+            OffsetDateTime projectedLockedUntil = OffsetDateTime.now().plus(SecurityConstants.LOGIN_LOCK_DURATION);
             log.warn(
-                    "连续登录失败达阈值，账号进入锁定：loginName={}，failCount={}，lockedUntil={}",
+                    "连续登录失败达阈值（基于加载快照），账号进入锁定：loginName={}，failCount={}，lockedUntil={}",
                     user.getLoginName(),
-                    failCount,
-                    lockedUntil);
+                    projectedFailCount,
+                    projectedLockedUntil);
         }
+        // 单语句原子累加 + 锁定判定（EX-28）：锁定时刻参数经 {1} 绑定（阈值 {0} 同为绑定参数，杜绝拼接）
         this.lambdaUpdate()
                 .eq(UserEntity::getId, user.getId())
-                .set(UserEntity::getFailCount, failCount)
-                // 锁定列仅在达阈值时写入（条件 set），未达阈值不触碰既有锁定状态
-                .set(lockedUntil != null, UserEntity::getLockedUntil, lockedUntil)
+                .setSql("fail_count = fail_count + 1")
+                .setSql(
+                        "locked_until = CASE WHEN fail_count + 1 >= {0} THEN {1} ELSE locked_until END",
+                        SecurityConstants.LOGIN_FAIL_LOCK_THRESHOLD,
+                        OffsetDateTime.now().plus(SecurityConstants.LOGIN_LOCK_DURATION))
                 .update();
-        log.info("登录失败计数更新：loginName={}，failCount={}", user.getLoginName(), failCount);
+        log.info("登录失败计数原子累加：loginName={}，loadedFailCount={}", user.getLoginName(), user.getFailCount());
     }
 
     /**
