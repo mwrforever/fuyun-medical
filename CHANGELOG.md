@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-05：fuyun-app 模块边界测试裸 System.out 改 SLF4J（BE-C3-13，输出通道等效替换）
+
+- **根因（BE-C3-13 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：
+  ModulithBoundaryTest:26 测试内裸 System.out——backend 宪法 A.1 节第 11 条「禁止裸
+  System.out，统一 SLF4J」无测试豁免条款。
+- **修复**：实扫全文件仅 1 处（:26）；补测试类 logger（标准 SLF4J 声明，项目测试类无
+  自身 logger 先例）；`System.out.println(modules)` → `log.info("{}", modules)` 等效
+  输出（模块布局内容不丢失）；关联注释「控制台输出」→「日志输出」同步措辞。断言零
+  改动（补偿防线与 modules.verify() 原样保留），测试行为零变化。
+- **验证**：`mvn -B -ntp -pl fuyun-app -am -Dtest=ModulithBoundaryTest test` 全绿
+  （1 用例；补 -Dsurefire.failIfNoSpecifiedTests=false 规避上游模块无匹配测试的参数
+  语义差异）+ `mvn -B -ntp -pl fuyun-app spotless:check` 通过（59 文件 clean）；diff
+  +7/-2（2 import+2 行 logger+1 处替换，-2 为原 System.out 语句与注释行）。
+
 ## 2026-09-29 · 机械组 EX-02（C 路 b）：fuyun-iot 遥测推送生命周期测试隐式断言显式化（BE-A4-15，只补不改）
 
 - **根因（BE-A4-15 评分 50，2026-09-28 全仓高风险问题清单低置信节）**：
