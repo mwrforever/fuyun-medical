@@ -97,7 +97,8 @@ public class IotAlarmEventListener {
         try {
             payload = objectMapper.treeToValue(envelope.payload(), AlarmTriggeredPayload.class);
         } catch (JsonProcessingException e) {
-            // 载荷不合规（缺字段/类型错）等同业务失败：上抛由三段式③失败收尾（FAILED 留痕后重抛）
+            // 载荷不合规（缺字段/类型错）等同业务失败：上抛由三段式③失败收尾（FAILED 留痕后重抛）；
+            // EX-19 收口 C 类：内部事件契约断言，保留 ISE（消费失败→重试→死信链路语义不变，零行为变化）
             throw new IllegalStateException("告警触发事件载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(

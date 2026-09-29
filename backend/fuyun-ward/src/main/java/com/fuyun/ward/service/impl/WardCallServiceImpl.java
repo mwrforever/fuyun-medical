@@ -15,6 +15,7 @@ import com.fuyun.ward.dto.CreateWardCallRequest;
 import com.fuyun.ward.dto.WardCallQueryRequest;
 import com.fuyun.ward.entity.WardCallEntity;
 import com.fuyun.ward.entity.WardCallRoutingRuleEntity;
+import com.fuyun.ward.enums.CallSource;
 import com.fuyun.ward.enums.CallStatus;
 import com.fuyun.ward.enums.CallType;
 import com.fuyun.ward.mapper.WardCallMapper;
@@ -93,17 +94,25 @@ public class WardCallServiceImpl implements IWardCallService {
     /**
      * 手工创建呼叫（初始态 CREATED；同床位合并取消 + 发号落行）。
      *
-     * <p>执行流程：同床位全部活跃旧呼叫批量置 CANCELLED（brief 冻结合并语义）→ 发号器签发
-     * call_no → 落行（escalation_count 初始 0，时间戳列由数据库默认值维护）→ 回读出视图。
+     * <p>执行流程：设备源守卫（WD-1008——source=IOT 拒绝，EX-19 收口 B 类就近承接）→ 同床位全部
+     * 活跃旧呼叫批量置 CANCELLED（brief 冻结合并语义）→ 发号器签发 call_no → 落行
+     * （escalation_count 初始 0，时间戳列由数据库默认值维护）→ 回读出视图。
      * 系统级 INFUSION 呼叫走 iot.alarm.triggered 事件消费落行，不经本入口。
      *
      * @param request 创建请求，非空；来源：POST /ward-calls 请求体（@Valid 后置）——wardId/bedId/
      *                callType/source 必填，patientId/deviceId/sourceRef 可空（设备源行由事件链携带）
      * @return 创建后视图（status=CREATED，escalationCount=0）
+     * @throws com.fuyun.common.exception.BizException WD-1008（400，source=IOT 设备源禁手工入口——
+     *                                               设备源呼叫经 iot 事件消费落行，防双通道重复落行）
      */
     @Override
     @Transactional
     public WardCallVO create(CreateWardCallRequest request) {
+        // 设备源守卫（EX-19 收口 B 类，WD-1008 400）：IOT 呼叫经 iot 事件消费落行，手工入口拒绝防双通道重复落行
+        if (request.source() == CallSource.IOT) {
+            throw new BizException(
+                    WardErrorCode.CALL_SOURCE_IOT_FORBIDDEN, HttpStatus.BAD_REQUEST, "设备源呼叫经事件消费落行，禁止手工入口创建");
+        }
         // 同床位合并语义（brief 冻结）：新呼叫落行前将同床位全部活跃旧呼叫批量置 CANCELLED
         int merged = callMapper.cancelActiveByBed(request.bedId(), operator());
         if (merged > 0) {
@@ -416,6 +425,8 @@ public class WardCallServiceImpl implements IWardCallService {
         try {
             return objectMapper.readValue(targetChain, new TypeReference<List<String>>() {});
         } catch (JsonProcessingException e) {
+            // EX-19 收口 C 类：路由规则配置脏数据的内部防御断言（本模块无规则写入口，target_chain
+            // 仅 DB 侧维护），保留 ISE 走 500 通道阻断转接（事务回滚），修正规则后重试
             throw new IllegalStateException("路由规则 target_chain 与契约不符（JSON 字符串数组）：" + callNo, e);
         }
     }

@@ -73,6 +73,8 @@ public class TelemetryAnomalyEventListener {
         try {
             payload = objectMapper.readValue(envelope.payload().toString(), TelemetryAnomalyPayload.class);
         } catch (Exception e) {
+            // EX-19 收口 C 类：内部事件契约断言，保留 ISE——上抛由三段式③失败收尾（FAILED 留痕后重抛
+            // 走死信），消费失败→重试→死信链路语义不变，零行为变化
             throw new IllegalStateException("遥测断流异常载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         // 缓存操作（写）：deviceId 维度注记快照（值=载荷 JSON，TTL 24h 自然过期——瞬态提示自愈）
@@ -81,6 +83,8 @@ public class TelemetryAnomalyEventListener {
         try {
             operations.set(key, objectMapper.writeValueAsString(payload), WardMessagingConstants.VITAL_ANOMALY_TTL);
         } catch (Exception e) {
+            // EX-19 收口 C 类：内部序列化防御断言（进程内 Jackson 写失败属系统级异常），保留 ISE——
+            // 上抛由三段式③失败收尾走死信，零行为变化
             throw new IllegalStateException("遥测断流异常注记序列化失败：event_id=" + envelope.eventId(), e);
         }
         log.info(
