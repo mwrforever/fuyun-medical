@@ -34,8 +34,11 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -120,6 +123,21 @@ class ChargePriceServiceImplTest {
     /** 已生效未闭行（历史用例沿用形态：起点在基准前 1 天、effective_to NULL） */
     private ChargeItemPrice openPublishedRow(long price, int version) {
         return priceRow(price, version, PriceStatus.PUBLISHED, at(FIXED_INSTANT.minus(Duration.ofDays(1))), null);
+    }
+
+    /** 版本行夹具（多项目批量形态）：项目 id 与行 id 显式给定（批查键集/收敛用例的确定性基础）。 */
+    private ChargeItemPrice priceRow(
+            long chargeItemId,
+            long rowId,
+            long price,
+            int version,
+            PriceStatus status,
+            OffsetDateTime effectiveFrom,
+            OffsetDateTime effectiveTo) {
+        ChargeItemPrice row = priceRow(price, version, status, effectiveFrom, effectiveTo);
+        row.setId(rowId);
+        row.setChargeItemId(chargeItemId);
+        return row;
     }
 
     /**
@@ -243,6 +261,57 @@ class ChargePriceServiceImplTest {
         PriceSnapshot atDue = service.snapshot("C001", 100L);
         assertThat(atDue.priceVersion()).isEqualTo(2);
         assertThat(atDue.unitPrice()).isEqualTo(4000L);
+    }
+
+    @Test
+    @DisplayName("批量快照取价：一次 IN 区间判定 + DESC 回放首行收敛 + 对照一次批查，无版本项目不出键不抛错")
+    void snapshotsBatchCurrentPricesAndCollapseFirstRowPerItem() {
+        OffsetDateTime older = at(FIXED_INSTANT.minus(Duration.ofDays(2)));
+        OffsetDateTime newer = at(FIXED_INSTANT.minus(Duration.ofDays(1)));
+        // DB 按 effective_from DESC 全局回放（跨项目交错）：项目 100 两行命中（区间交叉脏数据形态）+ 项目 200 一行
+        when(priceMapper.selectList(any()))
+                .thenReturn(List.of(
+                        priceRow(100L, 31L, 3500L, 3, PriceStatus.PUBLISHED, newer, null),
+                        priceRow(200L, 21L, 2000L, 1, PriceStatus.PUBLISHED, older, null),
+                        priceRow(100L, 30L, 3000L, 2, PriceStatus.PUBLISHED, older, null)));
+        InsuranceMapping mapping = new InsuranceMapping();
+        mapping.setNhsaCode("NHSA001");
+        mapping.setCatalogVersion("2026Q3");
+        mapping.setSelfPayRatio(new BigDecimal("0.10"));
+        mapping.setLimitPrice(5000L);
+        when(mappingService.effectiveMappings(any())).thenReturn(Map.of(100L, mapping));
+
+        Map<Long, PriceSnapshot> result = service.snapshots(Set.of(100L, 200L, 300L));
+
+        // 每项目收敛起点最新行（putIfAbsent 丢弃 100 的旧行 v2，与单查 DESC LIMIT 1 同口径）；
+        // 无版本项目 300 不出键不抛错（BILL-1008 守卫移交调用方逐行补偿校验）
+        assertThat(result).containsOnlyKeys(100L, 200L);
+        assertThat(result.get(100L).unitPrice()).isEqualTo(3500L);
+        assertThat(result.get(100L).priceVersion()).isEqualTo(3);
+        assertThat(result.get(100L).nhsaCode()).isEqualTo("NHSA001");
+        assertThat(result.get(200L).unitPrice()).isEqualTo(2000L);
+        assertThat(result.get(200L).nhsaCode()).isNull(); // 未对照项目仅自费，不阻断取价
+        // 批查 SQL 守卫钉死：IN 键集 + 谓词与单查逐字段同构；无 LIMIT 1（跨项目一次取回，首行由回放收敛）
+        ArgumentCaptor<Wrapper<ChargeItemPrice>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(priceMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItemPrice> wrapper = rendered(wrapperCaptor.getValue());
+        assertThat(wrapper.getSqlSegment())
+                .contains("charge_item_id")
+                .contains("status <>")
+                .contains("effective_from <=")
+                .contains("effective_to IS NULL OR effective_to >")
+                .contains("effective_from DESC")
+                .doesNotContain("LIMIT");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(100L, 200L, 300L, PriceStatus.DRAFT);
+        // now 源＝注入时钟单次求值（同一单据同一瞬时定价的区间判定基准，区别于逐行单查各行间先后差）
+        assertThat(boundNow(wrapper)).isEqualTo(at(FIXED_INSTANT));
+        // 对照腿一次批查：键集＝命中行项目（无版本项目 300 不查对照）
+        ArgumentCaptor<Collection<Long>> mappingKeys = ArgumentCaptor.forClass(Collection.class);
+        verify(mappingService, times(1)).effectiveMappings(mappingKeys.capture());
+        assertThat(mappingKeys.getValue()).containsExactlyInAnyOrder(100L, 200L);
+        // 空键集零 SQL 触达（MP in 谓词空集生成非法 SQL，前置短路）
+        assertThat(service.snapshots(Set.of())).isEmpty();
+        verify(priceMapper, times(1)).selectList(any());
     }
 
     @Test

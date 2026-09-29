@@ -25,6 +25,7 @@ import com.fuyun.billing.mapper.ChargeItemMapper;
 import com.fuyun.common.exception.BizException;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +37,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** 收费项目管理单测：编码唯一（uk 前置拒重）+ 按码取生效项守卫（不存在/停用）+ 组合构成落库。 */
+/** 收费项目管理单测：编码唯一（uk 前置拒重）+ 按码取生效项守卫（不存在/停用）+ 组合构成落库 + 划价批查面（编码集/构成集 IN 批查，A.4.3-14）。 */
 @ExtendWith(MockitoExtension.class)
 class ChargeItemServiceImplTest {
 
@@ -226,5 +227,71 @@ class ChargeItemServiceImplTest {
                 (LambdaQueryWrapper<ChargeItemComponent>) wrapperCaptor.getValue();
         assertThat(wrapper.getSqlSegment()).contains("combo_item_id");
         assertThat(wrapper.getParamNameValuePairs().values()).contains(9L);
+    }
+
+    @Test
+    @DisplayName("编码集批查：一次 IN 批查按 itemCode 键返回（含停用行供补偿校验区分），缺码不出键，空键集零 SQL")
+    void listByCodesBatchesAndKeepsInactiveRows() {
+        ChargeItem active = new ChargeItem();
+        active.setId(7L);
+        active.setItemCode("C001");
+        active.setStatus(ItemStatus.ACTIVE);
+        ChargeItem inactive = new ChargeItem();
+        inactive.setId(8L);
+        inactive.setItemCode("C002");
+        inactive.setStatus(ItemStatus.INACTIVE);
+        when(chargeItemMapper.selectList(any())).thenReturn(List.of(active, inactive));
+
+        Map<String, ChargeItem> result = service.listByCodes(List.of("C001", "C002", "C003"));
+
+        // 键集语义锚：命中行按键返回（停用行保留——BILL-1001/1003 区分归调用方补偿校验），词表外缺码不出键
+        assertThat(result).containsOnlyKeys("C001", "C002");
+        assertThat(result.get("C001")).isSameAs(active);
+        assertThat(result.get("C002").getStatus()).isEqualTo(ItemStatus.INACTIVE);
+        // 批查 SQL 守卫钉死：IN 条件必须落在 item_code 列且携带全部键集（A.4.3-14 批量取数锚）
+        ArgumentCaptor<Wrapper<ChargeItem>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(chargeItemMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItem> wrapper = rendered(wrapperCaptor.getValue());
+        assertThat(wrapper.getSqlSegment()).contains("item_code");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("C001", "C002", "C003");
+        // 空键集零 SQL 触达（MP in 谓词空集非法 SQL 前置短路）
+        assertThat(service.listByCodes(List.of())).isEmpty();
+        verify(chargeItemMapper, times(1)).selectList(any());
+    }
+
+    @Test
+    @DisplayName("组合构成批查：一次 IN 批查按 comboItemId 分组（组内 id 升序），空键集零 SQL")
+    void listComponentsByComboItemIdsBatchesAndGroupsByCombo() {
+        // DB 按全局 id 升序回放（跨组合交错：组9成员 → 组10成员 → 组9成员），分组须保持组内相对序
+        ChargeItemComponent combo9First = componentRow(1L, 9L, 12L);
+        ChargeItemComponent combo10 = componentRow(2L, 10L, 14L);
+        ChargeItemComponent combo9Second = componentRow(3L, 9L, 13L);
+        when(componentMapper.selectList(any())).thenReturn(List.of(combo9First, combo10, combo9Second));
+
+        Map<Long, List<ChargeItemComponent>> result = service.listComponentsByComboItemIds(List.of(9L, 10L));
+
+        // 分组语义锚：两组合各得自成员清单，组内按 id 升序（=维护插入序，划价展开行序稳定锚）
+        assertThat(result).containsOnlyKeys(9L, 10L);
+        assertThat(result.get(9L)).containsExactly(combo9First, combo9Second);
+        assertThat(result.get(10L)).containsExactly(combo10);
+        // 批查 SQL 守卫钉死：IN 条件落在 combo_item_id 列 + id 升序定序（防全量拉取与未定义组内序）
+        ArgumentCaptor<Wrapper<ChargeItemComponent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(componentMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItemComponent> wrapper =
+                (LambdaQueryWrapper<ChargeItemComponent>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("combo_item_id").contains("ORDER BY id ASC");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(9L, 10L);
+        // 空键集零 SQL 触达
+        assertThat(service.listComponentsByComboItemIds(List.of())).isEmpty();
+        verify(componentMapper, times(1)).selectList(any());
+    }
+
+    /** 构成行夹具：显式给定三键（id 升序定序用例的确定性基础）。 */
+    private ChargeItemComponent componentRow(long id, long comboItemId, long componentItemId) {
+        ChargeItemComponent row = new ChargeItemComponent();
+        row.setId(id);
+        row.setComboItemId(comboItemId);
+        row.setComponentItemId(componentItemId);
+        return row;
     }
 }

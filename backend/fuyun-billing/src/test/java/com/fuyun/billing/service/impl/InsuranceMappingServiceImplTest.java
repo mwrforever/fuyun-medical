@@ -18,6 +18,8 @@ import com.fuyun.billing.enums.MapType;
 import com.fuyun.billing.enums.MappingStatus;
 import com.fuyun.billing.mapper.InsuranceMappingMapper;
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,6 +93,32 @@ class InsuranceMappingServiceImplTest {
             assertThat(wrapper.getSqlSegment()).contains("charge_item_id").contains("status");
             assertThat(wrapper.getParamNameValuePairs().values()).contains(5L, MappingStatus.ACTIVE);
         }
+    }
+
+    @Test
+    @DisplayName("ACTIVE 对照批查：一次 IN 批查按键返回，无 ACTIVE 行项目不出键，空键集零 SQL")
+    void effectiveMappingsBatchesActiveRowsByKey() {
+        InsuranceMapping active = new InsuranceMapping();
+        active.setId(9L);
+        active.setChargeItemId(5L);
+        active.setStatus(MappingStatus.ACTIVE);
+        // 项目 6 无 ACTIVE 行（未贯标/已失效）：不出键（与单查返 null 同口径）
+        when(insuranceMappingMapper.selectList(any())).thenReturn(List.of(active));
+
+        Map<Long, InsuranceMapping> result = service.effectiveMappings(List.of(5L, 6L));
+
+        assertThat(result).containsOnlyKeys(5L);
+        assertThat(result.get(5L)).isSameAs(active);
+        // 批查 SQL 守卫钉死：IN 键集落在 charge_item_id 列 + status=ACTIVE 等值参数——
+        // ACTIVE 过滤是取价快照对照腿的数据前提（与单查谓词同构，防静默删 ACTIVE 过滤）
+        ArgumentCaptor<Wrapper<InsuranceMapping>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(insuranceMappingMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<InsuranceMapping> wrapper = (LambdaQueryWrapper<InsuranceMapping>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("charge_item_id").contains("status");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(5L, 6L, MappingStatus.ACTIVE);
+        // 空键集零 SQL 触达（MP in 谓词空集生成非法 SQL，前置短路）
+        assertThat(service.effectiveMappings(List.of())).isEmpty();
+        verify(insuranceMappingMapper, times(1)).selectList(any());
     }
 
     @Test

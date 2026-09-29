@@ -2,6 +2,7 @@ package com.fuyun.billing.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -28,6 +29,7 @@ import com.fuyun.billing.entity.FeeRecord;
 import com.fuyun.billing.enums.ChargeSource;
 import com.fuyun.billing.enums.FeeStatus;
 import com.fuyun.billing.enums.ItemClass;
+import com.fuyun.billing.enums.ItemStatus;
 import com.fuyun.billing.enums.TriggerType;
 import com.fuyun.billing.enums.VisitType;
 import com.fuyun.billing.internal.BillingDomainEvent;
@@ -35,11 +37,15 @@ import com.fuyun.billing.mapper.FeeRecordMapper;
 import com.fuyun.billing.record.PriceSnapshot;
 import com.fuyun.billing.service.IChargeItemService;
 import com.fuyun.billing.service.IChargePriceService;
+import com.fuyun.billing.vo.QuoteVO;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import java.math.BigDecimal;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +56,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /** 计价引擎单测（资金红线：金额服务端算、快照冻结、billing_key 防重、事件登记）。 */
@@ -90,6 +97,8 @@ class PricingEngineServiceImplTest {
         it.setItemClass(ItemClass.TREATMENT);
         it.setFeeCategory("EXAM_FEE");
         it.setComboFlag(false);
+        // 生效状态必置：预计价批查补偿校验在引擎侧判 ACTIVE（缺行/停用区分），夹具须为生效项目
+        it.setStatus(ItemStatus.ACTIVE);
         return it;
     }
 
@@ -103,6 +112,16 @@ class PricingEngineServiceImplTest {
         c.setComponentItemId(memberId);
         c.setDefaultQuantity(new BigDecimal(defaultQuantity));
         return c;
+    }
+
+    /** 预计价单行夹具（数量恒 1：补偿校验分支用例不涉金额算式，聚焦错误语义等价）。 */
+    private QuoteRequest.Line line(String itemCode) {
+        return new QuoteRequest.Line(itemCode, BigDecimal.ONE);
+    }
+
+    /** 预计价请求夹具（补偿校验用例统一就诊/患者上下文，行序即入参序）。 */
+    private QuoteRequest quoteReq(QuoteRequest.Line... lines) {
+        return new QuoteRequest(7L, "O2026091700001", List.of(lines));
     }
 
     @Test
@@ -221,8 +240,8 @@ class PricingEngineServiceImplTest {
     @Test
     @DisplayName("预计价：不落库不发消息，仅返回金额与对照口径")
     void quoteDoesNotPersistOrPublish() {
-        when(itemService.requireActiveByCode("C001")).thenReturn(item(100L, "C001"));
-        when(priceService.snapshot("C001", 100L)).thenReturn(snap(100L, 1500L, 1));
+        when(itemService.listByCodes(Set.of("C001"))).thenReturn(Map.of("C001", item(100L, "C001")));
+        when(priceService.snapshots(Set.of(100L))).thenReturn(Map.of(100L, snap(100L, 1500L, 1)));
 
         var vo = engine.quote(
                 new QuoteRequest(7L, "O2026091700001", List.of(new QuoteRequest.Line("C001", new BigDecimal("2")))));
@@ -330,17 +349,14 @@ class PricingEngineServiceImplTest {
     void comboQuoteSumsMemberLines() {
         ChargeItem combo = item(100L, "C-COMBO");
         combo.setComboFlag(true);
-        when(itemService.requireActiveByCode("C-COMBO")).thenReturn(combo);
         ChargeItem m1 = item(101L, "M1");
         ChargeItem m2 = item(102L, "M2");
-        when(itemService.listComponents(100L))
-                .thenReturn(List.of(component(100L, 101L, "1"), component(100L, 102L, "3")));
-        when(itemService.getById(101L)).thenReturn(m1);
-        when(itemService.getById(102L)).thenReturn(m2);
-        when(itemService.requireActiveByCode("M1")).thenReturn(m1);
-        when(itemService.requireActiveByCode("M2")).thenReturn(m2);
-        when(priceService.snapshot("M1", 101L)).thenReturn(snap(101L, 1500L, 1));
-        when(priceService.snapshot("M2", 102L)).thenReturn(snap(102L, 1000L, 1));
+        when(itemService.listByCodes(Set.of("C-COMBO"))).thenReturn(Map.of("C-COMBO", combo));
+        when(itemService.listComponentsByComboItemIds(Set.of(100L)))
+                .thenReturn(Map.of(100L, List.of(component(100L, 101L, "1"), component(100L, 102L, "3"))));
+        when(itemService.listByIds(Set.of(101L, 102L))).thenReturn(List.of(m1, m2));
+        when(priceService.snapshots(Set.of(101L, 102L)))
+                .thenReturn(Map.of(101L, snap(101L, 1500L, 1), 102L, snap(102L, 1000L, 1)));
 
         var vo = engine.quote(
                 new QuoteRequest(7L, "O2026091700001", List.of(new QuoteRequest.Line("C-COMBO", new BigDecimal("2")))));
@@ -356,13 +372,188 @@ class PricingEngineServiceImplTest {
     void quoteRejectsComboWithoutComponentsAsBill1008() {
         ChargeItem combo = item(100L, "C-COMBO");
         combo.setComboFlag(true);
-        when(itemService.requireActiveByCode("C-COMBO")).thenReturn(combo);
-        when(itemService.listComponents(100L)).thenReturn(List.of());
+        when(itemService.listByCodes(Set.of("C-COMBO"))).thenReturn(Map.of("C-COMBO", combo));
+        when(itemService.listComponentsByComboItemIds(Set.of(100L))).thenReturn(Map.of());
 
         assertThatThrownBy(() -> engine.quote(new QuoteRequest(
                         7L, "O2026091700001", List.of(new QuoteRequest.Line("C-COMBO", BigDecimal.ONE)))))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.PRICING_UNAVAILABLE));
+    }
+
+    @Test
+    @DisplayName("预计价批查接线（A.4.3-14）：多行单据四类批查各恰一次、键集去重收敛，逐行单查链零触达")
+    void quoteBatchesAllKeySetLookupsOnceWithoutPerLineSingleQueries() {
+        // 单据形态：直行 C001（重复两行验证键集去重、独立成行）+ 组合 C-COMBO（展开 M1/M2）+ 直行 C002
+        ChargeItem direct1 = item(200L, "C001");
+        ChargeItem direct2 = item(201L, "C002");
+        ChargeItem combo = item(100L, "C-COMBO");
+        combo.setComboFlag(true);
+        ChargeItem m1 = item(101L, "M1");
+        ChargeItem m2 = item(102L, "M2");
+        when(itemService.listByCodes(any())).thenReturn(Map.of("C001", direct1, "C002", direct2, "C-COMBO", combo));
+        when(itemService.listComponentsByComboItemIds(any()))
+                .thenReturn(Map.of(100L, List.of(component(100L, 101L, "1"), component(100L, 102L, "3"))));
+        when(itemService.listByIds(any())).thenReturn(List.of(m1, m2));
+        when(priceService.snapshots(any()))
+                .thenReturn(Map.of(
+                        200L, snap(200L, 1500L, 1),
+                        201L, snap(201L, 200L, 1),
+                        101L, snap(101L, 1500L, 1),
+                        102L, snap(102L, 1000L, 1)));
+
+        var vo = engine.quote(new QuoteRequest(
+                7L,
+                "O2026091700001",
+                List.of(
+                        new QuoteRequest.Line("C001", new BigDecimal("2")),
+                        new QuoteRequest.Line("C-COMBO", new BigDecimal("2")),
+                        new QuoteRequest.Line("C002", new BigDecimal("3")),
+                        new QuoteRequest.Line("C001", BigDecimal.ONE))));
+
+        // 金额逐字段等价（与逐行单查同算式）：1500×2 + M1 1500×(2×1) + M2 1000×(2×3) + 200×3 + 1500×1
+        assertThat(vo.totalAmount()).isEqualTo(3000L + 3000L + 6000L + 600L + 1500L);
+        assertThat(vo.lines())
+                .extracting(
+                        QuoteVO.QuoteLine::itemId,
+                        QuoteVO.QuoteLine::itemCode,
+                        QuoteVO.QuoteLine::unitPrice,
+                        QuoteVO.QuoteLine::quantity,
+                        QuoteVO.QuoteLine::amount,
+                        QuoteVO.QuoteLine::selfExpenseOnly)
+                .containsExactly(
+                        tuple(200L, "C001", 1500L, new BigDecimal("2"), 3000L, false),
+                        tuple(101L, "M1", 1500L, new BigDecimal("2"), 3000L, false),
+                        tuple(102L, "M2", 1000L, new BigDecimal("6"), 6000L, false),
+                        tuple(201L, "C002", 200L, new BigDecimal("3"), 600L, false),
+                        tuple(200L, "C001", 1500L, BigDecimal.ONE, 1500L, false));
+        // 四类批查各恰一次 + 键集钉死（重复码去重；组合本体 id 不进快照键集）
+        ArgumentCaptor<Collection<String>> codesCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(itemService, times(1)).listByCodes(codesCaptor.capture());
+        assertThat(codesCaptor.getValue()).containsExactlyInAnyOrder("C001", "C002", "C-COMBO");
+        ArgumentCaptor<Collection<Long>> comboIdsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(itemService, times(1)).listComponentsByComboItemIds(comboIdsCaptor.capture());
+        assertThat(comboIdsCaptor.getValue()).containsExactly(100L);
+        ArgumentCaptor<Collection<Long>> memberIdsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(itemService, times(1)).listByIds(memberIdsCaptor.capture());
+        assertThat(memberIdsCaptor.getValue()).containsExactlyInAnyOrder(101L, 102L);
+        ArgumentCaptor<Collection<Long>> pricingIdsCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(priceService, times(1)).snapshots(pricingIdsCaptor.capture());
+        assertThat(pricingIdsCaptor.getValue()).containsExactlyInAnyOrder(200L, 201L, 101L, 102L);
+        // 逐行单查链零触达（OPT-04 灶位根除锚：单查面仅供实收链 generateFromSource 消费）
+        verify(itemService, never()).requireActiveByCode(any());
+        verify(itemService, never()).listComponents(anyLong());
+        verify(itemService, never()).getById(any());
+        verify(priceService, never()).snapshot(any(), anyLong());
+    }
+
+    @Test
+    @DisplayName("无组合单据：仅编码批查+快照批查触达，构成/成员批查零调用（恒 3 查语义）")
+    void quoteWithoutComboSkipsComponentAndMemberBatches() {
+        when(itemService.listByCodes(Set.of("C001"))).thenReturn(Map.of("C001", item(200L, "C001")));
+        when(priceService.snapshots(Set.of(200L))).thenReturn(Map.of(200L, snap(200L, 1500L, 1)));
+
+        var vo = engine.quote(quoteReq(new QuoteRequest.Line("C001", new BigDecimal("2"))));
+
+        assertThat(vo.totalAmount()).isEqualTo(3000L);
+        verify(itemService, never()).listComponentsByComboItemIds(any());
+        verify(itemService, never()).listByIds(any());
+    }
+
+    @Test
+    @DisplayName("补偿校验分支等价：缺行/停用/未维护构成/无生效价格与逐行单查同码同文案同 HTTP 态，行序不变")
+    void quoteCompensatingValidationMatchesSingleQueryErrorSemantics() {
+        ChargeItem active = item(200L, "C-ACTIVE");
+        ChargeItem inactive = item(202L, "C-INACTIVE");
+        inactive.setStatus(ItemStatus.INACTIVE);
+        ChargeItem combo = item(100L, "C-COMBO");
+        combo.setComboFlag(true);
+        // 行序不变锚：有效行在前，缺行（第 2 行）先于停用（第 3 行）拒——首个无效行报错与逐行单查同序
+        //   （有效行须取价成功，故快照批查先备好 C-ACTIVE 的版本）
+        when(itemService.listByCodes(Set.of("C-ACTIVE", "C-MISSING", "C-INACTIVE")))
+                .thenReturn(Map.of("C-ACTIVE", active, "C-INACTIVE", inactive));
+        when(priceService.snapshots(any())).thenReturn(Map.of(200L, snap(200L, 1500L, 1)));
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-ACTIVE"), line("C-MISSING"), line("C-INACTIVE"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.CHARGE_ITEM_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getMessage()).isEqualTo("收费项目不存在：C-MISSING");
+                });
+        // 缺行分支（单行形态）：文案与单查 requireActiveByCode 逐字一致（BILL-1001/404）
+        when(itemService.listByCodes(Set.of("C-MISSING"))).thenReturn(Map.of());
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-MISSING"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.CHARGE_ITEM_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getMessage()).isEqualTo("收费项目不存在：C-MISSING");
+                });
+        // 停用分支：文案与单查 requireActiveByCode 逐字一致（BILL-1003/409）
+        when(itemService.listByCodes(Set.of("C-INACTIVE"))).thenReturn(Map.of("C-INACTIVE", inactive));
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-INACTIVE"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.CHARGE_ITEM_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).isEqualTo("收费项目已停用：C-INACTIVE");
+                });
+        // 组合未维护构成分支：文案与 quote 现状逐字一致（BILL-1008/409，未维护构成不出键）
+        when(itemService.listByCodes(Set.of("C-COMBO"))).thenReturn(Map.of("C-COMBO", combo));
+        when(itemService.listComponentsByComboItemIds(Set.of(100L))).thenReturn(Map.of());
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-COMBO"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.PRICING_UNAVAILABLE);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).isEqualTo("组合项目未维护构成：C-COMBO");
+                });
+        // 无生效价格分支：文案与单查 snapshot 逐字一致（BILL-1008/409，无版本项目不出键不抛错）
+        when(itemService.listByCodes(Set.of("C-ACTIVE"))).thenReturn(Map.of("C-ACTIVE", active));
+        when(priceService.snapshots(any())).thenReturn(Map.of());
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-ACTIVE"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.PRICING_UNAVAILABLE);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).isEqualTo("项目无生效价格版本：C-ACTIVE");
+                });
+    }
+
+    @Test
+    @DisplayName("组合成员补偿校验等价：成员缺行/停用与单查 memberItem 同码同文案，成员先取价后校验下一成员")
+    void quoteMemberCompensatingValidationMatchesSingleQueryErrors() {
+        ChargeItem combo = item(100L, "C-COMBO");
+        combo.setComboFlag(true);
+        ChargeItem m1 = item(101L, "M1"); // 场景一：有效但无生效价格（先于 M2 缺行校验暴露）
+        ChargeItem m3 = item(103L, "M3"); // 场景三：停用
+        m3.setStatus(ItemStatus.INACTIVE);
+        when(itemService.listByCodes(Set.of("C-COMBO"))).thenReturn(Map.of("C-COMBO", combo));
+        // 同一桩位三次变参依次命中（场景序即断言序）：构成批查 / 成员批查 / 快照批查各三次
+        when(itemService.listComponentsByComboItemIds(Set.of(100L)))
+                .thenReturn(
+                        Map.of(100L, List.of(component(100L, 101L, "1"), component(100L, 102L, "1"))),
+                        Map.of(100L, List.of(component(100L, 104L, "1"))),
+                        Map.of(100L, List.of(component(100L, 103L, "1"))));
+        when(itemService.listByIds(any())).thenReturn(List.of(m1), List.of(), List.of(m3));
+        when(priceService.snapshots(any())).thenReturn(Map.of());
+
+        // 场景一（序等价锚）：M1 取价失败先拒，先于 M2 缺行校验——与逐行单查「逐成员先取价再校验下一成员」同序
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-COMBO"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.PRICING_UNAVAILABLE);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).isEqualTo("项目无生效价格版本：M1");
+                });
+        // 场景二：成员缺行（构成脏数据）文案与单查 memberItem 逐字一致（BILL-1001/404）
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-COMBO"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.CHARGE_ITEM_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getMessage()).isEqualTo("组合成员项目不存在（构成脏数据）：104");
+                });
+        // 场景三：成员停用走单查 requireActiveByCode 停用文案（BILL-1003/409）
+        assertThatThrownBy(() -> engine.quote(quoteReq(line("C-COMBO"))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.CHARGE_ITEM_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).isEqualTo("收费项目已停用：M3");
+                });
     }
 
     @Test

@@ -13,6 +13,7 @@ import com.fuyun.billing.entity.ChargeItemComponent;
 import com.fuyun.billing.entity.FeeRecord;
 import com.fuyun.billing.enums.ChargeSource;
 import com.fuyun.billing.enums.FeeStatus;
+import com.fuyun.billing.enums.ItemStatus;
 import com.fuyun.billing.enums.TriggerType;
 import com.fuyun.billing.enums.VisitType;
 import com.fuyun.billing.internal.BillingDomainEvent;
@@ -30,7 +31,12 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -260,37 +266,116 @@ public class PricingEngineServiceImpl extends ServiceImpl<FeeRecordMapper, FeeRe
         return PageResult.of(result.getRecords(), page, size, result.getTotal());
     }
 
-    /** 预计价（只算不落、不发消息，供划价界面展示；无对照行显式标自费；组合行与实收同源展开）。 */
+    /**
+     * 预计价（只算不落、不发消息，供划价界面展示；无对照行显式标自费；组合行与实收同源展开）。
+     *
+     * <p>批量取数架构（OPT-04 / A.4.3-14，行为保持）：三跳键集预取——第一跳全部行 itemCode 去重一次
+     * 批查（含停用行，供补偿校验区分）；第二跳仅存在组合行时构成一次批查 + 全部成员一次 id 批查；
+     * 第三跳展开后全部待计价项目一次快照批查（价格版本 + 医保对照两腿 IN）。N 行单据 2N~3N 逐行
+     * 单查链收敛为恒 3 查（无组合）/5 查（含组合），与行数解耦。预取后按 {@code req.lines()} 原序
+     * 逐行补偿校验，错误语义与逐行单查完全等价（同错误码、同文案、同 HTTP 态，首个无效行报错、
+     * 行序不变）；唯一语义差异＝取价时刻收敛为单次求值（同一单据同一瞬时定价，区间判定口径与
+     * 单查一致，见 {@link IChargePriceService#snapshots}）。
+     *
+     * @param req 预计价请求，非空；lines 来源：划价界面勾选（itemCode/数量均为用户侧输入）
+     * @return 预计价结果（金额分、HALF_UP 到分；组合行按构成展开为逐成员行），非空
+     * @throws BizException BILL-1001（404 行项目缺行/组合成员缺行脏数据）/
+     *                      BILL-1003（409 行项目或组合成员停用）/
+     *                      BILL-1008（409 组合未维护构成/项目无生效价格版本）
+     */
     @Override
     @Transactional(readOnly = true)
     public QuoteVO quote(QuoteRequest req) {
+        // ==== 三跳键集预取（先取数后校验，错误统一由下方补偿校验按行序抛出）====
+        // 第一跳：全部行 itemCode 去重一次批查（含停用行——缺行 BILL-1001 与停用 BILL-1003 的
+        //   区分留给补偿校验，与逐行 requireActiveByCode 的两分支判定等价）
+        Map<String, ChargeItem> itemsByCode = itemService.listByCodes(
+                req.lines().stream().map(QuoteRequest.Line::itemCode).collect(Collectors.toSet()));
+        // 第二跳（仅存在组合行才触达）：组合构成一次批查 + 全部成员项目一次 id 批查（无组合单据零触达）
+        Set<Long> comboIds = itemsByCode.values().stream()
+                .filter(item -> Boolean.TRUE.equals(item.getComboFlag()))
+                .map(ChargeItem::getId)
+                .collect(Collectors.toSet());
+        Map<Long, List<ChargeItemComponent>> componentsByCombo = Map.of();
+        Map<Long, ChargeItem> membersById = Map.of();
+        if (!comboIds.isEmpty()) {
+            componentsByCombo = itemService.listComponentsByComboItemIds(comboIds);
+            Set<Long> memberIds = componentsByCombo.values().stream()
+                    .flatMap(List::stream)
+                    .map(ChargeItemComponent::getComponentItemId)
+                    .collect(Collectors.toSet());
+            // 空键集守卫：MP listByIds 无内建空集短路（in() 空集生成非法 SQL），全部组合未维护构成时零触达
+            membersById = memberIds.isEmpty()
+                    ? Map.of()
+                    : itemService.listByIds(memberIds).stream()
+                            .collect(Collectors.toMap(ChargeItem::getId, Function.identity()));
+        }
+        // 第三跳：展开后全部待计价项目 id 集（直行 + 组合成员；组合本体不取价）一次快照批查
+        Set<Long> pricingIds = new LinkedHashSet<>(membersById.keySet());
+        for (ChargeItem item : itemsByCode.values()) {
+            if (!Boolean.TRUE.equals(item.getComboFlag())) {
+                pricingIds.add(item.getId());
+            }
+        }
+        Map<Long, PriceSnapshot> snapshots = priceService.snapshots(pricingIds);
+        // ==== 逐行补偿校验 + 行装配（按 req.lines() 原序，首个无效行抛错——与逐行单查错误链等价）====
         List<QuoteVO.QuoteLine> lines = new ArrayList<>();
         long total = 0L;
         for (QuoteRequest.Line l : req.lines()) {
-            ChargeItem item = itemService.requireActiveByCode(l.itemCode());
+            // 缺行守卫：与单查 requireActiveByCode 同码同文案同 HTTP 态（BILL-1001/404）
+            ChargeItem item = itemsByCode.get(l.itemCode());
+            if (item == null) {
+                throw new BizException(
+                        BillingErrorCode.CHARGE_ITEM_NOT_FOUND, HttpStatus.NOT_FOUND, "收费项目不存在：" + l.itemCode());
+            }
+            // 停用守卫：与单查 requireActiveByCode 同码同文案同 HTTP 态（BILL-1003/409）
+            if (item.getStatus() != ItemStatus.ACTIVE) {
+                throw new BizException(
+                        BillingErrorCode.CHARGE_ITEM_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "收费项目已停用：" + l.itemCode());
+            }
             if (Boolean.TRUE.equals(item.getComboFlag())) {
                 // 组合预计价与计价引擎展开同源（FU-M13-01）：逐成员行、数量=行数量×构成默认量，
                 //   杜绝「预览一行、实收多行」的口径分裂；未维护构成守卫与 generateFromSource 同源
                 //   （第 2 轮审查 P2-5：禁预览出空行合计 0 的静默假价）
-                List<ChargeItemComponent> components = itemService.listComponents(item.getId());
+                List<ChargeItemComponent> components = componentsByCombo.getOrDefault(item.getId(), List.of());
                 if (components.isEmpty()) {
                     throw new BizException(
                             BillingErrorCode.PRICING_UNAVAILABLE, HttpStatus.CONFLICT, "组合项目未维护构成：" + l.itemCode());
                 }
                 for (ChargeItemComponent component : components) {
-                    ChargeItem member = memberItem(component.getComponentItemId());
-                    total += quoteLine(lines, member, l.quantity().multiply(component.getDefaultQuantity()));
+                    // 成员缺行守卫：与单查 memberItem 同码同文案同 HTTP 态（BILL-1001/404，构成脏数据显式暴露）
+                    ChargeItem member = membersById.get(component.getComponentItemId());
+                    if (member == null) {
+                        throw new BizException(
+                                BillingErrorCode.CHARGE_ITEM_NOT_FOUND,
+                                HttpStatus.NOT_FOUND,
+                                "组合成员项目不存在（构成脏数据）：" + component.getComponentItemId());
+                    }
+                    // 成员停用守卫：单查面经 requireActiveByCode 按码守卫，此处按批查行同字段同口径（BILL-1003/409）
+                    if (member.getStatus() != ItemStatus.ACTIVE) {
+                        throw new BizException(
+                                BillingErrorCode.CHARGE_ITEM_STATE_NOT_ALLOWED,
+                                HttpStatus.CONFLICT,
+                                "收费项目已停用：" + member.getItemCode());
+                    }
+                    total += quoteLine(lines, member, snapshots, l.quantity().multiply(component.getDefaultQuantity()));
                 }
                 continue;
             }
-            total += quoteLine(lines, item, l.quantity());
+            total += quoteLine(lines, item, snapshots, l.quantity());
         }
         return new QuoteVO(req.visitId(), total, lines);
     }
 
-    /** 单行预计价：快照取价 + 服务端算额 + 行装配，返回行金额（分）。 */
-    private long quoteLine(List<QuoteVO.QuoteLine> lines, ChargeItem item, BigDecimal quantity) {
-        PriceSnapshot snap = priceService.snapshot(item.getItemCode(), item.getId());
+    /** 单行预计价：批查快照补偿校验（无版本 BILL-1008 同码同文案）+ 服务端算额 + 行装配，返回行金额（分）。 */
+    private long quoteLine(
+            List<QuoteVO.QuoteLine> lines, ChargeItem item, Map<Long, PriceSnapshot> snapshots, BigDecimal quantity) {
+        // 无生效价格守卫：与单查 snapshot 同码同文案同 HTTP 态（BILL-1008/409，批查面无版本项目不出键）
+        PriceSnapshot snap = snapshots.get(item.getId());
+        if (snap == null) {
+            throw new BizException(
+                    BillingErrorCode.PRICING_UNAVAILABLE, HttpStatus.CONFLICT, "项目无生效价格版本：" + item.getItemCode());
+        }
         long amount = BigDecimal.valueOf(snap.unitPrice())
                 .multiply(quantity)
                 .setScale(0, RoundingMode.HALF_UP)

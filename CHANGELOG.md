@@ -2,6 +2,29 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-04：billing 划价链预计价逐行 2N~3N 单查链改键集批查 + 逐行补偿校验（性能，行为保持）
+
+- **根因（OPT-04 / BE-C4-13，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：
+  `PricingEngineServiceImpl.quote` 逐行单查链——行内 `requireActiveByCode` 逐行项目查询、
+  组合项 `listComponents` 逐项构成、成员 `memberItem` 逐成员（getById + 按码生效守卫再两查）、
+  `quoteLine` 逐行 snapshot（价格版本 + 医保对照再两查），N 行单据预计价 2N~3N 查询链
+  （A.4.3-14 直接点名），划价/开单高频界面直连。
+- **修复（行为保持）**：新增批量取数面——`IChargeItemService.listByCodes`（itemCode 去重 IN
+  批查，含停用行供补偿校验区分缺行/停用）与 `listComponentsByComboItemIds`（构成 IN 批查按
+  组合分组、组内 id 升序定序）、`IInsuranceMappingService.effectiveMappings`（ACTIVE 对照 IN
+  批查）、`IChargePriceService.snapshots`（价格版本区间判定 IN 批查 + 逐项目 effective_from
+  DESC 首行收敛，与单查同口径）；quote 改「三跳键集预取（项目 → 构成/成员 → 快照，四类取数
+  各恰一次）+ 逐行补偿校验」：缺行 BILL-1001/404、停用 BILL-1003/409、组合未维护构成与无
+  生效价格 BILL-1008/409 均与逐行单查同码同文案同 HTTP 态且行序不变（首个无效行报错）；
+  金额算式、组合展开（数量=行数量×构成默认量）、合计与快照装配零变化，取价时刻收敛为单次
+  求值（同一单据同一瞬时定价，区间判定语义与单查一致）；N 行单据 2N~3N 查询链 → 恒 3 查
+  （无组合）/5 查（含组合），与行数解耦。单查面（requireActiveByCode/listComponents/
+  effectiveMapping/snapshot）与 generateFromSource 实收链及其测试零触碰。行为锚定测试
+  「多行单据四类批查各恰一次 + 逐行单查链零触达 + 金额逐字段等价 + 补偿校验错误语义等价」
+  先红后绿交付；既有 3 个 quote 用例桩面随实现机械换至批查面（断言零改动，D-21 裁量：
+  单点单次、严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿 + `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-03：nursing 交接班生成在途任务 N+1 改 visitIds 单次批查 + 惰性逾期批量 CAS（性能，行为保持）
 
 - **根因（OPT-03 / BE-C4-01，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：
