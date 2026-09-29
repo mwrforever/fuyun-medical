@@ -148,4 +148,28 @@ public class PatientIdentifierServiceImpl extends ServiceImpl<PatientIdentifierM
                 new PatientIdentifierChangedPayload(
                         patientId, identifierType, crypto.hash(identifierValue), changeType)));
     }
+
+    /** 无主卡绑定 CAS 条件更新（EX-25；单语句原子条件更新直接委托 mapper，口径见接口契约） */
+    @Override
+    public int casBindUnowned(long id, long patientId) {
+        return baseMapper.casBindUnowned(id, patientId);
+    }
+
+    /** 挂失 CAS 条件更新（EX-25；单语句原子条件更新直接委托 mapper，口径见接口契约） */
+    @Override
+    public int casMarkLost(long id) {
+        return baseMapper.casMarkLost(id);
+    }
+
+    /** 补卡旧卡退役 CAS 条件更新（EX-25；单语句原子条件更新直接委托 mapper，口径见接口契约） */
+    @Override
+    public int casRetireReplaced(long id) {
+        return baseMapper.casRetireReplaced(id);
+    }
+
+    /** 解绑 CAS 条件更新（EX-25；单语句原子条件更新直接委托 mapper，口径见接口契约） */
+    @Override
+    public int casDisable(long id) {
+        return baseMapper.casDisable(id);
+    }
 }

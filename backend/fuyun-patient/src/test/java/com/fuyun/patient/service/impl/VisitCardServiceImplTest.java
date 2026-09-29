@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -41,7 +42,8 @@ import org.springframework.http.HttpStatus;
  * 就诊卡全生命周期实现单测（FU-M02-04 状态机）：发卡开户联动、绑定无主卡改挂、挂失账户联动
  * （账户未启用 PAT-1013 静默跳过）、补卡换号转移（余额零迁移）、解绑终态，以及各非法状态
  * 转移守卫与 identifier.changed 的 changeType 断言；绑定/补卡写库 info 留痕与卡号摘要
- * 脱敏口径经 Logback ListAppender 断言（BUG-21，iot 模块同款先例）。
+ * 脱敏口径经 Logback ListAppender 断言（BUG-21，iot 模块同款先例）；并发防覆写护航
+ * （EX-25：CAS 0 行重读定性 409/404、输家不覆写不重复发号不联动账户）。
  */
 @ExtendWith(MockitoExtension.class)
 class VisitCardServiceImplTest {
@@ -69,6 +71,12 @@ class VisitCardServiceImplTest {
     void setUp() {
         visitCardService = new VisitCardServiceImpl(identifierService, cardAccountService, crypto);
         cardRow = cardRow(11L, 5L, "C-0001", "ACTIVE");
+        // EX-25 卡状态 CAS 抢锚默认放行（返回 1=抢得迁移权）：并发冲突用例在单测内重桩为 0；
+        // lenient 同模块惯例——守卫类用例在触达 CAS 前即抛出，默认桩不消费不报错
+        lenient().when(identifierService.casBindUnowned(anyLong(), anyLong())).thenReturn(1);
+        lenient().when(identifierService.casMarkLost(anyLong())).thenReturn(1);
+        lenient().when(identifierService.casRetireReplaced(anyLong())).thenReturn(1);
+        lenient().when(identifierService.casDisable(anyLong())).thenReturn(1);
         // 挂 ListAppender 捕获服务日志（BUG-21 写操作留痕断言；tearDown 统一卸载防用例间串扰）
         cardLogger = (Logger) LoggerFactory.getLogger(VisitCardServiceImpl.class);
         logAppender = new ListAppender<>();
@@ -364,6 +372,105 @@ class VisitCardServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED));
         verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+    }
+
+    @Test
+    @DisplayName("并发双 bind 防覆写护航：CAS 0 行重读定性 PAT-1012 拒绝，不覆写赢家挂接不发事件（EX-25）")
+    void bindLosesCasRaceRejectedWithoutOverwrite() {
+        PatientIdentifier orphan = cardRow(11L, null, "C-0001", "DISABLED");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(orphan);
+        // 模拟并发赢家交错：bind 读快照（无主过守卫）后、CAS 前另一事务已抢先绑定患者 9
+        when(identifierService.casBindUnowned(11L, 5L)).thenAnswer(inv -> {
+            orphan.setPatientId(9L);
+            orphan.setStatus("ACTIVE");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.bind(new CardBindRequest("C-0001", 5L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).contains("并发");
+                });
+        // 输家不得覆写赢家挂接：卡行不回写、BOUND 事件不发布（丢单链防线）
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("并发双 bind 防覆写护航（输家重读行已消失）：PAT-1011 404 定性（与入口缺卡语义一致）")
+    void bindCasZeroWithVanishedRowClassifiedAsPat1011() {
+        PatientIdentifier orphan = cardRow(11L, null, "C-0001", "DISABLED");
+        // 首查命中守卫入口、CAS 败北后重读已无行（并发删除/不可达）
+        when(identifierService.findByCardNo("C-0001")).thenReturn(orphan, (PatientIdentifier) null);
+        when(identifierService.casBindUnowned(11L, 5L)).thenReturn(0);
+
+        assertThatThrownBy(() -> visitCardService.bind(new CardBindRequest("C-0001", 5L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                });
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+    }
+
+    @Test
+    @DisplayName("并发挂失防覆写护航：CAS 0 行重读定性 PAT-1012 拒绝，不回写不联动冻结不发事件（EX-25）")
+    void lossLosesCasRaceRejectedWithoutAccountFreeze() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
+        // 模拟并发赢家交错：loss 读快照（ACTIVE 过守卫）后、CAS 前另一事务已抢先置 LOST
+        when(identifierService.casMarkLost(11L)).thenAnswer(inv -> {
+            cardRow.setStatus("LOST");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.loss("C-0001")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        // 输家不得重复执行：卡行不回写、账户不联动冻结、LOST 事件不发布
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+        verifyNoInteractions(cardAccountService);
+    }
+
+    @Test
+    @DisplayName("并发双补卡防重复发号护航：CAS 0 行重读定性 PAT-1012 拒绝，旧卡不回写不发新卡（EX-25）")
+    void replaceLosesCasRaceRejectedWithoutIssuingNewCard() {
+        PatientIdentifier lostCard = cardRow(11L, 5L, "C-0001", "LOST");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(lostCard);
+        // 模拟并发赢家交错：replace 读快照（LOST 过守卫）后、CAS 前另一事务已抢先置 REPLACED
+        when(identifierService.casRetireReplaced(11L)).thenAnswer(inv -> {
+            lostCard.setStatus("REPLACED");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.replace(new CardReplaceRequest("C-0001", "C-0002")))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        // 输家不得重复发号：旧卡不回写、新卡不 attach、REPLACED 事件不发布
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).attach(anyLong(), any(), any(), any(), anyBoolean());
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("并发解绑防覆写护航：CAS 0 行重读定性 PAT-1012 拒绝，不回写不发事件（EX-25）")
+    void unbindLosesCasRaceRejectedWithoutOverwrite() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
+        // 模拟并发赢家交错：unbind 读快照（ACTIVE 过守卫）后、CAS 前另一事务已抢先置 DISABLED
+        when(identifierService.casDisable(11L)).thenAnswer(inv -> {
+            cardRow.setStatus("DISABLED");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.unbind("C-0001")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
     }
 
     @Test
