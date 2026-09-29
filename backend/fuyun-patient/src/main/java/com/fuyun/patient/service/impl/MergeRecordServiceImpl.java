@@ -135,10 +135,15 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
     /**
      * 审批并执行合并（双人角色 + SPI 前置检查 + 指针映射五步；FAILED 记录重跑执行序列）。
      *
+     * <p>并发收口（EX-21）：读快照守卫（终态/双人角色/SPI）通过后，以旧状态谓词 CAS 抢锚
+     * （PROCESSING/FAILED → PROCESSING + 审批人，{@link MergeRecordMapper#casApproveProcessing}）——
+     * 并发双批准恰一赢；输家 0 行重读定性拒（行消失 404 PAT-1007 / 已被并发处理 409 PAT-1008），
+     * 禁以过期快照重复执行合并序列。
+     *
      * @param id       合并记录 id，非空
      * @param operator 审批操作人，非空
      * @return 合并记录出参，非空
-     * @throws BizException PAT-1006/PAT-1007/PAT-1008
+     * @throws BizException PAT-1006/PAT-1007/PAT-1008（含并发双批准输家 CAS 0 行重读定性）
      */
     @Override
     @Transactional
@@ -153,10 +158,38 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         }
         // SPI 在途检查（事务内仅本地查询，M03/M04 经 OngoingVisitQuery 注册）
         checkOngoingVisits(record.getSurvivorPatientId(), record.getMergedPatientId());
+        // EX-21 审批抢锚 CAS（读后判收口，RefundServiceImpl BUG-10 同款时序）：谓词钉死
+        // PROCESSING/FAILED 可审批双态——并发双批准恰一赢（行锁上等待，先到者提交后谓词对新行
+        // 版本重评估不命中），输家 0 行重读定性拒，后提交者不得重复执行合并序列
+        if (baseMapper.casApproveProcessing(id, operator) != 1) {
+            throw concurrentApproveConflict(id);
+        }
         record.setApprovedBy(operator);
         record.setStatus(STATUS_PROCESSING);
         executeMerge(record);
         return toVO(record);
+    }
+
+    /**
+     * 审批 CAS 0 行命中的重读定性（EX-21，RefundServiceImpl 并发冲突定性同语义）：重读最新行——
+     * 行已消失归 404（PAT-1007，与入口查询语义一致禁漂移）；仍在表即状态已被并发事务迁移（他
+     * 审批人先落 COMPLETED），「已被并发处理」显式拒 PAT-1008——禁盲目重试，更禁以过期快照
+     * 整行覆写（合并序列重复执行的共根源）。
+     *
+     * @param id 合并记录 id，非空；来源：approve 入参
+     * @return 待抛业务异常（404 缺单 / 409 并发冲突），非空；调用方恒 throw
+     */
+    private BizException concurrentApproveConflict(long id) {
+        // 数据库读操作：CAS 败北后重读最新行定性（不可重试——状态机单次迁移，重试无正确性收益）
+        MergeRecord latest = getById(id);
+        if (latest == null) {
+            return new BizException(PatientErrorCode.MERGE_RECORD_NOT_FOUND, HttpStatus.NOT_FOUND, "合并记录不存在：" + id);
+        }
+        log.warn("合并审批并发冲突（CAS 0 行，已被并发处理）：id={}，当前状态={}", id, latest.getStatus());
+        return new BizException(
+                PatientErrorCode.MERGE_STATE_NOT_ALLOWED,
+                HttpStatus.CONFLICT,
+                "合并记录已被并发处理，当前状态不允许审批：" + latest.getStatus());
     }
 
     /**

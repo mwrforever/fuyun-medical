@@ -3,7 +3,10 @@ package com.fuyun.patient.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,6 +28,7 @@ import com.fuyun.patient.entity.MergeRecord;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PatientIdentifier;
 import com.fuyun.patient.internal.PatientDomainEvent;
+import com.fuyun.patient.mapper.MergeRecordMapper;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.service.IPatientService;
 import com.fuyun.patient.vo.MergeRecordVO;
@@ -42,11 +46,15 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 合并状态机单测（FU-M02-03/Spec §10）：SPI 放行与阻断、双人角色守卫、指针映射落库、
- * merged/split 事件载荷、拆分回挂与 REVERSED 终态、FAILED 重试、快照异常守卫
- * （验收 IT 的单测基座；getById/save/updateById 以测试子类覆写承载，患者行走 Mockito IPatientService）。
+ * merged/split 事件载荷、拆分回挂与 REVERSED 终态、FAILED 重试、快照异常守卫、并发双批准
+ * CAS 护航（EX-21：0 行重读定性 409/404、输家不重复执行合并序列）
+ * （验收 IT 的单测基座；getById/save/updateById 以测试子类覆写承载，患者行走 Mockito IPatientService，
+ * 审批抢锚 CAS 走 mock mapper 经 ReflectionTestUtils 注入 baseMapper——billing 同款先例）。
  */
 @ExtendWith(MockitoExtension.class)
 class MergeRecordServiceImplTest {
@@ -63,6 +71,9 @@ class MergeRecordServiceImplTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private MergeRecordMapper mergeRecordMapper;
+
     /** 内存患者表（patientService.getById 替身数据源） */
     private final Map<Long, Patient> patients = new HashMap<>();
 
@@ -78,14 +89,29 @@ class MergeRecordServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new StubMergeService(
-                patientService, identifierService, cacheService, eventPublisher, new ObjectMapper(), List.of());
+        service = newService(new ObjectMapper(), List.of());
         // lenient：守卫类用例在触达依赖前即抛出，部分替身数据源在单用例内不消费
         lenient()
                 .when(patientService.getById(any(Long.class)))
                 .thenAnswer(inv -> patients.get(inv.getArgument(0, Long.class)));
         lenient().when(identifierService.listByPatient(any(Long.class))).thenReturn(List.of());
         lenient().when(identifierService.getById(any(Long.class))).thenReturn(null);
+        // EX-21 审批 CAS 抢锚默认放行（返回 1=抢得执行权）：并发冲突用例在单测内重桩为 0；
+        // lenient 同模块惯例——守卫类用例在触达 CAS 前即抛出，默认桩不消费不报错
+        lenient()
+                .when(mergeRecordMapper.casApproveProcessing(anyLong(), anyString()))
+                .thenReturn(1);
+    }
+
+    /**
+     * 装配被测服务并注入 CAS mapper 替身（容器外单测，ReflectionTestUtils 注入 baseMapper，
+     * fuyun-billing RefundServiceImplTest 同款先例）。
+     */
+    private StubMergeService newService(ObjectMapper objectMapper, List<OngoingVisitQuery> spi) {
+        StubMergeService svc = new StubMergeService(
+                patientService, identifierService, cacheService, eventPublisher, objectMapper, spi);
+        ReflectionTestUtils.setField(svc, "baseMapper", mergeRecordMapper);
+        return svc;
     }
 
     /**
@@ -186,13 +212,7 @@ class MergeRecordServiceImplTest {
     @DisplayName("SPI 注册实现命中在途就诊：PAT-1006 阻断且从档未变、记录未动")
     void approveBlockedByOngoingVisit() {
         // SPI 命中替身需在 createRecord 之前装配（内存表与替身实例绑定）
-        service = new StubMergeService(
-                patientService,
-                identifierService,
-                cacheService,
-                eventPublisher,
-                new ObjectMapper(),
-                List.of(patientId -> true));
+        service = newService(new ObjectMapper(), List.of(patientId -> true));
         seedPatients();
         MergeRecord record = createRecord();
         assertThatThrownBy(() -> service.approve(record.getId(), "reviewer"))
@@ -207,13 +227,7 @@ class MergeRecordServiceImplTest {
     @Test
     @DisplayName("SPI 注册实现且双方无在途就诊：正常放行完成合并（注册后自动收紧、不误伤）")
     void approveProceedsWhenSpiReportsNoOngoingVisit() {
-        service = new StubMergeService(
-                patientService,
-                identifierService,
-                cacheService,
-                eventPublisher,
-                new ObjectMapper(),
-                List.of(patientId -> false));
+        service = newService(new ObjectMapper(), List.of(patientId -> false));
         seedPatients();
         MergeRecord record = createRecord();
         service.approve(record.getId(), "reviewer");
@@ -370,6 +384,45 @@ class MergeRecordServiceImplTest {
     }
 
     @Test
+    @DisplayName("并发双批准护航：CAS 0 行重读定性 PAT-1008 拒绝，合并序列不重复执行（EX-21）")
+    void approveLosesCasRaceRejectedWithoutReExecution() {
+        seedPatients();
+        MergeRecord record = createRecord();
+        // 模拟并发赢家交错：审批人读快照（PROCESSING 过守卫）后、CAS 前另一事务已批准落库 COMPLETED
+        when(mergeRecordMapper.casApproveProcessing(record.getId(), "reviewer")).thenAnswer(inv -> {
+            service.records.get(record.getId()).setStatus("COMPLETED");
+            return 0;
+        });
+        assertThatThrownBy(() -> service.approve(record.getId(), "reviewer"))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.MERGE_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).contains("并发");
+                });
+        // 输家不得重复执行合并序列：从档保持 NORMAL、标识未重挂、无 merged 事件
+        assertThat(patients.get(2L).getStatus()).isEqualTo("NORMAL");
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(eventPublisher, times(0)).publishEvent(any());
+    }
+
+    @Test
+    @DisplayName("并发双批准护航（输家重读行已消失）：PAT-1007 404 定性（与入口缺单语义一致禁漂移）")
+    void approveCasZeroWithVanishedRecordClassifiedAsPat1007() {
+        seedPatients();
+        MergeRecord record = createRecord();
+        when(mergeRecordMapper.casApproveProcessing(record.getId(), "reviewer")).thenAnswer(inv -> {
+            service.records.remove(record.getId());
+            return 0;
+        });
+        assertThatThrownBy(() -> service.approve(record.getId(), "reviewer"))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.MERGE_RECORD_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                });
+        verify(eventPublisher, times(0)).publishEvent(any());
+    }
+
+    @Test
     @DisplayName("拆分非 COMPLETED 记录：PAT-1008 拒绝（仅已完成合并可拆分）")
     void splitNonCompletedRejected() {
         seedPatients();
@@ -395,8 +448,7 @@ class MergeRecordServiceImplTest {
             throw new IllegalStateException(e);
         }
         // 故障序列化器需在 createRecord 之前装配（内存表与替身实例绑定）
-        service = new StubMergeService(
-                patientService, identifierService, cacheService, eventPublisher, broken, List.of());
+        service = newService(broken, List.of());
         MergeRecord record = createRecord();
         assertThatThrownBy(() -> service.approve(record.getId(), "reviewer")).isInstanceOf(IllegalStateException.class);
         assertThat(patients.get(2L).getStatus()).isEqualTo("NORMAL");
