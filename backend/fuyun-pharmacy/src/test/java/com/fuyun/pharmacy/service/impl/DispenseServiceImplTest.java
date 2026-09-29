@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,6 +45,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.Mockito;
@@ -162,6 +165,17 @@ class DispenseServiceImplTest {
         d.setStatus(status);
         d.setPicker("picker-01");
         return d;
+    }
+
+    /** 作废链 NORMAL 明细行构造（batchId 传 null 表 CREATED 单未锁批——零释放面分支锚点） */
+    private DispenseItem normalItem(long id, long dispenseId, Long batchId) {
+        DispenseItem item = new DispenseItem();
+        item.setId(id);
+        item.setDispenseId(dispenseId);
+        item.setBatchId(batchId);
+        item.setRequestedQty(new BigDecimal("2"));
+        item.setItemStatus("NORMAL");
+        return item;
     }
 
     @Test
@@ -401,7 +415,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("PENDING_DISPENSE");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
                 .thenReturn(1);
         // 放行入队 CREATED 发药单：明细未锁批（batchId 缺位），退场零释放面
@@ -431,7 +445,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("DISPENSING");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "DISPENSING", "CANCELLED")).thenReturn(1);
         Dispense picking = activeDispense("PICKING");
         when(dispenseMapper.selectList(any())).thenReturn(List.of(picking));
@@ -462,12 +476,13 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("DISPENSED");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
 
         impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
 
         verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
-        verify(dispenseMapper, never()).selectList(any());
+        // OPT-07 批查契约：命中处方（含终态跳过行）参与活动发药单键集批查恰一次；业务断言=零写面不变
+        verify(dispenseMapper, times(1)).selectList(any());
         verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
         verify(drugBatchMapper, never()).releaseLock(anyLong(), any());
         verify(dispenseItemMapper, never()).updateById(any(DispenseItem.class));
@@ -477,7 +492,7 @@ class DispenseServiceImplTest {
     @DisplayName("order.cancelled 脏差异守卫：清单处方号无法定位处方 warn 留痕不阻断同批作废")
     void orderCancelledSkipsUnknownRxNo() {
         DispenseServiceImpl impl = newService();
-        when(prescriptionMapper.selectOne(any())).thenReturn(null);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of());
 
         impl.voidUndispensedByRx(List.of("R20260918999999"), "退费逆向终态确认");
 
@@ -491,7 +506,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("CANCELLED");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
 
         impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
 
@@ -505,7 +520,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("APPROVED");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
 
         impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
 
@@ -519,7 +534,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("DISPENSING");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "DISPENSING", "CANCELLED")).thenReturn(0);
         Prescription dispensed = rxPendingFee(100L, "R20260918000001");
         dispensed.setStatus("DISPENSED");
@@ -527,8 +542,9 @@ class DispenseServiceImplTest {
 
         impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
 
-        // 处方 CAS 先行：0 行即整单跳过，发药单/锁零触碰（禁半程写面）
-        verify(dispenseMapper, never()).selectList(any());
+        // 处方 CAS 先行：0 行即整单跳过，发药单/锁零写面（禁半程写面）；
+        // OPT-07 批查契约：命中处方参与活动发药单键集批查恰一次（读面与守卫判定解耦）
+        verify(dispenseMapper, times(1)).selectList(any());
         verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
         verify(drugBatchMapper, never()).releaseLock(anyLong(), any());
     }
@@ -539,7 +555,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("DISPENSING");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "DISPENSING", "CANCELLED")).thenReturn(0);
         Prescription drifted = rxPendingFee(100L, "R20260918000001");
         drifted.setStatus("PENDING_FEE");
@@ -557,7 +573,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("PENDING_DISPENSE");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
                 .thenReturn(1);
         when(dispenseMapper.selectList(any())).thenReturn(List.of(activeDispense("ISSUED")));
@@ -575,7 +591,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("DISPENSING");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "DISPENSING", "CANCELLED")).thenReturn(1);
         when(dispenseMapper.selectList(any())).thenReturn(List.of(activeDispense("PICKING")));
         DispenseItem locked = new DispenseItem();
@@ -599,7 +615,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("PENDING_DISPENSE");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
                 .thenReturn(1);
         when(dispenseMapper.selectList(any())).thenReturn(List.of(activeDispense("CREATED")));
@@ -614,5 +630,119 @@ class DispenseServiceImplTest {
         assertThatThrownBy(() -> impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认"))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
+    }
+
+    @Test
+    @DisplayName("order.cancelled 三级级联批查：多处方多单多明细各恰一次（N+N×M+N×M×K→恒3查）+ 逐行作废行为等价")
+    void orderCancelledBatchesThreeCascadeReadsOnceAndVoidsEachListedRx() {
+        DispenseServiceImpl impl = newService();
+        // 清单四处方号：两张待作废（PENDING_DISPENSE/DISPENSING）+ 一张已发药终态（守卫跳过行）
+        // + 一张脏差异缺号（批查结果集缺位）——守卫在批查后按原循环序逐行判定的完整混合面
+        Prescription voiding1 = rxPendingFee(100L, "R20260918000001");
+        voiding1.setStatus("PENDING_DISPENSE");
+        Prescription voiding2 = rxPendingFee(101L, "R20260918000002");
+        voiding2.setStatus("DISPENSING");
+        Prescription dispensed = rxPendingFee(102L, "R20260918000003");
+        dispensed.setStatus("DISPENSED");
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(voiding1, voiding2, dispensed));
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
+                .thenReturn(1);
+        when(prescriptionMapper.casStatus(101L, "DISPENSING", "CANCELLED")).thenReturn(1);
+        Dispense created = activeDispense("CREATED");
+        Dispense picking = activeDispense("PICKING");
+        picking.setId(901L);
+        picking.setDispenseNo("D20260918000002");
+        picking.setRxNo("R20260918000002");
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(created, picking));
+        DispenseItem plain = normalItem(1L, 900L, null);
+        DispenseItem lockedOfCreated = normalItem(2L, 900L, 55L);
+        DispenseItem lockedOfPicking = normalItem(3L, 901L, 66L);
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(plain, lockedOfCreated, lockedOfPicking));
+        when(drugBatchMapper.releaseLock(eq(55L), any())).thenReturn(1);
+        when(drugBatchMapper.releaseLock(eq(66L), any())).thenReturn(1);
+        when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(1);
+        when(dispenseMapper.casStatus(901L, "PICKING", "CANCELLED")).thenReturn(1);
+
+        impl.voidUndispensedByRx(
+                List.of("R20260918000001", "R20260918000002", "R20260918000003", "R20260918000004"), "退费逆向终态确认");
+
+        // 三级批查各恰一次（旧逐行链=4 号 selectOne+守卫通过方逐处方/逐单 selectList；批查契约下
+        //   与行数解耦恒 3 查），处方逐号 selectOne 旧路径零触达
+        verify(prescriptionMapper, times(1)).selectList(any());
+        verify(prescriptionMapper, never()).selectOne(any());
+        verify(dispenseMapper, times(1)).selectList(any());
+        verify(dispenseItemMapper, times(1)).selectList(any());
+        // 批查键集契约：处方批查键集=清单 rxNos 全集；活动单批查键集=全部命中处方 rxNo 集
+        //   （脏差异缺号不入键集，只排除 CANCELLED 一个谓词值）；明细批查键集=全部涉及发药单 id 集
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<Prescription>> rxQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(prescriptionMapper).selectList(rxQueryCaptor.capture());
+        AbstractWrapper<?, ?, ?> rxWrapper = (AbstractWrapper<?, ?, ?>) rxQueryCaptor.getValue();
+        rxWrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
+        assertThat(rxWrapper.getParamNameValuePairs().values())
+                .containsExactlyInAnyOrder("R20260918000001", "R20260918000002", "R20260918000003", "R20260918000004");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<Dispense>> dispenseQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(dispenseMapper).selectList(dispenseQueryCaptor.capture());
+        AbstractWrapper<?, ?, ?> dispenseWrapper = (AbstractWrapper<?, ?, ?>) dispenseQueryCaptor.getValue();
+        dispenseWrapper.getSqlSegment();
+        assertThat(dispenseWrapper.getParamNameValuePairs().values())
+                .containsExactlyInAnyOrder("R20260918000001", "R20260918000002", "R20260918000003", "CANCELLED");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<DispenseItem>> itemQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(dispenseItemMapper).selectList(itemQueryCaptor.capture());
+        AbstractWrapper<?, ?, ?> itemWrapper = (AbstractWrapper<?, ?, ?>) itemQueryCaptor.getValue();
+        itemWrapper.getSqlSegment();
+        assertThat(itemWrapper.getParamNameValuePairs().values()).containsExactlyInAnyOrder(900L, 901L, "NORMAL");
+        // 逐行判定输出与旧实现行为快照等价：守卫行与缺号零写，作废行按清单序逐行 CAS（遇序保序）
+        verify(prescriptionMapper, never()).casStatus(eq(102L), anyString(), anyString());
+        InOrder voidOrder = inOrder(prescriptionMapper);
+        voidOrder.verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
+        voidOrder.verify(prescriptionMapper).casStatus(101L, "DISPENSING", "CANCELLED");
+        // 明细全部退场为 CANCELLED（三行全改，含 CREATED 单未锁批行）
+        ArgumentCaptor<DispenseItem> itemWriteCaptor = ArgumentCaptor.forClass(DispenseItem.class);
+        verify(dispenseItemMapper, times(3)).updateById(itemWriteCaptor.capture());
+        assertThat(itemWriteCaptor.getAllValues())
+                .allSatisfy(item -> assertThat(item.getItemStatus()).isEqualTo("CANCELLED"));
+        // 锁定释放仅锁批行（batchId 缺位零释放面），发药单同步作废
+        verify(drugBatchMapper).releaseLock(eq(55L), any());
+        verify(drugBatchMapper).releaseLock(eq(66L), any());
+        verify(drugBatchMapper, times(2)).releaseLock(anyLong(), any());
+        verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+        verify(dispenseMapper).casStatus(901L, "PICKING", "CANCELLED");
+    }
+
+    @Test
+    @DisplayName("order.cancelled 混合批次脏守卫保持：前序处方作废后遇 ISSUED 活动单仍拒 PH-1009 整事务回滚")
+    void orderCancelledKeepsIssuedDirtyGuardInMixedBatch() {
+        DispenseServiceImpl impl = newService();
+        Prescription voiding = rxPendingFee(100L, "R20260918000001");
+        voiding.setStatus("PENDING_DISPENSE");
+        Prescription dirty = rxPendingFee(101L, "R20260918000002");
+        dirty.setStatus("PENDING_DISPENSE");
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(voiding, dirty));
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
+                .thenReturn(1);
+        when(prescriptionMapper.casStatus(101L, "PENDING_DISPENSE", "CANCELLED"))
+                .thenReturn(1);
+        Dispense created = activeDispense("CREATED");
+        Dispense issued = activeDispense("ISSUED");
+        issued.setId(901L);
+        issued.setDispenseNo("D20260918000002");
+        issued.setRxNo("R20260918000002");
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(created, issued));
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(normalItem(1L, 900L, null)));
+        when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(1);
+
+        assertThatThrownBy(() -> impl.voidUndispensedByRx(List.of("R20260918000001", "R20260918000002"), "退费逆向终态确认"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
+
+        // 前序处方作废写面先行发生（真实库整事务回滚；mock 侧证明逐行序与旧链一致），脏单
+        //   零作废零释放（ISSUED 守卫先于明细处置）
+        verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
+        verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+        verify(dispenseMapper, never()).casStatus(eq(901L), any(), any());
+        verify(drugBatchMapper, never()).releaseLock(anyLong(), any());
     }
 }
