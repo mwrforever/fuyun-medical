@@ -16,6 +16,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
@@ -31,7 +32,6 @@ import com.fuyun.pharmacy.mapper.DispenseMapper;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
-import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import java.math.BigDecimal;
 import java.util.List;
@@ -45,6 +45,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -65,9 +67,6 @@ class DispenseReturnTest {
 
     @Mock
     private DrugBatchMapper drugBatchMapper;
-
-    @Mock
-    private StockLedgerMapper stockLedgerMapper;
 
     @Mock
     private PrescriptionMapper prescriptionMapper;
@@ -108,14 +107,14 @@ class DispenseReturnTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十一参直注（Task 6 起扩 batchSelectService/events/objectMapper、Task 10 扩第十参
-        // masterDataCache、Task 11 扩第十一参 settlementQueryPort，objectMapper 用真实例承载 JSON 读写）；
+        // 构造器十参直注（Task 6 起扩 batchSelectService/events/objectMapper、Task 10 扩第十参
+        // masterDataCache、Task 11 扩第十一参 settlementQueryPort、EX-37 收敛十参——流水批插改 Db
+        // 通道后 StockLedgerMapper 依赖卸除；objectMapper 用真实例承载 JSON 读写）；
         // ServiceImpl 继承字段 baseMapper 反射注入（Global Constraints 单测范式）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
                 drugBatchMapper,
-                stockLedgerMapper,
                 prescriptionMapper,
                 prescriptionItemMapper,
                 batchSelectService,
@@ -180,29 +179,111 @@ class DispenseReturnTest {
                 .thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\",\"TR-C3D4\"]")));
         when(drugBatchMapper.restock(55L, new BigDecimal("2"))).thenReturn(1);
         when(dispenseMapper.casStatus(900L, "ISSUED", "FULL_RETURNED")).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
         when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("2")))
                 .thenReturn(1);
 
-        impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4")));
+        // EX-37 桩面通道迁移：回补流水从逐行 insert 改 Db.saveBatch 批插、退药回写从逐行
+        //   updateById 改 Db.updateBatchById 批更（静态 Db 桩内执行；旧通道桩移除）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4")));
 
-        verify(drugBatchMapper).restock(55L, new BigDecimal("2"));
-        // 数据库写操作断言：处方明细退药累计回写（V701 returned_quantity 落地点，occupancy 数据源）
-        verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("2"));
-        ArgumentCaptor<StockLedger> ledgerCaptor = ArgumentCaptor.forClass(StockLedger.class);
-        verify(stockLedgerMapper).insert(ledgerCaptor.capture());
-        assertThat(ledgerCaptor.getValue().getAction()).isEqualTo("RETURN_RESTOCK");
-        assertThat(ledgerCaptor.getValue().getQuantity()).isEqualByComparingTo("2");
-        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(events).publishEvent(eventCaptor.capture());
-        DispenseReturnedPayload payload = (DispenseReturnedPayload)
-                ((com.fuyun.pharmacy.internal.PharmacyDomainEvent) eventCaptor.getValue()).payload();
-        assertThat(payload.fullReturn()).isTrue();
-        // 携退药行摘要（id 29 desc 冻结 lines 非空——billing 占用回退/退费联动读此面）
-        assertThat(payload.lines()).hasSize(1);
-        assertThat(payload.lines().get(0).itemCode()).isEqualTo("C0131230900157");
-        assertThat(payload.lines().get(0).batchNo()).isEqualTo("B20260601");
-        assertThat(payload.lines().get(0).quantity()).isEqualTo("2");
+            verify(drugBatchMapper).restock(55L, new BigDecimal("2"));
+            // 数据库写操作断言：处方明细退药累计回写（V701 returned_quantity 落地点，occupancy 数据源）
+            verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("2"));
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<StockLedger>> ledgerCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(ledgerCaptor.capture()));
+            assertThat(ledgerCaptor.getValue().get(0).getAction()).isEqualTo("RETURN_RESTOCK");
+            assertThat(ledgerCaptor.getValue().get(0).getQuantity()).isEqualByComparingTo("2");
+            ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+            verify(events).publishEvent(eventCaptor.capture());
+            DispenseReturnedPayload payload = (DispenseReturnedPayload)
+                    ((com.fuyun.pharmacy.internal.PharmacyDomainEvent) eventCaptor.getValue()).payload();
+            assertThat(payload.fullReturn()).isTrue();
+            // 携退药行摘要（id 29 desc 冻结 lines 非空——billing 占用回退/退费联动读此面）
+            assertThat(payload.lines()).hasSize(1);
+            assertThat(payload.lines().get(0).itemCode()).isEqualTo("C0131230900157");
+            assertThat(payload.lines().get(0).batchNo()).isEqualTo("B20260601");
+            assertThat(payload.lines().get(0).quantity()).isEqualTo("2");
+        }
+    }
+
+    @Test
+    @DisplayName("实物退批量写锚定（EX-37）：回补流水一次批插+退药回写一次批更（N 行 2N 写收敛 2 批） " + "+ 回补/明细累计 0 行防线逐行保留 + 退药补丁仅携 id+returnedQty")
+    void acceptReturnBatchesLedgerInsertAndReturnedQtyPatchWithRowGuardsKeptPerRow() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("ISSUED"));
+        DispenseItem first = issuedItem("2", "0", "[\"TR-A1B2\"]"); // id=1/prescriptionItemId=10/batchId=55
+        DispenseItem second = new DispenseItem();
+        second.setId(2L);
+        second.setDispenseId(900L);
+        second.setPrescriptionItemId(20L);
+        second.setDrugId(11L);
+        second.setItemCode("C0131230900158");
+        second.setRequestedQty(new BigDecimal("3"));
+        second.setIssuedQty(new BigDecimal("3"));
+        second.setReturnedQty(BigDecimal.ZERO);
+        second.setBatchId(66L);
+        second.setBatchNo("B20260701");
+        second.setTraceCodes("[\"TR-E5F6\"]");
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        // 回补条件更新逐行保留：0 行=批次状态漂移硬防线（禁批量吞语义）
+        when(drugBatchMapper.restock(55L, new BigDecimal("2"))).thenReturn(1);
+        when(drugBatchMapper.restock(66L, new BigDecimal("3"))).thenReturn(1);
+        // 处方明细累计回写逐行保留：0 行=明细脏数据硬防线（服务端原子累加语义禁批量化）
+        when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("2")))
+                .thenReturn(1);
+        when(prescriptionItemMapper.accumulateReturnedQuantity(20L, new BigDecimal("3")))
+                .thenReturn(1);
+        when(dispenseMapper.casStatus(900L, "ISSUED", "FULL_RETURNED")).thenReturn(1);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptReturn(new DispenseReturnRequest(
+                    "D20260918000001",
+                    "ISSUED_RETURN",
+                    List.of(
+                            new DispenseReturnRequest.ReturnLine("10", "2", List.of("TR-A1B2")),
+                            new DispenseReturnRequest.ReturnLine("20", "3", List.of("TR-E5F6")))));
+
+            verify(drugBatchMapper).restock(55L, new BigDecimal("2"));
+            verify(drugBatchMapper).restock(66L, new BigDecimal("3"));
+            verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("2"));
+            verify(prescriptionItemMapper).accumulateReturnedQuantity(20L, new BigDecimal("3"));
+            // 回补流水一次批插（红线 2 勾稽行集不变，正数回补行），旧逐行 insert 通道下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<StockLedger>> ledgersCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(ledgersCaptor.capture()));
+            assertThat(ledgersCaptor.getValue()).hasSize(2);
+            assertThat(ledgersCaptor.getValue()).allSatisfy(ledger -> {
+                assertThat(ledger.getAction()).isEqualTo("RETURN_RESTOCK");
+                assertThat(ledger.getRefDoc()).isEqualTo("D20260918000001");
+                assertThat(ledger.getQuantity()).isPositive(); // 正数量回补行
+            });
+            // 退药回写一次批更（A.4.3-16），旧逐行 updateById 通道下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> patchesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(patchesCaptor.capture()));
+            verify(dispenseItemMapper, never()).updateById(any(DispenseItem.class));
+            assertThat(patchesCaptor.getValue()).hasSize(2);
+            assertThat(patchesCaptor.getValue().get(0).getId()).isEqualTo(1L);
+            assertThat(patchesCaptor.getValue().get(0).getReturnedQty()).isEqualByComparingTo("2");
+            assertThat(patchesCaptor.getValue().get(1).getId()).isEqualTo(2L);
+            assertThat(patchesCaptor.getValue().get(1).getReturnedQty()).isEqualByComparingTo("3");
+            // EX-24 补丁纪律：仅携 id+退药数，读点快照列（批次/追溯码/实发数等）不进 SET——
+            //   跨队乱序窗口内对端写面（issued 回写等）不被读点快照覆写吞掉
+            assertThat(patchesCaptor.getValue()).allSatisfy(patch -> {
+                assertThat(patch.getDispenseId()).isNull();
+                assertThat(patch.getPrescriptionItemId()).isNull();
+                assertThat(patch.getDrugId()).isNull();
+                assertThat(patch.getItemCode()).isNull();
+                assertThat(patch.getRequestedQty()).isNull();
+                assertThat(patch.getIssuedQty()).isNull();
+                assertThat(patch.getBatchId()).isNull();
+                assertThat(patch.getBatchNo()).isNull();
+                assertThat(patch.getTraceCodes()).isNull();
+                assertThat(patch.getItemStatus()).isNull();
+            });
+        }
     }
 
     @Test
@@ -227,22 +308,24 @@ class DispenseReturnTest {
                 .thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\",\"TR-C3D4\"]")));
         when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
         when(dispenseMapper.casStatus(900L, "ISSUED", "PART_RETURNED")).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
         when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("1")))
                 .thenReturn(1);
 
-        impl.acceptReturn(issuedReturn("1", List.of("TR-A1B2")));
+        // EX-37 桩面补位：退药回写改 Db.updateBatchById 批更（静态 Db 桩内执行；旧通道桩移除）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptReturn(issuedReturn("1", List.of("TR-A1B2")));
 
-        verify(dispenseMapper).casStatus(900L, "ISSUED", "PART_RETURNED");
-        // 部分退时点回写断言：回写参数=本次退量（服务端原子累加，累计形态由 SQL 侧 + 承载）
-        verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("1"));
-        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(events).publishEvent(eventCaptor.capture());
-        DispenseReturnedPayload payload = (DispenseReturnedPayload)
-                ((com.fuyun.pharmacy.internal.PharmacyDomainEvent) eventCaptor.getValue()).payload();
-        assertThat(payload.fullReturn()).isFalse();
-        assertThat(payload.lines()).hasSize(1); // 部分退同样携退药行摘要（非空，与 id 29 desc 对齐）
-        assertThat(payload.lines().get(0).quantity()).isEqualTo("1");
+            verify(dispenseMapper).casStatus(900L, "ISSUED", "PART_RETURNED");
+            // 部分退时点回写断言：回写参数=本次退量（服务端原子累加，累计形态由 SQL 侧 + 承载）
+            verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("1"));
+            ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+            verify(events).publishEvent(eventCaptor.capture());
+            DispenseReturnedPayload payload = (DispenseReturnedPayload)
+                    ((com.fuyun.pharmacy.internal.PharmacyDomainEvent) eventCaptor.getValue()).payload();
+            assertThat(payload.fullReturn()).isFalse();
+            assertThat(payload.lines()).hasSize(1); // 部分退同样携退药行摘要（非空，与 id 29 desc 对齐）
+            assertThat(payload.lines().get(0).quantity()).isEqualTo("1");
+        }
     }
 
     @Test
@@ -255,18 +338,21 @@ class DispenseReturnTest {
                 .thenReturn(List.of(issuedItem("2", "1", "[\"TR-A1B2\",\"TR-C3D4\"]")));
         when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
         when(dispenseMapper.casStatus(900L, "PART_RETURNED", "FULL_RETURNED")).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
         when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("1")))
                 .thenReturn(1);
 
-        impl.acceptReturn(issuedReturn("1", List.of("TR-C3D4")));
+        // EX-37 桩面补位：退药回写改 Db.updateBatchById 批更（静态 Db 桩内执行；旧通道桩移除）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptReturn(issuedReturn("1", List.of("TR-C3D4")));
 
-        // 累计形态断言：续退时点再次按增量回写（returned_quantity = returned_quantity + 本次退量），
-        //   两次部分退累计 = 全量——occupancy returnedQuantity 由此收敛到实发数
-        verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("1"));
-        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper).updateById(itemCaptor.capture());
-        assertThat(itemCaptor.getValue().getReturnedQty()).isEqualByComparingTo("2");
+            // 累计形态断言：续退时点再次按增量回写（returned_quantity = returned_quantity + 本次退量），
+            //   两次部分退累计 = 全量——occupancy returnedQuantity 由此收敛到实发数
+            verify(prescriptionItemMapper).accumulateReturnedQuantity(10L, new BigDecimal("1"));
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> itemCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(itemCaptor.capture()));
+            assertThat(itemCaptor.getValue().get(0).getReturnedQty()).isEqualByComparingTo("2");
+        }
     }
 
     @Test
@@ -276,7 +362,7 @@ class DispenseReturnTest {
         when(dispenseMapper.selectOne(any())).thenReturn(dispense("ISSUED"));
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\"]")));
         when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
+        // EX-37 桩面迁移：旧 updateById 桩移除（0 行回写违例在批写前抛出，批通道不触达）
         when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("1")))
                 .thenReturn(0);
 
@@ -299,19 +385,78 @@ class DispenseReturnTest {
         picking.setBatchId(55L);
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(picking));
         when(drugBatchMapper.releaseLock(55L, new BigDecimal("2"))).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
 
-        impl.acceptReturn(new DispenseReturnRequest(
-                "D20260918000001",
-                "DISPENSING_CANCEL",
-                List.of(new DispenseReturnRequest.ReturnLine("10", "2", null))));
+        // EX-37 桩面通道迁移：明细退场从逐行 updateById 改 Db.updateBatchById 批更（静态 Db 桩
+        //   内执行；旧通道桩移除）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptReturn(new DispenseReturnRequest(
+                    "D20260918000001",
+                    "DISPENSING_CANCEL",
+                    List.of(new DispenseReturnRequest.ReturnLine("10", "2", null))));
 
-        verify(drugBatchMapper).releaseLock(55L, new BigDecimal("2"));
-        verify(stockLedgerMapper, never()).insert(any(StockLedger.class)); // 锁定数非数量流水
-        verify(events, never()).publishEvent(any()); // 未出库不发 returned
-        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper).updateById(itemCaptor.capture());
-        assertThat(itemCaptor.getValue().getItemStatus()).isEqualTo("CANCELLED");
+            verify(drugBatchMapper).releaseLock(55L, new BigDecimal("2"));
+            mockedDb.verify(() -> Db.saveBatch(any()), never()); // 锁定数非数量流水（批插通道零流水）
+            verify(events, never()).publishEvent(any()); // 未出库不发 returned
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> itemCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(itemCaptor.capture()));
+            assertThat(itemCaptor.getValue().get(0).getItemStatus()).isEqualTo("CANCELLED");
+        }
+    }
+
+    @Test
+    @DisplayName("发药中退场批量写锚定（EX-37）：明细退场一次批更（N 行 N 更收敛 1 批）+ 锁定释放 0 行防线逐行保留 " + "+ 退场补丁仅携 id+itemStatus")
+    void dispensingCancelBatchesItemPatchWithReleaseLockKeptPerRow() {
+        DispenseServiceImpl impl = newService();
+        Dispense d = dispense("PICKING");
+        when(dispenseMapper.selectOne(any())).thenReturn(d);
+        DispenseItem first = issuedItem("2", "0", "[]");
+        first.setIssuedQty(BigDecimal.ZERO);
+        first.setBatchId(55L);
+        DispenseItem second = new DispenseItem();
+        second.setId(2L);
+        second.setDispenseId(900L);
+        second.setPrescriptionItemId(20L);
+        second.setDrugId(11L);
+        second.setItemCode("C0131230900158");
+        second.setRequestedQty(new BigDecimal("3"));
+        second.setIssuedQty(BigDecimal.ZERO);
+        second.setBatchId(66L);
+        second.setBatchNo("B20260701");
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        // 锁定释放条件更新逐行保留：0 行=锁定数漂移硬防线（禁批量吞语义）
+        when(drugBatchMapper.releaseLock(55L, new BigDecimal("2"))).thenReturn(1);
+        when(drugBatchMapper.releaseLock(66L, new BigDecimal("3"))).thenReturn(1);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptReturn(new DispenseReturnRequest(
+                    "D20260918000001",
+                    "DISPENSING_CANCEL",
+                    List.of(
+                            new DispenseReturnRequest.ReturnLine("10", "2", null),
+                            new DispenseReturnRequest.ReturnLine("20", "3", null))));
+
+            verify(drugBatchMapper).releaseLock(55L, new BigDecimal("2"));
+            verify(drugBatchMapper).releaseLock(66L, new BigDecimal("3"));
+            // 明细退场一次批更（A.4.3-16），旧逐行 updateById 通道下线；锁定数非数量流水零批插
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> patchesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(patchesCaptor.capture()));
+            verify(dispenseItemMapper, never()).updateById(any(DispenseItem.class));
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+            assertThat(patchesCaptor.getValue()).hasSize(2);
+            // EX-24 补丁纪律：仅携 id+明细状态，读点快照列（批次/数量等）不进 SET
+            assertThat(patchesCaptor.getValue()).allSatisfy(patch -> {
+                assertThat(patch.getItemStatus()).isEqualTo("CANCELLED");
+                assertThat(patch.getDispenseId()).isNull();
+                assertThat(patch.getPrescriptionItemId()).isNull();
+                assertThat(patch.getDrugId()).isNull();
+                assertThat(patch.getRequestedQty()).isNull();
+                assertThat(patch.getBatchId()).isNull();
+                assertThat(patch.getBatchNo()).isNull();
+                assertThat(patch.getTraceCodes()).isNull();
+            });
+        }
     }
 
     @Test
@@ -506,11 +651,14 @@ class DispenseReturnTest {
         when(dispenseItemMapper.selectList(any()))
                 .thenReturn(List.of(issuedItem("2", "1", "[\"TR-A1B2\",\"TR-C3D4\"]")));
 
-        assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4"))))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED));
-        verify(drugBatchMapper, never()).restock(anyLong(), any());
-        verify(stockLedgerMapper, never()).insert(any(StockLedger.class));
+        // EX-37 桩面通道迁移：零流水断言迁至 Db.saveBatch 批插通道（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4"))))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED));
+            verify(drugBatchMapper, never()).restock(anyLong(), any());
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+        }
     }
 
     @Test
@@ -520,15 +668,18 @@ class DispenseReturnTest {
         when(dispenseMapper.selectOne(any())).thenReturn(dispense("ISSUED"));
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\"]")));
 
-        assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("两盒", List.of("TR-A1B2"))))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.NUMERIC_FIELD_MALFORMED));
-        // 格式守卫在全部写面之前拦截：零回补/零流水/零回写/零终态迁移/零事件
-        verify(drugBatchMapper, never()).restock(anyLong(), any());
-        verify(stockLedgerMapper, never()).insert(any(StockLedger.class));
-        verify(prescriptionItemMapper, never()).accumulateReturnedQuantity(anyLong(), any());
-        verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
-        verify(events, never()).publishEvent(any());
+        // EX-37 桩面通道迁移：零流水断言迁至 Db.saveBatch 批插通道（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("两盒", List.of("TR-A1B2"))))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.NUMERIC_FIELD_MALFORMED));
+            // 格式守卫在全部写面之前拦截：零回补/零流水/零回写/零终态迁移/零事件
+            verify(drugBatchMapper, never()).restock(anyLong(), any());
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+            verify(prescriptionItemMapper, never()).accumulateReturnedQuantity(anyLong(), any());
+            verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
+            verify(events, never()).publishEvent(any());
+        }
     }
 
     @Test
@@ -539,11 +690,14 @@ class DispenseReturnTest {
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\"]")));
         when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(0);
 
-        assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("1", List.of("TR-A1B2"))))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED));
-        verify(stockLedgerMapper, never()).insert(any(StockLedger.class));
-        verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        // EX-37 桩面通道迁移：零流水断言迁至 Db.saveBatch 批插通道（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("1", List.of("TR-A1B2"))))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED));
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+            verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        }
     }
 
     @Test
@@ -554,17 +708,19 @@ class DispenseReturnTest {
         when(dispenseItemMapper.selectList(any()))
                 .thenReturn(List.of(issuedItem("2", "0", "[\"TR-A1B2\",\"TR-C3D4\"]")));
         when(drugBatchMapper.restock(55L, new BigDecimal("2"))).thenReturn(1);
-        when(stockLedgerMapper.insert(any(StockLedger.class))).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
         // 退药累计回写打桩命中（本次改动新增写面，置于终态 CAS 之前）——本用例靶点为终态并发被抢分支
         when(prescriptionItemMapper.accumulateReturnedQuantity(10L, new BigDecimal("2")))
                 .thenReturn(1);
         when(dispenseMapper.casStatus(900L, "ISSUED", "FULL_RETURNED")).thenReturn(0);
 
-        assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4"))))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
-        verify(events, never()).publishEvent(any()); // 事件发布后置于终态迁移，并发被抢即整事务回滚
+        // EX-37 桩面补位：流水/退药批写在终态 CAS 前已发生（真实库随 CAS 违例整事务回滚），
+        //   静态 Db 桩内执行；insert/updateById 旧通道桩移除
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.acceptReturn(issuedReturn("2", List.of("TR-A1B2", "TR-C3D4"))))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
+            verify(events, never()).publishEvent(any()); // 事件发布后置于终态迁移，并发被抢即整事务回滚
+        }
     }
 
     @Test

@@ -28,7 +28,6 @@ import com.fuyun.pharmacy.mapper.DispenseMapper;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
-import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispenseVO;
@@ -62,8 +61,14 @@ import org.springframework.transaction.annotation.Transactional;
  * 其余状态 warn 跳过不上抛」（charged 重复投递仅放行一次，Spec §10 异常项）。uk_dispense_rx_active
  * 兜底防重复建单。装配归 PharmacyWebConfig @Import。
  * 查询形态（宪法 A.4.3-13）：主表（dispense）查询统一走 ServiceImpl 内置 lambdaQuery 链式；
- * 跨表/子表查询（prescription/prescription_item/dispense_item，另有 drug_batch/stock_ledger
- * 走条件更新与插入通道）不经本服务继承链，保留 Wrappers 手构——副表面无继承面可复用。
+ * 跨表/子表查询（prescription/prescription_item/dispense_item，另有 drug_batch 走条件更新
+ * 通道、stock_ledger 走 Db 批插通道）不经本服务继承链，保留 Wrappers 手构——副表面无继承面可复用。
+ * 写入形态（宪法 A.4.3-16，EX-37 批量写收拢）：循环内「无状态语义」的逐行 insert/updateById
+ * 一律收集后批语句落库（stock_ledger 批插 Db.saveBatch、dispense_item 补丁批更
+ * Db.updateBatchById）；「0 行防线」条件更新（casStatus/casIssue/lockQuantity/deductLocked/
+ * restock/releaseLock/accumulateReturnedQuantity 与选批-锁定联动）逐行保留禁批量化——批量
+ * 仅收敛写往返，禁吞并发/违例判定语义；明细批更走仅携 id+目标列的补丁实体（EX-24｜BE-A2-05
+ * 并发防覆写，BUG-07 补丁回写同款形态）。
  */
 @Slf4j
 public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> implements IDispenseService {
@@ -80,8 +85,6 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     private final DispenseItemMapper dispenseItemMapper;
 
     private final DrugBatchMapper drugBatchMapper;
-
-    private final StockLedgerMapper stockLedgerMapper;
 
     private final PrescriptionMapper prescriptionMapper;
 
@@ -104,12 +107,11 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
 
     /**
      * 全参构造器（装配归 PharmacyWebConfig @Import；Task 11 起扩十一参——settlementQueryPort
-     * 承载凭证核验反查）。
+     * 承载凭证核验反查；EX-37 收敛十参——流水批插改 Db 通道后 StockLedgerMapper 依赖卸除）。
      *
      * @param dispenseMapper         调剂单 mapper（ServiceImpl 继承 baseMapper 同源），非空
      * @param dispenseItemMapper     调剂明细 mapper，非空
      * @param drugBatchMapper        批次 mapper（锁定/扣减条件更新通道），非空
-     * @param stockLedgerMapper      库存流水 mapper（只增 INSERT 通道），非空
      * @param prescriptionMapper     处方 mapper，非空
      * @param prescriptionItemMapper 处方明细 mapper，非空
      * @param batchSelectService     FEFO 选批服务，非空
@@ -122,7 +124,6 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             DispenseMapper dispenseMapper,
             DispenseItemMapper dispenseItemMapper,
             DrugBatchMapper drugBatchMapper,
-            StockLedgerMapper stockLedgerMapper,
             PrescriptionMapper prescriptionMapper,
             PrescriptionItemMapper prescriptionItemMapper,
             IBatchSelectService batchSelectService,
@@ -133,7 +134,6 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         this.dispenseMapper = dispenseMapper;
         this.dispenseItemMapper = dispenseItemMapper;
         this.drugBatchMapper = drugBatchMapper;
-        this.stockLedgerMapper = stockLedgerMapper;
         this.prescriptionMapper = prescriptionMapper;
         this.prescriptionItemMapper = prescriptionItemMapper;
         this.batchSelectService = batchSelectService;
@@ -273,6 +273,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 .eq(DispenseItem::getItemStatus, "NORMAL")
                 .orderByAsc(DispenseItem::getId));
         String operator = OperatorContextHolder.get();
+        // 明细回填补丁行集（循环内仅收集，循环外一次批更——A.4.3-16 批量写纪律）
+        List<DispenseItem> itemPatches = new ArrayList<>(items.size());
         for (DispenseItem item : items) {
             PickLine line = lines.stream()
                     .filter(l -> String.valueOf(item.getPrescriptionItemId()).equals(l.prescriptionItemId()))
@@ -288,7 +290,9 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                         HttpStatus.BAD_REQUEST,
                         "追溯码逐码采集为空（无码不结）：itemCode=" + item.getItemCode());
             }
-            // 选批 + 条件锁定（防并发超发硬防线；选批失败/锁定 0 行一律 PH-1010 整事务回滚）
+            // 选批 + 条件锁定（防并发超发硬防线；选批失败/锁定 0 行一律 PH-1010 整事务回滚）。
+            //   EX-37 甄别：选批依赖前序锁定后的余量视图、锁定 0 行=并发超发防线——CAS 联动逐行
+            //   保留禁批量化（OPT-03 批量 CAS 不适用于选批-锁定联动面）
             DrugBatch batch =
                     batchSelectService.selectForDispense(item.getDrugId(), d.getStorehouse(), item.getRequestedQty());
             if (batch == null || drugBatchMapper.lockQuantity(batch.getId(), item.getRequestedQty()) != 1) {
@@ -297,11 +301,22 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                         HttpStatus.CONFLICT,
                         "批次可用量不足，配药被拒：drugId=" + item.getDrugId());
             }
-            // 数据库写操作：批次与逐码采集回填明细行（追溯码 JSON 文本承载）
-            item.setBatchId(batch.getId());
-            item.setBatchNo(batch.getBatchNo());
-            item.setTraceCodes(toJson(line.traceCodes()));
-            dispenseItemMapper.updateById(item);
+            // 数据库写操作（收集段）：批次与逐码采集回填明细行（追溯码 JSON 文本承载）——
+            //   EX-24 补丁化：仅携 id+批次三列的补丁实体（NOT_NULL 更新策略下读点快照列——
+            //   应发数/退药数/明细状态等不进 SET），读改写窗口内对端写面（退药累计回写等）
+            //   提交不被整行快照覆写吞掉（TriageServiceImpl BUG-07 补丁回写同款形态）
+            DispenseItem patch = new DispenseItem();
+            patch.setId(item.getId());
+            patch.setBatchId(batch.getId());
+            patch.setBatchNo(batch.getBatchNo());
+            patch.setTraceCodes(toJson(line.traceCodes()));
+            itemPatches.add(patch);
+        }
+        // 数据库写操作：明细回填一次批更（A.4.3-16 Db.updateBatchById JDBC 批处理：N 行 N 更收敛
+        //   1 批）——本段为无状态列回填无 0 行语义，可批；循环内任一拒绝整事务回滚（批次锁不
+        //   残留），批更后置与逐行写面零对外差异
+        if (!itemPatches.isEmpty()) {
+            Db.updateBatchById(itemPatches);
         }
         // 数据库写操作：调配留痕走指定列补丁回填（EX-24｜BE-A2-05 并发防覆写）——仅携 id+状态同值
         //   +调配人的补丁实体落库，NOT_NULL 更新策略下读点快照列（单号/处方号/患者/库房/核对发药
@@ -415,14 +430,19 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 .eq(DispenseItem::getItemStatus, "NORMAL")
                 .orderByAsc(DispenseItem::getId));
         List<DispenseCompletedPayload.Line> summary = new ArrayList<>(items.size());
+        // 出库流水行集与实发回写补丁行集（循环内仅收集，循环外各一次批量写——A.4.3-16 批量写纪律）
+        List<StockLedger> ledgers = new ArrayList<>(items.size());
+        List<DispenseItem> itemPatches = new ArrayList<>(items.size());
         for (DispenseItem item : items) {
-            // 数据库写操作：批次锁定转扣减（0 行=违例整事务回滚）+ 出库流水（红线 2：与扣减同事务）
+            // 数据库写操作：批次锁定转扣减（0 行=违例整事务回滚）。EX-37 甄别：扣减为「仅锁定余量
+            //   可扣」的 0 行违例防线（未锁先发定性），CAS 条件更新逐行保留禁批量化
             if (drugBatchMapper.deductLocked(item.getBatchId(), item.getRequestedQty()) != 1) {
                 throw new BizException(
                         PharmacyErrorCode.STOCK_INSUFFICIENT,
                         HttpStatus.CONFLICT,
                         "批次锁定扣减失败（未锁先发违例）：batchId=" + item.getBatchId());
             }
+            // 数据库写操作（收集段）：出库流水行（红线 2：负数量 ISSUE 行与扣减同事务落账）
             StockLedger ledger = new StockLedger();
             ledger.setStorehouse(d.getStorehouse());
             ledger.setDrugId(item.getDrugId());
@@ -431,14 +451,25 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             ledger.setQuantity(item.getRequestedQty().negate());
             ledger.setRefDoc(dispenseNo);
             ledger.setOperator(operator);
-            stockLedgerMapper.insert(ledger);
-            item.setIssuedQty(item.getRequestedQty());
-            dispenseItemMapper.updateById(item);
+            ledgers.add(ledger);
+            // 数据库写操作（收集段）：实发数回写补丁——EX-24 补丁化仅携 id+实发数（读点快照列
+            //   不进 SET，跨队乱序窗口内对端写面提交不被覆写吞掉，BUG-07 补丁回写同款形态）
+            DispenseItem patch = new DispenseItem();
+            patch.setId(item.getId());
+            patch.setIssuedQty(item.getRequestedQty());
+            itemPatches.add(patch);
             summary.add(new DispenseCompletedPayload.Line(
                     item.getItemCode(),
                     item.getBatchNo(),
                     item.getRequestedQty().toPlainString(),
                     fromJson(item.getTraceCodes())));
+        }
+        // 数据库写操作：出库流水一次批插 + 实发回写一次批更（A.4.3-16：N 行 2N 写收敛 2 批；
+        //   行集与行序不变、ASSIGN_ID 自动填充、与扣减同事务红线 2 勾稽不变；任一扣减违例已在
+        //   批写前抛出整事务回滚，与逐行写面零对外差异）
+        if (!ledgers.isEmpty()) {
+            Db.saveBatch(ledgers);
+            Db.updateBatchById(itemPatches);
         }
         // 数据库写操作：处方终态基点迁移 DISPENSED
         if (prescriptionMapper.casStatus(rx.getId(), "DISPENSING", "DISPENSED") != 1) {
@@ -509,6 +540,9 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         boolean allReturned = true;
         // 退药行摘要（随 returned 事件携出——id 29 desc 冻结 lines[] 非空，billing/退费联动读此面）
         List<DispenseReturnedPayload.Line> summary = new ArrayList<>(items.size());
+        // 回补流水行集与退药回写补丁行集（循环内仅收集，循环外各一次批量写——A.4.3-16 批量写纪律）
+        List<StockLedger> ledgers = new ArrayList<>(items.size());
+        List<DispenseItem> itemPatches = new ArrayList<>(items.size());
         for (DispenseItem item : items) {
             DispenseReturnRequest.ReturnLine line = req.items().stream()
                     .filter(l -> String.valueOf(item.getPrescriptionItemId()).equals(l.prescriptionItemId()))
@@ -533,13 +567,15 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                         HttpStatus.CONFLICT,
                         "追溯码与发药记录不一致（防回流药核验拒）：itemCode=" + item.getItemCode());
             }
-            // 数据库写操作：批次回补 + 回补流水（红线 2：与批次变更同事务；回补同一批次保批号勾稽）
+            // 数据库写操作：批次回补（回补同一批次保批号勾稽，红线 2：与批次变更同事务）。EX-37
+            //   甄别：回补为「批次行在库」0 行漂移防线，CAS 条件更新逐行保留禁批量化
             if (drugBatchMapper.restock(item.getBatchId(), returnQty) != 1) {
                 throw new BizException(
                         PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
                         HttpStatus.CONFLICT,
                         "批次回补失败：batchId=" + item.getBatchId());
             }
+            // 数据库写操作（收集段）：回补流水行（正数量 RETURN_RESTOCK，红线 2 同事务勾稽）
             StockLedger ledger = new StockLedger();
             ledger.setStorehouse(d.getStorehouse());
             ledger.setDrugId(item.getDrugId());
@@ -548,12 +584,20 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             ledger.setQuantity(returnQty);
             ledger.setRefDoc(d.getDispenseNo());
             ledger.setOperator(operator);
-            stockLedgerMapper.insert(ledger);
-            item.setReturnedQty(item.getReturnedQty().add(returnQty));
-            dispenseItemMapper.updateById(item);
+            ledgers.add(ledger);
+            // 数据库写操作（收集段）：退药数回写补丁——EX-24 补丁化仅携 id+退药数（读点快照列不
+            //   进 SET，跨队乱序窗口内对端写面提交不被覆写吞掉，BUG-07 补丁回写同款形态）；
+            //   内存实体同步累计保留（后续 allReturned 判定直取累计后内存态）
+            BigDecimal returnedTotal = item.getReturnedQty().add(returnQty);
+            item.setReturnedQty(returnedTotal);
+            DispenseItem patch = new DispenseItem();
+            patch.setId(item.getId());
+            patch.setReturnedQty(returnedTotal);
+            itemPatches.add(patch);
             // 数据库写操作：处方明细已退数量累计回写（V701 列注释「已退数量（退药回写）」承诺的回写点，
             //   occupancy returnedQuantity 数据源；服务端原子累加、与 dispense_item 回写同事务；
-            //   0 行=明细行缺失/已逻辑删脏数据，显式拒整事务回滚——casMarkFeesSettled 影响行数范式）
+            //   0 行=明细行缺失/已逻辑删脏数据，显式拒整事务回滚——casMarkFeesSettled 影响行数范式）。
+            //   EX-37 甄别：服务端原子累加（SET 列=自身+增量）语义禁批量化，逐行保留
             if (prescriptionItemMapper.accumulateReturnedQuantity(item.getPrescriptionItemId(), returnQty) != 1) {
                 throw new BizException(
                         PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
@@ -562,9 +606,16 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             }
             summary.add(new DispenseReturnedPayload.Line(
                     item.getItemCode(), item.getBatchNo(), returnQty.toPlainString(), issuedTraces));
-            if (item.getReturnedQty().compareTo(item.getIssuedQty()) != 0) {
+            if (returnedTotal.compareTo(item.getIssuedQty()) != 0) {
                 allReturned = false;
             }
+        }
+        // 数据库写操作：回补流水一次批插 + 退药回写一次批更（A.4.3-16：N 行 2N 写收敛 2 批；行集
+        //   与行序不变、与回补同事务红线 2 勾稽不变；任一回补/回写违例已在批写前抛出整事务回滚，
+        //   与逐行写面零对外差异）
+        if (!ledgers.isEmpty()) {
+            Db.saveBatch(ledgers);
+            Db.updateBatchById(itemPatches);
         }
         // 数据库写操作：发药单终态（受理完成即置——Spec :134；处方终态归 refund.approved，Spec :132）
         String target = allReturned ? "FULL_RETURNED" : "PART_RETURNED";
@@ -605,6 +656,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 .eq(DispenseItem::getDispenseId, d.getId())
                 .eq(DispenseItem::getItemStatus, "NORMAL")
                 .orderByAsc(DispenseItem::getId));
+        // 明细退场补丁行集（循环内仅收集，循环外一次批更——A.4.3-16 批量写纪律）
+        List<DispenseItem> itemPatches = new ArrayList<>(items.size());
         for (DispenseItem item : items) {
             DispenseReturnRequest.ReturnLine line = req.items().stream()
                     .filter(l -> String.valueOf(item.getPrescriptionItemId()).equals(l.prescriptionItemId()))
@@ -614,15 +667,25 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                             HttpStatus.BAD_REQUEST,
                             "明细退场缺行：prescriptionItemId=" + item.getPrescriptionItemId()));
             BigDecimal qty = parseReturnQuantity(line.returnQuantity());
-            // 数据库写操作：释放锁定（锁定数非数量流水，不落 stock_ledger；明细退场标记）
+            // 数据库写操作：释放锁定（锁定数非数量流水，不落 stock_ledger）。EX-37 甄别：释放为
+            //   「锁定数足额」0 行漂移防线，CAS 条件更新逐行保留禁批量化
             if (drugBatchMapper.releaseLock(item.getBatchId(), qty) != 1) {
                 throw new BizException(
                         PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
                         HttpStatus.CONFLICT,
                         "批次锁定释放失败：batchId=" + item.getBatchId());
             }
-            item.setItemStatus("CANCELLED");
-            dispenseItemMapper.updateById(item);
+            // 数据库写操作（收集段）：明细退场补丁——EX-24 补丁化仅携 id+明细状态（读点快照列
+            //   不进 SET，跨队乱序窗口内对端写面提交不被覆写吞掉，BUG-07 补丁回写同款形态）
+            DispenseItem patch = new DispenseItem();
+            patch.setId(item.getId());
+            patch.setItemStatus("CANCELLED");
+            itemPatches.add(patch);
+        }
+        // 数据库写操作：明细退场一次批更（A.4.3-16 Db.updateBatchById JDBC 批处理：N 行 N 更收敛
+        //   1 批）——本段为无状态标记无 0 行语义，可批；任一释放违例整事务回滚零对外差异
+        if (!itemPatches.isEmpty()) {
+            Db.updateBatchById(itemPatches);
         }
         log.warn("发药中明细退场：dispenseNo={}，处方保持 DISPENSING 继续剩余明细；operator={}", d.getDispenseNo(), operator);
     }
@@ -835,9 +898,12 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                 }
                 // 批查分组取行（原逐单 NORMAL 明细 selectList 同位替换；缺位空清单=原空返回形态）
                 List<DispenseItem> items = itemsByDispenseId.getOrDefault(d.getId(), List.of());
+                // 明细退场补丁行集（单内收集、单内一次批更——保持「明细先行→单据 CAS 后置」原写序）
+                List<DispenseItem> itemPatches = new ArrayList<>(items.size());
                 for (DispenseItem item : items) {
                     // 数据库写操作：释放锁定批次（锁定数非数量流水，不落 stock_ledger——DISPENSING_CANCEL
-                    //   退场段同款形态；CREATED 单明细未锁批 batchId 缺位零释放面）；0 行=批次漂移整事务回滚
+                    //   退场段同款形态；CREATED 单明细未锁批 batchId 缺位零释放面）；0 行=批次漂移整事务
+                    //   回滚。EX-37 甄别：释放为「锁定数足额」0 行漂移防线，CAS 条件更新逐行保留禁批量化
                     if (item.getBatchId() != null
                             && drugBatchMapper.releaseLock(item.getBatchId(), item.getRequestedQty()) != 1) {
                         throw new BizException(
@@ -845,8 +911,18 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                                 HttpStatus.CONFLICT,
                                 "批次锁定释放失败：batchId=" + item.getBatchId());
                     }
-                    item.setItemStatus("CANCELLED");
-                    dispenseItemMapper.updateById(item);
+                    // 数据库写操作（收集段）：明细退场补丁——EX-24 补丁化仅携 id+明细状态（读点快照
+                    //   列不进 SET，跨队乱序窗口内对端写面提交不被覆写吞掉，BUG-07 补丁回写同款形态）
+                    DispenseItem patch = new DispenseItem();
+                    patch.setId(item.getId());
+                    patch.setItemStatus("CANCELLED");
+                    itemPatches.add(patch);
+                }
+                // 数据库写操作：单内明细退场一次批更（A.4.3-16：M 行 M 更收敛 1 批/单，置于单据 CAS
+                //   前保持原「明细→单据」写序与锁序；本段为无状态标记无 0 行语义可批；空集零批调用
+                //   =原零写面）
+                if (!itemPatches.isEmpty()) {
+                    Db.updateBatchById(itemPatches);
                 }
                 // 数据库写操作：发药单同步作废（Spec :134 CREATED/PICKING→CANCELLED 处方作废联动；
                 //   PICKED 已核待发同样未出库，随整单退场释放锁）；0 行=并发被抢显式拒（事务回滚重投再定性）

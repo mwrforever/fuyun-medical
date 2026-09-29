@@ -27,13 +27,11 @@ import com.fuyun.pharmacy.entity.Dispense;
 import com.fuyun.pharmacy.entity.DispenseItem;
 import com.fuyun.pharmacy.entity.Prescription;
 import com.fuyun.pharmacy.entity.PrescriptionItem;
-import com.fuyun.pharmacy.entity.StockLedger;
 import com.fuyun.pharmacy.mapper.DispenseItemMapper;
 import com.fuyun.pharmacy.mapper.DispenseMapper;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
-import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import java.math.BigDecimal;
 import java.util.List;
@@ -70,9 +68,6 @@ class DispenseServiceImplTest {
 
     @Mock
     private DrugBatchMapper drugBatchMapper;
-
-    @Mock
-    private StockLedgerMapper stockLedgerMapper;
 
     @Mock
     private PrescriptionMapper prescriptionMapper;
@@ -116,12 +111,12 @@ class DispenseServiceImplTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十一参直注（Task 11 扩第十一参 settlementQueryPort；objectMapper 用真实例，与本域单测同款）
+        // 构造器十参直注（Task 11 扩第十一参 settlementQueryPort、EX-37 收敛十参——流水批插改 Db
+        // 通道后 StockLedgerMapper 依赖卸除；objectMapper 用真实例，与本域单测同款）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
                 drugBatchMapper,
-                stockLedgerMapper,
                 prescriptionMapper,
                 prescriptionItemMapper,
                 batchSelectService,
@@ -479,14 +474,18 @@ class DispenseServiceImplTest {
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(plain));
         when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(1);
 
-        impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
+        // EX-37 桩面通道迁移：明细退场从逐行 updateById 改 Db.updateBatchById 批更（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
 
-        verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
-        verify(drugBatchMapper, never()).releaseLock(anyLong(), any()); // 未锁批零释放
-        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper).updateById(itemCaptor.capture());
-        assertThat(itemCaptor.getValue().getItemStatus()).isEqualTo("CANCELLED");
-        verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+            verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
+            verify(drugBatchMapper, never()).releaseLock(anyLong(), any()); // 未锁批零释放
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> itemCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(itemCaptor.capture()));
+            assertThat(itemCaptor.getValue().get(0).getItemStatus()).isEqualTo("CANCELLED");
+            verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+        }
     }
 
     @Test
@@ -509,15 +508,20 @@ class DispenseServiceImplTest {
         when(drugBatchMapper.releaseLock(55L, new BigDecimal("2"))).thenReturn(1);
         when(dispenseMapper.casStatus(900L, "PICKING", "CANCELLED")).thenReturn(1);
 
-        impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
+        // EX-37 桩面通道迁移：明细退场从逐行 updateById 改 Db.updateBatchById 批更（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
 
-        // 锁定数非数量流水：释放不落 stock_ledger（DISPENSING_CANCEL 退场段同款形态）
-        verify(drugBatchMapper).releaseLock(55L, new BigDecimal("2"));
-        verify(stockLedgerMapper, never()).insert(any(StockLedger.class));
-        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper).updateById(itemCaptor.capture());
-        assertThat(itemCaptor.getValue().getItemStatus()).isEqualTo("CANCELLED");
-        verify(dispenseMapper).casStatus(900L, "PICKING", "CANCELLED");
+            // 锁定数非数量流水：释放不落 stock_ledger（DISPENSING_CANCEL 退场段同款形态；
+            //   EX-37 桩面通道迁移——零流水断言迁至 Db.saveBatch 批插通道）
+            verify(drugBatchMapper).releaseLock(55L, new BigDecimal("2"));
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> itemCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(itemCaptor.capture()));
+            assertThat(itemCaptor.getValue().get(0).getItemStatus()).isEqualTo("CANCELLED");
+            verify(dispenseMapper).casStatus(900L, "PICKING", "CANCELLED");
+        }
     }
 
     @Test
@@ -677,9 +681,12 @@ class DispenseServiceImplTest {
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(plain));
         when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(0);
 
-        assertThatThrownBy(() -> impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认"))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
+        // EX-37 桩面补位：单内明细退场批写先于单据 CAS 发生（真实库随 CAS 违例整事务回滚，静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认"))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
+        }
     }
 
     @Test
@@ -713,53 +720,127 @@ class DispenseServiceImplTest {
         when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(1);
         when(dispenseMapper.casStatus(901L, "PICKING", "CANCELLED")).thenReturn(1);
 
-        impl.voidUndispensedByRx(
-                List.of("R20260918000001", "R20260918000002", "R20260918000003", "R20260918000004"), "退费逆向终态确认");
+        // EX-37 桩面通道迁移：明细退场从逐行 updateById 改逐单 Db.updateBatchById 批更（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.voidUndispensedByRx(
+                    List.of("R20260918000001", "R20260918000002", "R20260918000003", "R20260918000004"), "退费逆向终态确认");
 
-        // 三级批查各恰一次（旧逐行链=4 号 selectOne+守卫通过方逐处方/逐单 selectList；批查契约下
-        //   与行数解耦恒 3 查），处方逐号 selectOne 旧路径零触达
-        verify(prescriptionMapper, times(1)).selectList(any());
-        verify(prescriptionMapper, never()).selectOne(any());
-        verify(dispenseMapper, times(1)).selectList(any());
-        verify(dispenseItemMapper, times(1)).selectList(any());
-        // 批查键集契约：处方批查键集=清单 rxNos 全集；活动单批查键集=全部命中处方 rxNo 集
-        //   （脏差异缺号不入键集，只排除 CANCELLED 一个谓词值）；明细批查键集=全部涉及发药单 id 集
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Wrapper<Prescription>> rxQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(prescriptionMapper).selectList(rxQueryCaptor.capture());
-        AbstractWrapper<?, ?, ?> rxWrapper = (AbstractWrapper<?, ?, ?>) rxQueryCaptor.getValue();
-        rxWrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
-        assertThat(rxWrapper.getParamNameValuePairs().values())
-                .containsExactlyInAnyOrder("R20260918000001", "R20260918000002", "R20260918000003", "R20260918000004");
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Wrapper<Dispense>> dispenseQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(dispenseMapper).selectList(dispenseQueryCaptor.capture());
-        AbstractWrapper<?, ?, ?> dispenseWrapper = (AbstractWrapper<?, ?, ?>) dispenseQueryCaptor.getValue();
-        dispenseWrapper.getSqlSegment();
-        assertThat(dispenseWrapper.getParamNameValuePairs().values())
-                .containsExactlyInAnyOrder("R20260918000001", "R20260918000002", "R20260918000003", "CANCELLED");
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Wrapper<DispenseItem>> itemQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
-        verify(dispenseItemMapper).selectList(itemQueryCaptor.capture());
-        AbstractWrapper<?, ?, ?> itemWrapper = (AbstractWrapper<?, ?, ?>) itemQueryCaptor.getValue();
-        itemWrapper.getSqlSegment();
-        assertThat(itemWrapper.getParamNameValuePairs().values()).containsExactlyInAnyOrder(900L, 901L, "NORMAL");
-        // 逐行判定输出与旧实现行为快照等价：守卫行与缺号零写，作废行按清单序逐行 CAS（遇序保序）
-        verify(prescriptionMapper, never()).casStatus(eq(102L), anyString(), anyString());
-        InOrder voidOrder = inOrder(prescriptionMapper);
-        voidOrder.verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
-        voidOrder.verify(prescriptionMapper).casStatus(101L, "DISPENSING", "CANCELLED");
-        // 明细全部退场为 CANCELLED（三行全改，含 CREATED 单未锁批行）
-        ArgumentCaptor<DispenseItem> itemWriteCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper, times(3)).updateById(itemWriteCaptor.capture());
-        assertThat(itemWriteCaptor.getAllValues())
-                .allSatisfy(item -> assertThat(item.getItemStatus()).isEqualTo("CANCELLED"));
-        // 锁定释放仅锁批行（batchId 缺位零释放面），发药单同步作废
-        verify(drugBatchMapper).releaseLock(eq(55L), any());
-        verify(drugBatchMapper).releaseLock(eq(66L), any());
-        verify(drugBatchMapper, times(2)).releaseLock(anyLong(), any());
-        verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
-        verify(dispenseMapper).casStatus(901L, "PICKING", "CANCELLED");
+            // 三级批查各恰一次（旧逐行链=4 号 selectOne+守卫通过方逐处方/逐单 selectList；批查契约下
+            //   与行数解耦恒 3 查），处方逐号 selectOne 旧路径零触达
+            verify(prescriptionMapper, times(1)).selectList(any());
+            verify(prescriptionMapper, never()).selectOne(any());
+            verify(dispenseMapper, times(1)).selectList(any());
+            verify(dispenseItemMapper, times(1)).selectList(any());
+            // 批查键集契约：处方批查键集=清单 rxNos 全集；活动单批查键集=全部命中处方 rxNo 集
+            //   （脏差异缺号不入键集，只排除 CANCELLED 一个谓词值）；明细批查键集=全部涉及发药单 id 集
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Wrapper<Prescription>> rxQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+            verify(prescriptionMapper).selectList(rxQueryCaptor.capture());
+            AbstractWrapper<?, ?, ?> rxWrapper = (AbstractWrapper<?, ?, ?>) rxQueryCaptor.getValue();
+            rxWrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
+            assertThat(rxWrapper.getParamNameValuePairs().values())
+                    .containsExactlyInAnyOrder(
+                            "R20260918000001", "R20260918000002", "R20260918000003", "R20260918000004");
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Wrapper<Dispense>> dispenseQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+            verify(dispenseMapper).selectList(dispenseQueryCaptor.capture());
+            AbstractWrapper<?, ?, ?> dispenseWrapper = (AbstractWrapper<?, ?, ?>) dispenseQueryCaptor.getValue();
+            dispenseWrapper.getSqlSegment();
+            assertThat(dispenseWrapper.getParamNameValuePairs().values())
+                    .containsExactlyInAnyOrder("R20260918000001", "R20260918000002", "R20260918000003", "CANCELLED");
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Wrapper<DispenseItem>> itemQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+            verify(dispenseItemMapper).selectList(itemQueryCaptor.capture());
+            AbstractWrapper<?, ?, ?> itemWrapper = (AbstractWrapper<?, ?, ?>) itemQueryCaptor.getValue();
+            itemWrapper.getSqlSegment();
+            assertThat(itemWrapper.getParamNameValuePairs().values()).containsExactlyInAnyOrder(900L, 901L, "NORMAL");
+            // 逐行判定输出与旧实现行为快照等价：守卫行与缺号零写，作废行按清单序逐行 CAS（遇序保序）
+            verify(prescriptionMapper, never()).casStatus(eq(102L), anyString(), anyString());
+            InOrder voidOrder = inOrder(prescriptionMapper);
+            voidOrder.verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
+            voidOrder.verify(prescriptionMapper).casStatus(101L, "DISPENSING", "CANCELLED");
+            // 明细全部退场为 CANCELLED（三行全改，含 CREATED 单未锁批行）——逐单一次批更（单 900 两行
+            //   一批、单 901 一行一批，明细先行→单据 CAS 后置写序不变）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> itemWriteCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(itemWriteCaptor.capture()), times(2));
+            assertThat(itemWriteCaptor.getAllValues().get(0))
+                    .extracting(DispenseItem::getId)
+                    .containsExactly(1L, 2L);
+            assertThat(itemWriteCaptor.getAllValues().get(1))
+                    .extracting(DispenseItem::getId)
+                    .containsExactly(3L);
+            assertThat(itemWriteCaptor.getAllValues().stream().flatMap(List::stream))
+                    .allSatisfy(item -> assertThat(item.getItemStatus()).isEqualTo("CANCELLED"));
+            // 锁定释放仅锁批行（batchId 缺位零释放面），发药单同步作废
+            verify(drugBatchMapper).releaseLock(eq(55L), any());
+            verify(drugBatchMapper).releaseLock(eq(66L), any());
+            verify(drugBatchMapper, times(2)).releaseLock(anyLong(), any());
+            verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+            verify(dispenseMapper).casStatus(901L, "PICKING", "CANCELLED");
+        }
+    }
+
+    @Test
+    @DisplayName("order.cancelled 批量写锚定（EX-37）：明细退场逐单一次批更（M 行 M 更收敛 1 批/单） "
+            + "+ 锁定释放/单据 CAS 0 行防线逐行保留 + 退场补丁仅携 id+itemStatus")
+    void orderCancelledBatchesItemPatchPerDispenseWithRowGuardsKept() {
+        DispenseServiceImpl impl = newService();
+        // 两处方待作废：R1 挂 CREATED 单（明细两行——未锁批+锁批 55）、R2 挂 PICKING 单（明细一行——锁批 66）
+        Prescription voiding1 = rxPendingFee(100L, "R20260918000001");
+        voiding1.setStatus("PENDING_DISPENSE");
+        Prescription voiding2 = rxPendingFee(101L, "R20260918000002");
+        voiding2.setStatus("DISPENSING");
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(voiding1, voiding2));
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
+                .thenReturn(1);
+        when(prescriptionMapper.casStatus(101L, "DISPENSING", "CANCELLED")).thenReturn(1);
+        Dispense created = activeDispense("CREATED");
+        Dispense picking = activeDispense("PICKING");
+        picking.setId(901L);
+        picking.setDispenseNo("D20260918000002");
+        picking.setRxNo("R20260918000002");
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(created, picking));
+        when(dispenseItemMapper.selectList(any()))
+                .thenReturn(List.of(normalItem(1L, 900L, null), normalItem(2L, 900L, 55L), normalItem(3L, 901L, 66L)));
+        // 锁定释放/单据作废条件更新逐行保留：0 行=批次漂移/并发被抢硬防线（禁批量吞语义）
+        when(drugBatchMapper.releaseLock(eq(55L), any())).thenReturn(1);
+        when(drugBatchMapper.releaseLock(eq(66L), any())).thenReturn(1);
+        when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(1);
+        when(dispenseMapper.casStatus(901L, "PICKING", "CANCELLED")).thenReturn(1);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.voidUndispensedByRx(List.of("R20260918000001", "R20260918000002"), "退费逆向终态确认");
+
+            verify(drugBatchMapper).releaseLock(eq(55L), any());
+            verify(drugBatchMapper).releaseLock(eq(66L), any());
+            verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+            verify(dispenseMapper).casStatus(901L, "PICKING", "CANCELLED");
+            // 明细退场逐单一次批更（保持「明细先行→单据 CAS 后置」的原单内写序），旧逐行通道下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> patchesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(patchesCaptor.capture()), times(2));
+            verify(dispenseItemMapper, never()).updateById(any(DispenseItem.class));
+            assertThat(patchesCaptor.getAllValues()).hasSize(2);
+            assertThat(patchesCaptor.getAllValues().get(0))
+                    .extracting(DispenseItem::getId)
+                    .containsExactly(1L, 2L); // 单 900 两行一批
+            assertThat(patchesCaptor.getAllValues().get(1))
+                    .extracting(DispenseItem::getId)
+                    .containsExactly(3L); // 单 901 一行一批
+            // EX-24 补丁纪律：仅携 id+明细状态，读点快照列（批次/数量等）不进 SET
+            assertThat(patchesCaptor.getAllValues().stream().flatMap(List::stream))
+                    .allSatisfy(patch -> {
+                        assertThat(patch.getItemStatus()).isEqualTo("CANCELLED");
+                        assertThat(patch.getDispenseId()).isNull();
+                        assertThat(patch.getPrescriptionItemId()).isNull();
+                        assertThat(patch.getDrugId()).isNull();
+                        assertThat(patch.getRequestedQty()).isNull();
+                        assertThat(patch.getBatchId()).isNull();
+                        assertThat(patch.getBatchNo()).isNull();
+                        assertThat(patch.getTraceCodes()).isNull();
+                    });
+        }
     }
 
     @Test
@@ -784,15 +865,19 @@ class DispenseServiceImplTest {
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(normalItem(1L, 900L, null)));
         when(dispenseMapper.casStatus(900L, "CREATED", "CANCELLED")).thenReturn(1);
 
-        assertThatThrownBy(() -> impl.voidUndispensedByRx(List.of("R20260918000001", "R20260918000002"), "退费逆向终态确认"))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
+        // EX-37 桩面补位：前序单明细退场批写先于脏单守卫发生（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(
+                            () -> impl.voidUndispensedByRx(List.of("R20260918000001", "R20260918000002"), "退费逆向终态确认"))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.DISPENSE_STATE_NOT_ALLOWED));
 
-        // 前序处方作废写面先行发生（真实库整事务回滚；mock 侧证明逐行序与旧链一致），脏单
-        //   零作废零释放（ISSUED 守卫先于明细处置）
-        verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
-        verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
-        verify(dispenseMapper, never()).casStatus(eq(901L), any(), any());
-        verify(drugBatchMapper, never()).releaseLock(anyLong(), any());
+            // 前序处方作废写面先行发生（真实库整事务回滚；mock 侧证明逐行序与旧链一致），脏单
+            //   零作废零释放（ISSUED 守卫先于明细处置）
+            verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
+            verify(dispenseMapper).casStatus(900L, "CREATED", "CANCELLED");
+            verify(dispenseMapper, never()).casStatus(eq(901L), any(), any());
+            verify(drugBatchMapper, never()).releaseLock(anyLong(), any());
+        }
     }
 }
