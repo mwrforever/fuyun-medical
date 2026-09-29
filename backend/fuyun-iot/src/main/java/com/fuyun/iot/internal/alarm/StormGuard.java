@@ -1,7 +1,9 @@
 package com.fuyun.iot.internal.alarm;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fuyun.iot.entity.IotAlarmEntity;
 import com.fuyun.iot.enums.AlarmRuleType;
+import com.fuyun.iot.enums.AlarmStatus;
 import com.fuyun.iot.mapper.IotAlarmMapper;
 import com.fuyun.iot.mapper.IotAlarmRuleMapper;
 import com.fuyun.iot.properties.AlarmProperties;
@@ -107,10 +109,10 @@ public class StormGuard {
     public boolean hasActiveAlarm(long ruleId, String deviceId) {
         // 数据库读操作：抑制① CAS 的查询面（同条件族，真实聚合以 CAS 影响行数为准）
         return alarmMapper
-                .selectList(com.baomidou.mybatisplus.core.toolkit.Wrappers.<IotAlarmEntity>lambdaQuery()
+                .selectList(Wrappers.<IotAlarmEntity>lambdaQuery()
                         .eq(IotAlarmEntity::getRuleId, ruleId)
                         .eq(IotAlarmEntity::getDeviceId, deviceId)
-                        .eq(IotAlarmEntity::getStatus, com.fuyun.iot.enums.AlarmStatus.ACTIVE))
+                        .eq(IotAlarmEntity::getStatus, AlarmStatus.ACTIVE))
                 .stream()
                 .findAny()
                 .isPresent();

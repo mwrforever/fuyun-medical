@@ -10,6 +10,7 @@ import com.fuyun.iot.service.ITelemetryPushService;
 import com.fuyun.iot.vo.DashboardSummaryVO;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -130,7 +131,7 @@ public class TelemetryPushServiceImpl implements ITelemetryPushService, SmartLif
         messagingTemplate.convertAndSend(
                 IotMessagingConstants.TOPIC_ALARM_PREFIX + alarm.getWardId(),
                 buildAlarmPayload(alarm),
-                java.util.Map.of("linkageNo", linkageNo));
+                Map.of("linkageNo", linkageNo));
         log.info(
                 "联动强提醒帧已推送（带 linkage 标记头）：topic={}{}，alarmNo={}，linkageNo={}",
                 IotMessagingConstants.TOPIC_ALARM_PREFIX,

@@ -13,6 +13,7 @@ import com.fuyun.iot.entity.IotDataQualityStatEntity;
 import com.fuyun.iot.entity.IotDeviceEntity;
 import com.fuyun.iot.entity.IotMetricDictEntity;
 import com.fuyun.iot.entity.IotMetricMappingEntity;
+import com.fuyun.iot.enums.DeviceStatus;
 import com.fuyun.iot.internal.IotAmqpMetrics;
 import com.fuyun.iot.internal.IotDomainEvent;
 import com.fuyun.iot.mapper.IotConsumerStatMapper;
@@ -213,7 +214,7 @@ public class QualityServiceImpl implements IQualityService {
         }
         BigDecimal freqPerMin = loadDeviceNominalFreq(device.getProductId());
         // 在线时长近似（类注释申报）：ONLINE 记全天 1440 分钟，其余状态记 0——精确时长随 P3 完善
-        int onlineMinutes = device.getStatus() == com.fuyun.iot.enums.DeviceStatus.ONLINE ? FULL_DAY_MINUTES : 0;
+        int onlineMinutes = device.getStatus() == DeviceStatus.ONLINE ? FULL_DAY_MINUTES : 0;
         long expected = freqPerMin == null
                 ? 0
                 : freqPerMin
@@ -337,7 +338,7 @@ public class QualityServiceImpl implements IQualityService {
     public int detectTelemetryAnomalies() {
         // 数据库读操作：在线候选设备扫描（LIMIT 硬顶泄压，截断 warn 留痕）
         List<IotDeviceEntity> onlineDevices = deviceMapper.selectList(Wrappers.<IotDeviceEntity>lambdaQuery()
-                .eq(IotDeviceEntity::getStatus, com.fuyun.iot.enums.DeviceStatus.ONLINE)
+                .eq(IotDeviceEntity::getStatus, DeviceStatus.ONLINE)
                 // 排序兜底：last_online_at 升序——状态最久未刷新者优先处置
                 .orderByAsc(IotDeviceEntity::getLastOnlineAt)
                 .last("LIMIT " + ANOMALY_SCAN_LIMIT));

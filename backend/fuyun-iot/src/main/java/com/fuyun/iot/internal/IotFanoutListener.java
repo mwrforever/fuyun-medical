@@ -13,6 +13,7 @@ import com.fuyun.iot.constants.IotMessagingConstants;
 import com.fuyun.iot.service.IDashboardService;
 import com.fuyun.iot.service.ITelemetryPushService;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -136,7 +137,7 @@ public class IotFanoutListener {
      * @param business       消费业务体（载荷解析与推送/刷新动作），非空
      */
     private void consumeWithIdempotency(
-            EventEnvelope envelope, String consumerModule, java.util.function.Consumer<EventEnvelope> business) {
+            EventEnvelope envelope, String consumerModule, Consumer<EventEnvelope> business) {
         // 标准范式①：重复投递（NX 失败且回查确认已处理）直接返回跳过，即 AUTO 确认
         if (!idempotencyService.tryAcquire(envelope.eventId(), consumerModule)) {
             log.info(

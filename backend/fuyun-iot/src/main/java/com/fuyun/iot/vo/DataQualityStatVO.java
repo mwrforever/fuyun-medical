@@ -1,6 +1,8 @@
 package com.fuyun.iot.vo;
 
+import com.fuyun.iot.entity.IotDataQualityStatEntity;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 
 /**
@@ -34,11 +36,11 @@ public record DataQualityStatVO(
      * @param entity 统计实体，非空
      * @return 统计视图，非空
      */
-    public static DataQualityStatVO from(com.fuyun.iot.entity.IotDataQualityStatEntity entity) {
+    public static DataQualityStatVO from(IotDataQualityStatEntity entity) {
         long expected = entity.getExpectedCount() == null ? 0 : entity.getExpectedCount();
         long received = entity.getReceivedCount() == null ? 0 : entity.getReceivedCount();
         BigDecimal usage = expected > 0
-                ? BigDecimal.valueOf(received).divide(BigDecimal.valueOf(expected), 4, java.math.RoundingMode.DOWN)
+                ? BigDecimal.valueOf(received).divide(BigDecimal.valueOf(expected), 4, RoundingMode.DOWN)
                 : BigDecimal.ZERO;
         // 利用率上限截断为 1（设备超预期频次上报时利用率不超 100%，语义为有数据时长占比）
         if (usage.compareTo(BigDecimal.ONE) > 0) {

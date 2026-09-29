@@ -2,6 +2,27 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 机械组 EX-04 全量收口：全仓全限定类名声明改 import+简名（BE-C3-11，纯机械零行为变化，按模块四提交）
+
+- **根因（BE-C3-11 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：IDispenseService:
+  :21 等 14 处全限定类名声明——backend 宪法 A.1 节第 13 条「禁止全限定类名声明」点名、
+  Spotless 不覆盖，消歧理由不成立。宪法收拢总裁决下按条款全量实扫收口（登记 14 处→
+  实扫 **44 处/28 文件**：首批 17+追加深包与 com.fuyun 20+实扫补 3+package-info 收尾
+  4——含预扫正则盲区 java.util.function/stream 深包与 com.baomidou Wrappers）。
+- **修复（src/main 范围，test 不扩；同名冲突消歧例外零适用）**：①iot 10 文件（ZoneOffset
+  /RoundingMode/Map.of/Consumer/Collectors.toSet/DeviceStatus/IotAlarmEntity 等枚举实体
+  /Wrappers.lambdaQuery/api package-info NamedInterface）；②patient 7 文件（LinkedHashMap
+  L1 缓存声明/Map.Entry 覆写签名/Arrays.stream/Collectors.joining/PatientConverter/
+  CardAccountLedger/AllergyChecker/PatientMatchCheckVO extends 尾项）；③pharmacy 4 文件
+  （List 签名 5 处含 PickLine/OccupancyVO 双限定/DispenseReturnRequest/DispenseVO/
+  DrugBatch/SettlementQueryPort/api package-info）；④跨模块收尾 5 文件（billing/nursing/
+  outpatient 三 api package-info NamedInterface 同款统一——全仓 8 处 package-info 形态
+  归一；common RoleContextHolder/system AuthTokenInterceptor 注释旧类名 PrivacyMaskService
+  →IPrivacyMaskService 同步，EX-03 配套）。Spotless 连带的链式调用换行重排为必要配套。
+- **验证**：iot 523/patient 240/pharmacy 167 用例全绿（=基线）+三模块 spotless 通过；
+  billing/nursing/outpatient 编译+spotless 通过；common/system spotless 通过；三模块
+  src/main FQN 复扫零残留。
+
 ## 2026-09-29 · 机械组 EX-06：workstation 零消费 vitalBoard API 移除（FE-Q1-14，死代码零容忍）
 
 - **根因（FE-Q1-14，2026-09-28 全仓性能与代码质量优化清单）**：workstation api/ward.ts

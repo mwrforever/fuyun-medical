@@ -247,7 +247,7 @@ public class ProductServiceImpl extends ServiceImpl<IotProductMapper, IotProduct
                 .toList();
         Set<String> existingCodes = metricDictMapper.selectBatchIds(metricCodes).stream()
                 .map(IotMetricDictEntity::getMetricCode)
-                .collect(java.util.stream.Collectors.toSet());
+                .collect(Collectors.toSet());
         for (UpdateMappingsRequest.MappingItem item : request.mappings()) {
             if (!existingCodes.contains(item.metricCode())) {
                 log.warn("映射编辑拒绝：字典码无命中：productId={}，metricCode={}", productId, item.metricCode());

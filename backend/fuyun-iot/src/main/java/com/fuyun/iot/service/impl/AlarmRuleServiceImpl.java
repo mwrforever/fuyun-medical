@@ -18,6 +18,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -187,10 +188,8 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
         List<IotTelemetryEntity> rows = telemetryMapper.selectList(Wrappers.<IotTelemetryEntity>lambdaQuery()
                 .eq(IotTelemetryEntity::getMetricCode, rule.getMetricCode())
                 .eq(rule.getDeviceId() != null, IotTelemetryEntity::getDeviceId, rule.getDeviceId())
-                .ge(
-                        IotTelemetryEntity::getOccurredAt,
-                        OffsetDateTime.ofInstant(request.from(), java.time.ZoneOffset.UTC))
-                .le(IotTelemetryEntity::getOccurredAt, OffsetDateTime.ofInstant(request.to(), java.time.ZoneOffset.UTC))
+                .ge(IotTelemetryEntity::getOccurredAt, OffsetDateTime.ofInstant(request.from(), ZoneOffset.UTC))
+                .le(IotTelemetryEntity::getOccurredAt, OffsetDateTime.ofInstant(request.to(), ZoneOffset.UTC))
                 .orderByAsc(IotTelemetryEntity::getOccurredAt)
                 .last("LIMIT " + SIMULATE_ROW_LIMIT));
         if (rows.size() >= SIMULATE_ROW_LIMIT) {

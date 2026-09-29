@@ -5,7 +5,9 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.iot.constants.IotMessagingConstants;
+import com.fuyun.iot.entity.IotAlarmEntity;
 import com.fuyun.iot.entity.IotConsumerStatEntity;
+import com.fuyun.iot.entity.IotDataQualityStatEntity;
 import com.fuyun.iot.entity.IotDeviceEntity;
 import com.fuyun.iot.entity.IotMetricMappingEntity;
 import com.fuyun.iot.enums.AlarmStatus;
@@ -256,9 +258,8 @@ public class DashboardServiceImpl implements IDashboardService {
         long offline = safeCount(deviceMapper.selectCount(
                 Wrappers.<IotDeviceEntity>lambdaQuery().eq(IotDeviceEntity::getStatus, DeviceStatus.OFFLINE)));
         long total = safeCount(deviceMapper.selectCount(null));
-        long activeAlarms =
-                safeCount(alarmMapper.selectCount(Wrappers.<com.fuyun.iot.entity.IotAlarmEntity>lambdaQuery()
-                        .eq(com.fuyun.iot.entity.IotAlarmEntity::getStatus, AlarmStatus.ACTIVE)));
+        long activeAlarms = safeCount(alarmMapper.selectCount(
+                Wrappers.<IotAlarmEntity>lambdaQuery().eq(IotAlarmEntity::getStatus, AlarmStatus.ACTIVE)));
         boolean stormActive = hasAnyStormKey();
         BigDecimal backlog = readBacklogEstimate();
         BigDecimal quality = readAverageQualityScore();
@@ -315,7 +316,7 @@ public class DashboardServiceImpl implements IDashboardService {
      */
     private BigDecimal readAverageQualityScore() {
         // 数据库读操作：单值 AVG 聚合（QueryWrapper 列名直书——单标量聚合不值得落 XML，A.4.3-15）
-        List<Object> rows = statMapper.selectObjs(new QueryWrapper<com.fuyun.iot.entity.IotDataQualityStatEntity>()
+        List<Object> rows = statMapper.selectObjs(new QueryWrapper<IotDataQualityStatEntity>()
                 .select("AVG(quality_score)")
                 .eq("stat_date", LocalDate.now(ZoneOffset.UTC)));
         if (rows.isEmpty() || rows.get(0) == null) {
