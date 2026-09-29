@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -274,6 +275,34 @@ class PossibleDuplicateServiceImplTest {
         int created = service.scanBatch();
         assertThat(created).isZero();
         verify(duplicateMapper, org.mockito.Mockito.times(0)).insert(any(PossibleDuplicate.class));
+    }
+
+    @Test
+    @DisplayName("批量扫描近窗档投影契约：恰 4 列 patient_id/name/sex/birth_date，created_at 近窗谓词零变化（EX-39）")
+    void scanBatchProjectsOnlyFourConsumedColumns() {
+        Patient recent = new Patient();
+        recent.setPatientId(SCAN_PATIENT_A);
+        recent.setName("李四");
+        recent.setSex("1");
+        recent.setBirthDate(LocalDate.of(1991, 1, 2));
+        when(patientService.lambdaQuery()).thenReturn(new LambdaQueryChainWrapper<>(patientMapper));
+        when(patientMapper.selectList(any())).thenReturn(List.of(recent));
+        // NO_MATCH 短路生成面：投影断言聚焦装载面，生成与计数语义另有专项用例锚定
+        when(matchingService.preCheck(any())).thenReturn(new PatientMatchCheckVO("NO_MATCH", null, null, List.of()));
+
+        service.scanBatch();
+
+        // 投影契约（EX-39/A.4.3-14）：循环仅消费姓名/性别/出生日期与自配对守卫的 patient_id
+        //   恰 4 列——宽行密文/盲索引/住址/建档渠道等列禁入投影（修复前全列取回近窗全部档）；
+        //   谓词零变化锚定：created_at 近窗下推不变（行集不变仅列收敛，评分入参等价）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<Patient>> patientCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(patientMapper).selectList(patientCaptor.capture());
+        LambdaQueryWrapper<Patient> wrapper = (LambdaQueryWrapper<Patient>) patientCaptor.getValue();
+        assertThat(wrapper.getSqlSelect().trim()).isEqualTo("patient_id,name,sex,birth_date");
+        assertThat(wrapper.getSqlSegment()).contains("created_at");
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .anySatisfy(value -> assertThat(value).isInstanceOf(OffsetDateTime.class));
     }
 
     @Test
