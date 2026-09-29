@@ -20,8 +20,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 预约挂号端点（/api/v1/outpatient 前缀，M03 Spec §7：动作子路径 POST 形态）：统一预约/当日挂号、
- * 预约取号、退号与改期（Task 6——退号四分支退费联动、改期先占新后退旧）。退号/改期为跨资金终态
- * 动作全量 @AuditLog(WRITE) 留痕（Global Constraints 审计口径；portal 匿名通道退号不经本控制器，
+ * 预约取号、退号与改期（Task 6——退号四分支退费联动、改期先占新后退旧）。四个写端点全量
+ * @AuditLog(WRITE) 留痕（审计全量口径，总 Spec 写操作全留痕；portal 匿名通道退号不经本控制器，
  * 留痕经服务层哨兵值承载）。操作者留痕经审计切面与 updated_by 承载。职责边界：仅 @Valid 校验
  * +调用 service+编排响应，禁业务逻辑与事务（宪法 B.1/A.1-8）。
  */
@@ -41,6 +41,7 @@ public class AppointmentController {
      * @return 预约单出参（apptNo/status/visitId/payDeadline），非空
      */
     @Operation(summary = "统一预约/当日挂号")
+    @AuditLog(actionType = AuditActionType.WRITE)
     @PostMapping("/appointments")
     public AppointmentVO book(@Valid @RequestBody AppointmentCreateRequest request) {
         return appointmentService.book(request);
@@ -54,6 +55,7 @@ public class AppointmentController {
      * @return 就诊记录出参（visitId），非空
      */
     @Operation(summary = "预约取号")
+    @AuditLog(actionType = AuditActionType.WRITE)
     @PostMapping("/appointments/{no}/take")
     public VisitVO take(@PathVariable("no") String no) {
         return appointmentService.take(no);

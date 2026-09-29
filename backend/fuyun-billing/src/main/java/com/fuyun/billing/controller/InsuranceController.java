@@ -31,9 +31,10 @@ import org.springframework.web.bind.annotation.RestController;
  * 医保基线端点（FU-M13-05 接口位，已裁决 3 口径：演示走模拟通道，真实通道 P5 替换网关实现后
  * 契约零改）：门诊登记/费用上传/撤销/调用留痕查询/补偿重试/电子凭证核验。
  *
- * <p>controller 禁业务逻辑与事务（A.1-8）：端点为网关/留痕服务的薄透传位；撤销与补偿重试端点
- * 挂 WRITE 审计（@AuditLog 注解 + AuditLogAspect 上下文内拦截落 system.audit_log）。调用口径
- * 同 Global Constraints 事务红线：模拟适应器零 IO 事务内直调合规，P5 真实通道改事务外两段式。
+ * <p>controller 禁业务逻辑与事务（A.1-8）：端点为网关/留痕服务的薄透传位；写端点（门诊登记/
+ * 费用上传/撤销/补偿重试）全量挂 WRITE 审计（@AuditLog 注解 + AuditLogAspect 上下文内拦截落
+ * system.audit_log，审计全量口径）。调用口径同 Global Constraints 事务红线：模拟适应器零 IO
+ * 事务内直调合规，P5 真实通道改事务外两段式。
  */
 @Tag(name = "billing-insurance", description = "M13 医保基线接口位（模拟通道，FU-M13-05）")
 @RestController
@@ -57,7 +58,7 @@ public class InsuranceController {
     }
 
     /**
-     * 门诊登记（POST /insurance/register?visitId=&patientId=，基线交易码 2001 接口位）。
+     * 门诊登记（POST /insurance/register?visitId=&patientId=，基线交易码 2001 接口位；WRITE 审计）。
      *
      * @param visitId   CF-3 就诊号（请求参数）；来源：收费员工作站登记动作
      * @param patientId 患者主索引（请求参数）
@@ -65,12 +66,14 @@ public class InsuranceController {
      */
     @Operation(summary = "医保门诊登记（2001 接口位）", operationId = "registerInsuranceVisit")
     @PostMapping("/insurance/register")
+    @AuditLog(actionType = AuditActionType.WRITE)
     public String register(@RequestParam String visitId, @RequestParam long patientId) {
         return insuranceGateway.register(visitId, patientId);
     }
 
     /**
-     * 费用上传（POST /insurance/fee-uploads?visitId=，基线交易码 2101 接口位；请求体=费用行 id 列表）。
+     * 费用上传（POST /insurance/fee-uploads?visitId=，基线交易码 2101 接口位；请求体=费用行 id 列表；
+     * WRITE 审计）。
      *
      * @param visitId CF-3 就诊号（请求参数）
      * @param feeIds  费用行 id 列表（请求体 JSON 数组）
@@ -78,6 +81,7 @@ public class InsuranceController {
      */
     @Operation(summary = "医保费用上传（2101 接口位）", operationId = "uploadInsuranceFees")
     @PostMapping("/insurance/fee-uploads")
+    @AuditLog(actionType = AuditActionType.WRITE)
     public int feeUpload(@RequestParam String visitId, @RequestBody List<Long> feeIds) {
         return insuranceGateway.feeUpload(visitId, feeIds);
     }
