@@ -228,6 +228,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 throw new BizException(
                         BillingErrorCode.REFUND_AMOUNT_EXCEEDED, HttpStatus.CONFLICT, "退费金额超可退余额：" + fee.getId());
             }
+            // 退费金额累加（资金口径=服务端逐行算额求和入 amount，禁前端传额——红线 1 退侧同源；
+            //   lineAmounts 与请求行序一一对应，供 link 负向台账逐行落 refund_amount 明细）
             lineAmounts.add(lineAmount);
             amount += lineAmount;
             // 跨日判定：任一费用行计费日早于今日 → 全单按跨日分级（保守须审批）
@@ -375,6 +377,10 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 != 1) {
             throw concurrentApprovalConflict(id, "审批");
         }
+        // 数据库写操作：终批状态落库回写（前态 L1 一级即终批=PENDING_APPROVAL / L2 二级终批=
+        //   PENDING_SECOND_APPROVAL → APPROVED——资金放行语义，后续 execute 才动卡退钱；
+        //   终批人/时刻已经 casFinalApprove 同语句原子落表，此处全行回写内存镜像，
+        //   保证同事务后续事件载荷取值与库内一致）
         refund.setStatus(RefundStatus.APPROVED);
         refund.setApprover(approver);
         refund.setApprovedAt(approvedAt);
@@ -537,6 +543,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     HttpStatus.CONFLICT,
                     "退款额超卡侧原付合计：refund=" + refund.getAmount() + "，cardTotal=" + cardTotal);
         }
+        // 资金写操作（跨模块 M02 卡台账，同事务）：每卡单次全额贷记退费额 refund.getAmount()——
+        //   与写入侧「同卡多行求和一笔出账」口径对称（上文书签口径已去重），台账记 REFUND 入账；
+        //   回填台账流水 id 至 paymentRefundRef 作资金溯源锚（卡账户对账依据）
         for (Map.Entry<Long, Long> channel : cardChannels.entrySet()) {
             long accountId = channel.getKey();
             long txnId = cardAccountLedger.record(
@@ -577,6 +586,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             st.setStatus(SettlementStatus.REFUNDED);
             settlementMapper.updateById(st);
         }
+        // 数据库写操作：退费单终态落库（APPROVED→EXECUTED，资金动作已全部完成的单据收口；
+        //   事务首步 casMarkExecuted 已抢锚置库内状态，此处全行回写补 payment_refund_ref
+        //   卡台账流水引用与内存镜像，供日志/后续审计取值）
         refund.setStatus(RefundStatus.EXECUTED);
         updateById(refund);
         log.info(

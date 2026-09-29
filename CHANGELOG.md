@@ -2,6 +2,31 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（billing 组，第 6/6 b 路）：fuyun-billing 计价方法级与退费资金口径行注释补齐（BE-A4-06 计价侧+BE-A4-08，零行为变化）
+
+- **根因（BE-A4-06/08 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：计价语义
+  公开方法无方法级 Javadoc（BE-A4-06 组量约 10 跨门诊/计价，本组收口计价侧）；退费
+  RefundServiceImpl:511 等 4 处写语句无行级注释（退费资金口径行无锚点）——报告行号已因
+  OPT-05 退费三级级联/OPT-12 累计已退投影/OPT-13 押金投影三次改造失准，按「退费资金
+  口径写语句」语义实扫定位。
+- **补齐（纯注释，零代码行变化）**：方法级 1 方法+行级 4 处 / 2 文件——
+  PrescriptionFeePortImpl.cancelPendingBySourceRef（按来源单据号作废处方触发在途
+  PENDING 费用行组：三段定位谓词+逐行复用引擎 cancel 的 PENDING→CANCELLED+REQUIRED
+  传播加入 M06 调用方事务，全模块实扫唯一方法级缺口——计价链路 PricingEngine/
+  ChargePrice/ChargeItem/PricingRule 服务+接口+Controller+监听器已经 OPT-04 等改造补齐）
+  + RefundServiceImpl 行级 4（apply 逐行算额累加禁前端传额红线 1、lineAmounts 供负向
+  台账逐行落 refund_amount；approve 终批状态落库 PENDING_APPROVAL/
+  PENDING_SECOND_APPROVAL→APPROVED 资金放行语义、CAS 已原子落终批人全行回写保事件载荷
+  一致；execute 卡台账跨模块 M02 资金写每卡单次全额贷记与写入侧同卡多行求和出账口径
+  对称、回填流水 id 作资金溯源锚；execute 退费单终态 APPROVED→EXECUTED 事务首步 CAS
+  抢锚全行回写补 payment_refund_ref 流水引用）。**多退**：save+saveBatch 块注释、
+  casEscalateFirstApproval、casFinal/casReject/casMarkExecuted 三支 CAS、费用行判态块、
+  结算单 REFUNDED 落库行等已有行级锚点未动；Mapper 接口经人工核验均有完整 Javadoc。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿（fuyun-billing 291 用例，
+  reactor 六模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-billing spotless:check` 通过
+  （206 文件 clean）；`git diff` 复核 27 行全为注释新增、零删除、零代码行/签名/import
+  变化。**EX-01 六组全收口（iot/ward/pharmacy/system/integration/outpatient+billing）**。
+
 ## 2026-09-29 · 注释补齐环 EX-01（outpatient 组，第 6/6 a 路）：fuyun-outpatient 门诊排班方法级与预约/分诊关键行注释补齐（BE-A4-06 门诊侧+BE-A4-09/10，零行为变化）
 
 - **根因（BE-A4-06/09/10 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：门诊
