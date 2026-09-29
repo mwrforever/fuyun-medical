@@ -87,6 +87,15 @@ public class ColdChainServiceImpl implements IColdChainService {
         this.events = events;
     }
 
+    /**
+     * 冷链档案建档：签发 archive_no（全局唯一，部分唯一索引兜底并发建档窗口）后落行。
+     *
+     * <p>新建语义边界：当日尚无巡检记录，overdue 注记按合规基线（每日≥2 次）判定恒为 true。
+     *
+     * @param request 保存请求，非空；来源：POST /cold-chain/archives 请求体（@Valid 后置）——
+     *                purpose/deviceId/tempRangeType 必填，verifyDueAt/inventoryDigest 可空
+     * @return 建档后视图（overdue=true——新建当日零巡检天然逾期）
+     */
     @Override
     @Transactional
     public ColdChainArchiveVO createArchive(SaveColdChainArchiveRequest request) {
@@ -110,6 +119,16 @@ public class ColdChainServiceImpl implements IColdChainService {
         return ColdChainArchiveVO.from(entity, true);
     }
 
+    /**
+     * 冷链档案更新（用途/设备/温区/验证到期/存量摘要可维护；archive_no 不可变）。
+     *
+     * <p>执行流程：存在性前置校验（WD-1004）→ 属性列整行更新 → 按更新后档案惰性重判 overdue。
+     *
+     * @param archiveNo 档案业务号，非空；来源：PUT 端点路径变量
+     * @param request   保存请求，非空；来源：PUT 请求体（@Valid 后置），字段可空性与建档同契约
+     * @return 更新后视图（带 overdue 注记）
+     * @throws com.fuyun.common.exception.BizException WD-1004（404，档案不存在）
+     */
     @Override
     @Transactional
     public ColdChainArchiveVO updateArchive(String archiveNo, SaveColdChainArchiveRequest request) {
@@ -125,6 +144,14 @@ public class ColdChainServiceImpl implements IColdChainService {
         return ColdChainArchiveVO.from(entity, overdueOf(List.of(entity)).getOrDefault(archiveNo, true));
     }
 
+    /**
+     * 冷链档案逻辑删（@TableLogic 置 deleted=1）。
+     *
+     * <p>边界条件：记录不级联删除——台账留痕红线；逻辑删后自然键查询面（requireArchive）不可见。
+     *
+     * @param archiveNo 档案业务号，非空；来源：DELETE 端点路径变量
+     * @throws com.fuyun.common.exception.BizException WD-1004（404，档案不存在）
+     */
     @Override
     @Transactional
     public void deleteArchive(String archiveNo) {
@@ -134,6 +161,13 @@ public class ColdChainServiceImpl implements IColdChainService {
         log.info("冷链档案已逻辑删：archiveNo={}，operator={}", archiveNo, operator());
     }
 
+    /**
+     * 冷链档案详情：读时惰性重判巡检 overdue 注记（每日≥2 次、间隔≥6h 两基线取「或」；不落库）。
+     *
+     * @param archiveNo 档案业务号，非空；来源：GET 详情端点路径变量
+     * @return 档案视图（含 overdue 注记；无当日巡检记录时判定 true）
+     * @throws com.fuyun.common.exception.BizException WD-1004（404，档案不存在）
+     */
     @Override
     @Transactional(readOnly = true)
     public ColdChainArchiveVO getArchive(String archiveNo) {
@@ -141,6 +175,17 @@ public class ColdChainServiceImpl implements IColdChainService {
         return ColdChainArchiveVO.from(entity, overdueOf(List.of(entity)).getOrDefault(archiveNo, true));
     }
 
+    /**
+     * 冷链档案分页（用途过滤，created_at 倒序）。
+     *
+     * <p>执行流程：过滤分页查询 → 当页档案 overdue 批量惰性判定（单次 IN 聚合防 N+1，
+     * 管理面低频可接受）→ 组装出参。
+     *
+     * @param purpose 用途过滤，可空=不过滤；来源：查询参数（枚举绑定）
+     * @param page    页码（0 基，服务层换算 MP 1 基 current）；来源：查询参数，缺省 0
+     * @param size    单页条数（1-200，端点 @Valid 约束）；来源：查询参数，缺省 20
+     * @return 分页出参（0 基页码，行内 overdue 注记随行）
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<ColdChainArchiveVO> pageArchives(ColdChainPurpose purpose, int page, int size) {
@@ -162,6 +207,21 @@ public class ColdChainServiceImpl implements IColdChainService {
                 result.getTotal());
     }
 
+    /**
+     * 冷链记录登记（INSPECTION 巡检 / ALARM_HANDLE 告警处置 / DEVIATION 偏差共用入口）。
+     *
+     * <p>执行流程：档案存在性校验（WD-1004）→ ALARM_HANDLE 必填校验（alarm_ref +
+     * second_operator，缺任一 WD-1005，GC12 冻结）→ 签发 record_no 落行（recorded_by 取
+     * 操作者上下文）→ ALARM_HANDLE 在同一写事务内发布归档事件（AFTER_COMMIT 出 MQ；
+     * 回滚事务不发布）。
+     *
+     * @param archiveNo 档案业务号，非空；来源：记录登记端点路径变量
+     * @param request   登记请求，非空；来源：POST 请求体（@Valid 后置）——recordType 必填；
+     *                  alarmRef/secondOperator 仅 ALARM_HANDLE 必填，content 可空
+     * @return 登记后记录视图（recordedAt 为登记时刻）
+     * @throws com.fuyun.common.exception.BizException WD-1004（404，档案不存在）或
+     *                                               WD-1005（400，ALARM_HANDLE 缺必填对——补齐后重试）
+     */
     @Override
     @Transactional
     public ColdChainRecordVO registerRecord(String archiveNo, RegisterColdChainRecordRequest request) {
@@ -205,6 +265,13 @@ public class ColdChainServiceImpl implements IColdChainService {
         return ColdChainRecordVO.from(entity);
     }
 
+    /**
+     * 冷链记录列表（档案维度，登记时刻倒序——台账追溯口径）。
+     *
+     * @param archiveNo 档案业务号，非空；来源：记录列表端点路径变量
+     * @return 记录视图清单；档案无记录时为空清单（非 null）
+     * @throws com.fuyun.common.exception.BizException WD-1004（404，档案不存在）
+     */
     @Override
     @Transactional(readOnly = true)
     public List<ColdChainRecordVO> listRecords(String archiveNo) {

@@ -2,6 +2,24 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 注释补齐环 EX-01（ward 组，第 2/6）：fuyun-ward 病区呼叫/冷链/输液板状态机迁移公开方法 Javadoc 补齐（BE-A4-03，零行为变化）
+
+- **根因（BE-A4-03 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：病房呼叫/冷链/
+  输注板状态机迁移方法（WardCallServiceImpl:95 等，组量 18）缺粒度契约——公开方法无
+  方法级 Javadoc，状态迁移前后态与异常码（WD-xxxx/HTTP 口径）无契约锚点。
+- **补齐（纯注释，零代码行变化）**：实扫 fuyun-ward src/main/java 公开方法，按 BE-A4-03
+  语义范围补齐 18 方法 / 4 文件——WardCallServiceImpl 8（create/answer/progress/complete/
+  transfer/route/cancel/get：六态迁移表前后态、CAS 零行 WD-1002 并发口径、route 事务回滚
+  语义）+ ColdChainServiceImpl 7（档案 CRUD/记录登记：WD-1004/WD-1005 触发条件、
+  ALARM_HANDLE 同事务事件发布、overdue 惰性判定基线）+ InfusionBoardServiceImpl 2（看板
+  聚合/历史追溯：三档映射展示口径、曲线降级边界）+ VitalSignBoardServiceImpl 1（SCAN
+  禁 KEYS 红线、deviceId 维度过滤缺位申报）。**多退**：全模块其余公开面（4 控制器/4 服务
+  接口/2 mapper/WardSeqGate/4 消费监听器/WardMessagingConfig 等）实扫方法级 Javadoc 均已
+  合规（含参数/返回值/异常粒度），无需补齐，条目外文件零改动。
+- **验证**：`mvn -B -ntp -pl fuyun-ward -am test` 全绿（fuyun-ward 71 用例，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-ward spotless:check` 通过；`git diff -U0` 复核 195 行
+  全为 Javadoc 新增、零删除、零代码行/签名/import 变化。
+
 ## 2026-09-29 · 注释补齐环 EX-01（iot 组，第 1/6）：fuyun-iot 华为对接边界与 trivial 覆写公开方法 Javadoc 补齐（BE-A4-01/02/07，零行为变化）
 
 - **根因（BE-A4-01 评分 75 / BE-A4-07 评分 60，2026-09-28 全仓高风险问题清单低置信节）**：

@@ -90,6 +90,17 @@ public class WardCallServiceImpl implements IWardCallService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 手工创建呼叫（初始态 CREATED；同床位合并取消 + 发号落行）。
+     *
+     * <p>执行流程：同床位全部活跃旧呼叫批量置 CANCELLED（brief 冻结合并语义）→ 发号器签发
+     * call_no → 落行（escalation_count 初始 0，时间戳列由数据库默认值维护）→ 回读出视图。
+     * 系统级 INFUSION 呼叫走 iot.alarm.triggered 事件消费落行，不经本入口。
+     *
+     * @param request 创建请求，非空；来源：POST /ward-calls 请求体（@Valid 后置）——wardId/bedId/
+     *                callType/source 必填，patientId/deviceId/sourceRef 可空（设备源行由事件链携带）
+     * @return 创建后视图（status=CREATED，escalationCount=0）
+     */
     @Override
     @Transactional
     public WardCallVO create(CreateWardCallRequest request) {
@@ -122,6 +133,17 @@ public class WardCallServiceImpl implements IWardCallService {
         return WardCallVO.from(requireCall(callNo));
     }
 
+    /**
+     * 应答状态迁移（CREATED/TRANSFERRED → ANSWERED；主链首跳 + 转接侧支回路同端点）。
+     *
+     * <p>执行流程：存在性前置校验（WD-1001）→ casAnswer CAS 落迁移（answered_at 置当前时刻）→
+     * 回读出视图。CAS 零行（非法前置态/已终态/并发态已迁移）统一 WD-1002，防绕过 Java 侧校验。
+     *
+     * @param callNo 呼叫业务号，非空；来源：应答端点路径变量
+     * @return 应答后视图（status=ANSWERED，answeredAt 已置）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）或
+     *                                               WD-1002（409，非法迁移或并发态已变——建议回读实态后重试或放弃）
+     */
     @Override
     @Transactional
     public WardCallVO answer(String callNo) {
@@ -134,6 +156,17 @@ public class WardCallServiceImpl implements IWardCallService {
         return WardCallVO.from(requireCall(callNo));
     }
 
+    /**
+     * 进入处理中状态迁移（ANSWERED → IN_PROGRESS；可选中间态——应答后亦可直接完成）。
+     *
+     * <p>执行流程：存在性前置校验（WD-1001）→ casProgress CAS 落迁移（processed_by 置操作者）→
+     * 回读出视图。CAS 零行统一 WD-1002（含 CREATED 未应答直入处理、已终态场景）。
+     *
+     * @param callNo 呼叫业务号，非空；来源：处理端点路径变量
+     * @return 处理后视图（status=IN_PROGRESS，processedBy 已置）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）或
+     *                                               WD-1002（409，非法迁移——前置态必须为 ANSWERED）
+     */
     @Override
     @Transactional
     public WardCallVO progress(String callNo) {
@@ -146,6 +179,19 @@ public class WardCallServiceImpl implements IWardCallService {
         return WardCallVO.from(requireCall(callNo));
     }
 
+    /**
+     * 完成状态迁移（ANSWERED/IN_PROGRESS → COMPLETED 终态；result_summary 强制）。
+     *
+     * <p>执行流程：存在性前置校验（WD-1001）→ result_summary 空白校验（WD-1005 400——词表无
+     * 呼叫域 400 码位借承申报见类外契约）→ casComplete CAS 落迁移（completed_at/result_summary
+     * 落列）→ 回读出视图。COMPLETED 为终态无出边，CAS 零行统一 WD-1002。
+     *
+     * @param callNo  呼叫业务号，非空；来源：完成端点路径变量
+     * @param request 完成请求，非空；resultSummary 必填非空白（处理结果摘要文本，落 result_summary 列）
+     * @return 完成后视图（status=COMPLETED，completedAt/resultSummary 已置）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）/WD-1002（409，非法
+     *                                               迁移）/WD-1005（400 借承，摘要缺失——补齐后重试）
+     */
     @Override
     @Transactional
     public WardCallVO complete(String callNo, CompleteWardCallRequest request) {
@@ -167,6 +213,18 @@ public class WardCallServiceImpl implements IWardCallService {
         return WardCallVO.from(requireCall(callNo));
     }
 
+    /**
+     * 转接状态迁移（CREATED/ANSWERED → TRANSFERRED；纯状态迁移——规则驱动转接走 route）。
+     *
+     * <p>执行流程：存在性前置校验（WD-1001）→ casTransfer CAS 落迁移 → 回读出视图。
+     * IN_PROGRESS 不可转接（处理中须先完成）；CAS 零行统一 WD-1002。转接后应答走 answer
+     * 端点回路（TRANSFERRED → ANSWERED 侧支出边）。
+     *
+     * @param callNo 呼叫业务号，非空；来源：转接端点路径变量
+     * @return 转接后视图（status=TRANSFERRED）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）或
+     *                                               WD-1002（409，非法迁移——IN_PROGRESS 须先完成）
+     */
     @Override
     @Transactional
     public WardCallVO transfer(String callNo) {
@@ -179,6 +237,22 @@ public class WardCallServiceImpl implements IWardCallService {
         return WardCallVO.from(requireCall(callNo));
     }
 
+    /**
+     * 转接触发（规则驱动）：CAS 转接（CREATED/ANSWERED → TRANSFERRED）+ 目标链解析一体原子。
+     *
+     * <p>执行流程：存在性前置校验（WD-1001）→ casTransfer 迁移 → 按病区+呼叫类型圈定候选规则 →
+     * 时段命中（V1100 HHmm-HHmm 起含终不含、支持跨午夜；非法格式按不命中）取首条 →
+     * target_chain JSONB 解析出目标链。无命中规则抛 WD-1003，事务整体回滚——转接不生效；
+     * 规则开任务转换且呼叫为 EMERGENCY 时留痕（M05 任务创建 PR-3 闭合）。
+     *
+     * @param callNo 呼叫业务号，非空；来源：转接触发端点路径变量
+     * @return 路由解析视图（目标链清单 + 任务转换开关快照）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）/WD-1002（409，非法
+     *                                               迁移）/WD-1003（409，当前时段无生效路由规则——
+     *                                               建议补配规则后重试，事务已回滚转接未生效）
+     * @throws IllegalStateException target_chain 规则脏数据解析失败——按路由未配置语义阻断转接
+     *                               （事务回滚），建议修正规则后重试
+     */
     @Override
     @Transactional
     public WardCallRouteVO route(String callNo) {
@@ -218,6 +292,17 @@ public class WardCallServiceImpl implements IWardCallService {
         return new WardCallRouteVO(callNo, call.getWardId(), call.getCallType(), targetChain, taskConvert);
     }
 
+    /**
+     * 取消状态迁移（CREATED/TRANSFERRED → CANCELLED 终态）。
+     *
+     * <p>边界条件：ANSWERED/IN_PROGRESS 不可人工取消（处理中须先完成——CAS 零行统一 WD-1002）。
+     * 存在性前置校验（WD-1001）；CANCELLED 为终态无出边。
+     *
+     * @param callNo 呼叫业务号，非空；来源：取消端点路径变量
+     * @return 取消后视图（status=CANCELLED）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）或
+     *                                               WD-1002（409，非法迁移——已应答/处理中不可取消）
+     */
     @Override
     @Transactional
     public WardCallVO cancel(String callNo) {
@@ -260,6 +345,16 @@ public class WardCallServiceImpl implements IWardCallService {
         return PageResult.of(content, page, size, result.getTotal());
     }
 
+    /**
+     * 呼叫详情（读时惰性升级判定承载面：超时未升级行 CAS 递增 escalation_count 后回读实态）。
+     *
+     * <p>与 page 同承载写事务口径（读路径内嵌升级 CAS，禁标 readOnly）；不存在抛 WD-1001。
+     * 终态行不参与升级判定（casEscalate 状态限定）。
+     *
+     * @param callNo 呼叫业务号，非空；来源：详情端点路径变量
+     * @return 呼叫视图（升级判定后实态——递增命中时 escalationCount +1，状态不变仍可应答）
+     * @throws com.fuyun.common.exception.BizException WD-1001（404，呼叫不存在）
+     */
     @Override
     @Transactional
     public WardCallVO get(String callNo) {

@@ -49,6 +49,17 @@ public class VitalSignBoardServiceImpl implements IVitalSignBoardService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 病区体征看板（纯读视图）：SCAN 遍历 anomaly 注记快照键（禁 KEYS 全量——生产红线），
+     * 逐键读取反解析出注记清单，附 presence 指标锚与编排缺位说明。
+     *
+     * <p>边界条件：注记按 deviceId 维度全量输出（病区过滤待绑定面 PR-3 闭合——wardId 当前
+     * 仅随视图透出不参与过滤）；单键快照脏数据跳过不阻断看板（warn 留痕，TTL 24h 自然过期
+     * 自愈）；在床/离床逐设备状态与落卡权威归 M05（本视图仅骨架）。
+     *
+     * @param wardId 病区 ID，非空；来源：看板端点路径变量（当前不参与注记过滤，仅随视图透出）
+     * @return 看板视图（presence 指标码 + anomaly 注记清单 + 缺位说明；无注记时清单为空）
+     */
     @Override
     @Transactional(readOnly = true)
     public VitalBoardVO board(Long wardId) {
