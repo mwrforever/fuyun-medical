@@ -2,6 +2,14 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-30 · 批次 E 资源组总收口（EX-30~36：可观测降级/线程池生命周期/测试资源回收，两路并行）
+
+- **根因**：BE-A1-02/03（catch 静默降级无可观测留痕）+BE-A5-01~05（无界池/无 shutdown/测试执行器驻留）——资源组七项。
+- **可观测降级两处**：EX-30 LinkageRuleVO JSONB 畸形原文降级 warn 留痕（ruleId/field+异常摘要，可空契约零变化，6e2ba70）；EX-31 Dashboard 最新值解析降级 warn（deviceId/metricCode；否决 isNumeric 前置守卫——与 BigDecimal 负数/小数/科学计数口径不一致将误杀合法值，680e870）。
+- **线程池生命周期两处**：EX-32 CommandDispatcher 无界 newCachedThreadPool 改有界 ThreadPoolExecutor（4/16/32/keepAlive 60s，低频管理面口径注释论证；CallerRuns 保命令不丢）+DisposableBean destroy 三段收口（1c1842e）；EX-33 模拟器 CommandSubscriber 补 close（iot-simulator 纯 Java 零 Spring 模块对齐 shutdownHook 显式形态，停机链取消任务→停调度→关订阅→断连接；Paho 回调零外抛不变量守卫，a5a9d5b）。
+- **测试资源回收三处**（fuyun-app failsafe 统一承载）：EX-36 IotTelemetryPipelineIT STOMP 调度器 @AfterEach 登记回收（3ee8ddc）；EX-34/35 Billing/Pharmacy GuardIT shutdownNow 移 finally（OutpatientPoolConcurrencyIT 0eb66a1 同型+复现锚点用例：动作异常后 worker 线程 join 有界退出，44db981/f5b5a65）。
+- **验证**：iot 569（+6）/iot-simulator 55（+2）/billing 293/pharmacy 173 全绿+定向 IT 真栈绿（IotTelemetryPipelineIT 9/9、GuardIT 12 用例）+spotless 过+主控 14 模块联跑终验 BUILD SUCCESS；对外行为零变化（内部线程池过载语义留痕注释）。
+
 ## 2026-09-30 · 批次 D 一致性组总收口（EX-21~29：CAS 收口/守卫折语句/软删谓词/补丁回写/原子累加/Lua 原子/portal 缓解，五路并行）
 
 - **根因**：BE-A2-02~05（读后判/读改写并发面）+BE-B5-02/05/06（条件更新/原子累加/Lua 原子）+BE-A3-02（portal 冒名，用户裁决③转正）——一致性组九项。
