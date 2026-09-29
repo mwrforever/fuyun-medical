@@ -2,6 +2,15 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-30 · 批次 D 一致性组总收口（EX-21~29：CAS 收口/守卫折语句/软删谓词/补丁回写/原子累加/Lua 原子/portal 缓解，五路并行）
+
+- **根因**：BE-A2-02~05（读后判/读改写并发面）+BE-B5-02/05/06（条件更新/原子累加/Lua 原子）+BE-A3-02（portal 冒名，用户裁决③转正）——一致性组九项。
+- **CAS 收口四处**：EX-21 合并审批 casApproveProcessing（PROCESSING/FAILED 谓词+审批人同语句落库，0 行重读定性 PAT-1007/1008，613422b）；EX-25 就诊卡四写 cas 族（bind 无主谓词/loss/unbind ACTIVE 谓词/replace LOST 谓词，PAT-1011/1012，c7edbca）；EX-22 网关删除 standby 守卫折入置删语句（NOT EXISTS 反查同 UPDATE，IOT-1025 拒删/行消失幂等留痕，1ead926）；EX-24 pharmacy 四写点整行回写改指定列补丁（update 吞 mapInsurance 对照列/mapInsurance 吞档案面/pick/verify 吞留痕快照，BUG-07 先例；PrescriptionServiceImpl.create 自建行持锁保留举证，Dispense 五处循环明细写归 EX-37 衔接补丁化，a26c1d7）。
+- **原子化三处**：EX-23 CardAccount UPDATE...RETURNING 补 deleted=0（DepositAccountMapper 对齐，软删死账户不可复活记账，985d31d）；EX-28 登录失败计数 setSql 原子累加+锁定判定迁 SQL CASE（阈值/窗口逐字等价，recordLoginSuccess 本为原子未动，f1f7d47）；EX-27 告警越限回合标记 Redis 三步改 Lua 原子（breach_marker_transition.lua 外置脚本 PoolRedisGate 先例；标记承载值 ISO→epoch 毫秒为原子判定前提；残余窗口=READ COMMITTED 跨语句交错与模块全部 CAS 先例同级，2561653）。
+- **EX-29 portal 冒名两层临时缓解（M18 后由归属校验取代，裁决③）**：PORTAL 渠道单患者活跃在约上限 3（409 新码 OP-1022 仅免登录面）+证件号解析失败频控 5 次/10 分钟冷却 30 分钟（429 新码 OP-1023，Redis INCR+EXPIRE，键 SHA-256 摘要明文禁入，异常降级放行，ab2f89e）。
+- **D-21 断言现代化裁量（主控逐次批准两处）**：pharmacy 3 行（快照同值断言→isNull 严格契约，「未触碰」由列不进 SET 承载）+system 2 处（计数字面值参数→SQL 原子契约片段，额外锚定阈值常量与 CASE 形态）——原断言冻结实现细节，新断言严格度不低于原，四边界合规。
+- **验证**：五模块门禁全绿 patient 250（+8）/iot 563（+3）/pharmacy 173（+4）/system 164（+1）/outpatient 339（+16）+spotless 过+主控五模块联跑终验 BUILD SUCCESS；行为变化（并发输家显式 409/软删不命中/新 4xx 契约 OP-1022/1023/EX-22 守卫时点与 EX-27 编码变化）入 N5 行为变化清单。
+
 ## 2026-09-30 · EX-19 裸 IAE 模式级收口全量闭环（BE-C3-05，11 模块两波，三态口径确立）
 
 - **根因**：BE-C3-05 全仓 209 处裸 IllegalArgumentException/IllegalStateException 绕过
