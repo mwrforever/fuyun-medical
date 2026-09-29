@@ -2,6 +2,7 @@ package com.fuyun.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -34,9 +35,13 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1）；JaCoCo 核心包
  * （com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
+ *
+ * <p>主表配对（宪法 A.4.3-20，EX-09 收拢）：extends ServiceImpl 声明主表 iot_alarm 继承面
+ * （baseMapper 由容器注入基类字段）；既有构造器注入的 alarmMapper 与其并存，方法体维持原
+ * mapper 通道（含 casAcknowledge/casClose 定制 CAS）不变，收拢完成态由后续演进消化。
  */
 @Slf4j
-public class AlarmServiceImpl implements IAlarmService {
+public class AlarmServiceImpl extends ServiceImpl<IotAlarmMapper, IotAlarmEntity> implements IAlarmService {
 
     /** 审计留痕系统操作人（无登录上下文回退值，与审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";

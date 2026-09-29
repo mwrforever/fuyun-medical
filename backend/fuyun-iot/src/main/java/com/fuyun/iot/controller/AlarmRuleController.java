@@ -51,7 +51,8 @@ public class AlarmRuleController {
      */
     @GetMapping
     public List<AlarmRuleVO> list() {
-        return alarmRuleService.list();
+        // 调用 listAll（服务面视图清单）——接口配对 IService 后 list() 归继承面实体语义（EX-09）
+        return alarmRuleService.listAll();
     }
 
     /**

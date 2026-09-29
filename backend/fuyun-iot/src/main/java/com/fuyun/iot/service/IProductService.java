@@ -1,10 +1,12 @@
 package com.fuyun.iot.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.dto.CreateProductRequest;
 import com.fuyun.iot.dto.ProductQueryRequest;
 import com.fuyun.iot.dto.UpdateCommandsRequest;
 import com.fuyun.iot.dto.UpdateMappingsRequest;
+import com.fuyun.iot.entity.IotProductEntity;
 import com.fuyun.iot.vo.CommandVO;
 import com.fuyun.iot.vo.MetricMappingVO;
 import com.fuyun.iot.vo.ProductVO;
@@ -15,8 +17,13 @@ import java.util.List;
  * 同步与失配检测、镜像查询、命令安全等级标注与属性 MDC 映射编辑的唯一业务出口。
  *
  * <p>注册中心不可用语义：RegistryException 由实现层统一转 IOT-1022（503）业务异常渲染。
+ *
+ * <p>主表配对（宪法 A.4.3-20）：CRUD 型服务主表 iot_product，接口继承 IService、实现已继承
+ * ServiceImpl（半配对收拢，EX-08）；命令标注/属性映射为产品聚合子表（productId 维度全量替换），
+ * 经实现侧注入的子表 mapper 承载，不入 IService 主表面；getById(String) 视图签名与
+ * IService#getById(Serializable) 构成重载并存。
  */
-public interface IProductService {
+public interface IProductService extends IService<IotProductEntity> {
 
     /**
      * 产品上架（POST /api/v1/iot/products 主管道）：Registry.createProduct 受理 + 本地镜像落行

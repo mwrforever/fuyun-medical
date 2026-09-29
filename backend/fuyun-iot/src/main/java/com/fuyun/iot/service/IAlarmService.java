@@ -1,8 +1,10 @@
 package com.fuyun.iot.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.dto.AlarmQueryRequest;
 import com.fuyun.iot.dto.CloseAlarmRequest;
+import com.fuyun.iot.entity.IotAlarmEntity;
 import com.fuyun.iot.vo.AlarmVO;
 
 /**
@@ -15,8 +17,11 @@ import com.fuyun.iot.vo.AlarmVO;
  * <p>错误码借承申报（MetricDictServiceImpl 先例）：告警行不存在借承 IOT-1012（其字面语义为
  * 告警规则不存在）、状态机违例借承 IOT-1013——两码位为 Task 1 冻结告警域词表内唯一 404/409 码位，
  * 消息显式区分场景；如需专属码位走顺延提案修订词表。
+ *
+ * <p>主表配对（宪法 A.4.3-20，EX-09 收拢）：单主表 iot_alarm 的 CRUD 型服务，接口继承 IService、
+ * 实现继承 ServiceImpl；page(AlarmQueryRequest) 过滤载体与 IService#page(IPage) 构成重载并存。
  */
-public interface IAlarmService {
+public interface IAlarmService extends IService<IotAlarmEntity> {
 
     /**
      * 告警分页查询（GET /api/v1/iot/alarms；病区/级别/状态过滤，last_triggered_at 降序稳定输出）。

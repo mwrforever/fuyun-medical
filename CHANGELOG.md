@@ -2,6 +2,29 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 批次 B 持久层组总收口（EX-08~13，BE-C2 半配对/手构 wrapper/无上界查询，按模块六提交）
+
+- **根因**：BE-C2 待裁决 #5/#6/#7 转正（宪法 A.4.3-20 半配对十七对全部判 CRUD 收拢、
+  iot 三服务窄职责不采信、Wrappers 直构自述不采信）+BE-C2-13/14/16；A.4.3-13 链式纪律
+  与 A.4.3-14 分页纪律。
+- **收拢口径（本批确立）**：以全仓既有先例（ISettlementService 持状态机仍以主表实体
+  收拢）为准——「跨表编排/状态 CAS 为自有方法、IService 面仅对主表 CRUD」不构成聚合根
+  排除条件；接口收拢处 javadoc 一律补护栏段「IService 通用写面不承载状态语义，禁经
+  通用写面绕行」。十七对全闭环：nursing 8（e1bdd59）/pharmacy 4（含主控裁定收拢的
+  Dispense/Prescription 两对）/iot 3+EX-09 三服务补全配对/inpatient 2（床位 CAS 高并发
+  域，cas* 权威入口零触碰）。
+- **链式化（EX-10/11/12）**：inpatient 三处+integration 三实现四处+pharmacy 八处成交
+  （字节码级核验 ChainQuery 终态与 mapper 直调等价、CAS 谓词逐字等价）；跨表/副表查询
+  合法保留手构；pharmacy buildSearchWrapper 一处因测试断言锚定 LambdaQueryWrapper
+  强转属「断言必改」情形按 D-21 出口留专项（方法 javadoc 留痕，N8 呈报）。
+- **EX-13 防御收拢**：计价规则/告警规则两配置清单加 LIMIT 200 硬顶+截断 warn（
+  QualityServiceImpl:82 先例同款）；正常配置量行为不变，超限截断为新防御语义；配套
+  截断用例两例护航 JaCoCo 核心包 LINE=1.00（mock 恰 200 行驱动 warn 分支，先例同构）。
+- **验证**：nursing 211/iot 524（+1 截断用例）/pharmacy 169（+2 配对纪律用例）/
+  inpatient 195（+2 配对纪律用例）/integration 83/billing 292（+1）全绿；各模块
+  spotless 通过；测试改动全部为 mock 面机械调整（entityClass 直设/类型 matcher 锁定）
+  与新增用例，既有断言零修改。
+
 ## 2026-09-29 · 机械组 EX-04 全量收口：全仓全限定类名声明改 import+简名（BE-C3-11，纯机械零行为变化，按模块四提交）
 
 - **根因（BE-C3-11 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：IDispenseService:

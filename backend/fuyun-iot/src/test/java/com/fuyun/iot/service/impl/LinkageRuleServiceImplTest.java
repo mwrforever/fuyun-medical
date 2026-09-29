@@ -134,7 +134,7 @@ class LinkageRuleServiceImplTest {
     void listReturnsAllRulesAsViews() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
 
-        List<LinkageRuleVO> rules = service.list();
+        List<LinkageRuleVO> rules = service.listAll();
 
         assertThat(rules).hasSize(1);
         assertThat(rules.get(0).id()).isEqualTo(RULE_ID);

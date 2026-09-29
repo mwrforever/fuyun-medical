@@ -1,6 +1,7 @@
 package com.fuyun.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.iot.api.IotErrorCode;
 import com.fuyun.iot.dto.SaveAlarmRuleRequest;
@@ -40,9 +41,14 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1）；JaCoCo 核心包
  * （com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
+ *
+ * <p>主表配对（宪法 A.4.3-20，EX-09 收拢）：extends ServiceImpl 声明主表 iot_alarm_rule 继承面
+ * （baseMapper 由容器注入基类字段）；既有构造器注入的 ruleMapper 与其并存，方法体维持原 mapper
+ * 通道不变（收拢完成态由后续演进消化）；telemetryMapper 为 simulate 回放的副表读通道。
  */
 @Slf4j
-public class AlarmRuleServiceImpl implements IAlarmRuleService {
+public class AlarmRuleServiceImpl extends ServiceImpl<IotAlarmRuleMapper, IotAlarmRuleEntity>
+        implements IAlarmRuleService {
 
     /** 静默窗口默认秒（brief 冻结默认值；请求未携带时补齐） */
     private static final int DEFAULT_SILENCE_WINDOW_SECS = 300;
@@ -52,6 +58,9 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
 
     /** simulate 回放行单窗口上限（LIMIT 硬顶） */
     private static final int SIMULATE_ROW_LIMIT = 5000;
+
+    /** 规则清单单次装载上限（EX-13 风险收拢：LIMIT 硬顶泄压，防配置膨胀全量拉取） */
+    private static final int RULE_LIST_LIMIT = 200;
 
     private final IotAlarmRuleMapper ruleMapper;
 
@@ -69,21 +78,26 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
     }
 
     /**
-     * 规则全量清单（只读事务）：id 升序稳定输出，软删行经 @TableLogic 自动过滤；规则为管理台
-     * 配置面数据（百级量级），按 brief 口径不分页；返回含禁用规则，启用过滤由告警引擎评估侧
+     * 上限 200 的规则清单（只读事务）：id 升序稳定输出，软删行经 @TableLogic 自动过滤；规则为
+     * 管理台配置面数据（百级量级），按 brief 口径不分页但以 LIMIT 硬顶泄压防配置膨胀全量拉取
+     * （截断以 warn 留痕，超限截断属防御性收拢）；返回含禁用规则，启用过滤由告警引擎评估侧
      * 按 enabled 判定。
      *
-     * @return 全部在册规则 VO（id 升序），非空；无规则时为空列表
+     * @return 在册规则 VO（id 升序，单次装载上限 200），非空；无规则时为空列表
      */
     @Override
     @Transactional(readOnly = true)
-    public List<AlarmRuleVO> list() {
-        // 数据库读操作：全量规则清单（id 升序稳定输出；@TableLogic 自动携带 deleted=0）
-        return ruleMapper
-                .selectList(Wrappers.<IotAlarmRuleEntity>lambdaQuery().orderByAsc(IotAlarmRuleEntity::getId))
-                .stream()
-                .map(AlarmRuleVO::from)
-                .toList();
+    public List<AlarmRuleVO> listAll() {
+        // 数据库读操作：规则清单装载（id 升序稳定输出；@TableLogic 自动携带 deleted=0；
+        // LIMIT 硬顶泄压，截断 warn 留痕）
+        List<IotAlarmRuleEntity> rules = ruleMapper.selectList(Wrappers.<IotAlarmRuleEntity>lambdaQuery()
+                .orderByAsc(IotAlarmRuleEntity::getId)
+                .last("LIMIT " + RULE_LIST_LIMIT));
+        if (rules.size() >= RULE_LIST_LIMIT) {
+            // 配置行数达硬顶：截断泄压留痕，提示配置膨胀排查（正常量不触发）
+            log.warn("告警规则清单触发装载上限截断：loaded={}，limit={}，请检查配置膨胀", rules.size(), RULE_LIST_LIMIT);
+        }
+        return rules.stream().map(AlarmRuleVO::from).toList();
     }
 
     /**

@@ -1,8 +1,10 @@
 package com.fuyun.iot.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.dto.DeviceQueryRequest;
 import com.fuyun.iot.dto.DeviceRegisterRequest;
+import com.fuyun.iot.entity.IotDeviceEntity;
 import com.fuyun.iot.vo.DeviceCredentialResetVO;
 import com.fuyun.iot.vo.DeviceShadowVO;
 import com.fuyun.iot.vo.DeviceVO;
@@ -15,8 +17,12 @@ import com.fuyun.iot.vo.DeviceVO;
  * IotRegistryConfig 装配），{@link com.fuyun.iot.registry.RegistryException} 由实现层统一转
  * IOT-1022（503）业务异常渲染；凭证红线（14-iot §9）：一机一密 secret 仅随注册/换发响应一次性
  * 透出，落库仅 credential_ref，禁日志禁落库。
+ *
+ * <p>主表配对（宪法 A.4.3-20）：单主表 iot_device 的 CRUD 型服务，接口继承 IService、实现已
+ * 继承 ServiceImpl（半配对收拢，EX-08）；getById(String) 视图签名与 IService#getById(Serializable)
+ * 构成重载并存，调用侧 String 实参恒解析到视图面。
  */
-public interface IDeviceManageService {
+public interface IDeviceManageService extends IService<IotDeviceEntity> {
 
     /**
      * 注册设备（一机一密签发）：本地查重（重复 IOT-1008 前置拒绝，不触注册中心）→

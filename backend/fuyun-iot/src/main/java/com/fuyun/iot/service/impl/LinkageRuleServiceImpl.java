@@ -2,6 +2,7 @@ package com.fuyun.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -47,9 +48,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1）；JaCoCo 核心包
  * （com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
+ *
+ * <p>主表配对（宪法 A.4.3-20，EX-09 收拢）：extends ServiceImpl 声明主表 iot_linkage_rule 继承面
+ * （baseMapper 由容器注入基类字段）；既有构造器注入的 ruleMapper 与其并存，方法体维持原 mapper
+ * 通道不变（收拢完成态由后续演进消化）；logMapper 为联动日志副表通道（分页查询与重推 CAS）。
  */
 @Slf4j
-public class LinkageRuleServiceImpl implements ILinkageRuleService {
+public class LinkageRuleServiceImpl extends ServiceImpl<IotLinkageRuleMapper, IotLinkageRuleEntity>
+        implements ILinkageRuleService {
 
     /** 审计留痕系统操作人（无登录上下文回退值，与审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
@@ -96,7 +102,7 @@ public class LinkageRuleServiceImpl implements ILinkageRuleService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<LinkageRuleVO> list() {
+    public List<LinkageRuleVO> listAll() {
         // 数据库读操作：全量规则清单（id 升序稳定输出；@TableLogic 自动携带 deleted=0）
         return ruleMapper
                 .selectList(Wrappers.<IotLinkageRuleEntity>lambdaQuery().orderByAsc(IotLinkageRuleEntity::getId))
