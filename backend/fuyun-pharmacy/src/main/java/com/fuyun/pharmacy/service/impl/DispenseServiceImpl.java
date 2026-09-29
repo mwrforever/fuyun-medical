@@ -523,19 +523,53 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     @Override
     @Transactional
     public void confirmRefundTerminalByRx(List<String> rxNos) {
+        // 空清单零查询零日志（listener 侧已拦空数组，此处兜底与原空循环零查询语义对齐）
+        if (rxNos.isEmpty()) {
+            return;
+        }
+        // 数据库读操作：refund.approved 清单处方号键集一次 IN 批查（uk_rx_no 保证每号至多一行，与原逐号
+        //   selectOne 同语义；脏差异缺号不出结果集→映射缺位即原 null 分支）——A.4.3-14 循环单查改批量，
+        //   N 号 N 查收敛为 1 查，缩短 refund.approved 消费事务持锁
+        Map<String, Prescription> rxByNo =
+                prescriptionMapper
+                        .selectList(Wrappers.<Prescription>lambdaQuery().in(Prescription::getRxNo, rxNos))
+                        .stream()
+                        .collect(Collectors.toMap(
+                                Prescription::getRxNo,
+                                Function.identity(),
+                                (first, duplicate) -> first,
+                                LinkedHashMap::new));
+        // 第二级键集=第一级命中且 DISPENSED 的 rxNo 集（原逐号活动发药单查询的精确谓词面——仅该状态
+        //   分支触达二级查询；按清单序过滤保键序确定）
+        List<String> dispensedRxNos = rxNos.stream()
+                .filter(rxNo -> rxByNo.get(rxNo) != null
+                        && "DISPENSED".equals(rxByNo.get(rxNo).getStatus()))
+                .toList();
+        // 数据库读操作：活动发药单按 DISPENSED 键集一次 IN 批查（排除 CANCELLED——uk_dispense_rx_active
+        //   允许取消态历史行共存，每号至多一行活动单=原逐号 selectOne 语义；缺号不出结果集→映射缺位即
+        //   原无活动单分支）；空键集短路零查询（空 id 集不出网）——2N 查收敛为恒 2 查
+        Map<String, Dispense> activeByRxNo = dispensedRxNos.isEmpty()
+                ? Map.of()
+                : baseMapper
+                        .selectList(Wrappers.<Dispense>lambdaQuery()
+                                .in(Dispense::getRxNo, dispensedRxNos)
+                                .ne(Dispense::getStatus, "CANCELLED"))
+                        .stream()
+                        .collect(Collectors.toMap(
+                                Dispense::getRxNo,
+                                Function.identity(),
+                                (first, duplicate) -> first,
+                                LinkedHashMap::new));
         for (String rxNo : rxNos) {
-            // 数据库读操作：按反查清单处方号定位（脏差异 warn 留痕不阻断同批收敛）
-            Prescription rx = prescriptionMapper.selectOne(
-                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
+            // 批查映射取行（原逐号 selectOne 同位替换；缺号映射缺位=null 即原脏差异分支）
+            Prescription rx = rxByNo.get(rxNo);
             if (rx == null) {
                 log.warn("退费终态确认无法定位处方：rxNo={}", rxNo);
                 continue;
             }
             if ("DISPENSED".equals(rx.getStatus())) {
-                // 数据库读操作：活动发药单（排除 CANCELLED——uk_dispense_rx_active 允许取消态历史行共存）
-                Dispense d = baseMapper.selectOne(Wrappers.<Dispense>lambdaQuery()
-                        .eq(Dispense::getRxNo, rxNo)
-                        .ne(Dispense::getStatus, "CANCELLED"));
+                // 批查映射取行（原逐号活动发药单 selectOne 同位替换；缺位=null 即原无活动单分支）
+                Dispense d = activeByRxNo.get(rxNo);
                 if (d == null) {
                     log.warn("退费终态确认跳过（无活动发药单）：rxNo={}", rxNo);
                     continue;

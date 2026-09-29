@@ -2,6 +2,28 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-09：pharmacy 退费终态确认双重 N+1 改两级键集 IN 批查（性能，行为保持）
+
+- **根因（OPT-09 / BE-C4-16 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80）**：`DispenseServiceImpl.confirmRefundTerminalByRx`（refund.approved 退费终态
+  确认 MQ 消费业务体）@Transactional 内 `for (String rxNo : rxNos)` 双重逐号查询——逐
+  rxNo `prescriptionMapper.selectOne` 查处方 + 命中 DISPENSED 再逐 rxNo `baseMapper.selectOne`
+  查活动发药单，退费多处方时 2N 次查询放大事务持锁时长（A.4.3-14 点名）。
+- **修复（行为保持）**：两级键集前置 IN 批查 + 原循环序单趟判定——①处方按清单 rxNos 一次
+  批查按号映射（uk_rx_no 保证每号至多一行，与原逐号 selectOne 同语义；脏差异缺号映射缺位
+  即原 null 分支）；②活动发药单按「第一级命中且 DISPENSED 的 rxNo 集」（原逐号查询的精确
+  谓词面——非 DISPENSED 分支与缺号不进键集）一次批查按号映射（排除 CANCELLED，
+  uk_dispense_rx_active 保证每号至多一行活动单=原逐号 selectOne 语义；缺号映射缺位即原无
+  活动单分支；空键集短路零查询）。循环内两处取行换 Map.get；状态判定分支、casStatus 终态
+  镜像、日志与幂等语义原形态零触碰；空清单兜底短路与原空循环零查询对齐。2N 查 → 恒 2 查。
+  行为锚定测试「五处方号混合面（两 DISPENSED 待镜像 FULL/PART+一 DISPENSED 无活动单+一
+  非 DISPENSED+一脏差异缺号）两级批查各恰一次+键集契约（一级=清单全集/二级=DISPENSED
+  命中集+排 CANCELLED）+逐号 selectOne 零触达+混合状态输出等价（镜像遇序、守卫行零迁移）」
+  先红后绿交付；既有 6 个终态确认用例桩面随实现由 selectOne 机械换至 selectList（业务断言
+  零改动，无读形态断言需现代化）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（167 用例，+1 新锚定）+
+  `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-08：pharmacy 缴费放行逐 rxNo 查询改清单键集一次 IN 批查（性能，行为保持）
 
 - **根因（OPT-08 / BE-C4-15 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
