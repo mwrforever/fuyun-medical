@@ -2,6 +2,26 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-29 · 性能清单修复环 OPT-08：pharmacy 缴费放行逐 rxNo 查询改清单键集一次 IN 批查（性能，行为保持）
+
+- **根因（OPT-08 / BE-C4-15 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80）**：`DispenseServiceImpl.releaseByRxNos`（settlement.completed 缴费放行 MQ 消费
+  业务体）@Transactional 内 `for (String rxNo : rxNos)` 逐号 `prescriptionMapper.selectOne`
+  查处方——N 号即 N 次单查，MQ 消费路径放大事务持锁时长（A.4.3-14 点名）；清单脏差异场景下
+  （部分号缺行）仍全额付出往返。
+- **修复（行为保持）**：rxNos 全集循环前一次 IN 批查 → `LinkedHashMap<rxNo, Prescription>`
+  按号映射（uk_rx_no 保证每号至多一行，与原逐号 selectOne 同语义；遇序保序与原逐行处理序
+  一致）；循环内取行换 Map.get，缺号映射缺位即原 null 分支（warn 文案逐字保持，留痕不阻断
+  同批放行）。通道过滤、CAS 放行、CAS 0 行重读定性、createDispense 建单入队、日志与幂等
+  语义全部原形态零触碰；N 号 N 查 → 恒 1 查。行为锚定测试「多 rxNo 清单（两待放行+一脏差异
+  缺号）批查恰一次+键集契约=清单全集+逐号 selectOne 零触达+缺号 warn 不阻断同批（两待放行
+  号仍按清单序 CAS 与建单入队）+放行输出（CREATED/rxNo 序/saveBatch 两次）等价」先红后绿
+  交付；既有 5 个放行用例桩面随实现由 selectOne 机械换至 selectList（断言零改动），其中
+  「单据精确放行」用例的「selectOne 恰一次」读形态断言随批查契约现代化为「selectList 恰
+  一次」（D-21 裁量：单点单次、严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（166 用例，+1 新锚定）+
+  `spotless:check` 通过。
+
 ## 2026-09-29 · 性能清单修复环 OPT-07：pharmacy 退费逆向作废三级级联 N+1 改三级键集前置批查（性能，行为保持）
 
 - **根因（OPT-07 / BE-C4-17 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，

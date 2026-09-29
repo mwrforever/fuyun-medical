@@ -148,10 +148,21 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             log.info("缴费放行跳过（该结算无药品行，纯检查/检验结算合法空清单）");
             return;
         }
+        // 数据库读操作：charged 清单处方号键集一次 IN 批查（uk_rx_no 保证每号至多一行，与原逐号
+        //   selectOne 同语义；脏差异缺号不出结果集→映射缺位即原 null 分支）——A.4.3-14 循环单查
+        //   改批量，N 号 N 查收敛为 1 查，缩短 settlement.completed 消费事务持锁
+        Map<String, Prescription> rxByNo =
+                prescriptionMapper
+                        .selectList(Wrappers.<Prescription>lambdaQuery().in(Prescription::getRxNo, rxNos))
+                        .stream()
+                        .collect(Collectors.toMap(
+                                Prescription::getRxNo,
+                                Function.identity(),
+                                (first, duplicate) -> first,
+                                LinkedHashMap::new));
         for (String rxNo : rxNos) {
-            // 数据库读操作：按处方号定位（charged 载荷清单与 pharmacy 库的脏差异 warn 留痕不阻断同批放行）
-            Prescription rx = prescriptionMapper.selectOne(
-                    Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
+            // 批查映射取行（原逐号 selectOne 同位替换；缺号映射缺位=null 即原脏差异分支，warn 留痕不阻断）
+            Prescription rx = rxByNo.get(rxNo);
             if (rx == null) {
                 log.warn("缴费放行跳过（清单处方号无法定位处方）：rxNo={}", rxNo);
                 continue;

@@ -184,12 +184,9 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription listed = rxPendingFee(100L, "R20260918000001");
         Prescription unlisted = rxPendingFee(101L, "R20260918000002");
-        // 同 visit 两处方在库，本次结算清单仅覆盖其一——未列入方禁被放行（患者维度误伤面回归锚）
-        when(prescriptionMapper.selectOne(any())).thenAnswer(inv -> {
-            AbstractWrapper<?, ?, ?> wrapper = inv.getArgument(0);
-            wrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
-            return wrapper.getParamNameValuePairs().containsValue("R20260918000001") ? listed : unlisted;
-        });
+        // 同 visit 两处方在库，本次结算清单仅覆盖其一——未列入方不入批查键集即不出结果集
+        // （患者维度误伤面回归锚）
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(listed));
         when(prescriptionMapper.casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE"))
                 .thenReturn(1);
         when(prescriptionItemMapper.selectList(any())).thenReturn(List.of(rxItem(1L, 100L)));
@@ -208,8 +205,8 @@ class DispenseServiceImplTest {
             assertThat(rowsCaptor.getValue().get(0).getRequestedQty()).isEqualByComparingTo("2");
         }
 
-        // 单据精确核心断言：仅清单内处方被定位与放行，未列入处方零 CAS 零建单
-        verify(prescriptionMapper, times(1)).selectOne(any());
+        // 单据精确核心断言：处方批查恰一次（键集=清单），未列入处方零 CAS 零建单
+        verify(prescriptionMapper, times(1)).selectList(any());
         verify(prescriptionMapper).casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE");
         verify(prescriptionMapper, never()).casStatus(eq(101L), any(), any());
         ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
@@ -237,7 +234,7 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
         rx.setStatus("PENDING_DISPENSE");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE"))
                 .thenReturn(0);
         when(prescriptionMapper.selectById(100L)).thenReturn(rx);
@@ -252,7 +249,7 @@ class DispenseServiceImplTest {
     void releaseByRxNosSkipsDriftedPrescriptionWithoutQueueing() {
         DispenseServiceImpl impl = newService();
         Prescription rx = rxPendingFee(100L, "R20260918000001");
-        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(rx));
         when(prescriptionMapper.casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE"))
                 .thenReturn(0);
         Prescription drifted = rxPendingFee(100L, "R20260918000001");
@@ -271,7 +268,7 @@ class DispenseServiceImplTest {
     @DisplayName("charged 脏差异守卫：清单处方号无法定位处方 warn 留痕不阻断同批放行")
     void releaseByRxNosSkipsUnknownRxNo() {
         DispenseServiceImpl impl = newService();
-        when(prescriptionMapper.selectOne(any())).thenReturn(null);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of());
 
         impl.releaseByRxNos(List.of("R20260918999999"));
 
@@ -285,12 +282,63 @@ class DispenseServiceImplTest {
         DispenseServiceImpl impl = newService();
         Prescription discharge = rxPendingFee(100L, "R20260918000001");
         discharge.setRxType("DISCHARGE");
-        when(prescriptionMapper.selectOne(any())).thenReturn(discharge);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(discharge));
 
         impl.releaseByRxNos(List.of("R20260918000001"));
 
         verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
         verify(dispenseMapper, never()).insert(any(Dispense.class));
+    }
+
+    @Test
+    @DisplayName("charged 放行批查：多 rxNo 清单键集一次 IN 批查（N 号 N 查收敛 1 查）+ 逐号 selectOne 零触达 " + "+ 脏差异缺号 warn 不阻断同批 + 逐号放行输出等价")
+    void releaseByRxNosBatchesPrescriptionReadOnceAndReleasesEachListedRx() {
+        DispenseServiceImpl impl = newService();
+        // 清单三处方号：两张待放行（PENDING_FEE）+ 一张脏差异缺号（批查结果集缺位→原 null 分支）
+        Prescription first = rxPendingFee(100L, "R20260918000001");
+        Prescription second = rxPendingFee(101L, "R20260918000002");
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(prescriptionMapper.casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE"))
+                .thenReturn(1);
+        when(prescriptionMapper.casStatus(101L, "PENDING_FEE", "PENDING_DISPENSE"))
+                .thenReturn(1);
+        // createDispense 逐号取处方明细（写侧原形态零触碰）：按清单处理序遇序两次各回各行
+        when(prescriptionItemMapper.selectList(any()))
+                .thenReturn(List.of(rxItem(1L, 100L)))
+                .thenReturn(List.of(rxItem(2L, 101L)));
+        when(dispenseMapper.insert(any(Dispense.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Dispense.class).setId(900L);
+            return 1;
+        });
+
+        // A.4.3-16：明细一次批插通道保持（写侧零触碰），静态 Db 桩内执行放行
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.releaseByRxNos(List.of("R20260918000001", "R20260918999999", "R20260918000002"));
+
+            // 放行处方批查恰一次（旧逐号=3 号 3 查；批查与行数解耦恒 1 查），逐号 selectOne 旧路径零触达
+            verify(prescriptionMapper, times(1)).selectList(any());
+            verify(prescriptionMapper, never()).selectOne(any());
+            // 批查键集契约=清单 rxNos 全集（含脏差异缺号——缺号不出结果集即原 null 分支）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Wrapper<Prescription>> rxQueryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+            verify(prescriptionMapper).selectList(rxQueryCaptor.capture());
+            AbstractWrapper<?, ?, ?> rxWrapper = (AbstractWrapper<?, ?, ?>) rxQueryCaptor.getValue();
+            rxWrapper.getSqlSegment(); // MP 条件参数在 getSqlSegment 惰性求值时才写入参数表
+            assertThat(rxWrapper.getParamNameValuePairs().values())
+                    .containsExactlyInAnyOrder("R20260918000001", "R20260918999999", "R20260918000002");
+            // 脏差异缺号 warn 不阻断同批放行：两待放行号仍按清单序 CAS（遇序保序）与建单入队
+            InOrder releaseOrder = inOrder(prescriptionMapper);
+            releaseOrder.verify(prescriptionMapper).casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE");
+            releaseOrder.verify(prescriptionMapper).casStatus(101L, "PENDING_FEE", "PENDING_DISPENSE");
+            ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
+            verify(dispenseMapper, times(2)).insert(dispenseCaptor.capture());
+            assertThat(dispenseCaptor.getAllValues())
+                    .extracting(Dispense::getRxNo)
+                    .containsExactly("R20260918000001", "R20260918000002");
+            assertThat(dispenseCaptor.getAllValues())
+                    .allSatisfy(d -> assertThat(d.getStatus()).isEqualTo("CREATED"));
+            mockedDb.verify(() -> Db.saveBatch(any()), times(2));
+        }
     }
 
     @Test
