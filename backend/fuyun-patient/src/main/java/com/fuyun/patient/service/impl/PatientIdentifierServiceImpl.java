@@ -35,7 +35,7 @@ public class PatientIdentifierServiceImpl extends ServiceImpl<PatientIdentifierM
 
     private final PatientFieldCrypto crypto;
 
-    // TODO(card-ops): 患者主索引服务依赖，供 Task 10 卡操作（挂失/补卡/解绑）解析收敛视图复用
+    // TODO(card-ops): 患者主索引服务依赖，供 Task 10 卡操作（挂失/补卡/解绑）解析收敛视图复用，计划于 P2 引入
     private final IPatientService patientService;
 
     /** 应用事件发布（MQ 出场由 PatientEventPublisher 中继承载：有事务 AFTER_COMMIT、无事务 D-8 fallbackExecution 兜底），构造器注入 */
