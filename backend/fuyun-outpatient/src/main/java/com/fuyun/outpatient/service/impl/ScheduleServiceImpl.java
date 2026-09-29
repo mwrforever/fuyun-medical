@@ -2,6 +2,7 @@ package com.fuyun.outpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -32,6 +33,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -190,8 +192,9 @@ public class ScheduleServiceImpl implements IScheduleService {
     /**
      * T+N 放号生成（契约见接口 javadoc）：ACTIVE 模板按 week_pattern 位串×日期窗口
      * [endDate-(days-1), endDate] 展开排班日历+号源池行+池键预热。实现要点：窗口内已存在
-     * 排班键循环前预过滤幂等跳过（warn 留痕，重放零插入）；预过滤后并发 uk 冲突抛 OP-1004
-     * 整批回滚（PG 事务 aborted 语义禁循环内捕获续跑）。
+     * 排班键循环前预过滤幂等跳过（warn 留痕，重放零插入）；生成行装配后集中两次批写（EX-37：排班批+
+     * 池行批各一次 saveBatch，替代循环内逐条 insert；排班批 ASSIGN_ID 回填主键后按平行序回填池行
+     * 外键）；预过滤后并发 uk 冲突抛 OP-1004 整批回滚（PG 事务 aborted 语义禁循环内捕获续跑）。
      *
      * @param request 放号请求，非空；endDate 为窗口截止日、days 为窗口天数
      * @return 本次实际生成排班行数（预过滤跳过不计入）
@@ -218,6 +221,10 @@ public class ScheduleServiceImpl implements IScheduleService {
                 .collect(Collectors.toSet());
         String operator = OperatorContextHolder.get();
         int generated = 0;
+        // 批写暂存（EX-37）：排班与池行按生成序平行列表暂存（Entity←Entity 装配块维持现状，仅逐条
+        // insert 迁出循环）；两列表同长同序——批写一回填的排班主键按平行序与池行一一对应
+        List<Schedule> schedules = new ArrayList<>();
+        List<ApptNumberPool> pools = new ArrayList<>();
         for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
             for (ScheduleTemplate template : templates) {
                 if (!matchesWeekAndValidity(template, date)) {
@@ -244,24 +251,8 @@ public class ScheduleServiceImpl implements IScheduleService {
                 schedule.setRoom(template.getRoom());
                 schedule.setCreatedBy(operator);
                 schedule.setUpdatedBy(operator);
-                try {
-                    // 数据库写操作：排班日历行落库；此处 uk 冲突=预过滤后的并发放号抢先落行（窗口外竞态）
-                    scheduleMapper.insert(schedule);
-                } catch (DuplicateKeyException e) {
-                    // PG 事务 aborted 语义：冲突后本事务后续语句全部拒续，不得继续循环——抛业务异常
-                    // 整批回滚（@Transactional 生效），调用方重试即走预过滤幂等路径
-                    log.warn(
-                            "放号并发冲突整批回滚：templateId={}，schedDate={}，session={}",
-                            template.getId(),
-                            date,
-                            template.getSession());
-                    throw new BizException(
-                            OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
-                            HttpStatus.CONFLICT,
-                            "放号并发冲突，整批已回滚请重试：schedDate=" + date);
-                }
                 ApptNumberPool pool = new ApptNumberPool();
-                pool.setScheduleId(schedule.getId());
+                // 外键 schedule_id 留待批写一回填排班主键后按平行序回填（原逐条 insert 后即取 id 的等价迁移）
                 pool.setApptType(template.getApptType());
                 pool.setSlotStart(template.getSlotStart());
                 pool.setSlotEnd(template.getSlotEnd());
@@ -269,11 +260,40 @@ public class ScheduleServiceImpl implements IScheduleService {
                 pool.setChannelQuota(DEFAULT_CHANNEL_QUOTA);
                 pool.setCreatedBy(operator);
                 pool.setUpdatedBy(operator);
-                // 数据库写操作：号源池行落库（used_count/version 走库默认 0）
-                apptNumberPoolMapper.insert(pool);
-                // 缓存写操作：池键预热 SET total+TTL（预约抢号第一道闸自本调用起生效）
-                poolRedisGate.prime(pool.getId(), pool.getTotalQuota(), poolKeyTtl(date));
+                schedules.add(schedule);
+                pools.add(pool);
                 generated++;
+            }
+        }
+        // 幂等全跳过（generated=0）零批写零预热——与原重放零插入语义对齐
+        if (generated > 0) {
+            try {
+                // 数据库批量写一：排班日历一次批插（Db.saveBatch：JDBC 批处理+ASSIGN_ID 批写回填主键，
+                // 先例 DispenseServiceImpl A.4.3-16）；此处 uk 冲突=预过滤后的并发放号抢先落行（窗口外竞态）
+                Db.saveBatch(schedules);
+                // 池行外键回填：批一回填的排班主键按平行序写入（两列表同长同序）
+                for (int i = 0; i < schedules.size(); i++) {
+                    pools.get(i).setScheduleId(schedules.get(i).getId());
+                }
+                // 数据库批量写二：号源池行一次批插（used_count/version 走库默认 0）
+                Db.saveBatch(pools);
+                // 缓存写操作：池键预热 SET total+TTL（预约抢号第一道闸自本调用起生效）；TTL 各锚
+                // 排班日次日 02:00 对账窗口（A.5-1），逐键不可批，按生成序执行
+                for (int i = 0; i < pools.size(); i++) {
+                    poolRedisGate.prime(
+                            pools.get(i).getId(),
+                            pools.get(i).getTotalQuota(),
+                            poolKeyTtl(schedules.get(i).getSchedDate()));
+                }
+            } catch (DuplicateKeyException e) {
+                // PG 事务 aborted 语义：批写任一语句 uk 冲突后本事务后续语句全部拒续，不得续跑——抛
+                // 业务异常整批回滚（@Transactional 生效），调用方重试即走预过滤幂等路径（Spring 环境下
+                // 批写冲突经 MyBatisExceptionTranslator 以 DuplicateKeyException 冒出，原逐条语义保持）
+                log.warn("放号并发冲突整批回滚：window={}~{}", start, end);
+                throw new BizException(
+                        OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
+                        HttpStatus.CONFLICT,
+                        "放号并发冲突，整批已回滚请重试：window=" + start + "~" + end);
             }
         }
         log.info("放号生成完成：endDate={}，days={}，模板数={}，生成排班={}", end, request.days(), templates.size(), generated);
