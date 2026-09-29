@@ -360,4 +360,88 @@ class DepositServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(BillingErrorCode.DEPOSIT_ACCOUNT_NOT_FOUND));
     }
+
+    // ===== OPT-13：押金欠费判定已确认费用聚合精确投影（A.4.3-14 投影子款锚定）=====
+
+    @Test
+    @DisplayName("已确认费用聚合投影契约：恰 1 列 amount，谓词（visit_id+status=CONFIRMED）零变化")
+    void confirmedFeeAggregationProjectsOnlyAmountColumn() {
+        when(depositAccountMapper.selectOne(any())).thenReturn(account(800L, 30000L, THRESHOLD, DepositStatus.NORMAL));
+        when(depositAccountMapper.mutateBalance(800L, 50000L)).thenReturn(80000L);
+        when(feeRecordMapper.selectList(any())).thenReturn(List.of(confirmedFee(1L, 5000L)));
+        stubTxnInsertBackfillsId();
+
+        service.deposit(new DepositRequest(7L, VISIT, 50000L, PaymentMethod.CASH, null, null));
+
+        // 投影契约（OPT-13）：仅取 amount 恰 1 列，费用行宽行列（费用项/数量/单价/来源单等）禁入
+        //   投影（修复前全列取回长疗程数百行宽行仅 mapToLong amount）；谓词零变化锚定：visit_id+status
+        //   等值且携带就诊号与 CONFIRMED（防投影修复顺带改动欠费判定人群口径）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<FeeRecord>> feeCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(feeRecordMapper).selectList(feeCaptor.capture());
+        LambdaQueryWrapper<FeeRecord> feeWrapper = (LambdaQueryWrapper<FeeRecord>) feeCaptor.getValue();
+        assertThat(feeWrapper.getSqlSegment()).contains("visit_id").contains("status");
+        assertThat(feeWrapper.getParamNameValuePairs().values()).contains(VISIT, FeeStatus.CONFIRMED);
+        assertThat(feeWrapper.getSqlSelect().trim()).isEqualTo("amount");
+    }
+
+    @Test
+    @DisplayName("欠费判定多行求和等价：两行 CONFIRMED 12000+11000=23000，回读 30000−23000<阈值 → ARREARS（漏加任一行即不切换）")
+    void arrearsEvaluationSumsAllConfirmedRowsForArrearsSwitch() {
+        when(depositAccountMapper.selectOne(any())).thenReturn(account(800L, 12000L, THRESHOLD, DepositStatus.NORMAL));
+        when(depositAccountMapper.mutateBalance(800L, 50000L)).thenReturn(30000L);
+        when(feeRecordMapper.selectList(any())).thenReturn(List.of(confirmedFee(1L, 12000L), confirmedFee(2L, 11000L)));
+        stubTxnInsertBackfillsId();
+        when(depositAccountMapper.update(isNull(), any())).thenReturn(1);
+
+        service.deposit(new DepositRequest(7L, VISIT, 50000L, PaymentMethod.CASH, null, null));
+
+        // 求和面锚点：12000+11000=23000 全量累加 → 30000−23000=7000 < 10000 转 ARREARS；漏加任一行
+        //   （30000−11000=19000 / 30000−12000=18000 均 ≥ 10000）则维持 NORMAL 零迁移，下述断言即失败
+        ArgumentCaptor<Wrapper<DepositAccount>> updCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(depositAccountMapper).update(isNull(), updCaptor.capture());
+        LambdaUpdateWrapper<DepositAccount> updWrapper = (LambdaUpdateWrapper<DepositAccount>) updCaptor.getValue();
+        // 状态迁移仍仅 SET status（投影修复不得触碰余额唯一写点红线）
+        assertThat(updWrapper.getSqlSet()).doesNotContain("balance");
+        assertThat(updWrapper.getSqlSet()).contains("status");
+        // 先物化 WHERE 段再断言参数（MP 条件参数惰性求值，顺序颠倒读到中间态）
+        assertThat(updWrapper.getSqlSegment()).contains("id");
+        assertThat(updWrapper.getParamNameValuePairs().values()).contains(DepositStatus.ARREARS, 800L);
+        verify(depositAccountMapper, never()).updateById(any(DepositAccount.class));
+        // 事件 status=ARREARS、余额出回读值 30000（M01 通知/M04 欠费提醒消费锚点）
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(events, times(1)).publishEvent(evt.capture());
+        DepositChangedPayload payload = (DepositChangedPayload) ((BillingDomainEvent) evt.getValue()).payload();
+        assertThat(payload.balance()).isEqualTo(30000L);
+        assertThat(payload.status()).isEqualTo("ARREARS");
+    }
+
+    @Test
+    @DisplayName("零行边界判定等价：CONFIRMED 集空 → 聚合 0，回读恰等于阈值不算欠费 → ARREARS 回升 NORMAL")
+    void arrearsEvaluationZeroRowsAtExactThresholdRecoversNormal() {
+        when(depositAccountMapper.selectOne(any())).thenReturn(account(800L, 5000L, THRESHOLD, DepositStatus.ARREARS));
+        when(depositAccountMapper.mutateBalance(800L, 50000L)).thenReturn(THRESHOLD);
+        when(feeRecordMapper.selectList(any())).thenReturn(List.of());
+        stubTxnInsertBackfillsId();
+        when(depositAccountMapper.update(isNull(), any())).thenReturn(1);
+
+        service.deposit(new DepositRequest(7L, VISIT, 50000L, PaymentMethod.CASH, null, null));
+
+        // 零行边界锚点：CONFIRMED 空 → 空流求和天然 0（投影修复不改空集语义）；有效余额 10000−0
+        //   恰等于阈值不算欠费（< 语义）→ evaluated NORMAL，ARREARS 回升仅 SET status
+        ArgumentCaptor<Wrapper<DepositAccount>> updCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(depositAccountMapper).update(isNull(), updCaptor.capture());
+        LambdaUpdateWrapper<DepositAccount> updWrapper = (LambdaUpdateWrapper<DepositAccount>) updCaptor.getValue();
+        assertThat(updWrapper.getSqlSet()).doesNotContain("balance");
+        assertThat(updWrapper.getSqlSet()).contains("status");
+        assertThat(updWrapper.getSqlSegment()).contains("id");
+        assertThat(updWrapper.getParamNameValuePairs().values()).contains(DepositStatus.NORMAL, 800L);
+        verify(depositAccountMapper, never()).updateById(any(DepositAccount.class));
+        // 事件 status=NORMAL、余额出回读值 10000（恰等于阈值，欠费提醒解除口径）
+        ArgumentCaptor<Object> evt = ArgumentCaptor.forClass(Object.class);
+        verify(events, times(1)).publishEvent(evt.capture());
+        DepositChangedPayload payload = (DepositChangedPayload) ((BillingDomainEvent) evt.getValue()).payload();
+        assertThat(payload.balance()).isEqualTo(THRESHOLD);
+        assertThat(payload.status()).isEqualTo("NORMAL");
+    }
 }

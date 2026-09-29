@@ -81,6 +81,8 @@ public class DepositServiceImpl extends ServiceImpl<DepositAccountMapper, Deposi
      * <p>执行流程：三守卫（就诊号/操作者/支付方式）→ 一就诊一账户定位（缺户即零余额开户，
      * SETTLED/CLOSED 终态拒缴）→ mutateBalance 原子记账回读（回读落空=并发终态竞争，显式拒）→
      * 欠费阈值判定并落状态迁移 → 缴存流水 ACTIVE 落库 → 事务内发 deposit.changed（AFTER_COMMIT 出 MQ）。
+     * 欠费判定的已确认费用聚合 .select 仅取 amount 列（长疗程数百行宽行全列取回徒增内存占用，
+     * A.4.3-14），谓词与求和算式不因投影而变（行集不变仅列收敛，判定结果等价）。
      *
      * @param req 缴存请求，非空；金额>0（@Positive 边界已保）
      * @return 新缴存流水 id
@@ -151,9 +153,12 @@ public class DepositServiceImpl extends ServiceImpl<DepositAccountMapper, Deposi
             throw new BizException(
                     BillingErrorCode.DEPOSIT_TXN_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "押金账户状态已变更，缴存未入账，请重试");
         }
-        // 数据库读操作：已确认未结算费用聚合（欠费预警人群，Spec §6——余额与已确认费用结合计算）
+        // 数据库读操作：已确认未结算费用聚合（欠费预警人群，Spec §6——余额与已确认费用结合计算）——
+        //   仅消费 amount 列，.select 精确投影免长疗程数百行宽行全列入内存（A.4.3-14；行集不变仅列
+        //   收敛，空集空流求和天然 0，求和结果与全列取回完全等价）
         long confirmedSum = feeRecordMapper
                 .selectList(Wrappers.<FeeRecord>lambdaQuery()
+                        .select(FeeRecord::getAmount)
                         .eq(FeeRecord::getVisitId, req.visitId())
                         .eq(FeeRecord::getStatus, FeeStatus.CONFIRMED))
                 .stream()
