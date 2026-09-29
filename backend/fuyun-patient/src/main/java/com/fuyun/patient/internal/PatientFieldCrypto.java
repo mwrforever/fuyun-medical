@@ -89,7 +89,8 @@ public class PatientFieldCrypto {
             byte[] digest = mac.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
             return hexEncode(digest);
         } catch (Exception e) {
-            // JDK 标准 HmacSHA256 不应抛出：属环境级异常，包装为运行时中断业务（禁静默吞错）
+            // JDK 标准 HmacSHA256 不应抛出：属环境级异常，包装为运行时中断业务（禁静默吞错）；
+            // EX-19 收口 C 类：环境级防御断言（非用户可达），保留 ISE 走全局 500 兜底，不转业务错误码
             throw new IllegalStateException("HMAC 盲索引计算失败（环境异常）", e);
         }
     }

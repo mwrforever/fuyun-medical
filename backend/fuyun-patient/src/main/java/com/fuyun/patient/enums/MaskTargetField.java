@@ -1,5 +1,9 @@
 package com.fuyun.patient.enums;
 
+import com.fuyun.common.exception.BizException;
+import com.fuyun.patient.api.PatientErrorCode;
+import org.springframework.http.HttpStatus;
+
 /**
  * 脱敏目标字段词表（privacy_mask_rule.target_field 落库值为小驼峰 name/idCardNo/mobile/address/birthDate，
  * 与 VO 属性名一致；枚举提供 {@link #column()} 返回落库词）。
@@ -35,10 +39,11 @@ public enum MaskTargetField {
     /**
      * 落库词反查枚举（明文查阅穷举分派与词表收口点）。
      *
-     * @param word privacy_mask_rule.target_field 落库词，非空；来源：脱敏规则行
+     * @param word privacy_mask_rule.target_field 落库词，非空；来源：脱敏规则行或明文查阅请求字段词
      * @return 对应枚举；未知词显式暴露（脏数据告警），不静默归入默认脱敏
-     * @throws IllegalArgumentException 未知落库词时触发（词表收口点）；建议处理策略：阻断查阅分派并
-     *                                  告警规则表脏数据
+     * @throws BizException PAT-1025（400，词表外落库词——请求字段词/规则表存储值漂移显式拒）；
+     *                      EX-19 收口 A 类：词表外经 BizException 出 400 ProblemDetail 携带 errorCode，
+     *                      不再以裸 IAE 走全局 500 通道
      */
     public static MaskTargetField ofColumn(String word) {
         for (MaskTargetField field : values()) {
@@ -47,7 +52,7 @@ public enum MaskTargetField {
                 return field;
             }
         }
-        throw new IllegalArgumentException("未知脱敏目标字段落库词: " + word);
+        throw new BizException(PatientErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知脱敏目标字段落库词: " + word);
     }
 
     /**

@@ -47,6 +47,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
 
 /**
  * 明文查阅与留痕服务单测（FU-M02-06 双留痕出口）：403 无豁免前置拒绝不落台账、豁免放行台账落痕、
@@ -232,8 +233,15 @@ class PrivacyServiceImplTest {
     }
 
     @Test
-    @DisplayName("词表收口：未知落库词经 MaskTargetField.ofColumn 抛 IllegalArgumentException（脏数据显式暴露）")
+    @DisplayName("词表收口：未知落库词经 MaskTargetField.ofColumn 抛 PAT-1025/400（EX-19 A 类收口，脏数据显式暴露）")
     void ofColumnThrowsOnUnknownWord() {
-        assertThatThrownBy(() -> MaskTargetField.ofColumn("unknown")).isInstanceOf(IllegalArgumentException.class);
+        // D-21 断言语义迁移（EX-19 收口）：原锚裸 IllegalArgumentException，随 ofColumn 转 BizException
+        // 升级锚定错误码 PAT-1025 与 400 状态（严格度不低于原断言）
+        assertThatThrownBy(() -> MaskTargetField.ofColumn("unknown"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("未知脱敏目标字段落库词")
+                .satisfies(e ->
+                        assertThat(((BizException) e).getErrorCode().getCode()).isEqualTo("PAT-1025"))
+                .satisfies(e -> assertThat(((BizException) e).getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
     }
 }

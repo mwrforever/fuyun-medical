@@ -3,8 +3,10 @@ package com.fuyun.patient.enums;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fuyun.common.exception.BizException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 /**
  * 患者域枚举词表单测（A.2-7 code↔enum 双向映射契约）：词表取值与声明顺序即落库词表，
@@ -95,9 +97,14 @@ class PatientEnumsTest {
             assertThat(MaskTargetField.ofColumn(field.column())).isEqualTo(field);
             assertThat(MaskTargetField.of(field.name())).isEqualTo(field);
         }
+        // D-21 断言语义迁移（EX-19 收口 A 类）：原锚裸 IllegalArgumentException，随 ofColumn 转
+        // BizException 升级锚定 PAT-1025 + 400（严格度不低于原断言）
         assertThatThrownBy(() -> MaskTargetField.ofColumn("phone"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("未知脱敏目标字段落库词");
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("未知脱敏目标字段落库词")
+                .satisfies(e ->
+                        assertThat(((BizException) e).getErrorCode().getCode()).isEqualTo("PAT-1025"))
+                .satisfies(e -> assertThat(((BizException) e).getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
     }
 
     @Test

@@ -185,7 +185,8 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         try {
             record.setPreSnapshot(objectMapper.writeValueAsString(snapshot));
         } catch (JsonProcessingException e) {
-            // 快照是拆分可逆的唯一依据：序列化失败即拒绝执行合并（fail-fast 防不可拆合并）
+            // 快照是拆分可逆的唯一依据：序列化失败即拒绝执行合并（fail-fast 防不可拆合并）；
+            // EX-19 收口 C 类：系统级序列化防御断言（非用户可达输入），保留 ISE 走全局 500 兜底
             throw new IllegalStateException("合并快照序列化失败", e);
         }
         // ②主档空字段补齐（字段级择优：主档空且从档非空才补，双方原值已在快照）
@@ -305,6 +306,8 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
             }
             return ids;
         } catch (JsonProcessingException e) {
+            // EX-19 收口 C 类：快照 JSON 损坏的数据级防御断言（落库快照非用户直改输入），保留 ISE
+            // 显式暴露数据异常拒绝拆分，走全局 500 兜底，不转业务错误码
             throw new IllegalStateException("合并快照解析失败（数据损坏）", e);
         }
     }
