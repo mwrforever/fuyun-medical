@@ -466,8 +466,10 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
     }
 
     /**
-     * 风险标识追加回写（Task 8 评估高危消费）：追加缺失项、不重复追加、逗号分隔；
-     * 已含该标识时零写入直接返回。
+     * 风险标识追加回写（Task 8 评估高危消费，EX-26 原子化）：追加缺失项、不重复追加、逗号分隔；
+     * 已含该标识时快照前置短路零写入，追加写为单语句 DB 侧拼接原子 UPDATE（casAppendRiskFlag）——
+     * 并发追加不同标识由行级锁串行化互不覆盖（杜绝读-改-写整串回写丢标记），并发追加同标识由
+     * SQL 侧「首尾补逗定位」谓词去重（0 行幂等）。
      *
      * @param visitId 住院就诊号，非空；来源：评估单载荷
      * @param flag    风险标识 code（如 FALL/PRESSURE），非空；来源：评估单高危结果
@@ -481,7 +483,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
             throw new BizException(
                     NursingErrorCode.WARD_PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "病区在区患者不存在：" + visitId);
         }
-        // 已含即零写入（不重复追加护栏）
+        // 已含即零写入（快照前置短路，省一次写触达；并发交错下 SQL 侧谓词为权威去重护栏）
         List<String> flags = Arrays.stream(orEmpty(row.getRiskFlags()).split(","))
                 .filter(s -> !s.isBlank())
                 .toList();
@@ -489,10 +491,10 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
             log.info("风险标识已存在（零写入）：visitId={}，flag={}", visitId, flag);
             return;
         }
-        String merged = String.join(",", flags) + (flags.isEmpty() ? flag : "," + flag);
-        // 数据库写操作：风险标识条件回写（Task 8 评估高危结果）
-        baseMapper.updateRiskFlags(visitId, merged, operator());
-        log.info("风险标识追加：visitId={}，flag={}，riskFlags={}", visitId, flag, merged);
+        // 数据库写操作：DB 侧拼接原子追加（EX-26）——合并/首标记分隔符/去重均在 SQL 内单语句完成，
+        // 行级锁串行化并发追加（终值合并结果由数据库承载，不再回读拼串）
+        baseMapper.casAppendRiskFlag(visitId, flag, operator());
+        log.info("风险标识原子追加：visitId={}，flag={}", visitId, flag);
     }
 
     /**
@@ -519,7 +521,8 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
             log.info("风险标识不存在（零写入）：visitId={}，flag={}", visitId, flag);
             return;
         }
-        // 移除目标项后整体回写剩余标识（与追加侧同为「服务层拼串、SQL 整体置值」分工）
+        // 移除目标项后整体回写剩余标识（追加侧 EX-26 已改 DB 侧原子拼接；移除为单行单写者语义
+        // 的降级回写，整串置值无并发追加互踩面——若与追加交错，追加侧原子拼接保底不丢标记）
         String merged = flags.stream().filter(f -> !f.equals(flag)).collect(Collectors.joining(","));
         // 数据库写操作：风险标识条件回写（评估复评降级，最新判级脱离高危）
         baseMapper.updateRiskFlags(visitId, merged, operator());

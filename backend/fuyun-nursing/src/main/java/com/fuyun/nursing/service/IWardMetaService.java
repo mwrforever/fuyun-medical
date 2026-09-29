@@ -113,7 +113,7 @@ public interface IWardMetaService extends IService<NursingWardPatient> {
 
     /**
      * 风险标识追加回写（Task 8 评估高危消费）：追加缺失项、不重复追加、逗号分隔；
-     * 已含该标识时零写入直接返回。
+     * 已含该标识时零写入直接返回；追加为单语句 DB 侧原子拼接（EX-26），并发追加互不覆盖。
      *
      * @param visitId 住院就诊号，非空；来源：评估单载荷
      * @param flag    风险标识 code（如 FALL/PRESSURE），非空；来源：评估单高危结果
