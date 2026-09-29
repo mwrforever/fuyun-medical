@@ -1,6 +1,7 @@
 package com.fuyun.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -18,10 +19,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
@@ -363,7 +366,7 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     }
 
     /**
-     * 对齐起跑并发执行（BillingConcurrencyGuardIT runConcurrent :150-176 范式：CountDownLatch 保证
+     * 对齐起跑并发执行（BillingConcurrencyGuardIT runConcurrent :153-183 范式：CountDownLatch 保证
      * 两请求尽量同拍发出，命中并发窗口）。
      *
      * @param actions 各线程执行的 HTTP 动作（线程序即列表序）
@@ -373,21 +376,25 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
     private List<ResponseEntity<String>> runConcurrent(List<Supplier<ResponseEntity<String>>> actions)
             throws Exception {
         ExecutorService pool = Executors.newFixedThreadPool(actions.size());
-        CountDownLatch start = new CountDownLatch(1);
-        List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
-        for (Supplier<ResponseEntity<String>> action : actions) {
-            futures.add(pool.submit(() -> {
-                start.await();
-                return action.get();
-            }));
+        try {
+            CountDownLatch start = new CountDownLatch(1);
+            List<Future<ResponseEntity<String>>> futures = new ArrayList<>();
+            for (Supplier<ResponseEntity<String>> action : actions) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return action.get();
+                }));
+            }
+            start.countDown();
+            List<ResponseEntity<String>> results = new ArrayList<>();
+            for (Future<ResponseEntity<String>> future : futures) {
+                results.add(future.get(60, TimeUnit.SECONDS));
+            }
+            return results;
+        } finally {
+            // 线程池回收移入 finally：future 等待中断/超时或动作执行异常时亦回收，防线程泄漏
+            pool.shutdownNow();
         }
-        start.countDown();
-        List<ResponseEntity<String>> results = new ArrayList<>();
-        for (Future<ResponseEntity<String>> future : futures) {
-            results.add(future.get(60, TimeUnit.SECONDS));
-        }
-        pool.shutdownNow();
-        return results;
     }
 
     @Test
@@ -577,5 +584,23 @@ class PharmacyDispenseGuardIT extends FuyunStackITBase {
                 Integer.class,
                 BATCH_B_ID);
         assertThat(ledgerRows).isZero();
+    }
+
+    @Test
+    @DisplayName("EX-35 资源回收：动作执行异常经 future.get 传导后线程池经 finally 回收不驻留")
+    void runConcurrentRecyclesPoolOnActionFailure() throws Exception {
+        // 构造中断场景验证 finally 生效：动作抛非受检异常 → future.get 以 ExecutionException
+        // 向上传导。修复前 shutdownNow 位于正常返回路径，异常路径不执行（固定线程池核心线程
+        // 常驻进程）；修复后 finally 无条件回收
+        AtomicReference<Thread> worker = new AtomicReference<>();
+        assertThatThrownBy(() -> runConcurrent(List.of(() -> {
+                    worker.set(Thread.currentThread());
+                    throw new IllegalStateException("IT 模拟动作执行异常路径");
+                })))
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(IllegalStateException.class);
+        // 回收实证：worker 引用经 Future 异常完成先行发生保证非空；join 有界等待工作线程退出
+        worker.get().join(5_000L);
+        assertThat(worker.get().isAlive()).as("动作异常路径线程池应经 finally 回收，工作线程不得驻留").isFalse();
     }
 }
