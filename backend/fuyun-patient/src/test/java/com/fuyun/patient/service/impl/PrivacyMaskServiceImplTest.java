@@ -7,11 +7,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
@@ -24,13 +26,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
 
-/** 脱敏引擎单测（Spec §10 安全项）：五类规则掩码形态、停用规则透传、豁免角色判定、规则清单与维护。 */
+/** 脱敏引擎单测（Spec §10 安全项）：五类规则掩码形态、停用规则透传、豁免角色判定、规则清单与维护
+ * （含 SEC-01 维护门禁：非 ADMIN/空角色 403 PAT-1024 且规则行零触达）。 */
 class PrivacyMaskServiceImplTest {
 
     private PrivacyMaskRuleMapper ruleMapper;
@@ -48,6 +53,8 @@ class PrivacyMaskServiceImplTest {
     void setUp() {
         ruleMapper = mock(PrivacyMaskRuleMapper.class);
         maskService = new PrivacyMaskServiceImpl(ruleMapper);
+        // 规则维护主链用例统一以 ADMIN 角色种子过门禁（门禁用例自行覆盖角色，用例间隔离收尾必清）
+        RoleContextHolder.set(List.of("ADMIN"));
         // 豁免判定经投影 wrapper 查询（OPT-11）：桩面由 selectList(null) 机械放宽为 any()
         when(ruleMapper.selectList(any()))
                 .thenReturn(List.of(
@@ -56,6 +63,12 @@ class PrivacyMaskServiceImplTest {
                         rule("MASK_MOBILE", "mobile", "ADMIN", true),
                         rule("MASK_ADDRESS", "address", "ADMIN", true),
                         rule("MASK_BIRTH_DATE", "birthDate", "ADMIN", true)));
+    }
+
+    @AfterEach
+    void clearRoleContext() {
+        // 清理角色 ThreadLocal：门禁/主链用例显式 set 后防线程复用残留污染后续用例
+        RoleContextHolder.clear();
     }
 
     /** 规则行替身（maskPattern 按词表默认值，引擎按 target_field 分派不读 pattern——保留策略语义在常量词表） */
@@ -202,6 +215,39 @@ class PrivacyMaskServiceImplTest {
         assertThat(rules.get(0).exemptRoles()).containsExactly("ADMIN", "DOCTOR");
         // 空串=无人豁免（种子默认口径），输出空清单而非含空元素
         assertThat(rules.get(1).exemptRoles()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("SEC-01：非 ADMIN 角色维护规则 PAT-1024 403 前置拒绝，规则行零触达（阻断自授豁免提权链）")
+    void updateRuleRejectedAs403ForNonAdminRole() {
+        // 业务角色（非管理员）试图改写规则：门禁 403 前置，规则行读/写零触达（exemptRoles 不可被污染）
+        RoleContextHolder.set(List.of("DOCTOR"));
+
+        assertThatThrownBy(() -> maskService.updateRule(
+                        "MASK_ID_CARD_NO", new PrivacyMaskRuleUpdateRequest(null, "DOCTOR", null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getErrorCode())
+                .isEqualTo(PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN);
+        // 传输语义逐字保持：403 与 PAT-1024 成对（下沉前后错误码/状态码零变化）
+        assertThatThrownBy(() ->
+                        maskService.updateRule("MASK_ID_CARD_NO", new PrivacyMaskRuleUpdateRequest(null, null, null)))
+                .extracting(e -> ((BizException) e).getHttpStatus())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(ruleMapper);
+    }
+
+    @Test
+    @DisplayName("SEC-01：无角色上下文（空角色清单）维护规则同样 PAT-1024 403（拦截器未注入/无角色一并不放行）")
+    void updateRuleRejectedAs403ForEmptyRoles() {
+        // 空角色=非 ADMIN：显式置空清单覆盖「未设置」路径（get 回退空清单，门禁语义一致）
+        RoleContextHolder.set(List.of());
+
+        assertThatThrownBy(() ->
+                        maskService.updateRule("MASK_ID_CARD_NO", new PrivacyMaskRuleUpdateRequest(null, null, null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getErrorCode())
+                .isEqualTo(PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN);
+        verifyNoInteractions(ruleMapper);
     }
 
     @Test

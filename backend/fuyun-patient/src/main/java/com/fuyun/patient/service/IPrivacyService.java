@@ -1,6 +1,7 @@
 package com.fuyun.patient.service;
 
 import com.fuyun.common.web.PageResult;
+import com.fuyun.patient.dto.PrivacyAccessLogQuery;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.UnmaskVO;
@@ -21,12 +22,11 @@ public interface IPrivacyService {
     UnmaskVO unmask(UnmaskRequest request);
 
     /**
-     * 查阅台账分页（等保审计主检索）。
+     * 查阅台账分页（等保审计主检索，GET /privacy-access-logs 端点用例）：检索条件编排（单页条数
+     * 越界收敛 1-200）归本方法承载，controller 仅组装原始请求参数。
      *
-     * @param patientId 患者过滤（可空=全量）
-     * @param page      0 基页码
-     * @param size      1-200
-     * @return 台账分页，非空
+     * @param query 台账检索条件（patientId 可空=全量；page 0 基原样透传；size 原始请求值，收敛 1-200），非空
+     * @return 台账分页（page/size 按收敛后口径回显），非空
      */
-    PageResult<PrivacyAccessLogVO> listAccessLogs(Long patientId, int page, int size);
+    PageResult<PrivacyAccessLogVO> listAccessLogs(PrivacyAccessLogQuery query);
 }

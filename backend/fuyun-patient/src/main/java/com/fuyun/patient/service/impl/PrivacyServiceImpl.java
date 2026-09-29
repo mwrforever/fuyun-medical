@@ -9,6 +9,7 @@ import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.CareRelationQuery;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.convert.PatientConverter;
+import com.fuyun.patient.dto.PrivacyAccessLogQuery;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PrivacyAccessLog;
@@ -167,26 +168,27 @@ public class PrivacyServiceImpl implements IPrivacyService {
     }
 
     /**
-     * 查阅台账分页。
+     * 查阅台账分页（等保审计主检索）：单页条数越界收敛 1-200 归本层承载（检索条件编排属业务
+     * 逻辑，controller 仅组装原始请求参数）。
      *
-     * @param patientId 患者过滤，可空
-     * @param page      0 基页码
-     * @param size      1-200
-     * @return 台账分页，非空
+     * @param query 台账检索条件（patientId 可空=全量；page 0 基；size 原始请求值），非空
+     * @return 台账分页（page 原样回显；size 按收敛后值回显），非空
      */
     @Override
     @Transactional(readOnly = true)
-    public PageResult<PrivacyAccessLogVO> listAccessLogs(Long patientId, int page, int size) {
+    public PageResult<PrivacyAccessLogVO> listAccessLogs(PrivacyAccessLogQuery query) {
+        // 单页条数防御性收敛 1-200：0/负数=1、超 200=200（防超大单页拖库，与既有端点收敛口径一致）
+        int size = Math.min(Math.max(query.size(), 1), 200);
         // MP Page 为 1 基：0 基契约 +1 换算（PageResult 出参仍以 0 基回显）
-        Page<PrivacyAccessLog> result = new Page<>(page + 1, size);
+        Page<PrivacyAccessLog> result = new Page<>(query.page() + 1, size);
         privacyAccessLogMapper.selectPage(
                 result,
                 new LambdaQueryWrapper<PrivacyAccessLog>()
-                        .eq(patientId != null, PrivacyAccessLog::getPatientId, patientId)
+                        .eq(query.patientId() != null, PrivacyAccessLog::getPatientId, query.patientId())
                         .orderByDesc(PrivacyAccessLog::getOccurredAt));
         List<PrivacyAccessLogVO> rows = result.getRecords().stream()
                 .map(row -> Mappers.getMapper(PatientConverter.class).toVO(row))
                 .toList();
-        return PageResult.of(rows, page, size, result.getTotal());
+        return PageResult.of(rows, query.page(), size, result.getTotal());
     }
 }

@@ -1,6 +1,8 @@
 package com.fuyun.patient.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.utils.SensitiveMasker;
 import com.fuyun.patient.api.PatientErrorCode;
@@ -27,7 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 豁免判定 = 当前角色清单与规则 exempt_roles（逗号分隔）有交集。规则装载口径（OPT-11 消化
  * 原设计豁免注释）：每请求从库装载、同请求内复用、禁跨请求缓存——管理面变更下轮请求即生效
  * （5 行量级；全量 @Cacheable 属跨请求缓存，须另行评审，禁擅自引入）。
- * 规则维护（listRules/updateRule）同本类承载，落库后下轮请求加载即生效。
+ * 规则维护（listRules/updateRule）同本类承载，落库后下轮请求加载即生效；updateRule 入口
+ * 承载 SEC-01 ADMIN 门禁（非 ADMIN 一律 PAT-1024 403 前置拒绝，规则行零触达）。
  * 聚合型服务直用 mapper（A.4.3-20 末句），不设 IService。
  *
  * <p>展示侧口径（审查 I7，待计划审批确认）：applyAll 不做角色豁免——任何角色（含 ADMIN）经列表/详情
@@ -36,6 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Slf4j
 public class PrivacyMaskServiceImpl implements IPrivacyMaskService {
+
+    /** 脱敏规则维护的管理员角色编码（与 V303 sys_role 种子 ADMIN 对齐，SEC-01 门禁判定依据） */
+    private static final String MASK_RULE_ADMIN_ROLE = "ADMIN";
 
     private final PrivacyMaskRuleMapper ruleMapper;
 
@@ -107,16 +113,26 @@ public class PrivacyMaskServiceImpl implements IPrivacyMaskService {
     }
 
     /**
-     * 规则维护（部分更新：非空字段覆盖库值；管理面变更经引擎每请求加载即时生效）。
+     * 规则维护（部分更新：非空字段覆盖库值；管理面变更经引擎每请求加载即时生效）。SEC-01 安全收口：
+     * 仅 ADMIN 角色可维护——规则维护属管理面配置写操作，若任意登录用户可改写 exemptRoles，即可
+     * 自授豁免再经 unmask 提权解密，故非 ADMIN 一律 PAT-1024 403 前置拒绝（规则行零触达；
+     * 拒绝由审计切面 FAIL 行留痕，与 unmask 403 同模式）。
      *
      * @param ruleCode 规则编码（业务唯一），非空
      * @param request  维护请求（部分更新语义），非空
      * @return 维护后规则出参，非空
-     * @throws BizException PAT-1021（404 规则编码无命中）
+     * @throws BizException PAT-1024（403 非 ADMIN 角色，SEC-01 门禁）/ PAT-1021（404 规则编码无命中）
      */
     @Override
     @Transactional
     public PrivacyMaskRuleVO updateRule(String ruleCode, PrivacyMaskRuleUpdateRequest request) {
+        // 权限校验：规则维护仅限 ADMIN（角色经认证拦截器注入 RoleContextHolder，V303 种入）；
+        // 非 ADMIN 一律 403 前置拒绝，规则行读/写零触达（exemptRoles 不可被非管理员污染）
+        if (!RoleContextHolder.get().contains(MASK_RULE_ADMIN_ROLE)) {
+            log.warn("脱敏规则维护拒绝（非 ADMIN 角色）：operator={}，ruleCode={}", OperatorContextHolder.get(), ruleCode);
+            throw new BizException(
+                    PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN, HttpStatus.FORBIDDEN, "脱敏规则维护仅限系统管理员");
+        }
         // 数据库读操作：业务键 rule_code 等值查行（uk 唯一，selectOne 无多行歧义）
         PrivacyMaskRule rule = ruleMapper.selectOne(
                 new LambdaQueryWrapper<PrivacyMaskRule>().eq(PrivacyMaskRule::getRuleCode, ruleCode));

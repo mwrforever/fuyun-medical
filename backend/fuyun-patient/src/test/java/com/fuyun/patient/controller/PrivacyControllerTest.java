@@ -15,6 +15,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.GlobalExceptionHandler;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.dto.PrivacyAccessLogQuery;
 import com.fuyun.patient.service.IPrivacyAuthService;
 import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.service.IPrivacyService;
@@ -45,8 +46,9 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
  * 审计落点由切面承载，standalone 骨架不加载）；授权登记/清单端点委托 service 直出（实体组装/
  * 时刻派生/落库/PAT-1023 解析守卫语义归 PrivacyAuthServiceImplTest）。
  *
- * <p>SEC-01 安全收口用例：脱敏规则维护写端点 ADMIN 门禁——非 ADMIN（含空角色）403 PAT-1024
- * 不触达服务、ADMIN 200 委托直出；读端点（规则清单）与 unmask 链路无 ADMIN 亦行为保持。
+ * <p>SEC-01 安全收口：脱敏规则维护 ADMIN 门禁（非 ADMIN 403 PAT-1024 且规则行零触达）已随
+ * 业务逻辑下沉 PrivacyMaskServiceImplTest 承载；本类保留 HTTP 错误契约锚点——service 侧
+ * PAT-1024 异常经全局渲染器出 403，及读端点（规则清单）无 ADMIN 门禁行为保持。
  */
 @ExtendWith(MockitoExtension.class)
 class PrivacyControllerTest {
@@ -100,10 +102,13 @@ class PrivacyControllerTest {
     }
 
     @Test
-    @DisplayName("SEC-01：非 ADMIN 角色维护脱敏规则 403 PAT-1024，不触达服务（阻断自授豁免提权链）")
-    void updateRuleRejectedAs403ForNonAdminRole() throws Exception {
-        // 业务角色（非管理员）试图改写规则：门禁 403 前置，服务零触达（exemptRoles 不可被污染）
-        RoleContextHolder.set(List.of("DOCTOR"));
+    @DisplayName("SEC-01 契约保持：service 侧 PAT-1024 门禁异常经全局渲染器出 403（门禁已下沉 service）")
+    void updateRuleRendersServiceSidePat1024As403() throws Exception {
+        // 门禁拒绝语义（非 ADMIN 403 + 规则行零触达）归 PrivacyMaskServiceImplTest；本用例锚定
+        // service 抛出的 PAT-1024 经全局渲染器仍出 403 ProblemDetail（HTTP 错误契约不变）
+        when(privacyMaskService.updateRule(any(), any()))
+                .thenThrow(new BizException(
+                        PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN, HttpStatus.FORBIDDEN, "脱敏规则维护仅限系统管理员"));
 
         String body = mockMvc.perform(put("/api/v1/patient/privacy-mask-rules/ID_CARD")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -113,27 +118,14 @@ class PrivacyControllerTest {
                 .getResponse()
                 .getContentAsString(StandardCharsets.UTF_8);
 
+        // ProblemDetail 契约：errorCode 扩展属性承载业务错误码（门禁下沉后 403 语义逐字保持）
         assertThat(body).contains("PAT-1024");
-        verifyNoInteractions(privacyMaskService);
+        verify(privacyMaskService).updateRule(any(), any());
     }
 
     @Test
-    @DisplayName("SEC-01：无角色上下文（空角色清单）维护脱敏规则同样 403（拦截器未注入/无角色一并不放行）")
-    void updateRuleRejectedAs403ForEmptyRoles() throws Exception {
-        // 空角色=非 ADMIN：显式置空清单覆盖「未设置」路径（get 回退空清单，门禁语义一致）
-        RoleContextHolder.set(List.of());
-
-        mockMvc.perform(put("/api/v1/patient/privacy-mask-rules/ID_CARD")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"enabled\":true}"))
-                .andExpect(status().isForbidden());
-        verifyNoInteractions(privacyMaskService);
-    }
-
-    @Test
-    @DisplayName("SEC-01：ADMIN 角色维护脱敏规则 200 委托服务直出（管理员正常维护通道保持）")
-    void updateRuleDelegatesForAdminRole() throws Exception {
-        RoleContextHolder.set(List.of("ADMIN", "DOCTOR"));
+    @DisplayName("规则维护端点：委托服务直出维护后规则（200，薄层透传）")
+    void updateRuleDelegatesAndReturnsUpdatedRule() throws Exception {
         when(privacyMaskService.updateRule(any(), any()))
                 .thenReturn(new PrivacyMaskRuleVO("ID_CARD", "idCardNo", "KEEP_6_4", List.of("DOCTOR"), true));
 
@@ -258,9 +250,11 @@ class PrivacyControllerTest {
     }
 
     @Test
-    @DisplayName("查阅台账端点：委托服务直出分页（200，0 基页码与总条数契约）")
+    @DisplayName("查阅台账端点：委托服务直出分页（200，0 基页码与总条数契约，原始参数对象直传）")
     void accessLogsDelegatesAndReturnsPagedLedger() throws Exception {
-        when(privacyService.listAccessLogs(5L, 0, 20))
+        // 检索条件以参数对象直传（缺省 page=0/size=20），size 收敛语义归 PrivacyServiceImplTest
+        PrivacyAccessLogQuery query = new PrivacyAccessLogQuery(5L, 0, 20);
+        when(privacyService.listAccessLogs(query))
                 .thenReturn(PageResult.of(
                         List.of(new PrivacyAccessLogVO(
                                 66L,
@@ -285,6 +279,6 @@ class PrivacyControllerTest {
                 .contains("\"total\":1")
                 .contains("\"operatorId\":\"op-001\"")
                 .contains("\"accessType\":\"UNMASK_QUERY\"");
-        verify(privacyService).listAccessLogs(5L, 0, 20);
+        verify(privacyService).listAccessLogs(query);
     }
 }

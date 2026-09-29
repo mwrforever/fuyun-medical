@@ -48,12 +48,14 @@ public interface IPrivacyMaskService {
     List<PrivacyMaskRuleVO> listRules();
 
     /**
-     * 规则维护（PUT /privacy-mask-rules/{ruleCode}，部分更新语义：非空字段覆盖库值）。
+     * 规则维护（PUT /privacy-mask-rules/{ruleCode} 端点用例，部分更新语义：非空字段覆盖库值）；
+     * SEC-01 安全收口：仅 ADMIN 角色可维护（非 ADMIN 一律 PAT-1024 403 前置拒绝，规则行零触达）。
      *
      * @param ruleCode 规则编码（业务唯一），非空
      * @param request  维护请求（部分更新语义），非空
      * @return 维护后规则出参，非空
-     * @throws com.fuyun.common.exception.BizException PAT-1021（404 规则编码无命中）
+     * @throws com.fuyun.common.exception.BizException PAT-1024（403 非 ADMIN 角色，SEC-01 门禁）
+     *                                                 / PAT-1021（404 规则编码无命中）
      */
     PrivacyMaskRuleVO updateRule(String ruleCode, PrivacyMaskRuleUpdateRequest request);
 }

@@ -21,6 +21,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.CareRelationQuery;
 import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.dto.PrivacyAccessLogQuery;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PrivacyAccessLog;
@@ -49,7 +50,8 @@ import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * 明文查阅与留痕服务单测（FU-M02-06 双留痕出口）：403 无豁免前置拒绝不落台账、豁免放行台账落痕、
- * 档案不存在守卫、台账空页与词表收口抛错；明文值断言仅存活于用例内，日志红线（禁打印明文）由实现保证。
+ * 档案不存在守卫、台账空页/分页条数收敛 1-200（检索条件编排归本层）与词表收口抛错；明文值断言
+ * 仅存活于用例内，日志红线（禁打印明文）由实现保证。
  */
 @ExtendWith(MockitoExtension.class)
 class PrivacyServiceImplTest {
@@ -198,12 +200,35 @@ class PrivacyServiceImplTest {
             return page;
         });
 
-        PageResult<PrivacyAccessLogVO> result = privacyService.listAccessLogs(5L, 0, 20);
+        PageResult<PrivacyAccessLogVO> result = privacyService.listAccessLogs(new PrivacyAccessLogQuery(5L, 0, 20));
 
         assertThat(result.content()).isEmpty();
         assertThat(result.page()).isZero();
         assertThat(result.size()).isEqualTo(20);
         assertThat(result.total()).isZero();
+    }
+
+    @Test
+    @DisplayName("查阅台账分页条数收敛：越界 size 收敛 1-200（500→200、0→1），收敛值直达分页查询与回显")
+    void listAccessLogsClampsPageSizeIntoBoundedRange() {
+        when(privacyAccessLogMapper.selectPage(any(), any())).thenAnswer(inv -> {
+            Page<PrivacyAccessLog> page = inv.getArgument(0);
+            page.setRecords(List.of());
+            page.setTotal(0);
+            return page;
+        });
+
+        PageResult<PrivacyAccessLogVO> oversized =
+                privacyService.listAccessLogs(new PrivacyAccessLogQuery(null, 0, 500));
+        PageResult<PrivacyAccessLogVO> undersized =
+                privacyService.listAccessLogs(new PrivacyAccessLogQuery(null, 0, 0));
+
+        // 收敛后值直达 MP 分页（防超大单页拖库），并按收敛口径回显出参
+        ArgumentCaptor<Page<PrivacyAccessLog>> captor = ArgumentCaptor.forClass(Page.class);
+        verify(privacyAccessLogMapper, times(2)).selectPage(captor.capture(), any());
+        assertThat(captor.getAllValues()).extracting(Page::getSize).containsExactly(200L, 1L);
+        assertThat(oversized.size()).isEqualTo(200);
+        assertThat(undersized.size()).isEqualTo(1);
     }
 
     @Test
