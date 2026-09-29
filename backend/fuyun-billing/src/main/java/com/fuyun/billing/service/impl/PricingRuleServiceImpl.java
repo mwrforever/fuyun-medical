@@ -26,6 +26,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class PricingRuleServiceImpl extends ServiceImpl<PricingRuleMapper, PricingRule> implements IPricingRuleService {
 
+    /** 配置面清单单次装载上限（EX-13 风险收拢：LIMIT 硬顶泄压，防配置膨胀全量拉取） */
+    private static final int LIST_ALL_LIMIT = 200;
+
     private final ObjectMapper objectMapper;
 
     /** 全参构造器（装配归 BillingWebConfig @Import）。 */
@@ -78,11 +81,23 @@ public class PricingRuleServiceImpl extends ServiceImpl<PricingRuleMapper, Prici
         return existing.getId();
     }
 
-    /** 全量规则清单（配置面列表页，id 倒序新规则在前）。 */
+    /**
+     * 上限 200 的规则清单（配置面列表页，id 倒序新规则在前）：LIMIT 硬顶泄压防配置膨胀
+     * 全量拉取，截断以 warn 留痕；正常配置量（百级内）行为不变，超限截断属防御性收拢。
+     */
     @Override
     @Transactional(readOnly = true)
     public List<PricingRule> listAll() {
-        return lambdaQuery().orderByDesc(PricingRule::getId).list();
+        // 数据库读操作：规则清单装载（id 倒序新规则在前；LIMIT 硬顶泄压，截断 warn 留痕）
+        List<PricingRule> rules = lambdaQuery()
+                .orderByDesc(PricingRule::getId)
+                .last("LIMIT " + LIST_ALL_LIMIT)
+                .list();
+        if (rules.size() >= LIST_ALL_LIMIT) {
+            // 配置行数达硬顶：截断泄压留痕，提示配置膨胀排查（正常量不触发）
+            log.warn("计价规则清单触发装载上限截断：loaded={}，limit={}，请检查配置膨胀", rules.size(), LIST_ALL_LIMIT);
+        }
+        return rules;
     }
 
     /**

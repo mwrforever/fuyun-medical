@@ -30,7 +30,7 @@ public interface IPricingRuleService extends IService<PricingRule> {
     long upsert(PricingRuleUpsertRequest req);
 
     /**
-     * 全量规则清单（配置面列表页）。
+     * 上限 200 的规则清单（配置面列表页）。
      *
      * @return 规则清单，可为空清单
      */
