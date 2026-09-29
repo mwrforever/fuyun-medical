@@ -2,6 +2,16 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-30 · 批次 F 性能收拢组总收口（EX-37~41：批量写/键集批查/精确投影/IoTDA 防御/前端隐藏暂停，六路并行+前端补派）
+
+- **根因**：BE-B3-04~12（循环逐行写）+BE-C4-19/20（循环内逐行读写）+BE-C4-25/27/28/29/30（全列取回仅用少量列）+BE-B4-01（IoTDA 客户端无超时/重试/熔断）+FE-B1-01（看板隐藏不暂停）。
+- **批量写六模块**（A.4.3-16，0 行防线 CAS 全部逐行保留甄别）：pharmacy Dispense 五段批插/补丁批更（0274d5d，衔接 EX-24 五处明细补丁化）；inpatient 医嘱明细/计划批插（821dc79，DuplicateKeyException→IP-1023 语义经 Spring 翻译链等价保持）；outpatient 放号两批写（b9d9962，装配块裁决维持）；billing 退费判态批更+组合成员批插（938bed7）；iot 产品命令/映射批插（8b55ad9）。
+- **键集批查/批量清理**：outpatient QueueZsetStore 失效票 selectBatchIds 前置+ZREM 单命令批清理（af4238f，可叫票 Lua 守卫保留）；patient 拆分回挂 listByIds 前置+updateBatchById（2ef256d，灶位甄别=split 回挂面呈报采纳，EX-21 CAS 零触碰）。
+- **精确投影五处**（A.4.3-14，OPT-12/13 先例）：inpatient 转科分野 1 列（821dc79）/billing 结算清单 2 列（d5547ca）/iot 失配与频率 2 处 1 列（8b55ad9）/patient 近窗档 4 列（20021db）。
+- **EX-40 IoTDA 防御配置（B.4-2）**：HttpConfig 超时 10s/30s（SDK 缺省 60/120s 与人机链路失配）+invoker 连接级重试 2 次（仅请求未送达，非幂等写安全）+熔断自实现（5 次开断/30s 半开/4xx 不计入）；错误通道 IOT-1022 零变化（8fa6328）。
+- **EX-41 前端隐藏暂停（web 宪法 B.3-4）**：InfusionBoardView visibilitychange 对齐 TriageBoard 先例——隐藏期三路刷新停发、恢复立刷；告急提示条仍落（94dc077）。
+- **验证**：六模块门禁全绿 pharmacy 178（+5）/inpatient 198（+3）/outpatient 341（+2）/billing 297（+4）/iot 576（+7）/patient 253（+3）+workstation 219（+2）+spotless/lint 过+主控六模块联跑终验 BUILD SUCCESS；对外行为零变化（放号 409 message 单日→窗口期、EX-40/41 新防御语义入 N5 清单）。
+
 ## 2026-09-30 · 批次 E 资源组总收口（EX-30~36：可观测降级/线程池生命周期/测试资源回收，两路并行）
 
 - **根因**：BE-A1-02/03（catch 静默降级无可观测留痕）+BE-A5-01~05（无界池/无 shutdown/测试执行器驻留）——资源组七项。
