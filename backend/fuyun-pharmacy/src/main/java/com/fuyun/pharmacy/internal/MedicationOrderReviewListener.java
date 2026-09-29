@@ -72,12 +72,14 @@ public class MedicationOrderReviewListener {
         String visitId = requireText(envelope, payload, "visitId");
         long patientId = payload.path("patientId").asLong(0);
         if (patientId <= 0) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "医嘱开立载荷不合规（patientId 缺失或非法）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
         JsonNode items = payload.path("items");
         // 明细快照为审方工作台药品明细唯一数据源：缺失或非数组定性不合规帧（空数组合法——纯嘱托类 drug 行）
         if (!items.isArray()) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "医嘱开立载荷不合规（items 非数组）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -96,6 +98,7 @@ public class MedicationOrderReviewListener {
     private static String requireText(EventEnvelope envelope, JsonNode payload, String field) {
         String value = textOrNull(payload, field);
         if (value == null) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "医嘱开立载荷不合规（缺 " + field + "）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }

@@ -74,6 +74,7 @@ public class PharmacyRefundApprovedListener {
         // settlementId 以数值承载，0 兜底值即不合规帧显式抛出进死信留痕
         long settlementId = envelope.payload().path("settlementId").asLong(0L);
         if (settlementId == 0L) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "退费审批回执载荷不合规（缺 settlementId）：eventType=" + envelope.eventType() + "，payload=" + envelope.payload());
         }

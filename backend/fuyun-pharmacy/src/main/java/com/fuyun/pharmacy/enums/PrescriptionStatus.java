@@ -2,6 +2,9 @@ package com.fuyun.pharmacy.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 处方状态机十值（Spec :132 逐字冻结）：CREATED→APPROVED（预检通过级同事务）→PENDING_FEE
@@ -64,7 +67,7 @@ public enum PrescriptionStatus {
      *
      * @param code 存储值，非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举（脏数据）
+     * @throws BizException PH-1022（400）code 无对应枚举（值域外 code 显式拒绝——EX-19 BE-C3-05 A 类收口）
      */
     public static PrescriptionStatus fromCode(String code) {
         for (PrescriptionStatus value : values()) {
@@ -72,6 +75,6 @@ public enum PrescriptionStatus {
                 return value;
             }
         }
-        throw new IllegalArgumentException("未知的处方状态 code: " + code);
+        throw new BizException(PharmacyErrorCode.ENUM_CODE_MALFORMED, HttpStatus.BAD_REQUEST, "未知的处方状态 code: " + code);
     }
 }

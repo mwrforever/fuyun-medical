@@ -48,6 +48,7 @@ public class PharmacyBillingSyncListener {
         consumerSupport.consume(message, (EventEnvelope envelope) -> {
             String billingKey = envelope.payload().path("billingKey").asText(null);
             if (billingKey == null || billingKey.isBlank()) {
+                // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
                 throw new IllegalStateException("费用生成回执载荷不合规（缺 billingKey）：payload=" + envelope.payload());
             }
             dispenseService.markPendingFee(billingKey);

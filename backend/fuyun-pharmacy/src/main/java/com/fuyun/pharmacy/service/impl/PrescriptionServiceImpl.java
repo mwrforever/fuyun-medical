@@ -166,7 +166,8 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         rx.setStatus("CREATED");
         baseMapper.insert(rx);
         if (baseMapper.casApprove(rx.getId()) != 1) {
-            // 同事务内 CREATED 被并发抢改属数据异常，显式暴露（禁静默带 CREATED 生效）
+            // 同事务内 CREATED 被并发抢改属数据异常，显式暴露（禁静默带 CREATED 生效）；
+            // EX-19 C 类留痕：内部并发防御断言（非用户输入路径），保留 ISE 同事务回滚，不在 A/B 收口范围
             throw new IllegalStateException("处方放行迁移失败（CREATED→APPROVED），rxNo=" + rx.getRxNo());
         }
         // 内存态与 DB 迁移同步：出参 VO status 口径取迁移后终态（APPROVED），防出参与库不一致
@@ -474,6 +475,7 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         }
         String candidate = ANTIBIO_GRANT_BY_CLASS.get(antibioClass);
         if (candidate == null) {
+            // EX-19 C 类留痕：主数据脏数据 fail-closed 防御（非用户输入路径），保留 ISE 人工对账，不在 A/B 收口范围
             throw new IllegalStateException("药品抗菌药分级词表外（主数据异常，人工对账）：antibioClass=" + antibioClass);
         }
         if (current == null) {

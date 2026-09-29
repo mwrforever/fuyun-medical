@@ -66,7 +66,8 @@ public class PharmacyChargedOrderListener {
         String visitId = payload.path("visitId").asText(null);
         JsonNode rxNosNode = payload.path("rxNos");
         if (visitId == null || visitId.isBlank() || !rxNosNode.isArray()) {
-            // 冻结契约不合规帧显式暴露（V204 id 25：visitId/rxNos 为本消费方必读双字段）
+            // 冻结契约不合规帧显式暴露（V204 id 25：visitId/rxNos 为本消费方必读双字段）；
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "缴费放行事件载荷不合规（缺 visitId 或 rxNos 非数组）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
