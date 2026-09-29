@@ -1,5 +1,6 @@
 package com.fuyun.pharmacy.service;
 
+import com.fuyun.pharmacy.entity.DrugBatch;
 import java.math.BigDecimal;
 
 /**
@@ -15,5 +16,5 @@ public interface IBatchSelectService {
      * @param quantity   请发数量（基础单位），非空且 >0
      * @return FEFO 首个足量在库批次；无合格批次返回 null（调用方 PH-1010）
      */
-    com.fuyun.pharmacy.entity.DrugBatch selectForDispense(long drugId, String storehouse, BigDecimal quantity);
+    DrugBatch selectForDispense(long drugId, String storehouse, BigDecimal quantity);
 }

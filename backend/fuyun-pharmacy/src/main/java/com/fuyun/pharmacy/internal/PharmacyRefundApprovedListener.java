@@ -1,5 +1,6 @@
 package com.fuyun.pharmacy.internal;
 
+import com.fuyun.billing.api.SettlementQueryPort;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
@@ -30,7 +31,7 @@ public class PharmacyRefundApprovedListener {
     private final IDispenseService dispenseService;
 
     /** 结算单反查端口（处方号精确清单唯一载体，billing api 只读面），非空 */
-    private final com.fuyun.billing.api.SettlementQueryPort settlementQueryPort;
+    private final SettlementQueryPort settlementQueryPort;
 
     /**
      * 全参构造器（装配归 PharmacyMessagingConfig @Import；消费模板多候选 @Qualifier 定绑；
@@ -43,7 +44,7 @@ public class PharmacyRefundApprovedListener {
     public PharmacyRefundApprovedListener(
             @Qualifier("pharmacyConsumerSupport") IdempotentConsumerSupport consumerSupport,
             IDispenseService dispenseService,
-            com.fuyun.billing.api.SettlementQueryPort settlementQueryPort) {
+            SettlementQueryPort settlementQueryPort) {
         this.consumerSupport = consumerSupport;
         this.dispenseService = dispenseService;
         this.settlementQueryPort = settlementQueryPort;
