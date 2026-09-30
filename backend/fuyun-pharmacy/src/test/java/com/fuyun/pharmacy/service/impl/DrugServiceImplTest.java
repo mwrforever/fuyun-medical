@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.exception.BizException;
@@ -22,6 +23,7 @@ import com.fuyun.pharmacy.mapper.DrugMapper;
 import com.fuyun.pharmacy.service.IDrugService;
 import com.fuyun.pharmacy.vo.DrugVO;
 import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -60,6 +62,36 @@ class DrugServiceImplTest {
     static void initTableInfo() {
         // MP 3.5.17 单测范式：无 Spring 上下文时手工注册实体表信息（patient/billing 实证形态）
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Drug.class);
+    }
+
+    /**
+     * 取链式 wrapper 底层谓词载体并触发渲染：MP 条件参数在 getSqlSegment 惰性求值时才写入
+     * 参数表，须先渲染再断言绑定值（billing ChargeItemServiceImplTest.rendered 同款）。
+     *
+     * @param chain buildSearchWrapper 产出的链式 wrapper，非空
+     * @return 已触发渲染的底层 LambdaQueryWrapper（承载 SQL 片段与参数绑定表），非空
+     */
+    private static LambdaQueryWrapper<Drug> rendered(LambdaQueryChainWrapper<Drug> chain) {
+        LambdaQueryWrapper<Drug> wrapper = (LambdaQueryWrapper<Drug>) chain.getWrapper();
+        wrapper.getSqlSegment();
+        return wrapper;
+    }
+
+    /**
+     * SQL 片段按占位符名回填绑定值（'v' 字面量形态）：契约断言面向「列+操作符+值」完整形态，
+     * 不锚定 MP 内部 MPGENVALx 编号（编号是实现细节）；参数表为 HashMap 无序，须按名配对
+     * 确定性回填（禁按迭代序回填——无序会错配值）。MP 3.5.17 likeRight 将 '%' 载入绑定值
+     * （'阿莫%'=前缀匹配形态，与 likeLeft/全包含的值形态可区分）。
+     *
+     * @param wrapper 已渲染的底层 wrapper，非空
+     * @return 回填后的 SQL 片段文本，非空
+     */
+    private static String resolvedSql(LambdaQueryWrapper<Drug> wrapper) {
+        String sql = wrapper.getSqlSegment();
+        for (Map.Entry<String, Object> entry : wrapper.getParamNameValuePairs().entrySet()) {
+            sql = sql.replace("#{ew.paramNameValuePairs." + entry.getKey() + "}", "'" + entry.getValue() + "'");
+        }
+        return sql;
     }
 
     private static DrugSaveRequest request(String drugCode) {
@@ -174,21 +206,31 @@ class DrugServiceImplTest {
     }
 
     @Test
-    @DisplayName("检索谓词：默认启用面 + keyword 四列 OR 前缀 + 对照过滤 IS NOT NULL（子串断言）")
-    void searchWrapperContainsEnabledAndKeywordPredicates() {
+    @DisplayName("检索谓词 SQL 契约：启用面+四列 OR 前缀+基药/分级等值+对照 IS NOT NULL+id 升序（EX-12 收口）")
+    void searchWrapperSqlContractPinsEnabledKeywordFiltersAndOrdering() {
         DrugServiceImpl impl = newService();
 
-        var wrapper = impl.buildSearchWrapper("阿莫", true, "UNRESTRICTED", true);
+        LambdaQueryWrapper<Drug> wrapper = rendered(impl.buildSearchWrapper("阿莫", true, "UNRESTRICTED", true));
+        String sql = resolvedSql(wrapper);
 
-        // wrapper 断言只做 contains 子串（Global Constraints：禁全文精确比对）；MP 条件参数在
-        // getSqlSegment 惰性求值时才写入 paramNameValuePairs——先渲染片段再断言参数（billing 同款）
-        String sql = wrapper.getSqlSegment();
-        assertThat(sql).contains("status"); // 默认启用面谓词落 status 列
-        assertThat(sql).contains("LIKE"); // likeRight 前缀匹配（通用名/商品名/拼音/医保码四列 OR）
-        assertThat(sql).contains("IS NOT NULL"); // insuranceMapped=true 附加对照谓词
-        assertThat(sql).contains("essential_flag").contains("antibio_class");
-        assertThat(((LambdaQueryWrapper<Drug>) wrapper).getParamNameValuePairs().values())
-                .contains("ENABLED", true, "UNRESTRICTED");
+        // 默认启用面谓词：status 等值 ENABLED（停用药品不进选药场景）
+        assertThat(sql).contains("status = 'ENABLED'");
+        // keyword 四列 OR 前缀匹配整块：通用名/商品名/拼音/医保码各一次 LIKE，'%' 载入绑定值
+        //   （'阿莫%'=右前缀形态，与 likeLeft/全包含的值形态可区分，四列缺一即红）
+        assertThat(sql)
+                .contains("(generic_name LIKE '阿莫%' OR trade_name LIKE '阿莫%'"
+                        + " OR pinyin_code LIKE '阿莫%' OR nhsa_code LIKE '阿莫%')");
+        // 过滤器等值谓词：基药/分级（列+操作符+绑定值完整形态）
+        assertThat(sql).contains("essential_flag = 'true'");
+        assertThat(sql).contains("antibio_class = 'UNRESTRICTED'");
+        // 对照过滤谓词：insuranceMapped=true 附加 nhsa_code 非空（列名锚定，非任意 IS NOT NULL）
+        assertThat(sql).contains("nhsa_code IS NOT NULL");
+        // 唯一顺序约束（A.4.3-17）：id 升序收尾，其后无其他排序键
+        assertThat(sql).endsWith("ORDER BY id ASC");
+        // 绑定值全量精确（序无关多集合：参数表为 HashMap 无序）：ENABLED+keyword×4（四列 OR 各绑
+        //   一次，'%' 随值承载）+基药+分级，无遗漏无多余
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .containsExactlyInAnyOrder("ENABLED", "阿莫%", "阿莫%", "阿莫%", "阿莫%", true, "UNRESTRICTED");
     }
 
     @Test
@@ -365,17 +407,23 @@ class DrugServiceImplTest {
     }
 
     @Test
-    @DisplayName("检索边界：keyword/过滤全空退化为仅启用面谓词（无 LIKE、无 IS NOT NULL）")
-    void searchWrapperDegradesToEnabledOnlyWhenFiltersBlank() {
+    @DisplayName("检索边界 SQL 契约：keyword/过滤全空退化为仅启用面谓词（无 LIKE、无 IS NOT NULL、过滤器列零进入）")
+    void searchWrapperSqlContractDegradesToEnabledOnlyWhenFiltersBlank() {
         DrugServiceImpl impl = newService();
 
-        LambdaQueryWrapper<Drug> wrapper = (LambdaQueryWrapper<Drug>) impl.buildSearchWrapper(" ", null, " ", null);
-        String sql = wrapper.getSqlSegment();
+        LambdaQueryWrapper<Drug> wrapper = rendered(impl.buildSearchWrapper(" ", null, " ", null));
+        String sql = resolvedSql(wrapper);
 
-        assertThat(sql).contains("status"); // 仅启用面谓词保留
-        assertThat(wrapper.getParamNameValuePairs().values()).contains("ENABLED");
-        assertThat(sql).doesNotContain("LIKE");
-        assertThat(sql).doesNotContain("IS NOT NULL");
+        // 仅启用面谓词 + 唯一顺序约束保留
+        assertThat(sql).contains("status = 'ENABLED'");
+        assertThat(sql).endsWith("ORDER BY id ASC");
+        // 空白关键词/空过滤零谓词零绑定：无前缀匹配、无非空谓词、过滤器列不进 WHERE、参数表仅 ENABLED
+        assertThat(sql)
+                .doesNotContain("LIKE")
+                .doesNotContain("IS NOT NULL")
+                .doesNotContain("essential_flag")
+                .doesNotContain("antibio_class");
+        assertThat(wrapper.getParamNameValuePairs().values()).containsExactly("ENABLED");
     }
 
     @Test

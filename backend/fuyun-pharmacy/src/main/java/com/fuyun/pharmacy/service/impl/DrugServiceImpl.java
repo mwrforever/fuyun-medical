@@ -1,7 +1,6 @@
 package com.fuyun.pharmacy.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.Wrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.conditions.query.LambdaQueryChainWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
@@ -220,43 +219,46 @@ public class DrugServiceImpl extends ServiceImpl<DrugMapper, Drug> implements ID
     @Transactional(readOnly = true)
     public PageResult<DrugVO> search(
             String keyword, Boolean essential, String antibioClass, Boolean insuranceMapped, int page, int size) {
-        // 数据库读操作：谓词组装收敛 buildSearchWrapper（0 基请求转 MP 1 基 current，与 billing page 同型）
-        Page<Drug> result = baseMapper.selectPage(
-                new Page<>(page + 1, size), buildSearchWrapper(keyword, essential, antibioClass, insuranceMapped));
+        // 数据库读操作：谓词组装收敛 buildSearchWrapper（0 基请求转 MP 1 基 current，与 billing page 同型）；
+        //   主表分页走链式 .page 终态（宪法 A.4.3-13，与 PrescriptionServiceImpl.list 同款成交形态）
+        Page<Drug> result = buildSearchWrapper(keyword, essential, antibioClass, insuranceMapped)
+                .page(new Page<>(page + 1, size));
         List<DrugVO> content = result.getRecords().stream().map(DrugVO::from).toList();
         return PageResult.of(content, page, size, result.getTotal());
     }
 
     /**
-     * 检索谓词组装（包级可见供单测对 getSqlSegment 做 contains 断言；keyword 非空时
+     * 检索谓词组装（包级可见供单测对链式终态做 SQL 契约断言；keyword 非空时
      * 通用名/商品名/拼音/医保码四列 OR 前缀匹配，insuranceMapped=true 附加 IS NOT NULL 谓词；
-     * 默认启用面——停用药品不进选药场景）。主表（drug）谓词面本应链式化（A.4.3-13），但
-     * 单测对返回形态强转 LambdaQueryWrapper 断言锚定，链式化须随断言现代化专项一并迁移
-     * （回归红线出口），暂保留 Wrappers 手构。
+     * 默认启用面——停用药品不进选药场景）。主表谓词走 ServiceImpl 内置 lambdaQuery 链式
+     * （宪法 A.4.3-13）：EX-12 遗留的手构形态已随断言现代化专项收口（D-21 回归红线出口，
+     * 单点单次：单测断言由 LambdaQueryWrapper 强转形态升级为 SQL 契约形态——getSqlSegment
+     * 逐子句 + 参数绑定值全量精确匹配），可选谓词由 boolean 条件重载承载（EX-12 其余八处
+     * 成交同款）。
      *
      * @param keyword         关键词，可空
      * @param essential       基药过滤，可空
      * @param antibioClass    分级过滤 code，可空
      * @param insuranceMapped 对照过滤，可空
-     * @return 检索 wrapper（id 升序，A.4.3-17 唯一顺序约束）
+     * @return 检索链式 wrapper（id 升序，A.4.3-17 唯一顺序约束），调用方以 .page 终态消费
      */
-    Wrapper<Drug> buildSearchWrapper(String keyword, Boolean essential, String antibioClass, Boolean insuranceMapped) {
-        var wrapper = Wrappers.<Drug>lambdaQuery().eq(Drug::getStatus, "ENABLED");
-        if (keyword != null && !keyword.isBlank()) {
-            wrapper.and(w -> w.likeRight(Drug::getGenericName, keyword)
-                    .or()
-                    .likeRight(Drug::getTradeName, keyword)
-                    .or()
-                    .likeRight(Drug::getPinyinCode, keyword)
-                    .or()
-                    .likeRight(Drug::getNhsaCode, keyword));
-        }
-        wrapper.eq(essential != null, Drug::getEssentialFlag, essential)
-                .eq(antibioClass != null && !antibioClass.isBlank(), Drug::getAntibioClass, antibioClass);
-        if (Boolean.TRUE.equals(insuranceMapped)) {
-            wrapper.isNotNull(Drug::getNhsaCode);
-        }
-        return wrapper.orderByAsc(Drug::getId);
+    LambdaQueryChainWrapper<Drug> buildSearchWrapper(
+            String keyword, Boolean essential, String antibioClass, Boolean insuranceMapped) {
+        // 数据库读操作：主表谓词组装走 ServiceImpl 内置 lambdaQuery 链式（宪法 A.4.3-13），
+        //   条件/序键与手构形态逐字等价（可选谓词由 boolean 条件重载承载，假值即不进 WHERE）
+        return lambdaQuery()
+                .eq(Drug::getStatus, "ENABLED")
+                .and(keyword != null && !keyword.isBlank(), w -> w.likeRight(Drug::getGenericName, keyword)
+                        .or()
+                        .likeRight(Drug::getTradeName, keyword)
+                        .or()
+                        .likeRight(Drug::getPinyinCode, keyword)
+                        .or()
+                        .likeRight(Drug::getNhsaCode, keyword))
+                .eq(essential != null, Drug::getEssentialFlag, essential)
+                .eq(antibioClass != null && !antibioClass.isBlank(), Drug::getAntibioClass, antibioClass)
+                .isNotNull(Boolean.TRUE.equals(insuranceMapped), Drug::getNhsaCode)
+                .orderByAsc(Drug::getId);
     }
 
     /**
