@@ -115,10 +115,24 @@ async function ensureQueueToken(): Promise<boolean> {
   tokenFetchInFlight = (async () => {
     try {
       const granted = await fetchBigscreenToken();
+      // 畸形载荷防御（生成物字段全可选）：缺令牌值视同签发失败——空值拼 Bearer 头必被服务端
+      // 拒绝，交 catch 清缓存走拒建连/重签语义，防 undefined 混入凭证头
+      if (granted.accessToken === undefined || granted.accessToken === '') {
+        throw new Error('签发载荷缺少 accessToken');
+      }
       bigscreenToken = granted.accessToken;
-      tokenExpiresAt = Date.now() + granted.expiresIn * 1000;
-      // info 仅留痕有效期秒数（令牌值禁入日志，web A.6 红线）
-      info('大屏订阅令牌已获取（运行期签发）', `expiresIn=${granted.expiresIn}s`, traceTag());
+      // expiresIn 出网为字符串（后端 Long→String 全局序列化）：显式收窄禁隐式乘法强转；
+      // 缺失/非数值（Number→NaN）兜底为「不可缓存」——到期时刻归零使缓存判定恒 false，
+      // 下次连接尝试立即重签（安全方向：宁可多签发一次，不静默持有未知有效期的令牌），
+      // 防 undefined*1000=NaN 令到期比对恒 false 却表面成功
+      const expiresInSeconds = Number(granted.expiresIn);
+      tokenExpiresAt = Number.isFinite(expiresInSeconds) ? Date.now() + expiresInSeconds * 1000 : 0;
+      // info 仅留痕有效期原文（令牌值禁入日志，web A.6 红线）
+      info(
+        '大屏订阅令牌已获取（运行期签发）',
+        `expiresIn=${granted.expiresIn ?? '缺省'}s`,
+        traceTag(),
+      );
       return true;
     } catch (fetchError) {
       // 签发失败：清缓存（下次连接尝试整体重签）；失败详情不含令牌值，可安全留痕
@@ -152,6 +166,13 @@ let queueSubscription: {
 
 /** connect() 传入的状态变更回调（disconnect 时解除，防悬挂引用） */
 let stateChangeListener: ((state: QueueConnectionState) => void) | null = null;
+
+/**
+ * 建连代际计数（竞态防御）：connect 发起时快照当前代际，disconnect 递增作废所有在飞建连链——
+ * 初始建连先异步取令牌再激活 Client，若取令牌在飞期间组件卸载（disconnect 时 client 尚为
+ * null、无从 deactivate），失配的建连链必须放弃激活，否则 WS 在卸载后被激活且永不断开。
+ */
+let connectGeneration = 0;
 
 /** 连接状态可写源（模块内部状态翻转专用，禁止外泄） */
 const connectionStateRef = ref<QueueConnectionState>('disconnected');
@@ -321,7 +342,14 @@ export function connect(
   // 先行进入 connecting（覆盖令牌签发阶段，页面呼吸点承载过渡）；令牌就绪后才创建 Client
   // 并激活——异步链内聚，调用方（页面）无需感知
   setConnectionState('connecting');
+  // 代际快照：本链以发起时刻的代际为准，取令牌在飞期间 disconnect 递增代际即判失配作废
+  const generation = connectGeneration;
   void ensureQueueToken().then((tokenReady) => {
+    // 代际失配=发起后已发生 disconnect（组件卸载/切换）：本次建连链整体作废——不建 Client
+    // 不激活不置失败态，防「卸载后 WS 被激活且永不再断开」的连接泄漏
+    if (generation !== connectGeneration) {
+      return;
+    }
     if (!tokenReady) {
       // 初始建连取不到令牌：拒绝建连（零 Client 创建零激活），置失败横幅态
       tokenFailedRef.value = true;
@@ -376,6 +404,9 @@ export function subscribeQueue(
  * 重连计划；状态回归 disconnected。
  */
 export async function disconnect(): Promise<void> {
+  // 先递增代际作废在飞建连链：异步取令牌未落地的 connect 不得在本次断开后激活 WS
+  // （disconnect 时 client 尚为 null 的窗口由代际比对兜底，而非仅靠 deactivate）
+  connectGeneration += 1;
   unsubscribeQueue();
   stateChangeListener = null;
   if (client !== null) {

@@ -171,4 +171,25 @@ describe('患者建档页', () => {
     expect(ElMessageBox.confirm).not.toHaveBeenCalled();
     wrapper.unmount();
   });
+
+  it('建档成功但跳转被中止后，手动离开仍触发未保存确认（放行标志不残留）', async () => {
+    vi.mocked(createPatient).mockResolvedValue({
+      outcome: 'NO_MATCH',
+      candidatePatientId: '1932000000000000001',
+    });
+    // 导航被其他守卫/重定向中止的形态：push 以 NavigationFailure 结算（truthy，不抛错、未离开）
+    pushMock.mockResolvedValue({ type: 4 });
+    const wrapper = mount(PatientCreateView);
+    await fillRequired(wrapper, true);
+    await clickButton(wrapper, '建档');
+    await vi.waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith('/patients/1932000000000000001');
+    });
+    // 放行标志已随导航中止回置：表单仍为脏态，手动离开必须走未保存确认（防标志残留静默放行）
+    const guard = vi.mocked(onBeforeRouteLeave).mock.calls[0]?.[0] as
+      (() => Promise<boolean>) | undefined;
+    await expect(guard?.()).resolves.toBe(true);
+    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
 });

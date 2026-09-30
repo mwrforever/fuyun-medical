@@ -158,9 +158,15 @@ async function handleSubmit(): Promise<void> {
     const patientId = String(result.candidatePatientId ?? '');
     // 建档成功跳详情为既定流程：先放行离开守卫再导航，成功跳转不触发未保存确认
     leavePassGranted = true;
-    await router.push(`/patients/${patientId}`);
+    const failure = await router.push(`/patients/${patientId}`);
+    // 导航被其他守卫/重定向中止时 push 以 NavigationFailure 结算（不抛错、未真正离开）：
+    // 回置放行标记，防标志残留令后续手动离开静默绕过未保存确认（守卫旁路失效）
+    if (failure) {
+      leavePassGranted = false;
+    }
   } catch {
-    // 失败弹错归响应拦截器；表单驻留防数据丢失
+    // push 异常结算同样回置放行标记（防守卫被旁路）；失败弹错归响应拦截器，表单驻留防数据丢失
+    leavePassGranted = false;
   } finally {
     submitting.value = false;
   }

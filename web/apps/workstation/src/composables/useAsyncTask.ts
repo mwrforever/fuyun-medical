@@ -66,6 +66,8 @@ export function useAsyncTask<T, A extends unknown[]>(
     try {
       return await task(...args);
     } catch (cause) {
+      // 失败先同步落 error 再交 onError：onError 重抛路径下 error.value 也已置位——调用方
+      // 择一消费即可（钩子内取参数，或钩子外读 error.value），禁两路重复处置同一失败
       error.value = cause;
       options?.onError?.(cause);
       return undefined;

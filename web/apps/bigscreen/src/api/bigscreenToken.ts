@@ -8,21 +8,20 @@
  * 链无差别校验）。失效由调用方按次重签（换发成本为一次匿名 HTTP，无 refresh 语义）。
  */
 import { http } from './http';
+import type { components } from '@fuyun/shared/api';
 
-/** 签发响应载荷（后端 BigscreenTokenVO record 镜像：无身份字段，脱敏出网冻结口径） */
-export interface BigscreenToken {
-  /** 访问令牌（typ=access，短期 TTL），非空；两段式 Base64Url 线格式，禁入任何日志 */
-  accessToken: string;
-  /** 令牌方案名，恒为 "Bearer"（RFC 6750，请求头拼接时后接空格） */
-  tokenType: string;
-  /** 有效期（秒），正值；调用方据此缓存到期重签 */
-  expiresIn: number;
-}
+/**
+ * 签发响应载荷（生成物唯一来源 A.3-3：后端 BigscreenTokenVO record，禁本地手写镜像类型）。
+ * 注意 expiresIn 出网为字符串——后端 Long 经全局 Long→String 序列化（backend A.3-8），与
+ * 雪花 id 同口径；消费方须经 Number 显式收窄，禁依赖隐式乘法强转。
+ */
+export type BigscreenToken = components['schemas']['BigscreenTokenVO'];
 
 /**
  * 获取大屏订阅令牌（STOMP CONNECT 帧鉴权凭证的唯一运行期来源，useQueueStomp 消费）。
  *
- * @return 签发载荷（令牌值 + Bearer 方案名 + 有效期秒数）
+ * @return 签发载荷（令牌值 + Bearer 方案名 + 有效期秒数——expiresIn 为字符串线格式）；生成物
+ *         字段全可选，缺省字段属畸形载荷，由消费方按「签发失败 / 不可缓存」兜底
  * @throws ScreenApiError 非 2xx 归一化错误（初始建连失败态整页横幅由页面承载）
  */
 export async function fetchBigscreenToken(): Promise<BigscreenToken> {

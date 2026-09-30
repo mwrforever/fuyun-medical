@@ -15,6 +15,9 @@ vi.mock('@/api/auth', () => ({
   refresh: vi.fn(),
 }));
 
+/** 测试假口令（非真实凭据，仅作登录 mock 入参占位，与任何真实环境口令无关） */
+const FAKE_PASSWORD = 'Fuyun@2026';
+
 /**
  * 构造登录成功响应（字段与后端契约一致：userId/expiresIn 为后端 Long 经 Long→String 的字符串输出）。
  *
@@ -49,7 +52,7 @@ describe('认证会话 store', () => {
     vi.mocked(loginApiMock).mockResolvedValue(loginResponse());
     const auth = useAuthStore();
 
-    await auth.login({ loginName: 'admin', password: 'Fuyun@2026' });
+    await auth.login({ loginName: 'admin', password: FAKE_PASSWORD });
 
     // 断言业务结果：双令牌与用户身份进入 state，快照同步写入 sessionStorage（换标签页可恢复）
     expect(auth.token).toBe('access-token-1');
@@ -63,7 +66,7 @@ describe('认证会话 store', () => {
     vi.mocked(loginApiMock).mockResolvedValue(loginResponse());
     vi.mocked(logoutApiMock).mockRejectedValue(new Error('network down'));
     const auth = useAuthStore();
-    await auth.login({ loginName: 'admin', password: 'Fuyun@2026' });
+    await auth.login({ loginName: 'admin', password: FAKE_PASSWORD });
 
     await auth.logout();
 
@@ -79,7 +82,7 @@ describe('认证会话 store', () => {
     const auth = useAuthStore();
 
     expect(auth.isLoggedIn).toBe(false);
-    await auth.login({ loginName: 'admin', password: 'Fuyun@2026' });
+    await auth.login({ loginName: 'admin', password: FAKE_PASSWORD });
     expect(auth.isLoggedIn).toBe(true);
   });
 
@@ -122,7 +125,7 @@ describe('认证会话 store', () => {
     );
     const auth = useAuthStore();
 
-    await auth.login({ loginName: 'admin', password: 'Fuyun@2026' });
+    await auth.login({ loginName: 'admin', password: FAKE_PASSWORD });
 
     // 断言业务结果：权限点集随会话身份进入 store（守卫与侧栏共用的判定数据源）
     expect(auth.permissions).toEqual(['patient:archive:search', 'nursing:ward:view']);
@@ -132,7 +135,7 @@ describe('认证会话 store', () => {
     vi.mocked(loginApiMock).mockResolvedValue(loginResponse()); // user 无 permissions 字段
     const auth = useAuthStore();
 
-    await auth.login({ loginName: 'admin', password: 'Fuyun@2026' });
+    await auth.login({ loginName: 'admin', password: FAKE_PASSWORD });
 
     // 断言业务结果：P0 后端契约缺省字段 → 空集（守卫全放行/侧栏全量显示的骨架口径）
     expect(auth.permissions).toEqual([]);

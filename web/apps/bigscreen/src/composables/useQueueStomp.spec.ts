@@ -18,10 +18,13 @@ const h = vi.hoisted(() => ({
   /** 捕获的订阅：destination + 帧回调（用例内投递毒帧/合法帧） */
   subscriptions: [] as { destination: string; callback: (message: { body: string }) => void }[],
   unsubscribeCalls: 0,
-  /** 令牌签发端点桩状态：tokenValue=本次签发令牌值，expiresIn=有效期秒数（负值=签出即过期），
-   *  tokenError 非 null=签发失败（模拟后端不可达/5xx），fetchCalls=签发调用计数 */
+  /** 令牌签发端点桩状态：tokenValue=本次签发令牌值；expiresIn 镜像线格式（后端 Long→String
+   *  全局序列化出网为字符串，负值字符串=签出即过期、undefined/非数值=畸形载荷），非 null
+   *  tokenError=签发失败（模拟后端不可达/5xx），fetchCalls=签发调用计数 */
   tokenValue: 'tok-screen',
-  tokenExpiresIn: 600,
+  tokenExpiresIn: '600',
+  /** 畸形载荷模拟：true=签发载荷整体省略 expiresIn 字段（生成物字段可选，缺失经 Number→NaN） */
+  tokenExpiresInOmitted: false,
   tokenError: null as Error | null,
   fetchCalls: 0,
 }));
@@ -55,11 +58,12 @@ vi.mock('@stomp/stompjs', () => {
 });
 
 vi.mock('@/api/bigscreenToken', () => ({
-  // 运行期签发桩（BUG-19：令牌唯一来源改 HTTP 签发端点，非构建期 VITE_ 注入）
+  // 运行期签发桩（BUG-19：令牌唯一来源改 HTTP 签发端点，非构建期 VITE_ 注入）；
+  // 出参形态镜像生成物 BigscreenTokenVO（expiresIn 为字符串线格式，字段可选）
   fetchBigscreenToken: (): Promise<{
     accessToken: string;
     tokenType: string;
-    expiresIn: number;
+    expiresIn?: string;
   }> => {
     h.fetchCalls += 1;
     if (h.tokenError !== null) {
@@ -68,7 +72,8 @@ vi.mock('@/api/bigscreenToken', () => ({
     return Promise.resolve({
       accessToken: h.tokenValue,
       tokenType: 'Bearer',
-      expiresIn: h.tokenExpiresIn,
+      // 省略标志开启时字段整体缺失（模拟生成物 BigscreenTokenVO 可选字段缺省的畸形载荷）
+      ...(h.tokenExpiresInOmitted ? {} : { expiresIn: h.tokenExpiresIn }),
     });
   },
 }));
@@ -92,7 +97,8 @@ beforeEach(async () => {
   h.subscriptions = [];
   h.unsubscribeCalls = 0;
   h.tokenValue = 'tok-screen';
-  h.tokenExpiresIn = 600;
+  h.tokenExpiresIn = '600';
+  h.tokenExpiresInOmitted = false;
   h.tokenError = null;
   h.fetchCalls = 0;
   await importModule();
@@ -173,9 +179,28 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
     }
   });
 
+  it('expiresIn 缺失/NaN 畸形载荷：本次连接仍建连，但令牌不可缓存——下次尝试立即重签兜底', async () => {
+    // 线格式为字符串；缺失（字段整体省略）与非数值串经 Number() 同落 NaN：兜底为「不可缓存」
+    // （到期时刻归零），防 undefined*1000=NaN 令缓存判定静默恒 false 却表面签发成功
+    h.tokenExpiresInOmitted = true;
+    queueStomp.connect('DEPT-INT');
+    await flushPromises();
+    // 本次连接不因畸形 expiresIn 升级为拒建连：Client 已建并激活（携令牌尝试由服务端裁决）
+    expect(h.activateCalls).toBe(1);
+    // 兜底生效：紧邻的连接尝试不复用缓存、立即重签（对照缓存有效用例的 fetchCalls=1）
+    const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
+    await beforeConnect();
+    expect(h.fetchCalls).toBe(2);
+    // NaN 同路：非数值字符串同样落入不可缓存兜底，重签后继续携带新令牌
+    h.tokenExpiresIn = 'not-a-number';
+    await beforeConnect();
+    expect(h.fetchCalls).toBe(3);
+    expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-screen');
+  });
+
   it('重连路径令牌重签失败：beforeConnect 不抛异常且本次尝试无凭证头，交服务端拒绝+库内建重连', async () => {
-    // 首签即过期形态（expiresIn=-1）：模拟「令牌在断线期间已到期」，重连路径必然触发重签
-    h.tokenExpiresIn = -1;
+    // 首签即过期形态（expiresIn='-1' 线格式）：模拟「令牌在断线期间已到期」，重连路径必然触发重签
+    h.tokenExpiresIn = '-1';
     queueStomp.connect('DEPT-INT');
     await flushPromises();
     const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
@@ -264,6 +289,21 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
     expect(queueStomp.connectionState.value).toBe('disconnected');
   });
 
+  it('建连在飞时卸载（disconnect 递增代际）：令牌链落定后不建 Client 不激活 WS', async () => {
+    queueStomp.connect('DEPT-INT');
+    // 竞态窗口模拟：令牌签发在飞（未 flush）即卸载断开——真实组件 onUnmounted 调用时序，
+    // 此刻 client 尚为 null、deactivate 无从作用，只能靠代际比对作废在飞建连链
+    await queueStomp.disconnect();
+    await flushPromises();
+    // 令牌签发已真实发起（窗口存在），但代际失配：零 Client 创建零激活——WS 不得在卸载后被激活
+    expect(h.fetchCalls).toBe(1);
+    expect(h.constructorCalls).toBe(0);
+    expect(h.activateCalls).toBe(0);
+    // 状态保持断开态且不置 tokenFailed（页面已卸载，失败横幅态无消费方）
+    expect(queueStomp.connectionState.value).toBe('disconnected');
+    expect(queueStomp.tokenFailed.value).toBe(false);
+  });
+
   it('断线 close 后重连 onConnect 重新落地订阅（stompjs 7.3.0 无自动重订阅，禁假连接）', async () => {
     queueStomp.connect('DEPT-INT');
     await flushPromises();
@@ -282,7 +322,7 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
 
   it('令牌值禁入任何日志（web A.6 红线）：全部 info/warn/error 输出拼接后不得出现令牌值', async () => {
     h.tokenValue = 'tok-screen-secret';
-    h.tokenExpiresIn = -1;
+    h.tokenExpiresIn = '-1';
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
