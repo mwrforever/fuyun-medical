@@ -2,6 +2,16 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-30 · 批次 G 前端压轴组总收口（EX-42~49：重复族下沉/通用范式沉淀/巨型组件拆分/健壮性与数据丢失防护，波 1 三路+波 2 核证收口+余项统筹）
+
+- **根因**：FE-Q1 重复族（surfaceBizError ×16/formatTime ×15/STOMP ×3）+FE-Q1-06 与 FE-A4-05 样板复制（41 处 loading 骨架/16 处三段式分页）+FE-A4-03/04 巨型组件（WardBoardView 2760 行/AppointmentView 916 行）+FE-A1 运行错误五点+FE-A2 数据丢失四点+BE-Q1-02 访问器副本。
+- **波 1 三提交**：EX-44 inpatient 访问器下沉（3a9f6c2，实扫 17 处=登记 11 处超集全量下沉）；EX-47 WardBoardView 拆 11 作业面 composable+wardBoardShared（4e2a96f，script 1171→约 190 行+三处行为修复先红后绿+新增 35 用例）；EX-48 portal 预约页三 composable（fd48ba7，src/composables/ 落位+.gitkeep 清理）。
+- **波 2 两提交**（中断专员半成品 14 文件主控核证可用后收口，744+/50- 与交接登记吻合）：EX-45 余四点（b801b4b，医生站竞态守卫+判空/结算判空+附带竞态守卫/物模型稳定行键，6 用例先红后绿；FE-A1-04 已随 EX-47）；EX-46 四点（7f71dab，删除确认+草稿守卫/建档路由守卫（登记措辞与页面形态不符按整页表单选型）/告警版本比对（强于授权降级）/字典覆盖防护（授权降级留痕），11 用例）。
+- **EX-43 重复族下沉**（ea00488）：两族收拢 app 级 utils/bizError.ts+timeFormat.ts（函数体逐字保持），wardBoardShared 删双定义回归 nursing 专属；tempChart 变体实质不同不收拢；STOMP 三文件令牌策略/订阅登记/帧管线全分叉且 B.1 禁 shared 依赖 vue——留痕不下沉。
+- **EX-42/49 统筹四提交**（试点+全量三组）：沉淀 useAsyncTask（loading/error/run，onError 可注入默认静默、竞态守卫随任务体保留）+usePagedList（页码四态+1↔0 基转换+契约兜底）附 14 单测+试点 3 文件（fc1640c，285=271+14）；全量三组并行 33 处/23 文件迁移（ec6979d/c46c234/8490cd2，iot/ward 14+inpatient/outpatient 11+billing/patient/pharmacy 9，285 持平 spec 零改动）；PatientDetailView 原无 catch 经 onError 重抛保持上抛语义（主控裁决留痕）。
+- **顺带清账**：CI format:check 11 文件 Prettier 偏差（EX-47 拆分提交遗留，实证 HEAD 即失败）独立 style 提交清账（705f0c7），CI frontend job Prettier 只读校验恢复绿。
+- **验证**：workstation 285（254→271→285）/portal 33/bigscreen 68 门禁全绿+lint/format:check/type-check 全过；既有测试断言全程零改动（行为保持红线）；新交互语义（EX-46 确认框/离开守卫）与三处行为修复（EX-47）入 N5 行为变化清单。
+
 ## 2026-09-30 · 批次 F 性能收拢组总收口（EX-37~41：批量写/键集批查/精确投影/IoTDA 防御/前端隐藏暂停，六路并行+前端补派）
 
 - **根因**：BE-B3-04~12（循环逐行写）+BE-C4-19/20（循环内逐行读写）+BE-C4-25/27/28/29/30（全列取回仅用少量列）+BE-B4-01（IoTDA 客户端无超时/重试/熔断）+FE-B1-01（看板隐藏不暂停）。
