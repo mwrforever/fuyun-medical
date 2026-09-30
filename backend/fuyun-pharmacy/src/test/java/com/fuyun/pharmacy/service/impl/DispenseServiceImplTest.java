@@ -339,6 +339,39 @@ class DispenseServiceImplTest {
     }
 
     @Test
+    @DisplayName("charged 放行批查重复键防御：同 rxNo 重复行保留首行（CAS 与建单快照取首行 id/患者）")
+    void releaseByRxNosKeepsFirstPrescriptionRowOnDuplicateRxNo() {
+        DispenseServiceImpl impl = newService();
+        // 处方批查结果集同 rxNo 两行（uk_rx_no 脏数据防御面）：首行 PENDING_FEE 门诊（id=100/
+        //   患者=700101）、次行同号不同 id/患者——toMap 重复键保留首行，后续判定以首行为准
+        Prescription first = rxPendingFee(100L, "R20260918000001");
+        Prescription duplicate = rxPendingFee(201L, "R20260918000001");
+        duplicate.setPatientId(700999L);
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(first, duplicate));
+        when(prescriptionMapper.casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE"))
+                .thenReturn(1);
+        when(prescriptionItemMapper.selectList(any())).thenReturn(List.of());
+        when(dispenseMapper.insert(any(Dispense.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Dispense.class).setId(900L);
+            return 1;
+        });
+
+        // A.4.3-16：明细批插通道承载（空行集批插，静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.releaseByRxNos(List.of("R20260918000001"));
+            mockedDb.verify(() -> Db.saveBatch(any()));
+        }
+
+        // 首行语义断言：放行 CAS 取首行 id=100（重复行 id=201 零触达），建单处方/患者快照取首行字段值
+        verify(prescriptionMapper).casStatus(100L, "PENDING_FEE", "PENDING_DISPENSE");
+        verify(prescriptionMapper, never()).casStatus(eq(201L), anyString(), anyString());
+        ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
+        verify(dispenseMapper).insert(dispenseCaptor.capture());
+        assertThat(dispenseCaptor.getValue().getPrescriptionId()).isEqualTo(100L);
+        assertThat(dispenseCaptor.getValue().getPatientId()).isEqualTo(700101L);
+    }
+
+    @Test
     @DisplayName("fee.created 迁移：处方通道 billingKey 解析 rxNo 后 APPROVED→PENDING_FEE")
     void markPendingFeeTransitionsApprovedPrescription() {
         DispenseServiceImpl impl = newService();
@@ -879,5 +912,41 @@ class DispenseServiceImplTest {
             verify(dispenseMapper, never()).casStatus(eq(901L), any(), any());
             verify(drugBatchMapper, never()).releaseLock(anyLong(), any());
         }
+    }
+
+    @Test
+    @DisplayName("order.cancelled 空清单兜底：零查询零写面直返（listener 侧已拦，service 侧兜底对齐原空循环语义）")
+    void voidUndispensedByRxSkipsEmptyListWithoutAnyQueryOrWrite() {
+        DispenseServiceImpl impl = newService();
+
+        impl.voidUndispensedByRx(List.of(), "退费逆向终态确认");
+
+        // 空清单守卫：三级级联批查均不发起（零查询零写面）
+        verifyNoInteractions(prescriptionMapper, dispenseMapper, dispenseItemMapper, drugBatchMapper);
+    }
+
+    @Test
+    @DisplayName("order.cancelled 处方批查重复键防御：同 rxNo 重复行保留首行（CAS 作废取首行 id/状态）")
+    void voidUndispensedByRxKeepsFirstPrescriptionRowOnDuplicateRxNo() {
+        DispenseServiceImpl impl = newService();
+        // 处方批查结果集同 rxNo 两行（uk_rx_no 脏数据防御面）：首行 PENDING_DISPENSE（作废域内）、
+        //   次行已作废（若被保留则幂等直返零写）——toMap 重复键保留首行，逐号判定以首行状态为准
+        Prescription first = rxPendingFee(100L, "R20260918000001");
+        first.setStatus("PENDING_DISPENSE");
+        Prescription duplicate = rxPendingFee(201L, "R20260918000001");
+        duplicate.setStatus("CANCELLED");
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(first, duplicate));
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "CANCELLED"))
+                .thenReturn(1);
+        // 首行保留→活动单键集批查照常发起，无活动单（空结果=原空返回形态，零退场写面）
+        when(dispenseMapper.selectList(any())).thenReturn(List.of());
+
+        impl.voidUndispensedByRx(List.of("R20260918000001"), "退费逆向终态确认");
+
+        // 首行语义断言：CAS 作废取首行 id=100/状态 PENDING_DISPENSE（次行 id=201 零触达；
+        //   若次行 CANCELLED 被保留则幂等直返零 CAS，本断言即失败）
+        verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
+        verify(prescriptionMapper, never()).casStatus(eq(201L), anyString(), anyString());
+        verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
     }
 }

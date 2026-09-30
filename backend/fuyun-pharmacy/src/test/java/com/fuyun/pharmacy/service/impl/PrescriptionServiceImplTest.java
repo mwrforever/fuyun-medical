@@ -619,6 +619,41 @@ class PrescriptionServiceImplTest {
     }
 
     @Test
+    @DisplayName("开方空明细守卫（契约外形态兜底）：空 items 药品零装载（空键集零查询），主行仍落库生效+发布空计费行事件")
+    void createSkipsDrugBatchLoadWhenItemsEmpty() {
+        PrescriptionServiceImpl impl = newService();
+        when(prescriptionMapper.insert(any(Prescription.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Prescription.class).setId(100L);
+            return 1;
+        });
+        when(prescriptionMapper.casApprove(100L)).thenReturn(1);
+        // 空明细=HTTP 面 @NotEmpty 已拒的契约外形态（service 层直调可触达）：药品键集空集守卫兜底
+        PrescriptionCreateRequest emptyItems = new PrescriptionCreateRequest(
+                700101L, VISIT, "OUTPATIENT", "NEIKE", List.of("J06.900"), false, List.of());
+
+        PrescriptionVO vo;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            vo = impl.create(emptyItems);
+            // 空明细落库形态：明细批插通道仍触达（空行集批插），无逐条 insert
+            mockedDb.verify(() -> Db.saveBatch(any()));
+        }
+
+        // 空键集守卫语义：药品零装载零查询；主行照常 CREATED→APPROVED 生效（空明细不阻断开方主链）
+        verify(drugMapper, never()).selectByIds(any());
+        assertThat(vo.status()).isEqualTo("APPROVED");
+        assertThat(vo.items()).isEmpty();
+        assertThat(vo.rxCategory()).isEqualTo("NORMAL"); // 无明细命中→类别保持初始 NORMAL
+        assertThat(vo.skinTestRequired()).isFalse();
+        // created 事件仍发布且计费行为空集（M-4 唯一携带源契约不因契约外形态破缺）
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(events).publishEvent(eventCaptor.capture());
+        PharmacyDomainEvent published = (PharmacyDomainEvent) eventCaptor.getValue();
+        assertThat(published.eventType()).isEqualTo(PharmacyMessagingConstants.EVENT_PRESCRIPTION_CREATED);
+        PrescriptionCreatedPayload payload = (PrescriptionCreatedPayload) published.payload();
+        assertThat(payload.lines()).isEmpty();
+    }
+
+    @Test
     @DisplayName("批查缺行错误语义等价：部分药品缺行拒 PH-1003（409）+ 文案逐字等于逐行点查口径（drugId 取请求行）")
     void createRejectsMissingDrugRowFromBatchLoadWithIdenticalErrorSemantics() {
         PrescriptionServiceImpl impl = newService();

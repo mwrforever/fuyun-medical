@@ -10,6 +10,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
@@ -580,6 +581,56 @@ class DispenseReturnTest {
         mirrorOrder.verify(prescriptionMapper).casStatus(101L, "DISPENSED", "PART_RETURNED");
         verify(prescriptionMapper, never()).casStatus(eq(102L), anyString(), anyString());
         verify(prescriptionMapper, never()).casStatus(eq(103L), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("refund.approved 空清单兜底：零查询零写面直返（listener 侧已拦，service 侧兜底对齐原空循环语义）")
+    void confirmRefundTerminalByRxSkipsEmptyListWithoutAnyQueryOrWrite() {
+        DispenseServiceImpl impl = newService();
+
+        impl.confirmRefundTerminalByRx(List.of());
+
+        // 空清单守卫：两级键集批查均不发起（零查询零写面）
+        verifyNoInteractions(prescriptionMapper, dispenseMapper, dispenseItemMapper);
+    }
+
+    @Test
+    @DisplayName("refund.approved 处方批查重复键防御：同 rxNo 重复行保留首行（DISPENSED 首行仍镜像收敛，次行终态不吞首行判定）")
+    void confirmRefundTerminalByRxKeepsFirstPrescriptionRowOnDuplicateRxNo() {
+        DispenseServiceImpl impl = newService();
+        // 处方批查结果集同 rxNo 两行（uk_rx_no 脏数据防御面）：首行 DISPENSED（镜像收敛域）、
+        //   次行已终态（若被保留则幂等跳过零写）——toMap 重复键保留首行，逐号判定以首行状态为准
+        Prescription first = terminalRx(100L, "R20260918000001", "DISPENSED");
+        Prescription duplicate = terminalRx(201L, "R20260918000001", "FULL_RETURNED");
+        when(prescriptionMapper.selectList(any())).thenReturn(List.of(first, duplicate));
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(dispense("PART_RETURNED")));
+
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
+
+        // 首行语义断言：镜像 CAS 取首行 id=100（次行 id=201 零触达）；若次行终态被保留则幂等
+        //   跳过零 CAS，本断言即失败
+        verify(prescriptionMapper).casStatus(100L, "DISPENSED", "PART_RETURNED");
+        verify(prescriptionMapper, never()).casStatus(eq(201L), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("refund.approved 活动发药单批查重复键防御：同 rxNo 重复行保留首行（镜像终态取首行受理状态）")
+    void confirmRefundTerminalByRxKeepsFirstActiveDispenseRowOnDuplicateRxNo() {
+        DispenseServiceImpl impl = newService();
+        when(prescriptionMapper.selectList(any()))
+                .thenReturn(List.of(terminalRx(100L, "R20260918000001", "DISPENSED")));
+        // 活动单批查结果集同 rxNo 两行（uk_dispense_rx_active 脏数据防御面）：首行 PART_RETURNED、
+        //   次行 FULL_RETURNED——镜像目标取首行受理终态（若保留次行则镜像 FULL_RETURNED，断言即失败）
+        Dispense first = dispense("PART_RETURNED");
+        Dispense duplicate = dispense("FULL_RETURNED");
+        duplicate.setId(901L);
+        when(dispenseMapper.selectList(any())).thenReturn(List.of(first, duplicate));
+
+        impl.confirmRefundTerminalByRx(List.of("R20260918000001"));
+
+        // 首行语义断言：镜像目标=首行受理终态 PART_RETURNED（FULL_RETURNED 次行不参与镜像）
+        verify(prescriptionMapper).casStatus(100L, "DISPENSED", "PART_RETURNED");
+        verify(prescriptionMapper, never()).casStatus(100L, "DISPENSED", "FULL_RETURNED");
     }
 
     @Test
