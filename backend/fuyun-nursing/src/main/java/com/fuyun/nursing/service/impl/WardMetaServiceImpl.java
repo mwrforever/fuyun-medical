@@ -44,7 +44,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
@@ -499,11 +498,13 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
 
     /**
      * 风险标识移除回写（评估复评降级消费，接口注见 IWardMetaService#removeRiskFlag）：
-     * 移除指定项后整体回写剩余标识（保持既有顺序）；不含该标识时零写入直接返回（幂等护栏）。
+     * 不含该标识时零写入直接返回（幂等护栏）；移除写为单语句 DB 侧原子摘除（casRemoveRiskFlag，
+     * EX-26 N7 收口与追加侧对称）——并发追加/移除交错双向不互吞，禁回退服务层读快照拼剩余串
+     * 整串置值的旧形态（会把并发追加的标记一并抹除，患者安全信号丢失窗口）。
      *
      * @param visitId 住院就诊号，非空；来源：评估单载荷
      * @param flag    风险标识 code（如 FALL/PRESSURE），非空；来源：评估单非高危结果
-     * @throws BizException NS-1001（404 在区行不存在）
+     * @throws BizException NS-1001（404 在区行不存在，含 CAS 0 行重读行已不在区定性）
      */
     @Override
     @Transactional
@@ -516,17 +517,33 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         List<String> flags = Arrays.stream(orEmpty(row.getRiskFlags()).split(","))
                 .filter(s -> !s.isBlank())
                 .toList();
-        // 不含目标标识即零写入（幂等护栏：复评本就非高危的场景不得产生多余写触达）
+        // 不含目标标识即零写入（快照前置短路，幂等护栏：复评本就非高危的场景不得产生多余写触达；
+        // 并发交错下的权威判定由 SQL 侧「当前值含该标识」谓词承载）
         if (!flags.contains(flag)) {
             log.info("风险标识不存在（零写入）：visitId={}，flag={}", visitId, flag);
             return;
         }
-        // 移除目标项后整体回写剩余标识（追加侧 EX-26 已改 DB 侧原子拼接；移除为单行单写者语义
-        // 的降级回写，整串置值无并发追加互踩面——若与追加交错，追加侧原子拼接保底不丢标记）
-        String merged = flags.stream().filter(f -> !f.equals(flag)).collect(Collectors.joining(","));
-        // 数据库写操作：风险标识条件回写（评估复评降级，最新判级脱离高危）
-        baseMapper.updateRiskFlags(visitId, merged, operator());
-        log.info("风险标识移除：visitId={}，flag={}，riskFlags={}", visitId, flag, merged);
+        // 数据库写操作：DB 侧原子移除（对称 CAS，EX-26 收口）——array_remove 单语句摘除目标标识，
+        // 与追加侧原子拼接共用行级锁串行化，并发追加/移除双向不互吞
+        if (baseMapper.casRemoveRiskFlag(visitId, flag, operator()) != 1) {
+            // 0 行重读定性（casXxx 0 行防线惯例）：施写瞬间行已不在区 → NS-1001 与入口缺行同语义；
+            // 行在而标识已不在 → 被并发移除先行，幂等命中非冲突（不报错不重试）；行与标识俱在 →
+            // 本轮移除意向已被并发新评估的重新追加取代，让位最新判级（重试会误删新评估的高危标记）
+            NursingWardPatient latest = requireInWardByVisit(visitId);
+            if (latest == null) {
+                throw new BizException(
+                        NursingErrorCode.WARD_PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "病区在区患者不存在：" + visitId);
+            }
+            boolean stillPresent =
+                    Arrays.stream(orEmpty(latest.getRiskFlags()).split(",")).anyMatch(flag::equals);
+            if (stillPresent) {
+                log.warn("风险标识移除让位并发重新追加（保留最新判级标记）：visitId={}，flag={}", visitId, flag);
+                return;
+            }
+            log.info("风险标识已被并发移除（0 行幂等命中）：visitId={}，flag={}", visitId, flag);
+            return;
+        }
+        log.info("风险标识原子移除：visitId={}，flag={}", visitId, flag);
     }
 
     /** 按 visit_id 定位在区行（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */

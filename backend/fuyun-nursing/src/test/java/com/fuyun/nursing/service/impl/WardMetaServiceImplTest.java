@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -842,7 +843,6 @@ class WardMetaServiceImplTest {
 
         // 原子契约调用面：只携新标识与审计操作者（不再服务层拼整串），禁回退整串置值旧形态
         verify(wardPatientMapper).casAppendRiskFlag(VISIT, "PRESSURE", "nurse-01");
-        verify(wardPatientMapper, never()).updateRiskFlags(any(), any(), any());
         String sql = wardPatientSql("casAppendRiskFlag", String.class, String.class, String.class);
         // DB 侧拼接锚：非空串分支追加 ','+新标识（行级锁串行化，并发追加互不覆盖）
         assertThat(sql).contains("risk_flags || ',' || #{flag}");
@@ -899,34 +899,89 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("风险标识移除（复评降级消费面）：移除指定项整体回写剩余标识（保持顺序、清空落空串）；" + "不含该标识零写入幂等")
-    void removeRiskFlagRemovesTargetAndSkipsAbsent() {
-        // 双标识行移除其一：剩余标识保持既有顺序整体回写
+    @DisplayName("风险标识原子移除（EX-26 N7 收口对称化）：DB 侧 array_remove 单语句摘除只携目标标识，" + "SQL 契约（移除/含标识谓词/在区谓词）钉死；不含该标识零写入幂等")
+    void removeRiskFlagRemovesAtomicallyViaDbSideArrayRemove() {
+        // 双标识行移除其一：原子调用只携目标标识与审计操作者（不再服务层拼剩余串整串回写）
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
         row.setRiskFlags("FALL,PRESSURE");
         when(wardPatientMapper.selectOne(any())).thenReturn(row);
-        when(wardPatientMapper.updateRiskFlags(VISIT, "FALL", "nurse-01")).thenReturn(1);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(1);
 
         service.removeRiskFlag(VISIT, "PRESSURE");
 
-        verify(wardPatientMapper).updateRiskFlags(VISIT, "FALL", "nurse-01");
+        verify(wardPatientMapper).casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01");
+        String sql = wardPatientSql("casRemoveRiskFlag", String.class, String.class, String.class);
+        // DB 侧移除锚：string_to_array→array_remove→array_to_string 原生数组三连单语句摘除
+        // （与追加侧原子拼接共用行级锁串行化，并发追加/移除双向不互吞）
+        assertThat(sql).contains("array_to_string(array_remove(string_to_array(risk_flags, ','), #{flag}), ',')");
+        // 幂等谓词锚：首尾补逗 position 定位「当前值含该标识」才施写（与追加侧同形态取反向）
+        assertThat(sql).contains("position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') > 0");
+        assertThat(sql).contains("status = 'IN_WARD'");
+        assertThat(sql).contains("deleted = 0");
 
-        // 仅存标识被移除：回写空串（DDL NOT NULL 默认空串口径，非 NULL）
+        // 仅存标识被移除：同样只携目标标识原子摘除（末位摘除落空串由 array_remove 自然承载）
         NursingWardPatient single = inWardRow(5L, 7L, "W01", "01");
         single.setRiskFlags("PRESSURE");
         when(wardPatientMapper.selectOne(any())).thenReturn(single);
-        when(wardPatientMapper.updateRiskFlags(VISIT, "", "nurse-01")).thenReturn(1);
 
         service.removeRiskFlag(VISIT, "PRESSURE");
 
-        verify(wardPatientMapper).updateRiskFlags(VISIT, "", "nurse-01");
+        verify(wardPatientMapper, times(2)).casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01");
 
-        // 不含目标标识（本就非高危的复评）：零写入幂等，无多余写触达
+        // 不含目标标识（本就非高危的复评）：快照前置短路零写入——原子移除总触达仍为前两段的 2 次
         NursingWardPatient noFlag = inWardRow(5L, 7L, "W01", "01");
         noFlag.setRiskFlags("");
         when(wardPatientMapper.selectOne(any())).thenReturn(noFlag);
         service.removeRiskFlag(VISIT, "PRESSURE");
-        verify(wardPatientMapper, never()).updateRiskFlags(VISIT, "PRESSURE", "nurse-01");
+        verify(wardPatientMapper, times(2)).casRemoveRiskFlag(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("风险标识移除 0 行幂等命中（EX-26 N7 收口）：目标已被并发移除先行，重读定性为幂等容忍不报错不重试")
+    void removeRiskFlagZeroRowWithFlagAlreadyRemovedToleratedAsIdempotent() {
+        // 交错模拟：快照读含目标 → 移除 CAS 施写前并发移除已先行提交（0 行）→ 重读行仍在且不含目标
+        NursingWardPatient snapshot = inWardRow(5L, 7L, "W01", "01");
+        snapshot.setRiskFlags("PRESSURE");
+        NursingWardPatient latest = inWardRow(5L, 7L, "W01", "01");
+        latest.setRiskFlags("");
+        when(wardPatientMapper.selectOne(any())).thenReturn(snapshot, latest);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(0);
+
+        service.removeRiskFlag(VISIT, "PRESSURE");
+
+        // 幂等命中非冲突：恰一次原子移除触达，无异常上抛、无二次施写（复评降级消费正常收敛）
+        verify(wardPatientMapper, times(1)).casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01");
+    }
+
+    @Test
+    @DisplayName("风险标识移除 0 行重读行已不在区：NS-1001 定性（与入口缺行语义一致，禁静默吞掉）")
+    void removeRiskFlagZeroRowWithVanishedRowClassifiedAsNs1001() {
+        // 交错模拟：快照读在区 → 移除 CAS 施写前患者已被并发移出病区（0 行）→ 重读无在区行
+        NursingWardPatient snapshot = inWardRow(5L, 7L, "W01", "01");
+        snapshot.setRiskFlags("PRESSURE");
+        when(wardPatientMapper.selectOne(any())).thenReturn(snapshot, (NursingWardPatient) null);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(0);
+
+        assertThatThrownBy(() -> service.removeRiskFlag(VISIT, "PRESSURE"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(NursingErrorCode.WARD_PATIENT_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("风险标识移除 0 行重读标识复现：让位并发重新追加（保留最新判级高危标记，重试会误删）")
+    void removeRiskFlagZeroRowYieldsToConcurrentReappend() {
+        // 交错模拟：移除 CAS 0 行（并发移除先行）后、重读前并发新评估又追加同标识——本轮移除
+        // 意向对应旧判级，让位最新判级：正常返回不报错、不再二次施写（防误删新评估高危标记）
+        NursingWardPatient snapshot = inWardRow(5L, 7L, "W01", "01");
+        snapshot.setRiskFlags("PRESSURE");
+        NursingWardPatient latest = inWardRow(5L, 7L, "W01", "01");
+        latest.setRiskFlags("PRESSURE");
+        when(wardPatientMapper.selectOne(any())).thenReturn(snapshot, latest);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(0);
+
+        service.removeRiskFlag(VISIT, "PRESSURE");
+
+        verify(wardPatientMapper, times(1)).casRemoveRiskFlag(any(), any(), any());
     }
 
     @Test
