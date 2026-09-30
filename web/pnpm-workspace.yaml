@@ -30,3 +30,8 @@ catalog:
   '@types/node': 24.13.3
   # openapi 类型契约生成（Task 16 / T-R4-3 实证：对 Springdoc 2.8.17 产出端点生成 api.d.ts，版本锁死）
   openapi-typescript: 7.13.0
+# 传递依赖漏洞钉版（CI pnpm audit high 阻断清账 2026-09-30）：brace-expansion 4.x~5.0.10 两个
+# high 级 DoS（GHSA-qhr7-859c-m2p7/GHSA-6j4f-fj2g-mc7p），全部 97 条路径均传递依赖无直接引用——
+# 范围式 override 仅钉受影响解析（>=4.0.0），2.1.7 消费者（漏洞外）不动；精确锁 5.0.11 守版本锁定红线
+overrides:
+  'brace-expansion@>=4.0.0 <5.0.11': 5.0.11
