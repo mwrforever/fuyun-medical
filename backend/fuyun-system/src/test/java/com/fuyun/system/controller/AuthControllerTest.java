@@ -45,7 +45,11 @@ class AuthControllerTest {
     void loginDelegatesRequestAndReturnsServiceResponse() {
         LoginRequest request = new LoginRequest("admin", "Fuyun@2026");
         LoginResponse expected = new LoginResponse(
-                "access", "refresh", "Bearer", 7200L, new UserVO(123L, "admin", "系统管理员", null, List.of("ADMIN")));
+                "access",
+                "refresh",
+                "Bearer",
+                7200L,
+                new UserVO(123L, "admin", "系统管理员", null, List.of("ADMIN"), List.of()));
         when(authService.login(request)).thenReturn(expected);
 
         LoginResponse actual = controller.login(request);
@@ -62,7 +66,7 @@ class AuthControllerTest {
                 "refresh-token",
                 "Bearer",
                 7200L,
-                new UserVO(123L, "admin", "系统管理员", null, List.of("ADMIN")));
+                new UserVO(123L, "admin", "系统管理员", null, List.of("ADMIN"), List.of()));
         when(authService.refresh(request)).thenReturn(expected);
 
         LoginResponse actual = controller.refresh(request);

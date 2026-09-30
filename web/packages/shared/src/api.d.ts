@@ -96,7 +96,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["getMetricMappings"];
         put: operations["updateMetricMappings"];
         post?: never;
         delete?: never;
@@ -112,7 +112,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["getCommands"];
         put: operations["updateCommands"];
         post?: never;
         delete?: never;
@@ -483,6 +483,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/auth/bigscreen-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["bigscreenToken"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2959,22 +2975,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/probe/biz-exception": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["triggerBizException"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/ward/ward-calls/{callNo}": {
         parameters: {
             query?: never;
@@ -4587,10 +4587,17 @@ export interface components {
             /** @example 0 */
             orgId?: string;
             roles?: string[];
+            permissions?: string[];
         };
         LoginRequest: {
             loginName: string;
             password: string;
+        };
+        BigscreenTokenVO: {
+            accessToken?: string;
+            tokenType?: string;
+            /** @example 0 */
+            expiresIn?: string;
         };
         ReviewDecisionRequest: {
             opinion?: string;
@@ -5035,6 +5042,8 @@ export interface components {
         };
         CancelAppointmentRequest: {
             reason: string;
+            credentialType?: string;
+            credentialNo?: string;
         };
         ExtraQuotaRequest: {
             /** Format: int32 */
@@ -7571,6 +7580,28 @@ export interface operations {
             };
         };
     };
+    getMetricMappings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MetricMappingVO"][];
+                };
+            };
+        };
+    };
     updateMetricMappings: {
         parameters: {
             query?: never;
@@ -7593,6 +7624,28 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["MetricMappingVO"][];
+                };
+            };
+        };
+    };
+    getCommands: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                productId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["CommandVO"][];
                 };
             };
         };
@@ -8315,6 +8368,26 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["LoginResponse"];
+                };
+            };
+        };
+    };
+    bigscreenToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BigscreenTokenVO"];
                 };
             };
         };
@@ -12359,26 +12432,6 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ArrearsApprovalVO"];
-                };
-            };
-        };
-    };
-    triggerBizException: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
                 };
             };
         };

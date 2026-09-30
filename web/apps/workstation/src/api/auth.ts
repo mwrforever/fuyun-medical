@@ -1,10 +1,18 @@
 /**
  * 认证域 API（web A.3-5 按业务域模块化）：login / refresh / logout 三操作。
  * 路径与后端契约对齐：POST /api/v1/system/auth/*（baseURL 已含 /api 前缀）；
- * 请求与响应分别建模（LoginRequest / LoginResponse），手写后备类型见 types/auth.ts。
+ * 请求与响应类型取自 openapi 生成物（EX-07 收口：手写后备 types/auth.ts 已删除，
+ * 生成物字段全可选属 springdoc 无 required 元数据的固有形态，消费侧按需收窄）。
  */
 import { http } from './http';
-import type { LoginRequest, LoginResponse } from '@/types/auth';
+import type { components } from '@fuyun/shared/api';
+
+/** 契约类型别名（生成物唯一来源）：登录请求体（loginName/password 后端必填校验） */
+export type LoginRequest = components['schemas']['LoginRequest'];
+/** 契约类型别名（生成物唯一来源）：登录/刷新双端点同构响应 */
+export type LoginResponse = components['schemas']['LoginResponse'];
+/** 契约类型别名（生成物唯一来源）：登录用户身份（含 P0 占位的 permissions 空集合契约） */
+export type UserVO = components['schemas']['UserVO'];
 
 /**
  * 登录：登录名 + 口令换双令牌与用户身份。

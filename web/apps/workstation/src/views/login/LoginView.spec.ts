@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { login as loginApiMock } from '@/api/auth';
 import { router } from '@/router';
 import LoginView from './LoginView.vue';
-import type { LoginResponse } from '@/types/auth';
+import type { LoginResponse } from '@/api/auth';
 
 vi.mock('@/api/auth', () => ({
   login: vi.fn(),
@@ -28,7 +28,7 @@ function loginResponse(): LoginResponse {
       userId: '1932000000000000001',
       loginName: 'admin',
       displayName: '系统管理员',
-      orgId: null,
+      orgId: undefined,
       roles: ['ADMIN'],
     },
   };

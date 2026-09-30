@@ -26,7 +26,7 @@ describe('侧栏权限过滤', () => {
       userId: '1',
       loginName: 'nurse01',
       displayName: '测试护士',
-      orgId: null,
+      orgId: undefined,
       roles: [],
       ...(permissions !== undefined ? { permissions } : {}),
     };

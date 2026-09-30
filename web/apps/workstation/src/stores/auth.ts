@@ -15,7 +15,7 @@ import { defineStore } from 'pinia';
 import { login as loginApi, logout as logoutApi } from '@/api/auth';
 import { setUnauthorizedHandler } from '@/api/http';
 import { router } from '@/router';
-import type { LoginRequest, LoginResponse, UserVO } from '@/types/auth';
+import type { LoginRequest, LoginResponse, UserVO } from '@/api/auth';
 
 /** sessionStorage 持久化键（冒号分层，与后端 Redis 键规范风格一致） */
 const AUTH_STORAGE_KEY = 'fy:workstation:auth';
@@ -153,6 +153,15 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function login(credentials: LoginRequest): Promise<void> {
     const resp: LoginResponse = await loginApi(credentials);
+    // 生成物契约字段全可选（springdoc 无 required 元数据），后端登录成功响应业务上恒携带
+    // 双令牌与身份：缺失即契约异常，显式失败优于 undefined 渗入会话态（守卫/侧栏消费 user）
+    if (
+      resp.accessToken === undefined ||
+      resp.refreshToken === undefined ||
+      resp.user === undefined
+    ) {
+      throw new Error('登录响应缺少令牌或身份字段（后端契约异常）');
+    }
     const snapshot: AuthSnapshot = {
       token: resp.accessToken,
       refreshToken: resp.refreshToken,

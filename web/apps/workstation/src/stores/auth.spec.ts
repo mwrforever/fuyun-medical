@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { login as loginApiMock, logout as logoutApiMock } from '@/api/auth';
 import { router } from '@/router';
 import { useAuthStore } from './auth';
-import type { LoginResponse, UserVO } from '@/types/auth';
+import type { LoginResponse, UserVO } from '@/api/auth';
 
 // api 层 mock：store 行为断言聚焦会话状态与持久化语义，不触达 Axios 单例
 vi.mock('@/api/auth', () => ({
@@ -15,8 +15,12 @@ vi.mock('@/api/auth', () => ({
   refresh: vi.fn(),
 }));
 
-/** 构造登录成功响应（字段与后端契约一致：userId/expiresIn 为后端 Long 经 Long→String 的字符串输出） */
-function loginResponse(): LoginResponse {
+/**
+ * 构造登录成功响应（字段与后端契约一致：userId/expiresIn 为后端 Long 经 Long→String 的字符串输出）。
+ *
+ * @param permissions 权限点编码集；缺省 = user 无 permissions 字段（防御存量快照/异常形态）
+ */
+function loginResponse(permissions?: string[]): LoginResponse {
   return {
     accessToken: 'access-token-1',
     refreshToken: 'refresh-token-1',
@@ -26,8 +30,9 @@ function loginResponse(): LoginResponse {
       userId: '1932000000000000001',
       loginName: 'admin',
       displayName: '系统管理员',
-      orgId: null,
+      orgId: undefined,
       roles: ['ADMIN'],
+      ...(permissions !== undefined ? { permissions } : {}),
     },
   };
 }
@@ -112,9 +117,9 @@ describe('认证会话 store', () => {
   });
 
   it('登录响应携带权限点集时 permissions 派生承载', async () => {
-    const resp = loginResponse();
-    resp.user.permissions = ['patient:archive:search', 'nursing:ward:view'];
-    vi.mocked(loginApiMock).mockResolvedValue(resp);
+    vi.mocked(loginApiMock).mockResolvedValue(
+      loginResponse(['patient:archive:search', 'nursing:ward:view']),
+    );
     const auth = useAuthStore();
 
     await auth.login({ loginName: 'admin', password: 'Fuyun@2026' });
@@ -140,7 +145,7 @@ describe('认证会话 store', () => {
       userId: '1',
       loginName: 'nurse01',
       displayName: '测试护士',
-      orgId: null,
+      orgId: undefined,
       roles: [],
       permissions: ['patient:archive:search'],
     };

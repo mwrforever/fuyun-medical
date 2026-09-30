@@ -129,6 +129,8 @@ class AuthServiceImplTest {
         assertThat(response.user().displayName()).isEqualTo("系统管理员");
         assertThat(response.user().orgId()).isNull();
         assertThat(response.user().roles()).containsExactly("ADMIN");
+        // permissions 契约锚定：P0 权限点体系未建恒为空集合（前端守卫按空集全放行兼容）
+        assertThat(response.user().permissions()).isEmpty();
 
         // 成功路径复位状态机（失败计数清零/锁定清空/最近登录时刻），签发入参为组装后的会话身份
         verify(userService).recordLoginSuccess(user);
@@ -259,6 +261,8 @@ class AuthServiceImplTest {
         assertThat(response.tokenType()).isEqualTo("Bearer");
         assertThat(response.user().userId()).isEqualTo(123L);
         assertThat(response.user().roles()).containsExactly("ADMIN");
+        // permissions 契约锚定：refresh 端点与 login 出参同构，同样空集合占位
+        assertThat(response.user().permissions()).isEmpty();
     }
 
     @Test

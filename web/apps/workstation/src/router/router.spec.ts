@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { router } from './index';
 import { useAuthStore } from '@/stores/auth';
-import type { UserVO } from '@/types/auth';
+import type { UserVO } from '@/api/auth';
 
 describe('路由认证守卫', () => {
   beforeEach(() => {
@@ -60,7 +60,7 @@ describe('路由权限守卫骨架（BUG-14）', () => {
       userId: '1',
       loginName: 'nurse01',
       displayName: '测试护士',
-      orgId: null,
+      orgId: undefined,
       roles: [],
     };
     // 仅在显式传入时携带权限点集：与真实登录响应「字段缺省 = 数据源缺失」形态一致

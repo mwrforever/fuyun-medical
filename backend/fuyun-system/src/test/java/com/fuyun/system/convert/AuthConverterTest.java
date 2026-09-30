@@ -19,7 +19,7 @@ class AuthConverterTest {
     private final AuthConverter converter = AuthConverter.INSTANCE;
 
     @Test
-    @DisplayName("会话身份转用户出参：身份字段同名映射，employeeId 不出参（内部标识防外泄）")
+    @DisplayName("会话身份转用户出参：身份字段同名映射，employeeId 不出参，permissions 空集合占位（P1-authz 前契约锚定）")
     void toUserVoMapsSessionIdentity() {
         SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
 
@@ -30,13 +30,15 @@ class AuthConverterTest {
         assertThat(vo.displayName()).isEqualTo("系统管理员");
         assertThat(vo.orgId()).isNull();
         assertThat(vo.roles()).containsExactly("ADMIN");
+        // permissions 契约锚定：P0 权限点体系未建恒为空集合（前端守卫按空集全放行兼容）
+        assertThat(vo.permissions()).isEmpty();
     }
 
     @Test
     @DisplayName("登录响应组装：令牌对与方案名/有效期/用户身份聚合到位")
     void toLoginResponseAggregatesTokenPairAndUser() {
         TokenPair pair = new TokenPair("access-value", "refresh-value");
-        UserVO user = new UserVO(123L, "admin", "系统管理员", null, List.of("ADMIN"));
+        UserVO user = new UserVO(123L, "admin", "系统管理员", null, List.of("ADMIN"), List.of());
 
         LoginResponse response = converter.toLoginResponse(pair, "Bearer", 7200L, user);
 
