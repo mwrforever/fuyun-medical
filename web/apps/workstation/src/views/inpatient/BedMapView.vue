@@ -15,6 +15,7 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { beds, BED_STATUS_LABELS, transfer, WARD_OPTIONS } from '@/api/inpatient';
 import type { BedMapVO } from '@/api/inpatient';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -41,21 +42,14 @@ const BED_ACTIONS: Record<string, ReadonlyArray<{ value: string; label: string }
 /** 当前病区（默认演示病区 W01；切换即重载床位图） */
 const wardId = ref(WARD_OPTIONS[0].code);
 const bedList = ref<BedMapVO[]>([]);
-const mapLoading = ref(false);
 /** 在途守卫：同一时刻至多一个床位动作可发（防双击重复提交） */
 const actingBedId = ref<string | null>(null);
 
-/** 加载病区床位图（后端床号升序直出） */
-async function loadMap(): Promise<void> {
-  mapLoading.value = true;
-  try {
-    bedList.value = await beds.map(wardId.value);
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧床位图
-  } finally {
-    mapLoading.value = false;
-  }
-}
+/** 加载病区床位图（后端床号升序直出）：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，
+ * 行为与迁移前一致——失败弹错归响应拦截器、驻留旧床位图） */
+const { loading: mapLoading, run: loadMap } = useAsyncTask(async () => {
+  bedList.value = await beds.map(wardId.value);
+});
 
 function onWardChange(): void {
   void loadMap();

@@ -16,6 +16,7 @@ import {
   quality,
 } from '@/api/iot';
 import type { ConsumeErrorVO, DataQualityStatVO } from '@/api/iot';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -44,87 +45,58 @@ function errorStatusClass(code: string | undefined): string {
 
 /* ==================== 质量统计表 ==================== */
 const statRows = ref<DataQualityStatVO[]>([]);
-const statLoading = ref(false);
 /** 统计筛选设备 ID（空串=全部设备） */
 const deviceIdFilter = ref('');
 
-/** 加载质量统计（deviceId 过滤由后端承载） */
-async function loadStats(): Promise<void> {
-  statLoading.value = true;
-  try {
-    const page = await quality.stats({
-      deviceId: deviceIdFilter.value.trim() === '' ? undefined : deviceIdFilter.value.trim(),
-      page: 0,
-      size: 50,
-    });
-    statRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    statLoading.value = false;
-  }
-}
+/** 加载质量统计（deviceId 过滤由后端承载）：loading 骨架经 useAsyncTask 收拢（EX-42 范式
+ * 迁移，行为与迁移前一致——失败弹错归响应拦截器；驻留旧清单） */
+const { loading: statLoading, run: loadStats } = useAsyncTask(async () => {
+  const page = await quality.stats({
+    deviceId: deviceIdFilter.value.trim() === '' ? undefined : deviceIdFilter.value.trim(),
+    page: 0,
+    size: 50,
+  });
+  statRows.value = page.content ?? [];
+});
 
 /* ==================== 设备利用率 TopN ==================== */
 const usageRows = ref<DataQualityStatVO[]>([]);
-const usageLoading = ref(false);
 
-/** 加载设备利用率（取 size 50 后按 usageRate 降序排序截取 TopN——TopN 形态由前端承载） */
-async function loadUsage(): Promise<void> {
-  usageLoading.value = true;
-  try {
-    const page = await quality.deviceUsage({ page: 0, size: 50 });
-    usageRows.value = [...(page.content ?? [])]
-      .sort((a, b) => (b.usageRate ?? 0) - (a.usageRate ?? 0))
-      .slice(0, USAGE_TOP_N);
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    usageLoading.value = false;
-  }
-}
+/** 加载设备利用率（取 size 50 后按 usageRate 降序排序截取 TopN——TopN 形态由前端承载）：
+ * loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移） */
+const { loading: usageLoading, run: loadUsage } = useAsyncTask(async () => {
+  const page = await quality.deviceUsage({ page: 0, size: 50 });
+  usageRows.value = [...(page.content ?? [])]
+    .sort((a, b) => (b.usageRate ?? 0) - (a.usageRate ?? 0))
+    .slice(0, USAGE_TOP_N);
+});
 
 /* ==================== 消费积压水位 ==================== */
 const lagRows = ref<Awaited<ReturnType<typeof monitor.consumerLag>>>([]);
-const lagLoading = ref(false);
 
-/** 加载消费组积压快照（量小全量直出） */
-async function loadLag(): Promise<void> {
-  lagLoading.value = true;
-  try {
-    lagRows.value = await monitor.consumerLag();
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    lagLoading.value = false;
-  }
-}
+/** 加载消费组积压快照（量小全量直出）：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移） */
+const { loading: lagLoading, run: loadLag } = useAsyncTask(async () => {
+  lagRows.value = await monitor.consumerLag();
+});
 
 /* ==================== 消费错误列表（重放/放弃） ==================== */
 const errorRows = ref<ConsumeErrorVO[]>([]);
-const errorLoading = ref(false);
 /** 状态筛选（空串=全部三态；默认 PENDING 待处置——死信治理主战场） */
 const errorStatusFilter = ref('PENDING');
 
-/** 加载消费错误列表（queueName 过滤由后端承载） */
-async function loadErrors(): Promise<void> {
-  errorLoading.value = true;
-  try {
-    const page = await consumeErrors.page({
-      status:
-        errorStatusFilter.value === ''
-          ? undefined
-          : (errorStatusFilter.value as ConsumeErrorVO['status']),
-      page: 0,
-      size: 50,
-    });
-    errorRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    errorLoading.value = false;
-  }
-}
+/** 加载消费错误列表（queueName 过滤由后端承载）：loading 骨架经 useAsyncTask 收拢
+ * （EX-42 范式迁移） */
+const { loading: errorLoading, run: loadErrors } = useAsyncTask(async () => {
+  const page = await consumeErrors.page({
+    status:
+      errorStatusFilter.value === ''
+        ? undefined
+        : (errorStatusFilter.value as ConsumeErrorVO['status']),
+    page: 0,
+    size: 50,
+  });
+  errorRows.value = page.content ?? [];
+});
 
 /** 重放在途行锚点（null=无在途；行级守卫防双击窗口内重复重投消费消息） */
 const replayingId = ref<string | null>(null);

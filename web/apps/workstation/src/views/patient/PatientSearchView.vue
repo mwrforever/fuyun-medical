@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 患者检索页（FU-M02-02）：证件号/手机号/姓名关键词分页检索，输出统一脱敏（Task 6 后端已脱敏，
-// 前端原样渲染不二次处理明文）；分页组件 1 基 ↔ 后端契约 0 基在本页边界转换；行点击与「详情」
-// link 按钮列双通道跳详情（F-4 键盘可达收口：按钮原生可聚焦，键盘用户有主流程路径）。
-// 体量小不设 composable（简单优先），数据获取以组件内 ref 承载；失败弹错归响应拦截器（web A.3-2）。
+// 前端原样渲染不二次处理明文）；分页组件 1 基 ↔ 后端契约 0 基的边界转换经 usePagedList 收口
+// （EX-49 范式迁移）；行点击与「详情」link 按钮列双通道跳详情（F-4 键盘可达收口：按钮原生
+// 可聚焦，键盘用户有主流程路径）。失败弹错归响应拦截器（web A.3-2）。
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
@@ -10,44 +10,27 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { usePagedList } from '@/composables/usePagedList';
 import { patientSexText, patientStatusTagType, patientStatusText } from '@/utils/patientDisplay';
 
 const router = useRouter();
 
 /** 检索词模型（证件号/手机号/姓名；trim 后为空则前置拦截，防全量扫描拖库） */
 const keyword = ref('');
-/** 当页数据（服务端分页返回，脱敏行） */
-const rows = ref<PatientVO[]>([]);
-/** 总条数（分页条渲染用） */
-const total = ref(0);
-/** 当前页码（1 基绑定分页组件，请求时转 0 基） */
-const currentPage = ref(1);
-/** 单页条数 */
-const pageSize = ref(20);
-/** 表格加载态 */
-const loading = ref(false);
 /** 是否已执行过检索（区分「初始未查」与「查无结果」两态提示） */
 const searched = ref(false);
 
-/** 执行检索：以当前 keyword/页码请求；校验失败由拦截器弹错，本页驻留旧结果 */
-async function fetchPage(): Promise<void> {
-  loading.value = true;
-  try {
-    const resp = await searchPatients({
-      keyword: keyword.value.trim(),
-      // 边界转换：组件 current-page 1 基 → 契约 page 0 基（api 层保持纯透传）
-      page: currentPage.value - 1,
-      size: pageSize.value,
-    });
-    rows.value = resp.content;
-    total.value = resp.total;
+/** 分页检索三段式（EX-49 范式迁移）：页码/行集/总数/加载态经 usePagedList 收拢，检索词归
+ * 本页持有经快照工厂实时取值合并出网（行为与迁移前一致——失败弹错归响应拦截器、驻留旧结果） */
+const { rows, total, loading, currentPage, pageSize, search, goToPage } = usePagedList({
+  params: () => ({ keyword: keyword.value.trim() }),
+  fetcher: ({ keyword: kw, page, size }) => searchPatients({ keyword: kw, page, size }),
+  pageSize: 20,
+  // 检索成功置位（失败驻留旧结果时保持原 searched 态，防误显「无结果」空态）
+  onSuccess: () => {
     searched.value = true;
-  } catch {
-    // 失败弹错归响应拦截器；终止本次翻页
-  } finally {
-    loading.value = false;
-  }
-}
+  },
+});
 
 /** 查询按钮：换词检索回第一页；空关键词前置提示不出网 */
 async function handleQuery(): Promise<void> {
@@ -55,8 +38,7 @@ async function handleQuery(): Promise<void> {
     void ElMessage.warning('请输入检索词（证件号/手机号/姓名）');
     return;
   }
-  currentPage.value = 1;
-  await fetchPage();
+  await search();
 }
 
 /**
@@ -65,8 +47,7 @@ async function handleQuery(): Promise<void> {
  * @param page 目标页码（1 基）
  */
 async function handlePageChange(page: number): Promise<void> {
-  currentPage.value = page;
-  await fetchPage();
+  await goToPage(page);
 }
 
 /**
