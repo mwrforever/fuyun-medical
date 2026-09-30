@@ -17,30 +17,32 @@ import {
   WARD_OPTIONS,
 } from '@/api/inpatient';
 import type { TransferWorklistVO } from '@/api/inpatient';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
 /* ==================== 待转抄列表 ==================== */
 const wardId = ref(WARD_OPTIONS[0].code);
-const rows = ref<TransferWorklistVO[]>([]);
-const listLoading = ref(false);
 /** 勾选集合（批量提交 orderNos 顺序=列表序，保证出网稳定） */
 const selectedNos = ref<Set<string>>(new Set());
 
-/** 加载待转抄列表（病区维度 AUDITED 医嘱聚合，开立时间倒序） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await transferWorklist.list({ wardId: wardId.value, page: 0, size: 50 });
-    rows.value = page.content ?? [];
-    // 重载后勾选集清空（旧勾选行可能已不在列表）
+/** 待转抄列表三段式（EX-49 范式迁移，病区维度 AUDITED 医嘱聚合，开立时间倒序）：行集/
+ * 加载态经 usePagedList 收拢（固定首页 size 50 直出），病区经快照工厂发起时实时取值；
+ * 成功后勾选集清空迁 onSuccess（失败驻留旧清单与旧勾选，行为与迁移前一致——失败弹错
+ * 归响应拦截器） */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({ wardId: wardId.value }),
+  fetcher: ({ wardId: ward, page, size }) => transferWorklist.list({ wardId: ward, page, size }),
+  pageSize: 50,
+  // 重载成功后勾选集清空（旧勾选行可能已不在列表）
+  onSuccess: () => {
     selectedNos.value = new Set();
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+  },
+});
 
 /** 行勾选切换（native checkbox，jsdom 可测） */
 function toggleSelect(row: TransferWorklistVO): void {

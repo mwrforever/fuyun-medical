@@ -15,6 +15,7 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { discharge, DISCHARGE_STATUS_LABELS, DISCHARGE_WAY_OPTIONS } from '@/api/inpatient';
 import type { ClearanceVO, DischargeRequestVO } from '@/api/inpatient';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { fenToYuanDisplay } from '@/utils/money';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
@@ -131,24 +132,22 @@ async function onCancel(row: DischargeRequestVO): Promise<void> {
 }
 
 /* ==================== 清理与预审结果面板 ==================== */
-const clearance = ref<ClearanceVO | null>(null);
-const clearanceLoading = ref(false);
 /** 面板锚定申请单（清理预审/离院确认共用） */
 const panelRequest = ref<DischargeRequestVO | null>(null);
+const clearance = ref<ClearanceVO | null>(null);
 
-/** 拉取清理与预审结果（清理三清单+追踪清单+欠费额+结算标记+挂账凭证） */
-async function loadClearance(row: DischargeRequestVO): Promise<void> {
-  panelRequest.value = row;
-  clearanceLoading.value = true;
-  try {
+/** 拉取清理与预审结果（清理三清单+追踪清单+欠费额+结算标记+挂账凭证）：loading 骨架经
+ * useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——失败弹错归响应拦截器、驻留旧
+ * 面板）；任务体首行先锚定 panelRequest，保持「发起新请求前先锚定」时序（面板头与离院
+ * 确认共吃该锚点） */
+const { loading: clearanceLoading, run: loadClearance } = useAsyncTask(
+  async (row: DischargeRequestVO) => {
+    // 发起前先锚定面板申请单（时序红线：锚定先于出网）
+    panelRequest.value = row;
     // 归一化兜底：异常空响应收敛 null，防 undefined 穿透守卫致渲染面空引用
     clearance.value = (await discharge.clearance(row.requestNo ?? '')) ?? null;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧面板
-  } finally {
-    clearanceLoading.value = false;
-  }
-}
+  },
+);
 
 /** 欠费额展示（分→元，全站唯一件换算；0 或空=无欠费） */
 const arrearsDisplay = computed(() => {

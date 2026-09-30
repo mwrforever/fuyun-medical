@@ -9,11 +9,13 @@ import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（billing 三页同款口径）
 import 'element-plus/es/components/message/style/css';
 import { listFees, previewSettlement, settle } from '@/api/billing';
-import type { FeeRecordVO, SettlementPreviewVO, SettlementVO } from '@/api/billing';
+import type { SettlementPreviewVO, SettlementVO } from '@/api/billing';
 import { createAppointment, listAvailablePools } from '@/api/outpatient';
 import type { AppointmentVO, NumberPoolVO } from '@/api/outpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
 import { fenToYuanDisplay } from '@/utils/money';
 
 /** 号别中文词表（生成物 apptType 五值枚举的展示映射；V705 appt-type 字典同源） */
@@ -30,12 +32,23 @@ const todayCount = ref(0);
 
 /* ---------- 第 1 步：选择患者（行高 40px 紧凑检索，行点击回填） ---------- */
 const keyword = ref('');
-const patientLoading = ref(false);
-const patients = ref<PatientVO[]>([]);
 /** 已选患者（null=未选；挂号与收费的 patientId 来源） */
 const selectedPatient = ref<PatientVO | null>(null);
 
-/** 检索患者：空词前置拦截不出网（patient 检索页同款口径），结果驻留供行点击回填 */
+/** 患者检索三段式（EX-49 范式迁移）：行集/加载态经 usePagedList 收拢（固定首页 size 10），
+ * 检索词经快照工厂发起时实时取值（行为与迁移前一致——失败弹错归响应拦截器、驻留旧结果，
+ * 结果供行点击回填） */
+const {
+  rows: patients,
+  loading: patientLoading,
+  search: searchPatientRows,
+} = usePagedList({
+  params: () => ({ keyword: keyword.value.trim() }),
+  fetcher: ({ keyword: kw, page, size }) => searchPatients({ keyword: kw, page, size }),
+  pageSize: 10,
+});
+
+/** 检索患者：在途早退 + 空词前置拦截不出网（patient 检索页同款口径） */
 async function onSearchPatients(): Promise<void> {
   if (patientLoading.value) {
     return;
@@ -44,15 +57,7 @@ async function onSearchPatients(): Promise<void> {
     void ElMessage.warning('请输入检索词（姓名/证件号/手机号）');
     return;
   }
-  patientLoading.value = true;
-  try {
-    const page = await searchPatients({ keyword: keyword.value.trim(), page: 0, size: 10 });
-    patients.value = page.content;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧结果
-  } finally {
-    patientLoading.value = false;
-  }
+  await searchPatientRows();
 }
 
 /** 行点击回填选中患者（步骤 1 完成态） */
@@ -63,7 +68,6 @@ function onSelectPatient(row: PatientVO): void {
 /* ---------- 第 2 步：选择排班/号别（日期 + 诊区 → 号源卡阵列 3 列 grid） ---------- */
 const deptCode = ref('');
 const poolDate = ref('');
-const poolsLoading = ref(false);
 const pools = ref<NumberPoolVO[]>([]);
 /** 已选号源池（null=未选；挂号入参 poolId 来源） */
 const selectedPool = ref<NumberPoolVO | null>(null);
@@ -76,7 +80,19 @@ function poolTone(pool: NumberPoolVO): 'danger' | 'warning' | 'brand' {
   return (pool.remaining ?? 0) <= 5 ? 'warning' : 'brand';
 }
 
-/** 查询可约号源：诊区/日期前置拦截不出网（availablePools 契约双必填） */
+/** 查询可约号源：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——
+ * 失败弹错归响应拦截器、驻留旧阵列）；成功路径 selectedPool 复位留在出网成功之后内联
+ * 承载（成功分支独占语义，失败驻留旧选择防误清）。 */
+const { loading: poolsLoading, run: loadPools } = useAsyncTask(async () => {
+  pools.value = await listAvailablePools({
+    deptCode: deptCode.value.trim(),
+    date: poolDate.value,
+  });
+  // 号源阵列刷新后清空已选池，防携带失效选择提交（成功路径复位）
+  selectedPool.value = null;
+});
+
+/** 查询号源入口：在途早退 + 诊区/日期前置拦截不出网（availablePools 契约双必填） */
 async function onQueryPools(): Promise<void> {
   if (poolsLoading.value) {
     return;
@@ -85,19 +101,7 @@ async function onQueryPools(): Promise<void> {
     void ElMessage.warning('请先填写诊区编码与排班日期');
     return;
   }
-  poolsLoading.value = true;
-  try {
-    pools.value = await listAvailablePools({
-      deptCode: deptCode.value.trim(),
-      date: poolDate.value,
-    });
-    // 号源阵列刷新后清空已选池，防携带失效选择提交
-    selectedPool.value = null;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧阵列
-  } finally {
-    poolsLoading.value = false;
-  }
+  await loadPools();
 }
 
 /** 点选号源卡（余 0 禁点）：选中态描边转品牌 + 底 brand-100（120ms 色值过渡） */
@@ -163,8 +167,8 @@ async function onRegister(): Promise<void> {
 }
 
 /* ---------- 右列：挂号费收费联动（复用 billing api，资金面零前端运算） ---------- */
-const fees = ref<FeeRecordVO[]>([]);
-const feesLoading = ref(false);
+/** 费用出网 visit 锚定（loadFees 入参经此转快照工厂，发起时实时取值） */
+let feesVisitId = '';
 const preview = ref<SettlementPreviewVO | null>(null);
 const previewing = ref(false);
 const settled = ref<SettlementVO | null>(null);
@@ -174,6 +178,19 @@ const chargeVisitId = computed(() =>
   lastAppointment.value?.status === 'TAKEN' ? (lastAppointment.value.visitId ?? '') : '',
 );
 
+/** 就诊费用三段式（EX-49 范式迁移）：行集/加载态经 usePagedList 收拢（固定首页 size 20），
+ * visitId 入参经锚定变量转快照工厂出网（行为与迁移前一致——失败弹错归响应拦截器、驻留旧
+ * 费用；完成态由调用方按 visit 变更自行清理） */
+const {
+  rows: fees,
+  loading: feesLoading,
+  fetch: fetchFees,
+} = usePagedList({
+  params: () => ({ visitId: feesVisitId }),
+  fetcher: ({ visitId, page, size }) => listFees({ visitId, page, size }),
+  pageSize: 20,
+});
+
 /**
  * 待缴费用行（FeeRecordVO.status 走后端 FeeStatus 词表，PENDING=已生成待确认；
  * UNPAID/PAID/REFUNDED 是 AppointmentVO.feeStatus 词表勿混淆——Task 15 Step6 真机 D-1：
@@ -181,17 +198,10 @@ const chargeVisitId = computed(() =>
  */
 const unpaidFees = computed(() => fees.value.filter((fee) => fee.status === 'PENDING'));
 
-/** 拉取就诊费用（挂号成功联动入口与结算成功重刷共用；完成态由调用方按 visit 变更自行清理） */
+/** 拉取就诊费用（挂号成功联动入口与结算成功重刷共用）：先锚定 visit 快照再发起加载。 */
 async function loadFees(visitId: string): Promise<void> {
-  feesLoading.value = true;
-  try {
-    const page = await listFees({ visitId, page: 0, size: 20 });
-    fees.value = page.content;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧费用
-  } finally {
-    feesLoading.value = false;
-  }
+  feesVisitId = visitId;
+  await fetchFees();
 }
 
 /** 预结算（自费口径，生成可结算草稿单） */

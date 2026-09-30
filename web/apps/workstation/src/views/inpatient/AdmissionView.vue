@@ -23,6 +23,7 @@ import {
 import type { AdmissionVO, BedMapVO } from '@/api/inpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -35,29 +36,25 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 /* ==================== 左栏：候床队列 ==================== */
-const queueRows = ref<AdmissionVO[]>([]);
-const queueTotal = ref(0);
-const queueLoading = ref(false);
 /** 状态筛选（空串=全部状态；常规视图传 WAITING/SCHEDULED） */
 const statusFilter = ref('');
 
-/** 加载候床队列（后端冻结排序=急诊优先＞预约时段＞候床时长，前端按返回序直出） */
-async function loadQueue(): Promise<void> {
-  queueLoading.value = true;
-  try {
-    const page = await admissions.list({
-      status: statusFilter.value === '' ? undefined : statusFilter.value,
-      page: 0,
-      size: 50,
-    });
-    queueRows.value = page.content ?? [];
-    queueTotal.value = Number(page.total ?? '0');
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    queueLoading.value = false;
-  }
-}
+/** 候床队列三段式（EX-49 范式迁移）：行集/总数/加载态经 usePagedList 收拢（固定首页
+ * size 50 直出，后端冻结排序=急诊优先＞预约时段＞候床时长，前端按返回序直出）；状态筛选
+ * 经快照工厂发起时实时取值，total 双形态由 composable 归一（行为与迁移前一致——失败弹错
+ * 归响应拦截器、驻留旧清单） */
+const {
+  rows: queueRows,
+  total: queueTotal,
+  loading: queueLoading,
+  fetch: loadQueue,
+} = usePagedList({
+  params: () => ({
+    status: statusFilter.value === '' ? undefined : statusFilter.value,
+  }),
+  fetcher: ({ status, page, size }) => admissions.list({ status, page, size }),
+  pageSize: 50,
+});
 
 /** 入院类型中文词表反查（行内类型列） */
 function admissionTypeLabel(code: string | undefined): string {
