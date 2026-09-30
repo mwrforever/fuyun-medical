@@ -12,6 +12,7 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { bindings, BIND_TYPE_LABELS, BINDING_STATUS_LABELS, IOT_WARD_OPTIONS } from '@/api/iot';
 import type { BindingVO } from '@/api/iot';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -19,27 +20,23 @@ import { formatTime } from '@/utils/timeFormat';
 const VISIT_NO_PATTERN = /^I\d{13}$/;
 
 /* ==================== 绑定列表 ==================== */
-const rows = ref<BindingVO[]>([]);
-const listLoading = ref(false);
 /** 状态筛选（空串=全部三态） */
 const statusFilter = ref('');
 
-/** 加载绑定列表（deviceId/wardId/status 过滤由后端承载，前端按返回序直出） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await bindings.list({
-      status: statusFilter.value === '' ? undefined : (statusFilter.value as BindingVO['status']),
-      page: 0,
-      size: 50,
-    });
-    rows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载绑定列表（deviceId/wardId/status 过滤由后端承载，前端按返回序直出）：页码/行集/
+ * 加载态经 usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——
+ * 失败弹错归响应拦截器；驻留旧清单） */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({
+    status: statusFilter.value === '' ? undefined : (statusFilter.value as BindingVO['status']),
+  }),
+  fetcher: ({ status, page, size }) => bindings.list({ status, page, size }),
+  pageSize: 50,
+});
 
 /** 绑定状态中文词表反查（状态列徽标） */
 function statusLabel(code: string | undefined): string {

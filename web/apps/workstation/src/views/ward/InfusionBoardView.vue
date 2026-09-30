@@ -10,6 +10,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { StompSubscription } from '@stomp/stompjs';
 import { INFUSION_ALERT_LABELS, WARD_OPTIONS, infusionBoard } from '@/api/ward';
 import type { InfusionBoardVO } from '@/api/ward';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import {
   alarmTopicPath,
   connect as stompConnect,
@@ -40,7 +41,6 @@ const wardId = ref(WARD_OPTIONS[0].code);
 
 /** 看板快照（REST 全量；null=尚未加载） */
 const board = ref<InfusionBoardVO | null>(null);
-const loading = ref(false);
 
 /** 最近一条输液告急联动帧（null=无；banner 展示锚点） */
 const lastShortageAlarm = ref<AlarmTriggeredPayload | null>(null);
@@ -65,17 +65,12 @@ function metricText(value: number | undefined): string {
 
 /* ==================== REST 全量 ==================== */
 
-/** 拉取病区输液看板快照（REST 全量兜底面；失败弹错归响应拦截器，驻留旧快照） */
-async function loadBoard(): Promise<void> {
-  loading.value = true;
-  try {
-    board.value = await infusionBoard.byWard(wardId.value);
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧快照
-  } finally {
-    loading.value = false;
-  }
-}
+/** 拉取病区输液看板快照（REST 全量兜底面）：loading 骨架经 useAsyncTask 收拢（EX-42 范式
+ * 迁移，行为与迁移前一致——失败弹错归响应拦截器，驻留旧快照）；WS 帧驱动的节流守卫在
+ * 外层 handleTelemetryFrame/handleAlarmFrame 承载，不经任务体，时序不受本迁移影响 */
+const { loading, run: loadBoard } = useAsyncTask(async () => {
+  board.value = await infusionBoard.byWard(wardId.value);
+});
 
 /* ==================== WS 增量（遥测摘要 + 病区告警双主题） ==================== */
 

@@ -12,31 +12,29 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { devices, DEVICE_STATUS_LABELS } from '@/api/iot';
 import type { DeviceShadowVO, DeviceVO } from '@/api/iot';
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
 /* ==================== 设备列表 ==================== */
-const rows = ref<DeviceVO[]>([]);
-const listLoading = ref(false);
 /** 状态筛选（空串=全部五态） */
 const statusFilter = ref('');
 
-/** 加载设备列表（status/wardId 过滤由后端承载，前端按返回序直出） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await devices.list({
-      status: statusFilter.value === '' ? undefined : (statusFilter.value as DeviceVO['status']),
-      page: 0,
-      size: 50,
-    });
-    rows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载设备列表（status/wardId 过滤由后端承载，前端按返回序直出）：页码/行集/加载态经
+ * usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错
+ * 归响应拦截器；驻留旧清单） */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({
+    status: statusFilter.value === '' ? undefined : (statusFilter.value as DeviceVO['status']),
+  }),
+  fetcher: ({ status, page, size }) => devices.list({ status, page, size }),
+  pageSize: 50,
+});
 
 /** 状态中文词表反查（状态列徽标） */
 function statusLabel(code: string | undefined): string {
@@ -152,25 +150,30 @@ function closeSecretDialog(): void {
 
 /* ==================== 设备影子查询抽屉 ==================== */
 const shadowVisible = ref(false);
-const shadowLoading = ref(false);
 /** 影子查询目标设备（抽屉上下文锚点） */
 const shadowDevice = ref<DeviceVO | null>(null);
 const shadowData = ref<DeviceShadowVO | null>(null);
 
-/** 影子查询（IoTDA desired/reported 两区直通展示） */
+/** 影子查询出网（IoTDA desired/reported 两区直通展示）：loading 骨架经 useAsyncTask 收拢
+ * （EX-42 范式迁移，行为与迁移前一致——失败弹错归响应拦截器；抽屉驻留空态经 onError
+ * 注入数据复位） */
+const { loading: shadowLoading, run: loadShadow } = useAsyncTask(
+  async (deviceId: string) => {
+    shadowData.value = await devices.shadow(deviceId);
+  },
+  {
+    onError: () => {
+      shadowData.value = null;
+    },
+  },
+);
+
+/** 打开影子抽屉（前置锚定目标设备/清空旧影子/开抽屉）后发起查询 */
 async function openShadow(row: DeviceVO): Promise<void> {
   shadowDevice.value = row;
   shadowData.value = null;
   shadowVisible.value = true;
-  shadowLoading.value = true;
-  try {
-    shadowData.value = await devices.shadow(row.deviceId ?? '');
-  } catch {
-    // 失败弹错归响应拦截器；抽屉驻留空态
-    shadowData.value = null;
-  } finally {
-    shadowLoading.value = false;
-  }
+  await loadShadow(row.deviceId ?? '');
 }
 
 /** 影子区 JSON 展示串（空区显示占位） */

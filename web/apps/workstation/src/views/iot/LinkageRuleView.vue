@@ -18,6 +18,8 @@ import {
 } from '@/api/iot';
 import type { LinkageLogVO, LinkageRuleVO, SaveLinkageRuleRequest } from '@/api/iot';
 import { WARD_OPTIONS } from '@/api/ward';
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -48,19 +50,12 @@ function resultClass(code: string | undefined): string {
 
 /* ==================== 规则列表 ==================== */
 const rows = ref<LinkageRuleVO[]>([]);
-const listLoading = ref(false);
 
-/** 加载规则列表（量小全量直出，无分页） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    rows.value = await linkageRules.list();
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载规则列表（量小全量直出，无分页）：loading 骨架经 useAsyncTask 收拢（EX-42 范式
+ * 迁移，行为与迁移前一致——失败弹错归响应拦截器；驻留旧清单） */
+const { loading: listLoading, run: loadList } = useAsyncTask(async () => {
+  rows.value = await linkageRules.list();
+});
 
 /* ==================== 规则 CRUD 弹窗 ==================== */
 const dialogVisible = ref(false);
@@ -265,30 +260,24 @@ async function onRemove(row: LinkageRuleVO): Promise<void> {
 }
 
 /* ==================== 执行日志 ==================== */
-const logRows = ref<LinkageLogVO[]>([]);
-const logLoading = ref(false);
 /** 结果筛选（空串=全部三态） */
 const resultFilter = ref('');
 
-/** 加载执行日志（ruleId/triggerSource/actionResult 过滤由后端承载） */
-async function loadLogs(): Promise<void> {
-  logLoading.value = true;
-  try {
-    const page = await linkageLogs.page({
-      actionResult:
-        resultFilter.value === ''
-          ? undefined
-          : (resultFilter.value as LinkageLogVO['actionResult']),
-      page: 0,
-      size: 50,
-    });
-    logRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    logLoading.value = false;
-  }
-}
+/** 加载执行日志（ruleId/triggerSource/actionResult 过滤由后端承载）：页码/行集/加载态经
+ * usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错
+ * 归响应拦截器；驻留旧清单） */
+const {
+  rows: logRows,
+  loading: logLoading,
+  fetch: loadLogs,
+} = usePagedList({
+  params: () => ({
+    actionResult:
+      resultFilter.value === '' ? undefined : (resultFilter.value as LinkageLogVO['actionResult']),
+  }),
+  fetcher: ({ actionResult, page, size }) => linkageLogs.page({ actionResult, page, size }),
+  pageSize: 50,
+});
 
 /** 重试在途行锚点（null=无在途；行级守卫防双击窗口内重复投递联动动作——病区播报/护理任务
  * 类副作用真实发生、retryCount 双计） */

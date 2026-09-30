@@ -16,6 +16,7 @@ import {
   wardCalls,
 } from '@/api/ward';
 import type { WardCallVO } from '@/api/ward';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -40,30 +41,26 @@ function sourceLabel(code: string | undefined): string {
 }
 
 /* ==================== 呼叫列表 ==================== */
-const rows = ref<WardCallVO[]>([]);
-const listLoading = ref(false);
 /** 病区筛选（演示病区种子缺省） */
 const wardFilter = ref(WARD_OPTIONS[0].code);
 /** 状态筛选（默认待应答——工作台主战场；空串=全部六态） */
 const statusFilter = ref('CREATED');
 
-/** 加载呼叫列表（wardId/status 过滤由后端承载，前端按返回序直出） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await wardCalls.page({
-      wardId: wardFilter.value === '' ? undefined : wardFilter.value,
-      status: statusFilter.value === '' ? undefined : (statusFilter.value as WardCallVO['status']),
-      page: 0,
-      size: 50,
-    });
-    rows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载呼叫列表（wardId/status 过滤由后端承载，前端按返回序直出）：页码/行集/加载态经
+ * usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错
+ * 归响应拦截器；驻留旧清单） */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({
+    wardId: wardFilter.value === '' ? undefined : wardFilter.value,
+    status: statusFilter.value === '' ? undefined : (statusFilter.value as WardCallVO['status']),
+  }),
+  fetcher: ({ wardId, status, page, size }) => wardCalls.page({ wardId, status, page, size }),
+  pageSize: 50,
+});
 
 /* ==================== 闭环操作（在途守卫逐行锚定 callNo） ==================== */
 

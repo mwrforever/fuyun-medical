@@ -19,6 +19,8 @@ import {
   RULE_TYPE_LABELS,
 } from '@/api/iot';
 import type { AlarmRuleVO, AlarmVO, SimulateResultVO } from '@/api/iot';
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -43,19 +45,12 @@ function readNumber(raw: string, label: string): number | undefined | null {
 
 /* ==================== 规则列表 ==================== */
 const rules = ref<AlarmRuleVO[]>([]);
-const rulesLoading = ref(false);
 
-/** 加载规则列表（全量直出，前端按返回序展示） */
-async function loadRules(): Promise<void> {
-  rulesLoading.value = true;
-  try {
-    rules.value = (await alarmRules.list()) ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    rulesLoading.value = false;
-  }
-}
+/** 加载规则列表（全量直出，前端按返回序展示）：loading 骨架经 useAsyncTask 收拢（EX-42
+ * 范式迁移，行为与迁移前一致——失败弹错归响应拦截器；驻留旧清单） */
+const { loading: rulesLoading, run: loadRules } = useAsyncTask(async () => {
+  rules.value = (await alarmRules.list()) ?? [];
+});
 
 /** 规则类型中文词表反查（类型列徽标） */
 function ruleTypeLabel(code: string | undefined): string {
@@ -344,21 +339,19 @@ async function onSimulate(): Promise<void> {
 }
 
 /* ==================== 活跃告警列表 ==================== */
-const alarmRows = ref<AlarmVO[]>([]);
-const alarmsLoading = ref(false);
 
-/** 加载告警列表（全状态直出，活跃行暴露确认/关闭入口） */
-async function loadAlarms(): Promise<void> {
-  alarmsLoading.value = true;
-  try {
-    const page = await alarms.list({ page: 0, size: 50 });
-    alarmRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    alarmsLoading.value = false;
-  }
-}
+/** 加载告警列表（全状态直出，活跃行暴露确认/关闭入口）：页码/行集/加载态经 usePagedList
+ * 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错归响应拦截器；
+ * 驻留旧清单） */
+const {
+  rows: alarmRows,
+  loading: alarmsLoading,
+  fetch: loadAlarms,
+} = usePagedList({
+  params: () => ({}),
+  fetcher: ({ page, size }) => alarms.list({ page, size }),
+  pageSize: 50,
+});
 
 /** 告警等级中文词表反查（等级列徽标） */
 function levelLabel(code: string | undefined): string {

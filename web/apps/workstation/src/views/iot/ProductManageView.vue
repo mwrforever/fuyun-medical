@@ -12,25 +12,24 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { metrics, PRODUCT_SYNC_STATUS_LABELS, products, SAFETY_LEVEL_LABELS } from '@/api/iot';
 import type { CommandItem, MappingItem, MetricDictVO, ProductVO } from '@/api/iot';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
 /* ==================== 产品列表 ==================== */
-const rows = ref<ProductVO[]>([]);
-const listLoading = ref(false);
 
-/** 加载产品列表（IoTDA 本地镜像，按返回序直出） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await products.list({ page: 0, size: 50 });
-    rows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载产品列表（IoTDA 本地镜像，按返回序直出）：页码/行集/加载态经 usePagedList 收拢
+ * （EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错归响应拦截器；
+ * 驻留旧清单） */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({}),
+  fetcher: ({ page, size }) => products.list({ page, size }),
+  pageSize: 50,
+});
 
 /** 同步状态中文词表反查（状态列徽标） */
 function syncStatusLabel(code: string | undefined): string {
