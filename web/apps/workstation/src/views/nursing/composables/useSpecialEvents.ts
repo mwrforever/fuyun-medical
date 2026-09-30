@@ -46,7 +46,8 @@ export function useSpecialEvents(options: UseSpecialEventsOptions) {
     try {
       await chart.addSpecialEvent(detail.visitId, {
         eventType: specialEventType.value,
-        remark: specialEventRemark.value.trim() === '' ? undefined : specialEventRemark.value.trim(),
+        remark:
+          specialEventRemark.value.trim() === '' ? undefined : specialEventRemark.value.trim(),
       });
       void ElMessage.success('特殊事件已记录');
       specialEventRemark.value = '';
@@ -58,5 +59,11 @@ export function useSpecialEvents(options: UseSpecialEventsOptions) {
     }
   }
 
-  return { specialEventType, specialEventRemark, specialEventRecording, resetDraft, onAddSpecialEvent };
+  return {
+    specialEventType,
+    specialEventRemark,
+    specialEventRecording,
+    resetDraft,
+    onAddSpecialEvent,
+  };
 }

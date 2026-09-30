@@ -8,7 +8,13 @@ import { useTempChart } from './useTempChart';
 
 vi.mock('@/api/nursing', () => ({
   chart: { query: vi.fn(), addSpecialEvent: vi.fn() },
-  vitalSigns: { record: vi.fn(), list: vi.fn(), pendingReview: vi.fn(), confirm: vi.fn(), reject: vi.fn() },
+  vitalSigns: {
+    record: vi.fn(),
+    list: vi.fn(),
+    pendingReview: vi.fn(),
+    confirm: vi.fn(),
+    reject: vi.fn(),
+  },
 }));
 
 /** 患者详情（admittedAt 可覆写：入院月禁翻断言用） */

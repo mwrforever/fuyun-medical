@@ -36,10 +36,7 @@ export function useAssignments(options: UseAssignmentsOptions) {
   async function loadAssignments(): Promise<void> {
     assignmentLoading.value = true;
     try {
-      assignmentList.value = await assignments.list(
-        options.wardId.value,
-        options.shiftCode.value,
-      );
+      assignmentList.value = await assignments.list(options.wardId.value, options.shiftCode.value);
     } catch {
       // 失败弹错归响应拦截器
     } finally {

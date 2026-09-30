@@ -229,9 +229,7 @@ export const products = {
   },
   /** 术语映射回显（整组替换的回读面：弹窗打开拉取既有全集回显，防仅携增量保存静默清空）。 */
   listMappings: async (productId: string): Promise<MetricMappingVO[]> => {
-    const resp = await http.get<MetricMappingVO[]>(
-      `/v1/iot/products/${productId}/metric-mappings`,
-    );
+    const resp = await http.get<MetricMappingVO[]>(`/v1/iot/products/${productId}/metric-mappings`);
     return resp.data;
   },
   /** 命令安全等级整组替换（FU-M14-09 白名单数据源；返回替换后命令全集）。 */

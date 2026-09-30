@@ -22,7 +22,10 @@ export const SCALE_TYPE_LABELS: Record<string, string> = {
 };
 
 /** 评估风险判级映射（§3.11：HIGH/MEDIUM/LOW 三档 tag 文案） */
-export const RISK_LEVEL_META: Record<string, { type: 'danger' | 'warning' | 'success'; text: string }> = {
+export const RISK_LEVEL_META: Record<
+  string,
+  { type: 'danger' | 'warning' | 'success'; text: string }
+> = {
   HIGH: { type: 'danger', text: '高风险' },
   MEDIUM: { type: 'warning', text: '中风险' },
   LOW: { type: 'success', text: '低风险' },

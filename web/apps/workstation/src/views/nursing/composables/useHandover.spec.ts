@@ -35,10 +35,7 @@ describe('useHandover', () => {
   });
 
   it('当日材料多行取末条（同日重生成幂等回显口径）', async () => {
-    vi.mocked(handovers.list).mockResolvedValue([
-      { handoverNo: 'HD1' },
-      { handoverNo: 'HD2' },
-    ]);
+    vi.mocked(handovers.list).mockResolvedValue([{ handoverNo: 'HD1' }, { handoverNo: 'HD2' }]);
     const state = useHandover({ wardId, shiftCode, operatorName });
     await state.loadHandoverOfDay();
     expect(state.handover.value?.handoverNo).toBe('HD2');

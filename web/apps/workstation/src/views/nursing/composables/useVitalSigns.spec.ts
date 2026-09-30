@@ -8,7 +8,13 @@ import type { WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
 import { useVitalSigns } from './useVitalSigns';
 
 vi.mock('@/api/nursing', () => ({
-  vitalSigns: { record: vi.fn(), list: vi.fn(), pendingReview: vi.fn(), confirm: vi.fn(), reject: vi.fn() },
+  vitalSigns: {
+    record: vi.fn(),
+    list: vi.fn(),
+    pendingReview: vi.fn(),
+    confirm: vi.fn(),
+    reject: vi.fn(),
+  },
 }));
 
 vi.mock('element-plus', async (importOriginal) => {

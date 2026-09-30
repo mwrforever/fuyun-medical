@@ -33,9 +33,7 @@ describe('useNursingTasks', () => {
 
   it('逾期行类契约：overdueFlag=true 挂 fuy-task-overdue（spec 机器判据）', () => {
     const state = useNursingTasks({ wardId, detailMap });
-    expect(state.taskRowClass({ row: { overdueFlag: true } })).toBe(
-      'fuy-task-overdue',
-    );
+    expect(state.taskRowClass({ row: { overdueFlag: true } })).toBe('fuy-task-overdue');
     expect(state.taskRowClass({ row: { overdueFlag: false } })).toBe('');
   });
 

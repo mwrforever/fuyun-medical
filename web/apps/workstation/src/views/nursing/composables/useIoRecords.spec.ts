@@ -57,7 +57,12 @@ describe('useIoRecords', () => {
 
   it('数量格式非法提示且零出网（两位小数拦截）', async () => {
     const state = setup(detailMock());
-    state.ioForm.value = { ioType: 'INTAKE', itemCode: 'FOOD-MILK', quantity: '150.25', unit: 'ml' };
+    state.ioForm.value = {
+      ioType: 'INTAKE',
+      itemCode: 'FOOD-MILK',
+      quantity: '150.25',
+      unit: 'ml',
+    };
     await state.onCreateIoRecord();
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('数量应为数值（最多一位小数）');
     expect(vi.mocked(ioRecords.create)).not.toHaveBeenCalled();

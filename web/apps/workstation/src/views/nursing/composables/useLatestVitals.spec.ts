@@ -7,7 +7,13 @@ import type { WardPatientDetailVO } from '@/api/nursing';
 import { useLatestVitals } from './useLatestVitals';
 
 vi.mock('@/api/nursing', () => ({
-  vitalSigns: { record: vi.fn(), list: vi.fn(), pendingReview: vi.fn(), confirm: vi.fn(), reject: vi.fn() },
+  vitalSigns: {
+    record: vi.fn(),
+    list: vi.fn(),
+    pendingReview: vi.fn(),
+    confirm: vi.fn(),
+    reject: vi.fn(),
+  },
 }));
 
 /** 患者详情（patientId/visitId 可覆写） */
