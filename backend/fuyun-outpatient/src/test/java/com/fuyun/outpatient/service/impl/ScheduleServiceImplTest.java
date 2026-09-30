@@ -346,6 +346,33 @@ class ScheduleServiceImplTest {
     }
 
     @Test
+    @DisplayName("generate：批写唯一冲突缺 SQLState（驱动未填充）——消息含 uk_schedule 兜底判定同转 OP-1004/409（EX-37 解包兜底分支）")
+    void generateTreatsUkNameMessageAsUniqueConflictWhenSqlStateMissing() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // 部分驱动/代理链路（如连接池包装后的 BatchUpdateException）不填充 SQLState：唯一冲突
+        // 语义仅承载在消息文本（PG 约束名 uk_schedule）——解包判定不得因 SQLState 缺失漏判成
+        // 系统异常原样上抛（放号竞态输家会被误报 500 而非可重试 409）
+        BatchUpdateException ukConflictNoState = new BatchUpdateException(
+                "duplicate key value violates unique constraint \"uk_schedule\"", null, new int[0]);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList()))
+                    .thenThrow(new PersistenceException(
+                            "Error flushing statements. Cause: BatchExecutorException: ScheduleMapper.insert (batch index #1) failed.",
+                            ukConflictNoState));
+
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        // 与 SQLState 23505 命中分支同出参（scheduleConflictRolledBack 单一来源同文案）
+                        assertThat(e.getMessage()).isEqualTo("放号并发冲突，整批已回滚请重试：window=2026-09-21~2026-09-27");
+                    });
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
+    }
+
+    @Test
     @DisplayName("generate：批写抛非唯一冲突 PersistenceException（连接类 SQLState 08006）——原样上抛不吞（不转 409）")
     void generateRethrowsNonUniquePersistenceException() {
         when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));

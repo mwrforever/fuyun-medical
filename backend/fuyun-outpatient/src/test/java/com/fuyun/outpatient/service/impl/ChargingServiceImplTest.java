@@ -482,6 +482,41 @@ class ChargingServiceImplTest {
     }
 
     @Test
+    @DisplayName("退费回执空申请单清单守卫：orderRefs 空集零批查零回滚零发布（空键集 IN 不出网）")
+    void refundApprovedSkipsEmptyOrderRefsWithoutBatchQuery() {
+        // 纯挂号费面结算单退费（无门诊申请单）：反查 orderRefs 为空——无单可逆直返
+        when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
+                .thenReturn(new SettlementSourceRefs(SETTLEMENT_ID, List.of(), List.of()));
+
+        service.onRefundApproved(refundApproved());
+
+        // 空清单守卫：批查/回滚/扇出全零触达（空键集 IN 不出网，消费事务零持库锁）
+        verifyNoInteractions(clinicOrderMapper);
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("退费回执批查重复单号防御：结果集重复 orderNo 保留首行——逆向以首行为准，重复行零放大")
+    void refundApprovedKeepsFirstRowOnDuplicateOrderNoInBatchResult() {
+        when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
+                .thenReturn(new SettlementSourceRefs(SETTLEMENT_ID, List.of("OP20260920000001"), List.of()));
+        // 结果集出现重复单号（uk_order_no 漂移的数据异常防御面）：首行 CHARGED、重复行 CANCELLED
+        when(clinicOrderMapper.selectList(any()))
+                .thenReturn(List.of(
+                        order(881L, "OP20260920000001", OrderStatus.CHARGED),
+                        order(882L, "OP20260920000001", OrderStatus.CANCELLED)));
+        when(clinicOrderMapper.casStatus(881L, "CHARGED", "CANCELLED")).thenReturn(1);
+
+        service.onRefundApproved(refundApproved());
+
+        // 保留首行语义：仅首行（CHARGED）被逆向 CAS；重复行（CANCELLED）零触碰不放大发布面
+        verify(clinicOrderMapper).casStatus(881L, "CHARGED", "CANCELLED");
+        verify(clinicOrderMapper, never()).casStatus(eq(882L), anyString(), anyString());
+        // 清单内单号恰一次扇出（重复行不产生第二次 order.cancelled）
+        verify(events, times(1)).publishEvent(any(OutpatientDomainEvent.class));
+    }
+
+    @Test
     @DisplayName("退费逆向端口异常转译：底层异常转可读 IllegalStateException，零写零发布")
     void refundApprovedTranslatesSourceRefPortFailure() {
         when(settlementQueryPort.sourceRefsOfSettlement(SETTLEMENT_ID))
