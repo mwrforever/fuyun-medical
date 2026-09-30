@@ -606,10 +606,12 @@ class IoRecordServiceImplTest {
 
             service.summarize(new IoSummaryCreateRequest(VISIT, "SHIFT", "DAY"));
 
-            // DAY 班 08:00–16:00 当日窗边界按北京时区承载（偏移随断言值钉死 +08:00）
+            // DAY 班 08:00–16:00 当日窗边界按北京时区承载（偏移随断言值钉死 +08:00）；
+            // 期望日期同取北京钟面（N8 后补：服务端医疗日来源改为 LocalDate.now(HEALTHCARE_TZ)，
+            // 本用例 setDefault(UTC) 下旧期望按 UTC 日期推导冻结的恰是该缺陷——必然同步，BUG-03 先例）
             ZoneId beijing = ZoneId.of("Asia/Shanghai");
             verify(recordMapper).sumByTypeAndPeriod(eq(VISIT), fromCaptor.capture(), toCaptor.capture());
-            LocalDate today = LocalDate.now();
+            LocalDate today = LocalDate.now(beijing);
             assertThat(fromCaptor.getValue())
                     .isEqualTo(today.atTime(8, 0).atZone(beijing).toOffsetDateTime());
             assertThat(toCaptor.getValue())
