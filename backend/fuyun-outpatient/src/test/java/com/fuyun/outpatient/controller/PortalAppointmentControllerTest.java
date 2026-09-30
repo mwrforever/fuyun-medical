@@ -43,9 +43,10 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
  * 解析成功后必须携归属患者主索引委托服务层三参 cancel（比对语义归 service 单测，本层只验证
  * 传参与异常透传）。book 端点业务语义归 service 单测，controller 层不重复覆盖。
  *
- * <p>EX-29 临时缓解②（BE-A3-02，裁决③）追加 book 链路频控编排用例：守卫取真实实例 + mock
- * Redis（判定本体真实执行、Redis 面可控模拟）——冷却期前置 429 OP-1023（不触达解析与预约）、
- * 解析失败计数（连续失败语义）、成功清零与超限 OP-1022 透传。缓解①上限判定本体归
+ * <p>EX-29 临时缓解②（BE-A3-02，裁决③）追加 book/cancel 链路频控编排用例：守卫取真实实例 + mock
+ * Redis（判定本体真实执行、Redis 面可控模拟）——冷却期前置 429 OP-1023（不触达解析与预约/退号
+ * 服务）、解析失败计数（连续失败语义）、成功清零与超限 OP-1022 透传；N7 补完 cancel 侧同款
+ * 三件套（与 book 同链路同口径，堵退号端点裸解析绕过）。缓解①上限判定本体归
  * AppointmentServiceImplTest，本层只验透传形态。
  */
 @ExtendWith(MockitoExtension.class)
@@ -267,6 +268,74 @@ class PortalAppointmentControllerTest {
                 .getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(body).contains("OP-1022");
+    }
+
+    @Test
+    @DisplayName("EX-29 缓解②（cancel 侧收口）：频控冷却中拒绝——429 OP-1023 前置拦截，不触达介质解析与退号服务（堵退号端点绕过）")
+    void cancelRejectedAs429WhenCredentialCoolingDown() throws Exception {
+        // 冷却标记在挂（键成分为摘要，argThat 只锚前缀，明文断言归守卫单测）
+        when(redisTemplate.hasKey(argThat(key -> key != null && key.startsWith("fy:outpatient:portal-cred-cool:"))))
+                .thenReturn(true);
+
+        String body = mockMvc.perform(post("/api/v1/outpatient/portal/appointments/AP20260928000001/cancel")
+                        .contentType("application/json")
+                        .content("{\"reason\":\"行程变动取消\",\"credentialType\":\"ID_CARD\",\"credentialNo\":\""
+                                + CREDENTIAL_NO + "\"}"))
+                .andExpect(status().isTooManyRequests())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("OP-1023");
+        // 前置拦截与 book 同口径：冷却期内退号请求不得触达介质解析与退号服务（枚举面收敛）
+        verifyNoInteractions(patientIdentityQuery, appointmentService);
+    }
+
+    @Test
+    @DisplayName("EX-29 缓解②（cancel 侧收口）：退号解析未命中 PAT-1001 计入连续失败计数后原样透出（404）")
+    void cancelRecordsFailureCountWhenResolutionMisses() throws Exception {
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+        when(patientIdentityQuery.resolveActivePatientId("ID_CARD", CREDENTIAL_NO))
+                .thenThrow(new BizException(PatientErrorCode.PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+
+        String body = mockMvc.perform(post("/api/v1/outpatient/portal/appointments/AP20260928000001/cancel")
+                        .contentType("application/json")
+                        .content("{\"reason\":\"行程变动取消\",\"credentialType\":\"ID_CARD\",\"credentialNo\":\""
+                                + CREDENTIAL_NO + "\"}"))
+                .andExpect(status().isNotFound())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("PAT-1001");
+        // 与档案不符即计连续失败一次（Redis INCR 计数键），退号与预约同计数口径；退号服务零触达
+        verify(valueOperations)
+                .increment(argThat(key -> key != null && key.startsWith("fy:outpatient:portal-cred-fail:")));
+        verifyNoInteractions(appointmentService);
+    }
+
+    @Test
+    @DisplayName("EX-29 缓解②（cancel 侧收口）：退号解析成功清零计数——携解析患者委托三参 cancel（介质解析成功=自证持卡）")
+    void cancelClearsFailureCountAndDelegatesWhenResolutionSucceeds() throws Exception {
+        when(redisTemplate.hasKey(anyString())).thenReturn(false);
+        when(patientIdentityQuery.resolveActivePatientId("ID_CARD", CREDENTIAL_NO))
+                .thenReturn(9L);
+        when(appointmentService.cancel("AP20260928000001", "行程变动取消", 9L)).thenReturn(cancelledVo());
+
+        String body = mockMvc.perform(post("/api/v1/outpatient/portal/appointments/AP20260928000001/cancel")
+                        .contentType("application/json")
+                        .content("{\"reason\":\"行程变动取消\",\"credentialType\":\"ID_CARD\",\"credentialNo\":\""
+                                + CREDENTIAL_NO + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        // 编排断言：解析成功清零连续失败计数（键成分为摘要，「连续」语义成功打断面）+ 委托三参退号
+        verify(redisTemplate).delete(argThat((String key) -> key.startsWith("fy:outpatient:portal-cred-fail:")));
+        verify(appointmentService).cancel("AP20260928000001", "行程变动取消", 9L);
+        assertThat(body).contains("\"AP20260928000001\"").contains("CANCELLED");
     }
 
     /** 退号成功出参替身（分支 1=CANCELLED，仅承载直出断言所需字段） */

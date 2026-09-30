@@ -35,8 +35,8 @@ import org.springframework.web.bind.annotation.RestController;
  * portal 患者匿名预约端点（/api/v1/outpatient/portal/**，裁决 13 免登录白名单通道）：服务端经介质
  * 解析（就诊卡号/证件号 → patient/api PatientIdentityQuery）定 patientId 后进入统一预约主流程，
  * <b>不经 OperatorContextHolder</b>（操作者留痕取哨兵值 PORTAL）；portal 患者账号体系随 M18/P6
- * 完整化（P1 演示口径注记）；<b>限流/风控随 M18 注记</b>——EX-29 已加临时缓解（book 链路证件号
- * 频控+单患者活跃预约上限，BE-A3-02 裁决③），M18 患者账号体系上线后由归属校验取代（本通道
+ * 完整化（P1 演示口径注记）；<b>限流/风控随 M18 注记</b>——EX-29 已加临时缓解（预约/退号链路
+ * 证件号频控+单患者活跃预约上限，BE-A3-02 裁决③），M18 患者账号体系上线后由归属校验取代（本通道
  * 免登录，P1 依赖白名单最小暴露面）。
  * portal 退号端点随 Task 6 与退号四分支统一交付。职责边界：仅 @Valid 校验+介质解析+调用 service，
  * 禁业务逻辑与事务（宪法 B.1/A.1-8）。
@@ -125,11 +125,16 @@ public class PortalAppointmentController {
      * 共用四分支语义（线上退号时限 OP-1010/已付退费回执驱动终态），但必须携带介质凭证——单号
      * 顺序流水高度可枚举，服务端解析 patientId 后由服务层比对单据归属（不匹配 403 OP-1021，
      * 阻断匿名遍历单号退他人号源）；匿名链路不经审计切面（裁决 13——操作者留痕取哨兵值
-     * PORTAL；限流/风控随 M18 注记）。
+     * PORTAL；限流/风控随 M18 注记）。临时缓解②（EX-29）退号侧收口：证件号频控与 book 同链路
+     * 同口径——冷却期前置 429 OP-1023 拒绝（不触达介质解析）、解析未命中计入连续失败计数、
+     * 解析成功清零，堵「仅预约侧有频控、经退号端点裸解析」的绕过面；M18 后由归属校验取代。
      *
      * @param no      预约单业务号（路径参数）
      * @param request 退号请求（reason 必填留痕；credentialType/credentialNo 介质凭证本链路必填），非空
      * @return 预约单出参（分支 1=CANCELLED；分支 2=RESERVED 待退费回执），非空
+     * @throws BizException OP-1023（429 证件号频控冷却中）/ OP-1021（403 介质解析患者与单据
+     *                      归属不符，服务层判定透传）时触发；建议处理策略：冷却提示稍后重试，
+     *                      归属不符引导核对持卡人或转人工窗口办理
      */
     @Operation(summary = "portal 退号（免登录）")
     @PostMapping("/appointments/{no}/cancel")
@@ -146,8 +151,23 @@ public class PortalAppointmentController {
                     HttpStatus.BAD_REQUEST,
                     "退号介质凭证必填且类型仅支持 ID_CARD/VISIT_CARD");
         }
-        // 介质解析（M02 身份解析面，与 book 同型）：明文仅本调用生命周期内存活，禁入日志（脱敏红线）
-        long patientId = patientIdentityQuery.resolveActivePatientId(request.credentialType(), request.credentialNo());
+        // 临时缓解②（EX-29）退号侧收口：退号与预约同链路同频控口径——冷却期前置拒绝（429 OP-1023，
+        // 判定归守卫），堵「预约侧有频控、经退号端点裸解析」的证件号有效性 oracle 绕过
+        credentialRateGuard.checkNotCoolingDown(request.credentialType(), request.credentialNo());
+        // 介质解析（M02 身份解析面，与 book 同型）：明文仅本调用生命周期内存活，禁入日志（脱敏红线）；
+        // 解析未命中（PAT-1001 与档案不符）计入该证件号连续失败计数（与 book 同款计数编排）
+        long patientId;
+        try {
+            patientId = patientIdentityQuery.resolveActivePatientId(request.credentialType(), request.credentialNo());
+        } catch (BizException e) {
+            if (PatientErrorCode.PATIENT_NOT_FOUND == e.getErrorCode()) {
+                // 频控判定与 Redis 计数归守卫（B.1 下沉），本层只编排「与档案不符即计数」
+                credentialRateGuard.recordResolutionFailure(request.credentialType(), request.credentialNo());
+            }
+            throw e;
+        }
+        // 解析成功清零连续失败计数（与 book 同语义：介质解析成功=自证持卡，打断连续失败计数）
+        credentialRateGuard.clearFailureCount(request.credentialType(), request.credentialNo());
         // 受理留痕（info）：凭证只打类型与长度摘要，禁任何明文片段（患者敏感字段脱敏红线）
         log.info(
                 "portal 免登录退号受理：apptNo={}，介质类型={}，介质号长度={}",

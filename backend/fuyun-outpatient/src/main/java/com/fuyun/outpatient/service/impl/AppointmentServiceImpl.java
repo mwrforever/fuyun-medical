@@ -247,7 +247,10 @@ public class AppointmentServiceImpl implements IAppointmentService {
         long patientId = context.resolvedPatientId();
         // 临时缓解①（EX-29，BE-A3-02 裁决③）：portal 匿名通道单患者活跃预约数上限——免登录面
         // 可冒用他人证件号刷量占号，单患者 RESERVED/TAKEN 在约数达上限即拒（409 OP-1022）；
-        // 仅作用 PORTAL 渠道（已鉴权渠道不受限），M18 患者账号体系上线后由归属校验取代
+        // 仅作用 PORTAL 渠道（已鉴权渠道不受限），M18 患者账号体系上线后由归属校验取代。
+        // 并发声明：本检查为 check-then-act 非原子（计数读与后续预约插入之间无锁），并发窗口内
+        // 多笔同患者预约可越限放行——定位为防刷量软上限非硬约束（硬约束语义待 M18 归属校验
+        // 体系取代后消亡，本处不引入额外锁/唯一约束以保持临时缓解最小实现）
         if (channel == ApptChannel.PORTAL) {
             // 数据库读操作：患者维度活跃预约计数（跨科累计，池行读取前 fail-fast 拒绝省读）
             Long activeAppts = appointmentMapper.selectCount(Wrappers.<Appointment>lambdaQuery()
