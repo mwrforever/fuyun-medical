@@ -12,7 +12,6 @@ import com.fuyun.patient.service.ICardAccountService;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.service.IVisitCardService;
 import com.fuyun.patient.vo.CardVO;
-import java.time.OffsetDateTime;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.factory.Mappers;
 import org.springframework.http.HttpStatus;
@@ -144,9 +143,15 @@ public class VisitCardServiceImpl implements IVisitCardService {
         if (identifierService.casMarkLost(card.getId()) != 1) {
             throw cardConcurrentConflict(cardNo);
         }
+        // 内存镜像同步状态列（本事务内后续联动/日志引用快照字段，保持领域对象一致）
         card.setStatus("LOST");
-        card.setUnboundAt(OffsetDateTime.now());
-        identifierService.updateById(card);
+        // 数据库写操作：镜像写补丁化（EX-24 指定列补丁纪律，N7 B-2 收口）——仅携状态列补丁实体
+        // 回写；unbound_at 已由 casMarkLost 同语句以 DB now() 原子落库（与审计列同源时钟），
+        // 镜像写裁剪不携时序列，避免应用时钟（及读回快照残留旧值，如复绑卡再挂失）覆写 DB 时刻
+        PatientIdentifier patch = new PatientIdentifier();
+        patch.setId(card.getId());
+        patch.setStatus("LOST");
+        identifierService.updateById(patch);
         identifierService.publishChanged(card.getPatientId(), "VISIT_CARD", cardNo, "LOST");
         // 账户挂失联动（M02 §5 card_account：CLOSED 终态静默跳过；一卡通未启用时 PAT-1013 静默跳过）
         try {
@@ -218,9 +223,15 @@ public class VisitCardServiceImpl implements IVisitCardService {
         if (identifierService.casDisable(card.getId()) != 1) {
             throw cardConcurrentConflict(cardNo);
         }
+        // 内存镜像同步状态列（本事务内后续事件发布/日志引用快照字段，保持领域对象一致）
         card.setStatus("DISABLED");
-        card.setUnboundAt(OffsetDateTime.now());
-        identifierService.updateById(card);
+        // 数据库写操作：镜像写补丁化（EX-24 指定列补丁纪律，N7 B-2 收口）——仅携状态列补丁实体
+        // 回写；unbound_at 已由 casDisable 同语句以 DB now() 原子落库（与审计列同源时钟），
+        // 镜像写裁剪不携时序列，避免应用时钟（及读回快照残留旧值，如复绑卡再解绑）覆写 DB 时刻
+        PatientIdentifier patch = new PatientIdentifier();
+        patch.setId(card.getId());
+        patch.setStatus("DISABLED");
+        identifierService.updateById(patch);
         identifierService.publishChanged(card.getPatientId(), "VISIT_CARD", cardNo, "UNBOUND");
         // 卡号明文禁入日志：以 HMAC 摘要形态定位卡片
         log.info("就诊卡解绑：patientId={}，卡号摘要={}", card.getPatientId(), crypto.hash(cardNo));

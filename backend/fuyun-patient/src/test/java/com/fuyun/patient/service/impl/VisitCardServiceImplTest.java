@@ -27,12 +27,14 @@ import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.ICardAccountService;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.vo.CardVO;
+import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -43,7 +45,8 @@ import org.springframework.http.HttpStatus;
  * （账户未启用 PAT-1013 静默跳过）、补卡换号转移（余额零迁移）、解绑终态，以及各非法状态
  * 转移守卫与 identifier.changed 的 changeType 断言；绑定/补卡写库 info 留痕与卡号摘要
  * 脱敏口径经 Logback ListAppender 断言（BUG-21，iot 模块同款先例）；并发防覆写护航
- * （EX-25：CAS 0 行重读定性 409/404、输家不覆写不重复发号不联动账户）。
+ * （EX-25：CAS 0 行重读定性 409/404、输家不覆写不重复发号不联动账户）；挂失/解绑镜像写
+ * 补丁面（N7 B-2：仅携状态列，unbound_at 以 CAS 落的 DB 时钟为准不携应用时钟）。
  */
 @ExtendWith(MockitoExtension.class)
 class VisitCardServiceImplTest {
@@ -225,17 +228,49 @@ class VisitCardServiceImplTest {
     }
 
     @Test
-    @DisplayName("挂失成功：置 LOST 并落解绑时刻，联动冻结账户，发布 LOST 事件")
+    @DisplayName("挂失成功：镜像写仅携状态列（unbound_at 以挂失 CAS 落的 DB 时钟为准），联动冻结账户并发布 LOST 事件")
     void lossSetsLostAndFreezesAccount() {
+        // 快照残留旧解绑时刻（模拟复绑卡再挂失）：镜像写补丁化后不得携入回写覆写 CAS 的 DB now()
+        cardRow.setUnboundAt(OffsetDateTime.now().minusDays(1));
         when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
 
         visitCardService.loss("C-0001");
 
         assertThat(cardRow.getStatus()).isEqualTo("LOST");
-        assertThat(cardRow.getUnboundAt()).isNotNull();
-        verify(identifierService).updateById(cardRow);
+        // 镜像写补丁面（N7 B-2）：仅携主键定位 + 状态列回写；unbound_at 不携（应用时钟覆写
+        // casMarkLost 同语句落的 DB now() 会致挂失时刻契约失真），快照残留旧值亦不得泄漏进补丁
+        ArgumentCaptor<PatientIdentifier> patchCaptor = ArgumentCaptor.forClass(PatientIdentifier.class);
+        verify(identifierService).updateById(patchCaptor.capture());
+        PatientIdentifier patch = patchCaptor.getValue();
+        assertThat(patch.getId()).isEqualTo(11L);
+        assertThat(patch.getStatus()).isEqualTo("LOST");
+        assertThat(patch.getUnboundAt()).isNull();
         verify(identifierService).publishChanged(5L, "VISIT_CARD", "C-0001", "LOST");
         verify(cardAccountService).freezeByPatient(5L);
+    }
+
+    @Test
+    @DisplayName("挂失镜像写最小补丁面（N7 B-2）：仅携主键与状态列回写，禁以读回快照整行覆写其余列")
+    void lossMirrorWritePatchCarriesOnlyStatusColumn() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
+
+        visitCardService.loss("C-0001");
+
+        // EX-24 指定列补丁纪律的补丁面最小性锚：除 id（定位）与 status（迁移列）外全列不携——
+        // unbound_at 时序列归 CAS DB 时钟（成功用例已锚），此处禁整行覆写扩展到全部非时序列
+        ArgumentCaptor<PatientIdentifier> patchCaptor = ArgumentCaptor.forClass(PatientIdentifier.class);
+        verify(identifierService).updateById(patchCaptor.capture());
+        PatientIdentifier patch = patchCaptor.getValue();
+        assertThat(patch.getId()).isEqualTo(11L);
+        assertThat(patch.getStatus()).isEqualTo("LOST");
+        assertThat(patch.getPatientId()).isNull();
+        assertThat(patch.getIdentifierType()).isNull();
+        assertThat(patch.getCardNo()).isNull();
+        assertThat(patch.getIdentifierValueCipher()).isNull();
+        assertThat(patch.getValueHash()).isNull();
+        assertThat(patch.getIsPrimary()).isNull();
+        assertThat(patch.getBoundAt()).isNull();
+        assertThat(patch.getUnboundAt()).isNull();
     }
 
     @Test
@@ -349,15 +384,23 @@ class VisitCardServiceImplTest {
     }
 
     @Test
-    @DisplayName("解绑成功：置 DISABLED 终态并落解绑时刻，发布 UNBOUND 事件，账户不销户")
+    @DisplayName("解绑成功：镜像写仅携状态列（unbound_at 以解绑 CAS 落的 DB 时钟为准），发布 UNBOUND 事件，账户不销户")
     void unbindDisablesActiveCardWithoutClosingAccount() {
+        // 快照残留旧解绑时刻（模拟复绑卡再解绑）：镜像写补丁化后不得携入回写覆写 CAS 的 DB now()
+        cardRow.setUnboundAt(OffsetDateTime.now().minusDays(1));
         when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
 
         visitCardService.unbind("C-0001");
 
         assertThat(cardRow.getStatus()).isEqualTo("DISABLED");
-        assertThat(cardRow.getUnboundAt()).isNotNull();
-        verify(identifierService).updateById(cardRow);
+        // 镜像写补丁面（N7 B-2）：仅携主键定位 + 状态列回写；unbound_at 不携（应用时钟覆写
+        // casDisable 同语句落的 DB now() 会致解绑时刻契约失真），快照残留旧值亦不得泄漏进补丁
+        ArgumentCaptor<PatientIdentifier> patchCaptor = ArgumentCaptor.forClass(PatientIdentifier.class);
+        verify(identifierService).updateById(patchCaptor.capture());
+        PatientIdentifier patch = patchCaptor.getValue();
+        assertThat(patch.getId()).isEqualTo(11L);
+        assertThat(patch.getStatus()).isEqualTo("DISABLED");
+        assertThat(patch.getUnboundAt()).isNull();
         verify(identifierService).publishChanged(5L, "VISIT_CARD", "C-0001", "UNBOUND");
         verifyNoInteractions(cardAccountService);
     }
