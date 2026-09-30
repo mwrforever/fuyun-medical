@@ -822,10 +822,14 @@ class OutpatientRefundRollbackIT extends FuyunStackITBase {
         assertThat(booked.path("payDeadline").isNull()).as("占位单应携支付时限").isFalse();
         assertThat(poolUsedCount(tomorrowPoolId)).as("预约占用一号").isEqualTo(1);
 
-        // 匿名退号（分支 1：UNPAID 无结算锚→免退费直取消+回池）
+        // 匿名退号（分支 1：UNPAID 无结算锚→免退费直取消+回池）——介质凭证与预约步同因子
+        // （BUG-01 收口 7a82b20 起 cancel 凭证必填：缺省 400 PARAM_FORMAT_INVALID，归属比对
+        // 靠单号+凭证双因子阻断匿名遍历，本步补载荷同步而非断言变更）
         long refundFramesBefore = refundApprovedFrameCount();
         ObjectNode cancel = objectMapper.createObjectNode();
-        cancel.put("reason", "IT 未支付退号");
+        cancel.put("credentialType", "ID_CARD")
+                .put("credentialNo", PORTAL_ID_CARD)
+                .put("reason", "IT 未支付退号");
         JsonNode cancelled =
                 postJson("/api/v1/outpatient/portal/appointments/" + portalApptNo + "/cancel", (String) null, cancel);
         assertThat(cancelled.path("status").asText()).as("免退费直取消应 CANCELLED").isEqualTo("CANCELLED");
