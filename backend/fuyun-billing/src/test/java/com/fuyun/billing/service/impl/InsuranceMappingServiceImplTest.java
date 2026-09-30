@@ -122,6 +122,33 @@ class InsuranceMappingServiceImplTest {
     }
 
     @Test
+    @DisplayName("ACTIVE 对照批查遇重复 chargeItemId 脏数据：保留首行不抛异常（部分唯一索引防御兜底）")
+    void effectiveMappingsKeepsFirstRowOnDuplicateChargeItemId() {
+        // 脏数据场景：uk_mapping_item_active 部分唯一索引被绕过（历史数据/人工改库），
+        // 批查结果同一 chargeItemId 返回两条 ACTIVE 行——无 merge 函数时 toMap 将抛
+        // IllegalStateException 使整单快照取价失败，merge 语义为保留批查结果中的首行
+        InsuranceMapping first = new InsuranceMapping();
+        first.setId(9L);
+        first.setChargeItemId(5L);
+        first.setNhsaCode("NHBZ-TREAT-001");
+        first.setStatus(MappingStatus.ACTIVE);
+        InsuranceMapping duplicate = new InsuranceMapping();
+        duplicate.setId(10L);
+        duplicate.setChargeItemId(5L);
+        duplicate.setNhsaCode("NHBZ-TREAT-002");
+        duplicate.setStatus(MappingStatus.ACTIVE);
+        when(insuranceMappingMapper.selectList(any())).thenReturn(List.of(first, duplicate));
+
+        Map<Long, InsuranceMapping> result = service.effectiveMappings(List.of(5L));
+
+        // 保留首行：键收敛为 1，值身份与字段均指向批查结果中的第一条 ACTIVE 行
+        assertThat(result).containsOnlyKeys(5L);
+        assertThat(result.get(5L)).isSameAs(first);
+        assertThat(result.get(5L).getId()).isEqualTo(9L);
+        assertThat(result.get(5L).getNhsaCode()).isEqualTo("NHBZ-TREAT-001");
+    }
+
+    @Test
     @DisplayName("对照登记 upsert：存在 ACTIVE 行则改该行（never insert），无则插新 ACTIVE 行回填 id")
     void upsertMappingReplacesActiveRow() {
         InsuranceMapping active = new InsuranceMapping();
