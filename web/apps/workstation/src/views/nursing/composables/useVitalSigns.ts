@@ -11,7 +11,8 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import axios from 'axios';
 import { vitalSigns } from '@/api/nursing';
 import type { VitalSignVO, WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
-import { formatTime, surfaceBizError } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 体征录入/待复核参数对象（患者上下文经卡墙底座注入；提交成功刷新经体温单面注入） */
 export interface UseVitalSignsOptions {

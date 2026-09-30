@@ -8,7 +8,6 @@ import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
-import axios from 'axios';
 import {
   CONSUME_ERROR_STAGE_LABELS,
   CONSUME_ERROR_STATUS_LABELS,
@@ -17,20 +16,11 @@ import {
   quality,
 } from '@/api/iot';
 import type { ConsumeErrorVO, DataQualityStatVO } from '@/api/iot';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 设备利用率 TopN 截取条数（降序排序后取前 10 台展示） */
 const USAGE_TOP_N = 10;
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
 
 /** 比率展示串（0.02 → 2.00%，缺测率/利用率列共用；空值占位） */
 function rateText(value: number | undefined): string {
@@ -50,16 +40,6 @@ function errorStatusLabel(code: string | undefined): string {
 /** 消费错误状态徽标状态类（fuy-cerr-tag--{status} 契约类，色值经语义 token 承载） */
 function errorStatusClass(code: string | undefined): string {
   return `fuy-cerr-tag--${(code ?? '').toLowerCase()}`;
-}
-
-/** 时点展示串（MM-dd HH:mm，采样时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /* ==================== 质量统计表 ==================== */

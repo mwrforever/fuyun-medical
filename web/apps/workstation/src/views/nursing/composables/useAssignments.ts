@@ -8,7 +8,7 @@ import type { Ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { assignments } from '@/api/nursing';
 import type { NurseAssignmentVO } from '@/api/nursing';
-import { surfaceBizError } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
 
 /** 分配类型词表（PRIMARY 责任患者 / BED 管床；新增分配表单与展示共用） */
 export const ASSIGNMENT_TYPE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [

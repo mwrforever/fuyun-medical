@@ -13,32 +13,11 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
-import axios from 'axios';
 import { discharge, DISCHARGE_STATUS_LABELS, DISCHARGE_WAY_OPTIONS } from '@/api/inpatient';
 import type { ClearanceVO, DischargeRequestVO } from '@/api/inpatient';
 import { fenToYuanDisplay } from '@/utils/money';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，申请/结算时点列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 四态 tab 词表（后端 DischargeRequestStatus 主链四态；CANCELLED 行在创建来源态内自然消隐） */
 const STATUS_TABS: ReadonlyArray<{ code: string; label: string }> = [

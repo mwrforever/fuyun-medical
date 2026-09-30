@@ -9,7 +9,6 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
-import axios from 'axios';
 import {
   ACTION_TYPE_LABELS,
   LINKAGE_RESULT_LABELS,
@@ -19,17 +18,8 @@ import {
 } from '@/api/iot';
 import type { LinkageLogVO, LinkageRuleVO, SaveLinkageRuleRequest } from '@/api/iot';
 import { WARD_OPTIONS } from '@/api/ward';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 触发源中文词表反查（触发源列徽标） */
 function triggerSourceLabel(code: string | undefined): string {
@@ -54,16 +44,6 @@ function resultLabel(code: string | undefined): string {
 /** 执行结果徽标状态类（fuy-linkage-tag--{result} 契约类） */
 function resultClass(code: string | undefined): string {
   return `fuy-linkage-tag--${(code ?? '').toLowerCase()}`;
-}
-
-/** 时点展示串（MM-dd HH:mm，执行时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 /* ==================== 规则列表 ==================== */

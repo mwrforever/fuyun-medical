@@ -8,7 +8,8 @@ import type { ComputedRef, Ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { handovers } from '@/api/nursing';
 import type { ShiftHandoverVO } from '@/api/nursing';
-import { surfaceBizError, todayString } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
+import { todayString } from '../wardBoardShared';
 
 /** 交接班参数对象（病区/班次上下文与交班人锚点经底座/视图注入） */
 export interface UseHandoverOptions {

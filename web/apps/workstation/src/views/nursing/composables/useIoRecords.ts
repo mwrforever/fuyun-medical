@@ -8,7 +8,7 @@ import type { ComputedRef } from 'vue';
 import { ElMessage } from 'element-plus';
 import { ioRecords } from '@/api/nursing';
 import type { WardPatientDetailVO } from '@/api/nursing';
-import { surfaceBizError } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
 
 /** 出入量类型词表（IoType 两值：入量/出量；快录表单下拉与展示共用） */
 export const IO_TYPE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [

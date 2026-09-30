@@ -9,21 +9,9 @@ import { onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
-import axios from 'axios';
 import { REVIEW_TASK_STATUS_OPTIONS, reviewTasks } from '@/api/pharmacy';
 import type { ReviewTaskVO } from '@/api/pharmacy';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
+import { surfaceBizError } from '@/utils/bizError';
 
 /* ==================== 待审任务列表 ==================== */
 const rows = ref<ReviewTaskVO[]>([]);

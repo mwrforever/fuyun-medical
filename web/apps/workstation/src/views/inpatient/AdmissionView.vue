@@ -8,7 +8,6 @@
 // （后端 VO 契约即不含姓名），诊断摘要列标注脱敏提示。
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import axios from 'axios';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
@@ -24,6 +23,8 @@ import {
 import type { AdmissionVO, BedMapVO } from '@/api/inpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 住院证状态中文词表（CANCELLED/COMPLETED 兜底直显原文） */
 const STATUS_LABELS: Record<string, string> = {
@@ -32,28 +33,6 @@ const STATUS_LABELS: Record<string, string> = {
   COMPLETED: '已入院',
   CANCELLED: '已作废',
 };
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，建单时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 /* ==================== 左栏：候床队列 ==================== */
 const queueRows = ref<AdmissionVO[]>([]);

@@ -7,7 +7,7 @@ import { ref } from 'vue';
 import type { Ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { wardPatients } from '@/api/nursing';
-import { surfaceBizError } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
 
 /** 入区登记参数对象（病区上下文与主加载重跑经卡墙底座注入） */
 export interface UseWardRegisterOptions {

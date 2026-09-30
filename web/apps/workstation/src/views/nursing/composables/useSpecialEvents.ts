@@ -9,7 +9,7 @@ import type { ComputedRef } from 'vue';
 import { ElMessage } from 'element-plus';
 import { chart } from '@/api/nursing';
 import type { WardPatientDetailVO } from '@/api/nursing';
-import { surfaceBizError } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
 
 /** 特殊事件参数对象（患者上下文经卡墙底座注入；记录成功刷新经体温单面注入） */
 export interface UseSpecialEventsOptions {

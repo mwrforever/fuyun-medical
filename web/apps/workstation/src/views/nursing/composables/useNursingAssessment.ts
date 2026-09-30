@@ -10,7 +10,7 @@ import type { ComputedRef, Ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { assessments } from '@/api/nursing';
 import type { NursingAssessmentVO, ScaleDefinitionVO, WardPatientDetailVO } from '@/api/nursing';
-import { surfaceBizError } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
 
 /** 量表中文词表（scaleType 五值展示映射） */
 export const SCALE_TYPE_LABELS: Record<string, string> = {

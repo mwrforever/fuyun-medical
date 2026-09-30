@@ -15,6 +15,8 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { beds, BED_STATUS_LABELS, transfer, WARD_OPTIONS } from '@/api/inpatient';
 import type { BedMapVO } from '@/api/inpatient';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** visit 号格式：I 前缀 + 13 位数字（I+8 位日期+5 位流水，共 14 字符，M02 冻结） */
 const VISIT_NO_PATTERN = /^I\d{13}$/;
@@ -34,28 +36,6 @@ const BED_ACTIONS: Record<string, ReadonlyArray<{ value: string; label: string }
   DISINFECTING: [{ value: 'disinfectDone', label: '消毒完成' }],
   MAINTENANCE: [{ value: 'maintainDone', label: '维修恢复' }],
 };
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，占用摘要入科时点共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 /* ==================== 床位卡墙 ==================== */
 /** 当前病区（默认演示病区 W01；切换即重载床位图） */

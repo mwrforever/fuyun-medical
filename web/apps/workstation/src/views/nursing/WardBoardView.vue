@@ -23,7 +23,8 @@ import {
 } from '@/api/nursing';
 import { useAuthStore } from '@/stores/auth';
 import { AXIS_WIDTH, DAILY_ROWS } from './tempChart';
-import { formatTime, splitTags } from './wardBoardShared';
+import { splitTags } from './wardBoardShared';
+import { formatTime } from '@/utils/timeFormat';
 import { tempSiteMark, useLatestVitals } from './composables/useLatestVitals';
 import { ASSIGNMENT_TYPE_OPTIONS, useAssignments } from './composables/useAssignments';
 import { useHandover } from './composables/useHandover';

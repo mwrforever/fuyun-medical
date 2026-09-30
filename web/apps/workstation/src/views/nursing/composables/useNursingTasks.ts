@@ -9,7 +9,8 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import axios from 'axios';
 import { tasks } from '@/api/nursing';
 import type { NursingTaskVO, WardPatientDetailVO } from '@/api/nursing';
-import { surfaceBizError, todayString } from '../wardBoardShared';
+import { surfaceBizError } from '@/utils/bizError';
+import { todayString } from '../wardBoardShared';
 
 /** 任务类型中文词表（NursingTaskVO.taskType 十值枚举展示映射） */
 export const TASK_TYPE_LABELS: Record<string, string> = {
