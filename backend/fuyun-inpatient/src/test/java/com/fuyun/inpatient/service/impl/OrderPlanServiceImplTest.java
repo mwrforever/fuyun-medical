@@ -13,6 +13,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
@@ -31,10 +33,12 @@ import com.fuyun.inpatient.entity.OrderFrequency;
 import com.fuyun.inpatient.entity.OrderStatusLog;
 import com.fuyun.inpatient.entity.OrderTransferLog;
 import com.fuyun.inpatient.enums.CheckConclusion;
+import com.fuyun.inpatient.enums.OrderClass;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.PlanStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
@@ -43,8 +47,8 @@ import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import com.fuyun.patient.api.AllergyChecker;
@@ -147,13 +151,13 @@ class OrderPlanServiceImplTest {
     private InpatientSeqGate seqGate;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
     private ApplicationEventPublisher events;
 
     @Mock
-    private OrderAuditService orderAuditService;
+    private IOrderAuditService orderAuditService;
 
     @Mock
     private PracticeCheckPort practiceCheckPort;
@@ -226,6 +230,8 @@ class OrderPlanServiceImplTest {
                 statusLogMapper,
                 transferLogMapper,
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 seqGate,
                 stateMachine,
                 events,
@@ -571,7 +577,7 @@ class OrderPlanServiceImplTest {
                 itemMapper,
                 frequencyMapper,
                 planMapper,
-                visitMapper,
+                new InpatientVisitAccessor(visitMapper),
                 seqGate,
                 practiceCheckPort,
                 allergyChecker,
@@ -928,6 +934,93 @@ class OrderPlanServiceImplTest {
                 .contains("plan_no = #{planNo}")
                 .contains("status = 'PENDING'")
                 .contains("deleted = 0");
+    }
+
+    // ===== OPT-14：日计划批任务在院就诊候选查询精确投影（A.4.3-14 投影子款锚定）=====
+
+    @Test
+    @DisplayName("在院就诊候选查询投影契约：恰 1 列 id，谓词（status=ADMITTED）零变化")
+    void admittedVisitCandidateQueryProjectsOnlyIdColumn() {
+        LocalDate planDate = LocalDate.of(2026, 9, 26);
+        when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
+        // 零候选直过——本用例仅锚查询契约，不依赖生成面（频次/明细/计划零触达）
+        when(orderMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.decomposeNextDay(planDate)).isZero();
+
+        // 投影契约（OPT-14）：仅取 id 恰 1 列——就诊宽行（入院诊断/医保/床位/护理级别等）
+        //   禁入投影（修复前全列取回千级在院行仅 map(getId) 组装 IN 集）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<InpatientVisit>> visitCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(visitMapper).selectList(visitCaptor.capture());
+        LambdaQueryWrapper<InpatientVisit> visitWrapper = (LambdaQueryWrapper<InpatientVisit>) visitCaptor.getValue();
+        // 先物化 WHERE 段再断言参数（MP 条件参数惰性求值）；谓词零变化锚定：status 等值携带
+        //   ADMITTED（防投影修复顺带改动候选人群口径）
+        assertThat(visitWrapper.getSqlSegment()).contains("status");
+        assertThat(visitWrapper.getParamNameValuePairs().values()).contains(VisitStatus.ADMITTED.getCode());
+        assertThat(visitWrapper.getSqlSelect().trim()).isEqualTo("id");
+    }
+
+    @Test
+    @DisplayName("批任务输出等价：两在院就诊 id 全量喂入候选 IN 集，各医嘱计划归属各自就诊（漏任一行即失败）")
+    void decomposeNextDayFeedsAllAdmittedVisitIdsIntoCandidateQuery() {
+        LocalDate planDate = LocalDate.of(2026, 9, 26);
+        long visitPk2 = 7002L;
+        InpatientVisit visit2 = visitRow();
+        visit2.setId(visitPk2);
+        visit2.setVisitId("I2026092500002");
+        when(visitMapper.selectList(any())).thenReturn(List.of(visitRow(), visit2));
+        MedicalOrder orderA = orderRow(OrderStatus.TRANSFERRED, "LONG", false, "qd");
+        MedicalOrder orderB = orderRow(OrderStatus.TRANSFERRED, "LONG", false, "qd");
+        orderB.setId(9002L);
+        orderB.setOrderNo("MO2026092500002");
+        orderB.setVisitId(visitPk2);
+        when(orderMapper.selectList(any())).thenReturn(List.of(orderA, orderB));
+        when(frequencyMapper.selectOne(any())).thenReturn(freqRow("qd", "08:00", false));
+        when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)));
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        when(visitMapper.selectById(visitPk2)).thenReturn(visit2);
+        when(planMapper.selectList(any())).thenReturn(List.of());
+        when(seqGate.nextNo("PL")).thenReturn("PL2026092600001", "PL2026092600002");
+
+        assertThat(service.decomposeNextDay(planDate)).isEqualTo(2);
+
+        // 输出等价锚点：两医嘱各生成 1 行且归属各自就诊（orderId@visitId 配对）——投影仅收敛
+        //   列面，id 全量喂入驱动；丢任一就诊行则对应医嘱无候选、生成 1 行配对即失败
+        verify(planMapper, times(2)).insert(planCaptor.capture());
+        assertThat(planCaptor.getAllValues())
+                .extracting(plan -> plan.getOrderId() + "@" + plan.getVisitId())
+                .containsExactlyInAnyOrder(ORDER_PK + "@" + VISIT_PK, 9002L + "@" + visitPk2);
+        // IN 集携带全部在院就诊主键（投影列 id 足量喂入面）+ 候选谓词零变化锚定
+        //   （visit_id+status 双值+order_class=LONG）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<MedicalOrder>> orderCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(orderMapper).selectList(orderCaptor.capture());
+        LambdaQueryWrapper<MedicalOrder> orderWrapper = (LambdaQueryWrapper<MedicalOrder>) orderCaptor.getValue();
+        assertThat(orderWrapper.getSqlSegment())
+                .contains("visit_id")
+                .contains("status")
+                .contains("order_class");
+        assertThat(orderWrapper.getParamNameValuePairs().values())
+                .contains(
+                        VISIT_PK,
+                        visitPk2,
+                        OrderStatus.TRANSFERRED.getCode(),
+                        OrderStatus.EXECUTING.getCode(),
+                        OrderClass.LONG.getCode());
+    }
+
+    @Test
+    @DisplayName("零在院就诊边界：空集直过零事务零事件，不发起下游医嘱候选查询（投影不改空集语义）")
+    void decomposeNextDaySkipsDownstreamQueryWhenNoAdmittedVisits() {
+        LocalDate planDate = LocalDate.of(2026, 9, 26);
+        when(visitMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.decomposeNextDay(planDate)).isZero();
+
+        assertThat(begunTransactions.get()).as("零在院就诊零候选——不开启任何批次事务").isZero();
+        verify(orderMapper, never()).selectList(any());
+        verifyNoInteractions(events, seqGate);
     }
 
     /** 构造在院就诊行（ADMITTED——日切候选与计划落值载体）。 */

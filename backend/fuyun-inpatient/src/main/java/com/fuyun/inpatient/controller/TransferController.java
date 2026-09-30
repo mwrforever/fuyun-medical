@@ -2,7 +2,7 @@ package com.fuyun.inpatient.controller;
 
 import com.fuyun.common.web.PageResult;
 import com.fuyun.inpatient.dto.TransferCheckRequest;
-import com.fuyun.inpatient.service.OrderTransferService;
+import com.fuyun.inpatient.service.IOrderTransferService;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -34,7 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class TransferController {
 
-    private final OrderTransferService orderTransferService;
+    private final IOrderTransferService orderTransferService;
 
     /**
      * 转抄工作台待转抄列表：病区在院就诊的 AUDITED 医嘱聚合（开立时间倒序），班次过滤按

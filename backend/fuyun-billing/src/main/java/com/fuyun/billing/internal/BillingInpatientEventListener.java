@@ -137,6 +137,7 @@ public class BillingInpatientEventListener {
                 JsonNode items = payload.path("items");
                 // 明细数组为离散计价唯一数据面：非数组定性不合规帧（空数组合法——无计价行嘱托）
                 if (!items.isArray()) {
+                    // 内部断言：非用户输入路径——上游模块发布帧契约违约，ISE 死信留痕（BE-C3-05 C 类）
                     throw new IllegalStateException(
                             "医嘱开立载荷不合规（items 非数组）：eventType=" + eventType + "，payload=" + payload);
                 }
@@ -202,6 +203,7 @@ public class BillingInpatientEventListener {
     private static long requirePatientId(EventEnvelope envelope, JsonNode payload) {
         long patientId = payload.path("patientId").asLong(0);
         if (patientId <= 0) {
+            // 内部断言：非用户输入路径——上游模块发布帧契约违约，ISE 死信留痕（BE-C3-05 C 类）
             throw new IllegalStateException(
                     "住院事件载荷不合规（patientId 缺失或非法）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -219,6 +221,7 @@ public class BillingInpatientEventListener {
     private static String requireText(EventEnvelope envelope, JsonNode payload, String field) {
         String value = textOrNull(payload, field);
         if (value == null) {
+            // 内部断言：非用户输入路径——上游模块发布帧契约违约，ISE 死信留痕（BE-C3-05 C 类）
             throw new IllegalStateException(
                     "住院事件载荷不合规（缺 " + field + "）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -236,12 +239,14 @@ public class BillingInpatientEventListener {
     private static Instant requireInstant(EventEnvelope envelope, JsonNode payload, String field) {
         String value = textOrNull(payload, field);
         if (value == null) {
+            // 内部断言：非用户输入路径——上游模块发布帧契约违约，ISE 死信留痕（BE-C3-05 C 类）
             throw new IllegalStateException(
                     "住院事件载荷不合规（缺 " + field + "）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
         try {
             return Instant.parse(value);
         } catch (Exception e) {
+            // 内部断言：非用户输入路径——上游模块发布帧契约违约，ISE 死信留痕（BE-C3-05 C 类）
             throw new IllegalStateException(
                     "住院事件载荷不合规（" + field + " 非法时点文本）：eventType=" + envelope.eventType() + "，payload=" + payload, e);
         }

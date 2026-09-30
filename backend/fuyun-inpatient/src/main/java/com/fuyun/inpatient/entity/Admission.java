@@ -11,7 +11,7 @@ import lombok.Setter;
 
 /**
  * 住院证（入院申请）实体（inpatient.admission，V902）：待入院队列主体，登记即建单入 WAITING
- * 队列；schedule 预约置 SCHEDULED 并记录目标床位/预约日期（床位 RESERVED 预占联动调 BedService
+ * 队列；schedule 预约置 SCHEDULED 并记录目标床位/预约日期（床位 RESERVED 预占联动调 IBedService
  * 归 Task 4 随 V903 bed 落地后补齐）；register 登记确认 CAS 置 COMPLETED（终态）。
  * admission_no 受 uk_admission_no 部分唯一约束兜底。
  */

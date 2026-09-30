@@ -56,6 +56,18 @@ public class DictVersionServiceImpl extends ServiceImpl<DictVersionMapper, DictV
         this.eventPublisher = eventPublisher;
     }
 
+    /**
+     * 创建草稿字典版本（POST /api/v1/system/dict-types/{typeCode}/versions 执行点）：为既有
+     * 类型开出新 DRAFT 版本供条目维护，新版本自此进入 DRAFT→PUBLISHED→DEPRECATED 状态机。
+     *
+     * <p>执行流程：类型存在性校验（经 IDictTypeService.getByTypeCode 跨表查询，A.4.3-21）→
+     * 版本号自增（同类型现有最大版本 +1，无版本从 1 起）→ 组装 DRAFT 实体落库 → 转 VO。
+     * 读最大值+1 非原子，并发开版本由 uk_dict_version_type_version 唯一索引兜底回滚。
+     *
+     * @param typeCode 所属字典类型编码，非空；来源：管理端路径参数
+     * @return 版本出参（typeCode + 自增版本号 + DRAFT 状态 + 空条目清单），非空
+     * @throws BizException SYS-1011（字典类型不存在，HTTP 404）
+     */
     @Override
     @Transactional
     public DictVersionVO createVersion(String typeCode) {
@@ -83,6 +95,24 @@ public class DictVersionServiceImpl extends ServiceImpl<DictVersionMapper, DictV
         return dictConverter.toVersionVO(type, entity, List.of());
     }
 
+    /**
+     * 发布字典版本（POST /api/v1/system/dict-versions/{versionId}/publish 执行点）：DRAFT→
+     * PUBLISHED 状态迁移，同类型旧 PUBLISHED 版本随之置 DEPRECATED（同一 type 同一时刻仅一个
+     * PUBLISHED，M01 Spec §5），发布即生效（published_at/effective_at 同取 now，P0 无定时生效）。
+     *
+     * <p>执行流程：①版本与所属类型存在性校验 → ②条件更新原子抢占发布权（{@code UPDATE ...
+     * WHERE id=? AND status='DRAFT'}，影响行数=0 即状态已变或并发落败，防并发双 publish 双
+     * 广播）→ ③同类型其余 PUBLISHED 行置 DEPRECATED → ④事务内发布 Spring 应用事件，
+     * AFTER_COMMIT 监听事务提交后才广播 system.dict.published 至 MQ（A.4.2-7 事务内禁消息
+     * 发送；事务回滚则广播不出）。缓存联动写实：发布侧自身不触碰任何缓存——system 模块 P0
+     * 无服务端字典缓存（本地缓存失效属 P1 接入），下游消费方（如药房主数据缓存）凭事务后
+     * 广播事件自行刷新。
+     *
+     * @param versionId 字典版本 ID，非空；来源：管理端路径参数
+     * @throws BizException SYS-1012（字典版本不存在，HTTP 404）、SYS-1011（所属类型缺失，
+     *                      HTTP 404，外键悬空属数据一致性异常，建议核查数据）、SYS-1013
+     *                      （版本状态非 DRAFT 或并发发布落败，HTTP 409，建议刷新版本状态后重试）
+     */
     @Override
     @Transactional
     public void publish(Long versionId) {

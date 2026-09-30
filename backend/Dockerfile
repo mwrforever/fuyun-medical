@@ -38,6 +38,10 @@ RUN mvn -B -ntp package -DskipTests
 
 # ===== 运行层：JRE17 基底 + curl（compose 健康检查探针依赖，Temurin JRE 系基底不含） =====
 FROM eclipse-temurin:17-jre
+# 容器默认时区（BUG-03）：基底默认 UTC，会使 ZoneId.systemDefault()/LocalDate.now() 漂移，
+# 北京时间 00:00-08:00 的护理记录错归前一日/前月页；注入北京时区与业务日界口径对齐
+# （compose backend 服务 environment 同键注入可覆写，与 .env.example TZ 示例三处同源联动）
+ENV TZ=Asia/Shanghai
 # 安装 curl 后清空 apt 缓存压体积；固定 uid 1001 的非 root 用户运行（等保最小权限）
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \

@@ -1,7 +1,9 @@
 package com.fuyun.iot.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.iot.dto.SaveAlarmRuleRequest;
 import com.fuyun.iot.dto.SimulateAlarmRequest;
+import com.fuyun.iot.entity.IotAlarmRuleEntity;
 import com.fuyun.iot.vo.AlarmRuleVO;
 import com.fuyun.iot.vo.SimulateResultVO;
 import java.util.List;
@@ -14,15 +16,19 @@ import java.util.List;
  * simulate 仅支持 THRESHOLD 规则（对历史遥测行重放越限回合状态机，返回触发明细不落库）。
  *
  * <p>落 service 契约包（宪法 B.1）：controller 与（未来）管理台共用同一语言。
+ *
+ * <p>主表配对（宪法 A.4.3-20）：单主表 iot_alarm_rule 的 CRUD 型服务，接口继承 IService、实现
+ * 继承 ServiceImpl（全配对收拢，EX-09）；视图出参的全量清单命名 listAll，避免与 IService#list()
+ * （返回实体 List）返回类型冲突。
  */
-public interface IAlarmRuleService {
+public interface IAlarmRuleService extends IService<IotAlarmRuleEntity> {
 
     /**
      * 规则清单（GET /api/v1/iot/alarm-rules；纯读，id 升序稳定输出）。
      *
      * @return 规则视图清单，非空；空表为空清单
      */
-    List<AlarmRuleVO> list();
+    List<AlarmRuleVO> listAll();
 
     /**
      * 规则登记（POST /api/v1/iot/alarm-rules；写操作，规则型参数条件必填校验）。

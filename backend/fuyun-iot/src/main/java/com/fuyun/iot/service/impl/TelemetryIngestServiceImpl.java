@@ -77,7 +77,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * <p>告警引擎挂接（P2 PR-2 Task 7 / FU-M14-08，afterCommit 推送钩子形态照抄扩展）：事务提交后
  * 经 {@link com.fuyun.iot.internal.alarm.AlarmEngine}#evaluate 旁路评估三类规则源（阈值/透传/
  * 离线）——评估在 ingest 事务外（afterCommit 时点原事务已提交），引擎自身独立短事务承载落行与
- * 事件发布，不阻塞 ingest 主链路；评估失败仅 error 告警，不影响已提交批次。
+ * 事件发布，不阻塞 ingest 主链路；评估失败旁路跳过不上抛不重试，error 留痕含批次规模、设备
+ * 足迹采样与异常摘要（EX-16 收拢：旁路语义保留但必须可观测），不影响已提交批次。
  *
  * <p>W-7 非数值承载语义（D-9 裁决，V1005 raw_value 列）：整批全量入库不再丢弃任何行——value 可
  * 数值定型的行落 NUMERIC 值列且 raw_value 为 NULL；非数值行 value 落 NULL（哨兵值会污染生理指标
@@ -100,6 +101,9 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
 
     /** 防刷屏键 TTL：1 小时（brief 冻结；TTL 窗口内同设备同属性仅首见告警一次） */
     private static final Duration METRIC_MISSING_WARN_TTL = Duration.ofHours(1);
+
+    /** 评估失败留痕的设备标识采样上限：批次可跨数百设备，全量入日志有刷屏风险，采样定位即可（全量设备可按时间窗查 iot_telemetry） */
+    private static final int ALARM_FAIL_LOG_DEVICE_SAMPLE = 5;
 
     /** 绑定域服务：生效绑定查询唯一出口（findActiveByDevice，遥测富化与设备归属查询同源） */
     private final IBindingService bindingService;
@@ -180,7 +184,9 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
         // 患者关联（步骤五）数据源：绑定快照单次批量查询（Task 3 既有链路保留，宪法 A.4.3-14）：
         // distinct 设备集合入参，只取 BOUND 生效绑定，patient/visit/ward 供快照冗余与摘要推送分组
         Map<String, BindingVO> boundByDeviceId = new HashMap<>(deviceIds.size());
-        for (BindingVO binding : bindingService.listActiveByDevices(deviceIds)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：生效绑定单次装载，循环内纯迭代组装映射
+        List<BindingVO> bindings = bindingService.listActiveByDevices(deviceIds);
+        for (BindingVO binding : bindings) {
             // 快照映射组装（纯内存）：uk_iot_binding_device_bound 保证每设备至多一条活跃绑定
             boundByDeviceId.put(binding.deviceId(), binding);
         }
@@ -286,8 +292,10 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
     }
 
     /**
-     * 告警引擎旁路评估（afterCommit 推送钩子形态照抄扩展，Task 7）：评估失败仅 error 告警，
-     * 不影响已提交落库批次（评估是旁路语义，落库是主职责）。
+     * 告警引擎旁路评估（afterCommit 推送钩子形态照抄扩展，Task 7）：评估失败旁路吞并不上抛不
+     * 重试，评估告警旁路跳过不影响已提交落库批次（评估是旁路语义，落库是主职责）。失败留痕按
+     * EX-16/BE-C3-06 收拢口径补强（旁路语义保留但必须可观测）：error 含批次规模、设备足迹
+     * （去重数与采样标识防刷屏）与异常类名消息，堆栈按模块惯例随行。
      *
      * @param entities 本批已写入遥测实体，非空
      */
@@ -295,7 +303,20 @@ public class TelemetryIngestServiceImpl implements ITelemetryIngestService {
         try {
             alarmEngine.evaluate(new AlarmEngine.TelemetryBatch(entities));
         } catch (RuntimeException e) {
-            log.error("告警引擎评估失败（不影响已提交批次）：count={}，原因={}", entities.size(), e.getMessage(), e);
+            // 评估失败旁路吞并：不上抛不重试（旁路语义保留），留痕后本批评估告警旁路跳过；
+            // 批次可跨数百设备，设备标识采样打印防刷屏，堆栈按模块惯例随行
+            List<String> deviceIds = entities.stream()
+                    .map(IotTelemetryEntity::getDeviceId)
+                    .distinct()
+                    .toList();
+            log.error(
+                    "告警引擎评估失败，评估告警旁路跳过（不影响已提交批次）：count={}，devices={}，" + "sample={}，原因={}: {}",
+                    entities.size(),
+                    deviceIds.size(),
+                    deviceIds.stream().limit(ALARM_FAIL_LOG_DEVICE_SAMPLE).toList(),
+                    e.getClass().getSimpleName(),
+                    e.getMessage(),
+                    e);
         }
     }
 

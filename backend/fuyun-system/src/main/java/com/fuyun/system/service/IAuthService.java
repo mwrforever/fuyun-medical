@@ -2,6 +2,7 @@ package com.fuyun.system.service;
 
 import com.fuyun.system.dto.LoginRequest;
 import com.fuyun.system.dto.RefreshRequest;
+import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
 
 /**
@@ -44,4 +45,19 @@ public interface IAuthService {
      *                                                 SYS-1004（令牌已过期，401）
      */
     void logout(String rawToken);
+
+    /**
+     * 签发大屏订阅令牌（BUG-19：叫号大屏 WS 链路凭证运行期获取，替代构建期 VITE_ 内联红线缺陷）。
+     *
+     * <p>匿名哨兵会话：无 sys_user 行、零角色、零员工/机构归属，经
+     * {@link ITokenService#issueAccess} 签 5 分钟短期单 access 令牌（无 refresh）。令牌与登录
+     * access 同构，/ws/outpatient CONNECT 帧鉴权链无差别放行——WS 鉴权协议零改动。
+     *
+     * <p>演进注记（TASK.md W-39，2026-09-25 用户裁决）：短期单 access 与 HTTP 认证拦截器共用
+     * 校验链属已知过渡态，P2 WS 通道演进开大屏专用匿名只读通道（订阅级最小授权）后收敛；
+     * 过渡期以 5 分钟 TTL 收窄误用窗口（「缩短 TTL」裁决口径）。
+     *
+     * @return 大屏订阅令牌出参（令牌值 + Bearer 方案名 + 有效期秒数），非空
+     */
+    BigscreenTokenVO issueBigscreenToken();
 }

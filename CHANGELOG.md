@@ -2,6 +2,717 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-09-30 · 批次 G 前端压轴组总收口（EX-42~49：重复族下沉/通用范式沉淀/巨型组件拆分/健壮性与数据丢失防护，波 1 三路+波 2 核证收口+余项统筹）
+
+- **根因**：FE-Q1 重复族（surfaceBizError ×16/formatTime ×15/STOMP ×3）+FE-Q1-06 与 FE-A4-05 样板复制（41 处 loading 骨架/16 处三段式分页）+FE-A4-03/04 巨型组件（WardBoardView 2760 行/AppointmentView 916 行）+FE-A1 运行错误五点+FE-A2 数据丢失四点+BE-Q1-02 访问器副本。
+- **波 1 三提交**：EX-44 inpatient 访问器下沉（3a9f6c2，实扫 17 处=登记 11 处超集全量下沉）；EX-47 WardBoardView 拆 11 作业面 composable+wardBoardShared（4e2a96f，script 1171→约 190 行+三处行为修复先红后绿+新增 35 用例）；EX-48 portal 预约页三 composable（fd48ba7，src/composables/ 落位+.gitkeep 清理）。
+- **波 2 两提交**（中断专员半成品 14 文件主控核证可用后收口，744+/50- 与交接登记吻合）：EX-45 余四点（b801b4b，医生站竞态守卫+判空/结算判空+附带竞态守卫/物模型稳定行键，6 用例先红后绿；FE-A1-04 已随 EX-47）；EX-46 四点（7f71dab，删除确认+草稿守卫/建档路由守卫（登记措辞与页面形态不符按整页表单选型）/告警版本比对（强于授权降级）/字典覆盖防护（授权降级留痕），11 用例）。
+- **EX-43 重复族下沉**（ea00488）：两族收拢 app 级 utils/bizError.ts+timeFormat.ts（函数体逐字保持），wardBoardShared 删双定义回归 nursing 专属；tempChart 变体实质不同不收拢；STOMP 三文件令牌策略/订阅登记/帧管线全分叉且 B.1 禁 shared 依赖 vue——留痕不下沉。
+- **EX-42/49 统筹四提交**（试点+全量三组）：沉淀 useAsyncTask（loading/error/run，onError 可注入默认静默、竞态守卫随任务体保留）+usePagedList（页码四态+1↔0 基转换+契约兜底）附 14 单测+试点 3 文件（fc1640c，285=271+14）；全量三组并行 33 处/23 文件迁移（ec6979d/c46c234/8490cd2，iot/ward 14+inpatient/outpatient 11+billing/patient/pharmacy 9，285 持平 spec 零改动）；PatientDetailView 原无 catch 经 onError 重抛保持上抛语义（主控裁决留痕）。
+- **顺带清账**：CI format:check 11 文件 Prettier 偏差（EX-47 拆分提交遗留，实证 HEAD 即失败）独立 style 提交清账（705f0c7），CI frontend job Prettier 只读校验恢复绿。
+- **验证**：workstation 285（254→271→285）/portal 33/bigscreen 68 门禁全绿+lint/format:check/type-check 全过；既有测试断言全程零改动（行为保持红线）；新交互语义（EX-46 确认框/离开守卫）与三处行为修复（EX-47）入 N5 行为变化清单。
+
+## 2026-09-30 · 批次 F 性能收拢组总收口（EX-37~41：批量写/键集批查/精确投影/IoTDA 防御/前端隐藏暂停，六路并行+前端补派）
+
+- **根因**：BE-B3-04~12（循环逐行写）+BE-C4-19/20（循环内逐行读写）+BE-C4-25/27/28/29/30（全列取回仅用少量列）+BE-B4-01（IoTDA 客户端无超时/重试/熔断）+FE-B1-01（看板隐藏不暂停）。
+- **批量写六模块**（A.4.3-16，0 行防线 CAS 全部逐行保留甄别）：pharmacy Dispense 五段批插/补丁批更（0274d5d，衔接 EX-24 五处明细补丁化）；inpatient 医嘱明细/计划批插（821dc79，DuplicateKeyException→IP-1023 语义经 Spring 翻译链等价保持）；outpatient 放号两批写（b9d9962，装配块裁决维持）；billing 退费判态批更+组合成员批插（938bed7）；iot 产品命令/映射批插（8b55ad9）。
+- **键集批查/批量清理**：outpatient QueueZsetStore 失效票 selectBatchIds 前置+ZREM 单命令批清理（af4238f，可叫票 Lua 守卫保留）；patient 拆分回挂 listByIds 前置+updateBatchById（2ef256d，灶位甄别=split 回挂面呈报采纳，EX-21 CAS 零触碰）。
+- **精确投影五处**（A.4.3-14，OPT-12/13 先例）：inpatient 转科分野 1 列（821dc79）/billing 结算清单 2 列（d5547ca）/iot 失配与频率 2 处 1 列（8b55ad9）/patient 近窗档 4 列（20021db）。
+- **EX-40 IoTDA 防御配置（B.4-2）**：HttpConfig 超时 10s/30s（SDK 缺省 60/120s 与人机链路失配）+invoker 连接级重试 2 次（仅请求未送达，非幂等写安全）+熔断自实现（5 次开断/30s 半开/4xx 不计入）；错误通道 IOT-1022 零变化（8fa6328）。
+- **EX-41 前端隐藏暂停（web 宪法 B.3-4）**：InfusionBoardView visibilitychange 对齐 TriageBoard 先例——隐藏期三路刷新停发、恢复立刷；告急提示条仍落（94dc077）。
+- **验证**：六模块门禁全绿 pharmacy 178（+5）/inpatient 198（+3）/outpatient 341（+2）/billing 297（+4）/iot 576（+7）/patient 253（+3）+workstation 219（+2）+spotless/lint 过+主控六模块联跑终验 BUILD SUCCESS；对外行为零变化（放号 409 message 单日→窗口期、EX-40/41 新防御语义入 N5 清单）。
+
+## 2026-09-30 · 批次 E 资源组总收口（EX-30~36：可观测降级/线程池生命周期/测试资源回收，两路并行）
+
+- **根因**：BE-A1-02/03（catch 静默降级无可观测留痕）+BE-A5-01~05（无界池/无 shutdown/测试执行器驻留）——资源组七项。
+- **可观测降级两处**：EX-30 LinkageRuleVO JSONB 畸形原文降级 warn 留痕（ruleId/field+异常摘要，可空契约零变化，6e2ba70）；EX-31 Dashboard 最新值解析降级 warn（deviceId/metricCode；否决 isNumeric 前置守卫——与 BigDecimal 负数/小数/科学计数口径不一致将误杀合法值，680e870）。
+- **线程池生命周期两处**：EX-32 CommandDispatcher 无界 newCachedThreadPool 改有界 ThreadPoolExecutor（4/16/32/keepAlive 60s，低频管理面口径注释论证；CallerRuns 保命令不丢）+DisposableBean destroy 三段收口（1c1842e）；EX-33 模拟器 CommandSubscriber 补 close（iot-simulator 纯 Java 零 Spring 模块对齐 shutdownHook 显式形态，停机链取消任务→停调度→关订阅→断连接；Paho 回调零外抛不变量守卫，a5a9d5b）。
+- **测试资源回收三处**（fuyun-app failsafe 统一承载）：EX-36 IotTelemetryPipelineIT STOMP 调度器 @AfterEach 登记回收（3ee8ddc）；EX-34/35 Billing/Pharmacy GuardIT shutdownNow 移 finally（OutpatientPoolConcurrencyIT 0eb66a1 同型+复现锚点用例：动作异常后 worker 线程 join 有界退出，44db981/f5b5a65）。
+- **验证**：iot 569（+6）/iot-simulator 55（+2）/billing 293/pharmacy 173 全绿+定向 IT 真栈绿（IotTelemetryPipelineIT 9/9、GuardIT 12 用例）+spotless 过+主控 14 模块联跑终验 BUILD SUCCESS；对外行为零变化（内部线程池过载语义留痕注释）。
+
+## 2026-09-30 · 批次 D 一致性组总收口（EX-21~29：CAS 收口/守卫折语句/软删谓词/补丁回写/原子累加/Lua 原子/portal 缓解，五路并行）
+
+- **根因**：BE-A2-02~05（读后判/读改写并发面）+BE-B5-02/05/06（条件更新/原子累加/Lua 原子）+BE-A3-02（portal 冒名，用户裁决③转正）——一致性组九项。
+- **CAS 收口四处**：EX-21 合并审批 casApproveProcessing（PROCESSING/FAILED 谓词+审批人同语句落库，0 行重读定性 PAT-1007/1008，613422b）；EX-25 就诊卡四写 cas 族（bind 无主谓词/loss/unbind ACTIVE 谓词/replace LOST 谓词，PAT-1011/1012，c7edbca）；EX-22 网关删除 standby 守卫折入置删语句（NOT EXISTS 反查同 UPDATE，IOT-1025 拒删/行消失幂等留痕，1ead926）；EX-24 pharmacy 四写点整行回写改指定列补丁（update 吞 mapInsurance 对照列/mapInsurance 吞档案面/pick/verify 吞留痕快照，BUG-07 先例；PrescriptionServiceImpl.create 自建行持锁保留举证，Dispense 五处循环明细写归 EX-37 衔接补丁化，a26c1d7）。
+- **原子化四处**：EX-23 CardAccount UPDATE...RETURNING 补 deleted=0（DepositAccountMapper 对齐，软删死账户不可复活记账，985d31d）；EX-28 登录失败计数 setSql 原子累加+锁定判定迁 SQL CASE（阈值/窗口逐字等价，recordLoginSuccess 本为原子未动，f1f7d47）；EX-27 告警越限回合标记 Redis 三步改 Lua 原子（breach_marker_transition.lua 外置脚本 PoolRedisGate 先例；标记承载值 ISO→epoch 毫秒为原子判定前提；残余窗口=READ COMMITTED 跨语句交错与模块全部 CAS 先例同级，2561653）；EX-26 风险标识追加改 DB 侧单语句原子拼接（CASE 空串直落+首尾补逗 position 去重谓词与 Java contains 逐字等价，并发同标识 0 行幂等；removeRiskFlag 单写者降级语义保持邻界登记，本提交补 hash 见 git log）。
+- **EX-29 portal 冒名两层临时缓解（M18 后由归属校验取代，裁决③）**：PORTAL 渠道单患者活跃在约上限 3（409 新码 OP-1022 仅免登录面）+证件号解析失败频控 5 次/10 分钟冷却 30 分钟（429 新码 OP-1023，Redis INCR+EXPIRE，键 SHA-256 摘要明文禁入，异常降级放行，ab2f89e）。
+- **BUG-01 portal 免登录退号介质归属校验（本 PR 补记，提交 7a82b20）**：portal 退号（BUG-01）凭证必填（缺省 400 OP-1019/PARAM_FORMAT_INVALID，工作站两参通道共用 DTO 可空行为保持）+ 归属不符 OP-1021 403（介质解析患者与单据归属同事务比对，阻断匿名遍历单号退他人号源）。
+- **EX-29 缓解②退号侧收口（N7 补完）**：portal cancel 链路补证件号频控三件套（冷却期前置 429 OP-1023 不触达解析/PAT-1001 计连续失败/解析成功清零），与 book 同链路同口径，堵经退号端点裸解析绕过。
+- **D-21 断言现代化裁量（主控逐次批准两处）**：pharmacy 3 行（快照同值断言→isNull 严格契约，「未触碰」由列不进 SET 承载）+system 2 处（计数字面值参数→SQL 原子契约片段，额外锚定阈值常量与 CASE 形态）——原断言冻结实现细节，新断言严格度不低于原，四边界合规。
+- **EX-26 removeRiskFlag 对称原子化（N7 审查 B-1 补完）**：整串置值回写（updateRiskFlags）改 DB 侧 array_to_string/array_remove/string_to_array 单语句摘除 casRemoveRiskFlag，「当前值含该标识」position 谓词与追加侧同形态取反向——行级锁串行化下并发追加/移除双向不互吞（原「追加侧原子拼接保底不丢标记」失实论断修正：整串置值会抹掉并发追加标记）；0 行重读三态定性（行不在区 NS-1001/已被并发移除幂等命中/让位并发重追加不误删新判级），updateRiskFlags 无调用方随删。
+- **EX-24/EX-25 就诊卡 loss/unbind 镜像写时钟归一（N7 审查 B-2 补完）**：casMarkLost/casDisable 同语句 DB now() 落 unbound_at 后的 updateById 镜像写改仅携状态列补丁实体（EX-24 指定列补丁纪律），裁剪不携 unbound_at——应用时钟与快照残留旧值（复绑卡再挂失/解绑）不再覆写 DB 时刻，时刻契约与实现归一。
+- **验证**：五模块门禁全绿 patient 250（+8）/iot 563（+3）/pharmacy 173（+4）/system 164（+1）/outpatient 339（+16）+spotless 过+主控五模块联跑终验 BUILD SUCCESS；行为变化（并发输家显式 409/软删不命中/新 4xx 契约 OP-1022/1023/EX-22 守卫时点与 EX-27 编码变化）入 N5 行为变化清单。
+
+## 2026-09-30 · EX-19 裸 IAE 模式级收口全量闭环（BE-C3-05，11 模块两波，三态口径确立）
+
+- **根因**：BE-C3-05 全仓 209 处裸 IllegalArgumentException/IllegalStateException 绕过
+  双层错误模型（宪法 A.3-3/4）——枚举 fromCode 词表外值直接 500、内部断言与用户可达
+  路径混用同一通道。
+- **三态收口口径（本项确立）**：A 枚举 fromCode 用户可达→转 BizException 新码最小化
+  （400+errorCode）；B 用户可达 DTO 前置校验 400；C 内部断言（编程错误/环境异常/数据
+  不一致/MQ 契约）保留+「EX-19 C 类收口留痕」行级注释；断言 IAE→BizException 测试
+  迁移按 D-21 四边界放行且提交 body 留痕。
+- **第一波六模块**：iot 24 枚举→IOT-1026（1f25efb）/billing 24→BILL-1034（83d3342）/
+  pharmacy 15→PH-1022（3f46f42）/outpatient 8 复用 OP-1019 零新增码（725f18e）/
+  system 13→SYS-1031（0d47ec4）/ward 6→WD-1007/1008+IOT 手工入口守卫迁移（Jackson
+  探针实证 record 构造器异常 errorCode 无法出网）（9b0dda4）；B 类普遍 0（既有守卫
+  已覆盖）、fromCode 多无生产调用点=契约级 500→400 预留。
+- **第二波五模块**：nursing 9+inpatient 8 全 C 类留痕（两模块 fromCode 本为「null+
+  调用方判空」形态无转码面，22a8949）；patient A 类 1 点 PAT-1025+D-21 断言迁移两测
+  （cccea1f）；integration 9+common 11 全 C 类留痕（common 共享底座无业务错误码
+  体系全保留，36031d4）。
+- **验证**：11 模块局部门禁全绿（iot 560/billing 293/pharmacy 169/outpatient 323/
+  system 163/ward 85/patient 242/inpatient 195/nursing 211/integration 83）+各模块
+  spotless 过；对外行为变化（各新码点 500→400、ward 守卫次序提前）入 N5 行为变化
+  清单汇总。
+
+## 2026-09-29 · 批次 C 宪法 C3/C1 轨总收口（EX-14~18+20：分层下沉/异常可观测/审计全量/for 头形态，五路并行+专项）
+
+- **根因**：BE-C3-03/04/06/07/10/12（分层/审计/异常口径——「自述边界/契约留痕不构成
+  背书」按总裁决收拢）+BE-C4-02~12（总裁决④用户显式重开 for 头形态收拢）。
+- **分层下沉**：EX-14 patient PrivacyController 两链路（SEC-01 门禁折入
+  PrivacyMaskServiceImpl.updateRule 既有用例方法防无门禁写路径回归、分页收敛下沉
+  PrivacyServiceImpl 参数对象法，8fb82a0）；EX-15 iot 兜底入库鉴权+消息组装下沉新建
+  IFallbackIngestService（app IotConfig @Import 装配行 3 行最小跨模块触碰，aca3a69）。
+- **异常可观测**：EX-16 评估告警 catch 事实修正（fa87a33 起已有 error 非静默）——
+  增强既有唯一日志补设备标识/旁路语义/异常类名（采样常量防刷屏，不降级 error）；
+  EX-17 CommandLogVO 空 catch 补 @Slf4j+参数化 warn（契约不变 null 出网）（同提交
+  fea8ec8）。
+- **审计全量口径**：EX-18 四写端点（book/take/register/feeUpload）补
+  @AuditLog(WRITE)（待裁决 #8 转正；portal 豁免维持；依赖可达无 BUG-24 反应环，
+  ef1f366）。
+- **EX-20 for 头形态收拢（11 处=BE-C4-02~12 全量，含实扫补全 2 处）**：冒号右侧
+  查询/IO 内嵌提取循环前变量——纯形态重构（for 头仅求值一次，零行为零性能变化）；
+  修宪候选地位不变仍呈报 N8；第 12 处 WardMetaServiceImpl:574（本地私有方法间接
+  解析）形态间接主控裁定不扩，N8 复核。
+- **验证**：patient 242（+2 门禁用例等强度迁移）/iot 532（+8 fallback 交付）/
+  billing 292/outpatient 295/nursing 211 全绿+四模块 spotless 过；fuyun-app
+  test-compile 13 模块 SUCCESS。附：EX-03 重命名 fuyun-app 两 IT 跨模块引用遗漏
+  由本轮并行验证暴露并即修（9255c37）。
+
+## 2026-09-29 · 批次 B 持久层组总收口（EX-08~13，BE-C2 半配对/手构 wrapper/无上界查询，按模块六提交）
+
+- **根因**：BE-C2 待裁决 #5/#6/#7 转正（宪法 A.4.3-20 半配对十七对全部判 CRUD 收拢、
+  iot 三服务窄职责不采信、Wrappers 直构自述不采信）+BE-C2-13/14/16；A.4.3-13 链式纪律
+  与 A.4.3-14 分页纪律。
+- **收拢口径（本批确立）**：以全仓既有先例（ISettlementService 持状态机仍以主表实体
+  收拢）为准——「跨表编排/状态 CAS 为自有方法、IService 面仅对主表 CRUD」不构成聚合根
+  排除条件；接口收拢处 javadoc 一律补护栏段「IService 通用写面不承载状态语义，禁经
+  通用写面绕行」。十七对全闭环：nursing 8（e1bdd59）/pharmacy 4（含主控裁定收拢的
+  Dispense/Prescription 两对）/iot 3+EX-09 三服务补全配对/inpatient 2（床位 CAS 高并发
+  域，cas* 权威入口零触碰）。
+- **链式化（EX-10/11/12）**：inpatient 三处+integration 三实现四处+pharmacy 八处成交
+  （字节码级核验 ChainQuery 终态与 mapper 直调等价、CAS 谓词逐字等价）；跨表/副表查询
+  合法保留手构；pharmacy buildSearchWrapper 一处因测试断言锚定 LambdaQueryWrapper
+  强转属「断言必改」情形按 D-21 出口留专项（方法 javadoc 留痕，N8 呈报）。
+- **EX-13 防御收拢**：计价规则/告警规则两配置清单加 LIMIT 200 硬顶+截断 warn（
+  QualityServiceImpl:82 先例同款）；正常配置量行为不变，超限截断为新防御语义；配套
+  截断用例两例护航 JaCoCo 核心包 LINE=1.00（mock 恰 200 行驱动 warn 分支，先例同构）。
+- **验证**：nursing 211/iot 524（+1 截断用例）/pharmacy 169（+2 配对纪律用例）/
+  inpatient 195（+2 配对纪律用例）/integration 83/billing 292（+1）全绿；各模块
+  spotless 通过；测试改动全部为 mock 面机械调整（entityClass 直设/类型 matcher 锁定）
+  与新增用例，既有断言零修改。
+
+## 2026-09-29 · 机械组 EX-04 全量收口：全仓全限定类名声明改 import+简名（BE-C3-11，纯机械零行为变化，按模块四提交）
+
+- **根因（BE-C3-11 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：IDispenseService:
+  :21 等 14 处全限定类名声明——backend 宪法 A.1 节第 13 条「禁止全限定类名声明」点名、
+  Spotless 不覆盖，消歧理由不成立。宪法收拢总裁决下按条款全量实扫收口（登记 14 处→
+  实扫 **44 处/28 文件**：首批 17+追加深包与 com.fuyun 20+实扫补 3+package-info 收尾
+  4——含预扫正则盲区 java.util.function/stream 深包与 com.baomidou Wrappers）。
+- **修复（src/main 范围，test 不扩；同名冲突消歧例外零适用）**：①iot 10 文件（ZoneOffset
+  /RoundingMode/Map.of/Consumer/Collectors.toSet/DeviceStatus/IotAlarmEntity 等枚举实体
+  /Wrappers.lambdaQuery/api package-info NamedInterface）；②patient 7 文件（LinkedHashMap
+  L1 缓存声明/Map.Entry 覆写签名/Arrays.stream/Collectors.joining/PatientConverter/
+  CardAccountLedger/AllergyChecker/PatientMatchCheckVO extends 尾项）；③pharmacy 4 文件
+  （List 签名 5 处含 PickLine/OccupancyVO 双限定/DispenseReturnRequest/DispenseVO/
+  DrugBatch/SettlementQueryPort/api package-info）；④跨模块收尾 5 文件（billing/nursing/
+  outpatient 三 api package-info NamedInterface 同款统一——全仓 8 处 package-info 形态
+  归一；common RoleContextHolder/system AuthTokenInterceptor 注释旧类名 PrivacyMaskService
+  →IPrivacyMaskService 同步，EX-03 配套）。Spotless 连带的链式调用换行重排为必要配套。
+- **验证**：iot 523/patient 240/pharmacy 167 用例全绿（=基线）+三模块 spotless 通过；
+  billing/nursing/outpatient 编译+spotless 通过；common/system spotless 通过；三模块
+  src/main FQN 复扫零残留。
+
+## 2026-09-29 · 机械组 EX-06：workstation 零消费 vitalBoard API 移除（FE-Q1-14，死代码零容忍）
+
+- **根因（FE-Q1-14，2026-09-28 全仓性能与代码质量优化清单）**：workstation api/ward.ts
+  :188-195 vitalBoard 资源组 API 零消费——全局 §四死代码零容忍。
+- **修复（纯删除 10 行）**：引用核验零消费（web/ 全工作区 grep `vitalBoard|VitalBoardVO`
+  仅命中 ward.ts 自身与生成物 api.d.ts 契约声明——生成物禁改、契约存在不构成消费）；
+  删除 vitalBoard 资源组函数+VitalBoardVO 类型别名（仅 ward.ts 内部消费）+头部注释
+  「+ 体征看板（病区快照）」条目同步。nursing 域 vitalSigns 为另一资源不涉。
+- **验证**：web 根 `pnpm lint`（--max-warnings=0）通过+`pnpm --filter @fuyun/workstation
+  type-check` 通过+`test` 42 文件 217 用例全过（=基线）+改动文件 prettier --check 通过；
+  diff 纯删除无引用改写。
+
+## 2026-09-29 · 机械组 EX-05：fuyun-app 模块边界测试裸 System.out 改 SLF4J（BE-C3-13，输出通道等效替换）
+
+- **根因（BE-C3-13 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：
+  ModulithBoundaryTest:26 测试内裸 System.out——backend 宪法 A.1 节第 11 条「禁止裸
+  System.out，统一 SLF4J」无测试豁免条款。
+- **修复**：实扫全文件仅 1 处（:26）；补测试类 logger（标准 SLF4J 声明，项目测试类无
+  自身 logger 先例）；`System.out.println(modules)` → `log.info("{}", modules)` 等效
+  输出（模块布局内容不丢失）；关联注释「控制台输出」→「日志输出」同步措辞。断言零
+  改动（补偿防线与 modules.verify() 原样保留），测试行为零变化。
+- **验证**：`mvn -B -ntp -pl fuyun-app -am -Dtest=ModulithBoundaryTest test` 全绿
+  （1 用例；补 -Dsurefire.failIfNoSpecifiedTests=false 规避上游模块无匹配测试的参数
+  语义差异）+ `mvn -B -ntp -pl fuyun-app spotless:check` 通过（59 文件 clean）；diff
+  +7/-2（2 import+2 行 logger+1 处替换，-2 为原 System.out 语句与注释行）。
+
+## 2026-09-29 · 机械组 EX-02（C 路 b）：fuyun-iot 遥测推送生命周期测试隐式断言显式化（BE-A4-15，只补不改）
+
+- **根因（BE-A4-15 评分 50，2026-09-28 全仓高风险问题清单低置信节）**：
+  TelemetryPushServiceImplLifecycleTest:107-119 隐式断言（不抛异常即通过）与
+  @DisplayName「兜底排空失败吞错：发送异常捕获留痕不上抛（不打断调度周期）」声称不符。
+- **修复（11 行纯新增，既有断言零改动——D-21 红线）**：flushDueWindowsSwallowsSendFailures
+  补两组显式断言锚定 DisplayName 声称：①verify convertAndSend 命中 doThrow 桩且执行流
+  越过吞错点=「捕获不上抛」；②二次 flushDueWindowsQuietly 后 times(1) 恒定=「不打断
+  调度周期、失败帧不补推」。「留痕」维度（log.error）未断言——测试类无日志捕获设施，
+  引入属过度设计，锚定两个可观测语义。
+- **验证**：`mvn -B -ntp -pl fuyun-iot -am test` 全绿（523 用例=基线，用例数不变）+
+  `spotless:check` 通过；git diff 11 insertions/0 deletions/0 modifications。
+
+## 2026-09-29 · 机械组 EX-02（C 路 a）：fuyun-system 审计写库补 info 日志（BE-A4-12，日志新增零逻辑变化）
+
+- **根因（BE-A4-12 评分 55，2026-09-28 全仓高风险问题清单低置信节）**：AuditLogServiceImpl
+  :37-51 审计写库无 info——原「审计表即日志载体」豁免申报按宪法收拢总裁决不采信（全局
+  §二「数据库写操作必须 info」显式条款可锚定）。
+- **修复**：append 落库成功后补一行中文 info（actionType/operatorId/resource/bizNo/
+  result/traceId 六摘要字段）；**敏感红线**：detail 原文与 failReason 不入日志（detail
+  可能残留身份证/手机号脱敏残留，行级注释标明）；类补 Lombok @Slf4j。**必要注释修正
+  （1 行）**：类 javadoc 原「本类不落日志」条款与新日志直接矛盾，保留即成失实注释（违
+  全局 §一），改写为准确口径（成功落库本类 info 摘要；失败告警由审计切面 error 统一
+  承担）。
+- **验证**：`mvn -B -ntp -pl fuyun-system -am test` 全绿（161 用例=基线）+
+  `spotless:check` 通过；代码既有行零改动，新增 @Slf4j/import/日志块+1 行 javadoc 修正。
+
+## 2026-09-29 · 机械组 EX-03（B 路 a）：fuyun-patient 五服务接口 I 前缀重命名（BE-C2-10，纯命名层零行为变化）
+
+- **根因（BE-C2-10 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：patient 五个
+  服务接口无 I 前缀（backend 宪法 A.4.3-20 点名，纯命名层机械重命名无外部契约）。
+- **修复**：PatientMatchingService/PatientRegistrationService/PrivacyMaskService/
+  PrivacyService/VisitCardService → 各加 I 前缀（文件重命名+声明/import/字段/构造参数/
+  javadoc/@link 词边界机械替换，XxxServiceImpl 零误伤）；引用面 main 11 文件（3 controller+
+  7 impl+1 vo）+test 9 文件，旧名全模块 grep 零残留；spotless 连带的 import 字母序重排
+  为重命名必要配套。test 九文件断言零改动。**顺带（EX-04 双 ID 标注）**：重命名面文件
+  PossibleDuplicateServiceImpl 内 2 处全限定类名（:198 java.util.stream.Collectors、
+  :220 java.util.Arrays）一并改 import+简名，避免同文件二次触碰。
+- **跨模块注释残留说明**：fuyun-common RoleContextHolder:10 与 fuyun-system
+  AuthTokenInterceptor:77 注释中提及旧名「PrivacyMaskService」字样——纯注释非代码引用，
+  由 EX-04 追加收口任务同步（见后续条目）。
+- **验证**：`mvn -B -ntp -pl fuyun-patient -am test` 全绿（240 用例=基线，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-patient spotless:check` 通过；diff 核验全部改动行
+  含接口名替换/import 重排，无逻辑行变化。
+
+## 2026-09-29 · 机械组 EX-02（B 路 b）：fuyun-patient 预留依赖 TODO 补版本计划格式（BE-A4-14，零功能影响）
+
+- **根因（BE-A4-14 评分 65，2026-09-28 全仓高风险问题清单低置信节）**：
+  PatientIdentifierServiceImpl:38 预留依赖 TODO 无「计划于 X 版本引入」版本计划——全局
+  规范 §四唯一例外格式要求 `TODO(<feature>): <扩展说明，计划于 X 版本引入>`。
+- **修复（仅注释追加）**：`// TODO(card-ops): 患者主索引服务依赖，供 Task 10 卡操作
+  （挂失/补卡/解绑）解析收敛视图复用` 追加「，计划于 P2 引入」。P2 选择依据：①原暗示
+  阶段 P1 已于 2026-09-25 终验收尾且卡操作实际实现未消费此预留依赖（依赖悬空不可再写
+  P1）；②P2 住院线 M04 入院登记/M05 PDA 是卡介质解析收敛的最近合理消费窗口。
+- **验证**：`mvn -B -ntp -pl fuyun-patient -am test` 全绿（240 用例=基线，reactor 全
+  SUCCESS）+ `spotless:check` 通过；diff 仅 1 行注释追加。
+
+## 2026-09-29 · 机械组 EX-03/EX-02（A 路）：fuyun-inpatient 十服务接口 I 前缀重命名+占用流水开账写库补日志（BE-C2-10/BE-A4-13，纯命名层+日志新增）
+
+- **根因（BE-C2-10 评分 75 / BE-A4-13 评分 70，2026-09-28 全仓高风险问题清单低置信节）**：
+  inpatient 十个服务接口无 I 前缀（backend 宪法 A.4.3-20 点名，纯命名层机械重命名无外部
+  契约）；BedServiceImpl:378 锚点方法体含数据库写操作而方法内零日志（占用流水开账
+  insert 无审计锚点）。
+- **修复**：①十接口重命名——AdmissionService/BedService/ConsultationService/
+  DischargeService/MedicalOrderService/OrderAuditService/OrderPlanService/
+  OrderStateMachineService/OrderTransferService/TransferService → 各加 I 前缀（文件重命名+
+  声明/引用/javadoc/@link 全量机械替换，词边界无误伤）；引用面 main 45 文件+test 10 文件，
+  旧名全模块 grep 零残留（迁移 SQL 注释 V902:5/V904:4/39/V905:6 四处提及旧类名按
+  A.4.1-3 迁移禁改红线冻结——Flyway checksum 保护）；test 十文件纯重命名引用替换、断言
+  零改动。②EX-02 日志——BedServiceImpl 实扫全文件 9 个写语句，唯一「方法体含写且方法内
+  零日志」为 openAssign 的 assignMapper.insert（占用流水开账，原 :390；报告锚点 :378 即
+  该方法声明）；补一行 info（床位号/就诊 ID/占用类型/FREE→OCCUPIED 状态迁移/操作人）。
+  **口径差异说明**：报告「等 3 处」实扫仅 1 处成立——其余 8 个写语句所在方法均已有业务
+  完成日志，疑将 assign/occupyForAdmission 等无直接写语句的委托入口误计，给其补日志将与
+  同路径主方法日志逐笔重复，按精准修改不扩。
+- **验证**：`mvn -B -ntp -pl fuyun-inpatient -am test` 全绿（193 用例=基线，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-inpatient spotless:check` 通过（159 文件 clean）；
+  44/45 改动文件与「HEAD+机械替换」零差异，唯 BedServiceImpl 额外差异恰为 1 条日志。
+
+## 2026-09-29 · 注释补齐环 EX-01（billing 组，第 6/6 b 路）：fuyun-billing 计价方法级与退费资金口径行注释补齐（BE-A4-06 计价侧+BE-A4-08，零行为变化）
+
+- **根因（BE-A4-06/08 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：计价语义
+  公开方法无方法级 Javadoc（BE-A4-06 组量约 10 跨门诊/计价，本组收口计价侧）；退费
+  RefundServiceImpl:511 等 4 处写语句无行级注释（退费资金口径行无锚点）——报告行号已因
+  OPT-05 退费三级级联/OPT-12 累计已退投影/OPT-13 押金投影三次改造失准，按「退费资金
+  口径写语句」语义实扫定位。
+- **补齐（纯注释，零代码行变化）**：方法级 1 方法+行级 4 处 / 2 文件——
+  PrescriptionFeePortImpl.cancelPendingBySourceRef（按来源单据号作废处方触发在途
+  PENDING 费用行组：三段定位谓词+逐行复用引擎 cancel 的 PENDING→CANCELLED+REQUIRED
+  传播加入 M06 调用方事务，全模块实扫唯一方法级缺口——计价链路 PricingEngine/
+  ChargePrice/ChargeItem/PricingRule 服务+接口+Controller+监听器已经 OPT-04 等改造补齐）
+  + RefundServiceImpl 行级 4（apply 逐行算额累加禁前端传额红线 1、lineAmounts 供负向
+  台账逐行落 refund_amount；approve 终批状态落库 PENDING_APPROVAL/
+  PENDING_SECOND_APPROVAL→APPROVED 资金放行语义、CAS 已原子落终批人全行回写保事件载荷
+  一致；execute 卡台账跨模块 M02 资金写每卡单次全额贷记与写入侧同卡多行求和出账口径
+  对称、回填流水 id 作资金溯源锚；execute 退费单终态 APPROVED→EXECUTED 事务首步 CAS
+  抢锚全行回写补 payment_refund_ref 流水引用）。**多退**：save+saveBatch 块注释、
+  casEscalateFirstApproval、casFinal/casReject/casMarkExecuted 三支 CAS、费用行判态块、
+  结算单 REFUNDED 落库行等已有行级锚点未动；Mapper 接口经人工核验均有完整 Javadoc。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿（fuyun-billing 291 用例，
+  reactor 六模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-billing spotless:check` 通过
+  （206 文件 clean）；`git diff` 复核 27 行全为注释新增、零删除、零代码行/签名/import
+  变化。**EX-01 六组全收口（iot/ward/pharmacy/system/integration/outpatient+billing）**。
+
+## 2026-09-29 · 注释补齐环 EX-01（outpatient 组，第 6/6 a 路）：fuyun-outpatient 门诊排班方法级与预约/分诊关键行注释补齐（BE-A4-06 门诊侧+BE-A4-09/10，零行为变化）
+
+- **根因（BE-A4-06/09/10 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：门诊
+  排班公开方法无方法级 Javadoc（ScheduleServiceImpl:103 锚点，组量约 10 跨门诊/计价，
+  本组收口门诊侧）；预约挂号 AppointmentServiceImpl:417 等 4 处缓存读写与 4 处数据库写
+  缺行级注释（行号基于 OPT 批查化改造前快照，按语义实扫定位）；实扫另得分诊链路
+  TriageServiceImpl 6 处库写+ScheduleServiceImpl 模板 insert 1 处缺行级，属 BE-A4-10
+  「数据库写行级缺失」同类（N1 统计 45 处写操作行缺注范围），经主控裁量按宪法收拢
+  总裁决一并补齐。
+- **补齐（纯注释，零代码行变化）**：方法级 8 方法+行级 16 处 / 3 文件——
+  ScheduleServiceImpl 8（saveTemplate 登记 ACTIVE/号段倒挂 OP-1019、generate T+N 放号
+  week_pattern 展开两段幂等、stop/resume CAS 状态迁移+整池联动+AFTER_COMMIT 事件面、
+  availablePools 余量谓词、extraQuota 加号 CAS+池键 INCRBY 快路径）+ AppointmentServiceImpl
+  行级 9（BE-A4-09 缓存 5：当日流水键 INCR 原子计数/首签 48h TTL 禁无过期键/预约失败
+  Lua 原子回补越界封顶/回池余量同步/支付占位键删除；BE-A4-10 库写 4：取号 visit 落库
+  初始 REGISTERED/当日挂号 RESERVED→TAKEN CAS+visit 同事务落库/池行条件回池 version
+  防双回补）+ TriageServiceImpl 行级 6（报到回写仅同值列/建票初始 WAITING/分级快照仅
+  triage_level 列不落状态机列 BUG-07 纪律/RE_TRIAGE 票面指派/调级分值不改号 Spec/跨队列
+  转接新队建票唯一键区分）+ ScheduleServiceImpl 模板 insert 行级 1。**多退**：7 个 MQ
+  监听器 onXxx 人工核实在 @RabbitListener 上方已有 Javadoc（扫描跨行注解误报）；
+  take/releaseCredit 邻近写语句已有语义覆盖行级注释未动；fuyun-billing 计价侧归同组
+  b 路另行提交。
+- **验证**：`mvn -B -ntp -pl fuyun-outpatient -am test` 全绿（fuyun-outpatient 295
+  用例，reactor 八模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-outpatient spotless:check`
+  通过（154 文件 clean）；`git diff` 复核 84 行全为注释新增、零删除、零代码行/签名/
+  import 变化。
+
+## 2026-09-29 · 注释补齐环 EX-01（integration 组，第 5/6）：fuyun-integration 消费幂等与事件基础设施公开方法 Javadoc 补齐（BE-A4-02 本体补位，零行为变化）
+
+- **根因（BE-A4-02 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：全仓消费幂等
+  基础设施 true/false 语义缺方法级说明——本体 MessageIdempotencyServiceImpl 位于
+  fuyun-integration（EX-01 原登记模块列表漏列，本组补位；iot 侧灶位已随第 1/6 组收口），
+  锚点 :71 等，组量约 19。
+- **补齐（纯注释，零代码行变化）**：19 方法 / 7 文件（均 service/impl）——
+  MessageIdempotencyServiceImpl 3（tryAcquire 消费幂等前置判定：**true/false 语义
+  单独成段写实底**——true=放行执行业务（NX 抢占首次/前置键残留台账无 PROCESSED 的
+  上次中断/仅 FAILED 行的有界重投/Redis 故障降级四来源）、false=确认重复投递（台账已有
+  PROCESSED 行）调用方 return 即 AUTO 确认；幂等键构成含 consumerModule 要素隔离同事件
+  多模块消费、同帧并发业务可能重复执行由 recordProcessed 唯一索引兜底的 at-least-once
+  边界；recordProcessed PROCESSED 事实登记与 DuplicateKeyException 分流；settleFailure
+  释放前置键+FAILED 留痕、异常 addSuppressed 挂回不改变控制流）+ QueueGovernorImpl 2
+  （消费者/延迟队列声明，先登记后订阅阻断启动）+ EventRegistryServiceImpl 4（幂等登记
+  不覆盖冻结契约、清单 CAS 自旋 3 次上界、isRegistered true 含 DEPRECATED 已废止须另判
+  状态）+ DeadLetterServiceImpl 4（replay PENDING→REPLAYED 状态机 CAS 抢先/超限/不可
+  路由/失败回退 INT-1002~1005、close 终态敏感备注只记长度）+ 查询面 3（死信列表/消费
+  台账/发布台账只读分页，零写语义）+ MdmSubscriptionServiceImpl 4（(topic,subscriber)
+  幂等、逻辑删保对账、空清单≠null）。**多退**：5 控制器/5 服务接口/2 监听器入口/
+  MessagingGovernance/config/Converter/TypeHandler 实扫均已合规；MessageIdempotencyService
+  接口本体在 fuyun-common 且 Javadoc 已完整覆盖 true/false 语义（D-7 段落），越界未动；
+  iot 模块零触碰。
+- **验证**：`mvn -B -ntp -pl fuyun-integration -am test` 全绿（fuyun-integration 83
+  用例，reactor 三模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-integration spotless:check`
+  通过（72 文件 clean）；`git diff` 复核 241 行全为 Javadoc 新增、零删除、零代码行/
+  签名/import 变化。
+
+## 2026-09-29 · 注释补齐环 EX-01（system 组，第 4/6）：fuyun-system 认证域与字典域公开方法 Javadoc 补齐（BE-A4-05，零行为变化）
+
+- **根因（BE-A4-05 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：认证域
+  （AuthServiceImpl:92 锚点）方法体编号行注释较完整，公开方法缺方法级 Javadoc；实扫
+  全模块缺方法级 Javadoc 公开方法恰 13 个（=报告组量）：认证域 7+字典域 6。
+- **补齐（纯注释，零代码行变化）**：13 方法 / 7 文件——AuthServiceImpl 3（login：
+  账号加载→锁定/停用校验→bcrypt 比对→状态机复位→会话组装→双令牌签发，SYS-1001/1002/
+  1006 与防枚举口径；refresh：同 sid 换发 refresh 值不轮换 SYS-1005；logout：按 sid
+  删会话键双令牌同时失效 SYS-1003/1004）+ UserServiceImpl 3（findByLoginName 认证列
+  精确投影、逻辑删/不存在同归 null；recordLoginFailure 计数累加达阈置锁定含并发丢计数
+  边界；recordLoginSuccess 计数/锁定/最近登录三复位）+ RoleServiceImpl 1
+  （findRoleCodesByUserId 两步单表查询仅 ACTIVE）+ 字典域 6（DictItemServiceImpl.
+  addItem 仅 DRAFT 版本可维护、uk 兜底并发；DictQueryServiceImpl.readPublished 无
+  服务端缓存+no-cache 协商每次回源写实；DictTypeServiceImpl.createType 前置校验已删行
+  不占用+uk 并发兜底、getByTypeCode 两列投影禁当完整实体用；DictVersionServiceImpl.
+  createVersion 版本号同类型自增 uk 兜底、publish DRAFT→PUBLISHED 条件更新防并发双
+  发布+AFTER_COMMIT 广播下游缓存联动语义）。**多退**：控制器/服务接口/
+  TokenServiceImpl/AuthTokenInterceptor/Practice 系列等实扫均已合规未动。
+- **验证**：`mvn -B -ntp -pl fuyun-system -am test` 全绿（fuyun-system 161 用例，
+  reactor 四模块全 SUCCESS）+ `mvn -B -ntp -pl fuyun-system spotless:check` 通过；
+  `git diff` 复核 157 行全为 Javadoc 新增、零删除、零代码行/签名/import 变化。
+
+## 2026-09-29 · 注释补齐环 EX-01（pharmacy 组，第 3/6）：fuyun-pharmacy 药事核心链路公开方法 Javadoc 补齐（BE-A4-04，零行为变化）
+
+- **根因（BE-A4-04 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：药事核心链路
+  （DispenseServiceImpl:207 等，组量 17——报告行号基于 OPT-07/08/09 批查化改造前快照，
+  本次按语义实扫定位）公开方法行级注释完整而方法级 Javadoc 缺——参数可空性/来源与
+  PH-xxxx 异常码口径无 impl 侧契约锚点。
+- **补齐（纯注释，零代码行变化）**：实扫 fuyun-pharmacy src/main/java 公开方法，按
+  BE-A4-04 语义范围补齐 20 方法 / 4 文件——DispenseServiceImpl 10（缴费放行/费用回执/
+  调剂三段 pick·verify·issue/退药受理两时点/退费终态收敛/未发药作废/占用查询/工作台
+  回显：状态机前后态、PH-1008~1021 异常口径与建议处理、参数可空性与来源）+
+  PrescriptionServiceImpl 3（create/cancel/list：执业授权纵深两段 PH-1017、TOCTOU 费用
+  联动裁决 7、四条件分页口径）+ DrugServiceImpl 5（建档/变更/详情/医保对照/检索：uk
+  双防线、changed 广播 changeType 语义、默认启用面）+ BatchSelectServiceImpl 1（FEFO
+  选批单批足量约束、无批次=null 由调用方 PH-1010 定性）。**多退**：接口层（IDispenseService
+  等 5 接口）、controller 层 4、MedicationReviewServiceImpl（{@inheritDoc}+自有 Javadoc）、
+  PrescriptionCancelPortImpl/PrescriptionOpenPortImpl 实扫方法级 Javadoc 均已合规（含
+  参数/返回值/PH 码粒度）；internal 8 监听器入口方法（onXxx(Message)）有简短方法级
+  Javadoc 且业务语义在包级 handleXxx 完整承载，超出 BE-A4-04 点名语义不动，条目外
+  文件零改动。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（fuyun-pharmacy 167 用例，
+  reactor 全 SUCCESS）+ `mvn -B -ntp -pl fuyun-pharmacy spotless:check` 通过；
+  `git diff` 复核 280 行全为 Javadoc 新增、零删除、零代码行/签名/import 变化。
+
+## 2026-09-29 · 注释补齐环 EX-01（ward 组，第 2/6）：fuyun-ward 病区呼叫/冷链/输液板状态机迁移公开方法 Javadoc 补齐（BE-A4-03，零行为变化）
+
+- **根因（BE-A4-03 评分 75，2026-09-28 全仓高风险问题清单低置信节）**：病房呼叫/冷链/
+  输注板状态机迁移方法（WardCallServiceImpl:95 等，组量 18）缺粒度契约——公开方法无
+  方法级 Javadoc，状态迁移前后态与异常码（WD-xxxx/HTTP 口径）无契约锚点。
+- **补齐（纯注释，零代码行变化）**：实扫 fuyun-ward src/main/java 公开方法，按 BE-A4-03
+  语义范围补齐 18 方法 / 4 文件——WardCallServiceImpl 8（create/answer/progress/complete/
+  transfer/route/cancel/get：六态迁移表前后态、CAS 零行 WD-1002 并发口径、route 事务回滚
+  语义）+ ColdChainServiceImpl 7（档案 CRUD/记录登记：WD-1004/WD-1005 触发条件、
+  ALARM_HANDLE 同事务事件发布、overdue 惰性判定基线）+ InfusionBoardServiceImpl 2（看板
+  聚合/历史追溯：三档映射展示口径、曲线降级边界）+ VitalSignBoardServiceImpl 1（SCAN
+  禁 KEYS 红线、deviceId 维度过滤缺位申报）。**多退**：全模块其余公开面（4 控制器/4 服务
+  接口/2 mapper/WardSeqGate/4 消费监听器/WardMessagingConfig 等）实扫方法级 Javadoc 均已
+  合规（含参数/返回值/异常粒度），无需补齐，条目外文件零改动。
+- **验证**：`mvn -B -ntp -pl fuyun-ward -am test` 全绿（fuyun-ward 71 用例，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-ward spotless:check` 通过；`git diff -U0` 复核 195 行
+  全为 Javadoc 新增、零删除、零代码行/签名/import 变化。
+
+## 2026-09-29 · 注释补齐环 EX-01（iot 组，第 1/6）：fuyun-iot 华为对接边界与 trivial 覆写公开方法 Javadoc 补齐（BE-A4-01/02/07，零行为变化）
+
+- **根因（BE-A4-01 评分 75 / BE-A4-07 评分 60，2026-09-28 全仓高风险问题清单低置信节）**：
+  fuyun-iot 华为对接边界（IotDeviceRegistry 双实现）与命名锚点（AlarmRuleServiceImpl:83）公开
+  方法行级注释在而方法级 Javadoc 缺；SmartLifecycle trivial 覆写（IotAmqpTelemetryConsumer:372
+  isAutoStartup 等）无覆写意图说明。BE-A4-02（消费幂等基础设施）iot 侧实扫为空——幂等消费
+  监听器（IotAlarmEventListener/IotFanoutListener）方法级 Javadoc 已合规，其基础设施本体
+  （MessageIdempotencyServiceImpl）在 fuyun-integration，归后续 EX 组。
+- **补齐（纯注释，零代码行变化）**：实扫 fuyun-iot src/main/java 公开方法，按三组语义范围
+  补齐 26 方法 / 6 文件——华为对接边界 HuaweiIotdaRegistry 8 + SimulatedRegistry 8（SDK
+  映射、secret 一次性透出红线、幂等语义）+ 命名锚点 AlarmRuleServiceImpl 5（抖动防护②、
+  回放状态机、LIMIT 硬顶）+ AMQP 消费循环 QueueWorker.run 1 + trivial 覆写 4
+  （isAutoStartup×3 / isRunning×1，一两句覆写意图）。**多退**：全模块实扫 88 处缺方法级
+  Javadoc，超出三组语义范围者（其余 service impl / config / handler 等约 62 处）与两处
+  匿名类 afterCommit 覆写（外围方法已文档化意图）本次不动，留待后续组。
+- **验证**：`mvn -B -ntp -pl fuyun-iot -am test` 全绿（fuyun-iot 523 用例，reactor 全
+  SUCCESS）+ `mvn -B -ntp -pl fuyun-iot spotless:check` 通过；`git diff -U0` 复核 185 行
+  全为注释新增、零删除、零代码行与 import 变化。
+
+## 2026-09-29 · 性能清单修复环 OPT-14：inpatient 日计划批任务在院就诊候选查询补 .select 精确投影（性能，行为保持）
+
+- **根因（OPT-14 / BE-C4-26 ↔ BE-C2-18 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80，A.4.3-14 投影子款点名）**：`OrderPlanServiceImpl.decomposeCandidates`（长期医嘱
+  日切批任务候选查询）全列取回全部 ADMITTED 在院就诊行（三级医院夜间千级宽行，含入院
+  诊断/医保/床位/护理级别等 25 列）仅 `stream().map(InpatientVisit::getId)` 组装候选医嘱
+  IN 集；宽行全量入内存徒增占用，逐夜必发。
+- **修复（行为保持，方案：补 .select 投影）**：`.select(InpatientVisit::getId)`（恰 1 列）；
+  谓词（status=ADMITTED）、候选口径（TRANSFERRED/EXECUTING × LONG × end_at 过滤）、生成
+  与写侧零变化；javadoc 与行级注释补投影口径句（行集不变仅列收敛，IN 集与全列取回完全
+  等价）。**方案裁量（.select 而非聚合/子查询下推）**：消费面为 id 键集（非聚合值），IN
+  集组装须在应用侧进行，`.select` 已完整承载——无可下推的聚合算式，键集语义等价，故以
+  最小改动收敛列面，不新增 XML SQL 面。
+- **测试（先红后绿）**：新增 3 个行为锚定——「在院就诊候选查询投影契约（恰 1 列 id+谓词
+  status=ADMITTED 零变化锚定）」改前红（getSqlSelect 为 null，NPE 断言失败）改后绿；
+  「批任务输出等价（两在院就诊 id 全量喂入候选 IN 集+候选谓词 visit_id/status 双值/
+  order_class=LONG 零变化锚定，各医嘱计划归属各自就诊 orderId@visitId 配对——丢任一就诊
+  行即失败）」与「零在院就诊边界（空集直过零事务零事件，不发起下游医嘱候选查询——投影
+  不改空集语义）」两用例改前改后均绿（行为锚定）。既有用例零改动（桩面 selectList(any())
+  对投影不敏感，业务断言零变化，无 D-21 桩更新）。
+- **验证**：`mvn -B -ntp -pl fuyun-inpatient -am test` 全绿（193 用例，OrderPlanServiceImplTest
+  24）+ `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-13：billing 押金欠费判定已确认费用聚合补 .select 精确投影（性能，行为保持）
+
+- **根因（OPT-13 / BE-C4-24，2026-09-28 全仓性能与代码质量优化清单，评分 80，
+  A.4.3-14 投影 + A.4.3-15 聚合子款点名）**：`DepositServiceImpl.deposit`（押金缴存路径）
+  的已确认未结算费用聚合查询全列取回该就诊全部 CONFIRMED 费用行（长疗程数百行宽行，
+  含费用项/数量/单价/来源单等列）仅 `mapToLong(FeeRecord::getAmount).sum()` 求和；
+  宽行全量入内存徒增占用，缴存路径每次执行命中。
+- **修复（行为保持，方案：补 .select 投影）**：`.select(FeeRecord::getAmount)`（恰 1 列）；
+  谓词（visit_id+status=CONFIRMED）、求和算式、欠费判定逻辑零变化；javadoc 与行级注释补
+  投影口径句（行集不变仅列收敛，空集空流求和天然 0，判定结果等价）。
+  **方案裁量（.select 而非 SUM 下推）**：求和语义用 .select 承载已完全等价——行集由谓词
+  决定、投影仅收敛列面，空集 `.stream().sum()` 天然 0；SUM 下推须为空集 NULL 加 coalesce
+  兜 0 且新增 XML 聚合 SQL 面，缴存路径单次调用非循环热路径无聚合下推收益，宽行内存浪费
+  是唯一问题，.select 以最小改动消除，故不新增 XML 聚合。
+- **测试（先红后绿）**：新增 3 个行为锚定——「聚合投影契约（恰 1 列 amount+谓词 visit_id/
+  status=CONFIRMED 零变化锚定）」改前红（getSqlSelect 为 null，NPE 断言失败）改后绿；
+  「多行求和欠费等价（两行 12000+11000=23000，回读 30000−23000<阈值转 ARREARS，漏加
+  任一行即 19000/18000 ≥ 阈值不切换、断言即失败）」与「零行边界判定等价（CONFIRMED 空 →
+  聚合 0，回读恰等于阈值不算欠费，ARREARS 回升 NORMAL）」两用例改前改后均绿（行为锚定）。
+  既有用例零改动（桩面 selectList(any()) 对投影不敏感，业务断言零变化，无 D-21 桩更新）。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿（291 用例，DepositServiceImplTest
+  13）+ `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-12：billing 结算维度累计已退两步查询补 .select 精确投影（性能，行为保持）
+
+- **根因（OPT-12 / BE-C4-23 ↔ BE-B1-10 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80，A.4.3-14 投影子款点名）**：`RefundServiceImpl.totalRefundedFen`（原路退回
+  execute 的结算终态判定）两步查询均全列取回仅用 1 列——第一步取回本结算单
+  APPROVED/EXECUTED 态退费单全行（金额/渠道等宽行字段）仅 map id，第二步取回集内全部
+  refund_fee_link 宽行仅取 refund_amount 求和；退费单/关联表宽行全量入内存徒增占用。
+- **修复（行为保持，方案：两步补 .select 投影）**：第一步 `.select(RefundRequest::getId)`
+  （恰 1 列）、第二步 `.select(RefundFeeLink::getRefundAmount)`（恰 1 列）；谓词、顺序、
+  空 id 集短路（isEmpty → 0 分）、求和算式零变化；javadoc 补投影口径句（本方法仅消费
+  该两列，宽行全列取回徒增内存占用）。「维持 id 集两步查询」为 javadoc 有意决策不动
+  （不合并 JOIN）。**方案裁量（.select 而非 SUM 下推）**：两步语义用 .select 承载已完全
+  等价——空 id 集短路是 Java 侧控制流，SUM 下推须折叠进 SQL（空集 SUM 为 NULL 须
+  coalesce 兜 0）且为非循环热路径新增 XML 聚合 SQL 面；本方法单次调用非循环热路径
+  （javadoc 自述），宽行内存浪费是唯一问题，.select 以最小改动消除，故不新增 XML 聚合。
+- **测试（先红后绿）**：新增 3 个行为锚定——「两步查询投影契约（第一步恰 1 列 id/
+  第二步恰 1 列 refund_amount+谓词零变化锚定）」改前红（getSqlSelect 为 null，NPE
+  断言失败）改后绿；「空集短路（第二步 link 查询零发出、聚合贡献 0 分留 SETTLED）」与
+  「多行求和等价（集内两 link 5000+3000=8000 ≥ 总额转 REFUNDED，漏加单行即失败）」
+  两用例改前改后均绿（行为锚定）。既有用例零改动（桩面 selectList(any()) 对投影不
+  敏感，业务断言零变化，无 D-21 桩更新）。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿（288 用例，RefundServiceImplTest
+  55）+ `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-11：patient 脱敏豁免判定批量面收敛查询 + 精确投影（性能，行为保持）
+
+- **根因（OPT-11 / BE-C4-21 + BE-C4-22 ↔ BE-B1-09 + BE-C2-15 归并组，四报并一，
+  2026-09-28 全仓性能与代码质量优化清单，评分 80，A.4.3-14 + A.4.3-17 点名）**：
+  `PrivacyServiceImpl.unmask`（明文查阅 sensitive 操作路径）循环逐字段调
+  `PrivacyMaskService.isExempt`，而 `PrivacyMaskServiceImpl.isExempt` 每次调用执行一次
+  无 WHERE 全表查询 `ruleMapper.selectList(null)`——unmask 请求数字段数 = 全表查询次数
+  （循环内单查放大），且 isExempt 仅消费 3 列（target_field/enabled/exempt_roles）却全列
+  取回（投影缺失）。规则表种子 5 行当前实害小，但 sensitive 路径每请求必放大。
+- **修复（行为保持，方案 a：接口增批量判定面）**：`PrivacyMaskService` 增
+  `exemptFields(roles, targetFields)` 批量豁免判定——内部规则单次装载（请求内内存复用）
+  + 逐字段判定纯内存，判定面查询数与请求字段数解耦（N 字段 N 查 → 恒 1 查）；装载查询
+  补 `.select` 精确投影仅取判定消费 3 列（A.4.3-14）；既有单字段 `isExempt` 保留（判定体
+  逐字下沉私有 `isExemptAgainst` 共享，其余调用方零扰动）并同样走投影装载。`unmask` ①段
+  豁免判定改用批量结果，exemptAll 聚合、firstUnexemptField 取值、诊疗关系第二道与异常
+  语义零变化（判定纯函数，批量=同一规则快照上逐字段单查的逐词等价）。选择方案 a 而非
+  unmask 端装载：A.4.3-21 要求豁免判定逻辑单点收口在脱敏引擎（禁复制判定逻辑），方案 b
+  必然把词匹配+角色交集逻辑复制进 PrivacyServiceImpl 或暴露实体级装载面，违反该约束。
+  **设计豁免消化**：类注释原「规则每次请求加载、禁提前缓存」口径更新为「每请求从库装载、
+  同请求内复用、禁跨请求缓存」——请求内单次装载不跨请求、管理面变更下轮请求即生效，
+  不违反原豁免意图；全量 @Cacheable（跨请求缓存）仍禁、须另行评审。applyAll/listRules
+  全列取回按清单结论保留（applyAll 完整字段消费、listRules 对外契约）。行为锚定测试
+  「四字段混合面批量判定恰一次查询+逐字段与单查口径等价（豁免/角色未命中/空豁免集/未登记
+  四形态）」与「投影契约（wrapper .select 仅 3 列，非消费列不入投影）」「unmask 恰一次批量
+  调用+逐字段单查零触达」先红后绿交付（红基线=委托版逐字段实现上恰一次断言失败，
+  4 字段 4 查被拦截，1 用例红 10 绿）。
+- **D-21 桩更新留痕**：既有用例桩面随实现机械迁移——PrivacyMaskServiceImplTest 的
+  `selectList(null)` 放宽为 `selectList(any())`（豁免判定改经投影 wrapper 查询）、
+  PrivacyServiceImplTest/PrivacyCareRelationGateTest 的 `isExempt(anyList(), anyString())`
+  换 `exemptFields(anyList(), anyCollection())`（thenAnswer 全字段统一豁免/空集 = 原
+  恒 true/false 语义的批量等价）；业务断言零改动；范围单点单次、与实现同 PR 原子交付。
+- **验证**：`mvn -B -ntp -pl fuyun-patient -am test` 全绿（240 用例，+3 新锚定）+
+  `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-10：outpatient 退费回执逐单号查询改清单键集一次 IN 批查（性能，行为保持）
+
+- **根因（OPT-10 / BE-C4-18 ↔ BE-B1-05 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80，A.4.3-14 点名）**：`ChargingServiceImpl.onRefundApproved`（refund.approved 退费
+  回执 MQ 消费业务体）@Transactional 内 `for (String orderNo : refs.orderRefs())` 逐单号
+  无条件 `clinicOrderMapper.selectOne` 定位本域申请单——热路径每单必查（与同文件 :136/:153
+  CAS 未命中条件分支重读性质不同，后者清单已认定豁免），N 单即 N 次单查，放大消费事务
+  持锁时长；orderRefs 键集前置已知。
+- **修复（行为保持）**：orderRefs 全集循环前一次 IN 批查 → `LinkedHashMap<orderNo,
+  ClinicOrder>` 按号映射（uk_order_no 保证每单号至多一行=原逐单 selectOne 语义；遇序保序
+  与原逐行处理序一致）；循环内取行换 Map.get，缺号映射缺位即原无命中幂等跳过分支（info
+  文案逐字保持）；空清单短路零查询（与原空循环零查询语义对齐）。命中后状态流转写侧、
+  逐单扇出、日志与幂等语义全部原形态零触碰；N 单 N 查 → 恒 1 查。行为锚定测试「多单号
+  清单（两命中+一无命中缺号）批查恰一次+键集契约=清单全集+逐单号 selectOne 零触达+混合面
+  输出等价（缺号幂等跳过不阻断同批，两命中单仍按清单序 CAS 与扇出）」先红后绿交付；既有
+  4 个退费用例桩面随实现由 selectOne 机械换至 selectList（业务断言零改动）。
+- **验证**：`mvn -B -ntp -pl fuyun-outpatient -am test` 全绿（295 用例，+1 新锚定）+
+  `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-09：pharmacy 退费终态确认双重 N+1 改两级键集 IN 批查（性能，行为保持）
+
+- **根因（OPT-09 / BE-C4-16 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80）**：`DispenseServiceImpl.confirmRefundTerminalByRx`（refund.approved 退费终态
+  确认 MQ 消费业务体）@Transactional 内 `for (String rxNo : rxNos)` 双重逐号查询——逐
+  rxNo `prescriptionMapper.selectOne` 查处方 + 命中 DISPENSED 再逐 rxNo `baseMapper.selectOne`
+  查活动发药单，退费多处方时 2N 次查询放大事务持锁时长（A.4.3-14 点名）。
+- **修复（行为保持）**：两级键集前置 IN 批查 + 原循环序单趟判定——①处方按清单 rxNos 一次
+  批查按号映射（uk_rx_no 保证每号至多一行，与原逐号 selectOne 同语义；脏差异缺号映射缺位
+  即原 null 分支）；②活动发药单按「第一级命中且 DISPENSED 的 rxNo 集」（原逐号查询的精确
+  谓词面——非 DISPENSED 分支与缺号不进键集）一次批查按号映射（排除 CANCELLED，
+  uk_dispense_rx_active 保证每号至多一行活动单=原逐号 selectOne 语义；缺号映射缺位即原无
+  活动单分支；空键集短路零查询）。循环内两处取行换 Map.get；状态判定分支、casStatus 终态
+  镜像、日志与幂等语义原形态零触碰；空清单兜底短路与原空循环零查询对齐。2N 查 → 恒 2 查。
+  行为锚定测试「五处方号混合面（两 DISPENSED 待镜像 FULL/PART+一 DISPENSED 无活动单+一
+  非 DISPENSED+一脏差异缺号）两级批查各恰一次+键集契约（一级=清单全集/二级=DISPENSED
+  命中集+排 CANCELLED）+逐号 selectOne 零触达+混合状态输出等价（镜像遇序、守卫行零迁移）」
+  先红后绿交付；既有 6 个终态确认用例桩面随实现由 selectOne 机械换至 selectList（业务断言
+  零改动，无读形态断言需现代化）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（167 用例，+1 新锚定）+
+  `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-08：pharmacy 缴费放行逐 rxNo 查询改清单键集一次 IN 批查（性能，行为保持）
+
+- **根因（OPT-08 / BE-C4-15 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 80）**：`DispenseServiceImpl.releaseByRxNos`（settlement.completed 缴费放行 MQ 消费
+  业务体）@Transactional 内 `for (String rxNo : rxNos)` 逐号 `prescriptionMapper.selectOne`
+  查处方——N 号即 N 次单查，MQ 消费路径放大事务持锁时长（A.4.3-14 点名）；清单脏差异场景下
+  （部分号缺行）仍全额付出往返。
+- **修复（行为保持）**：rxNos 全集循环前一次 IN 批查 → `LinkedHashMap<rxNo, Prescription>`
+  按号映射（uk_rx_no 保证每号至多一行，与原逐号 selectOne 同语义；遇序保序与原逐行处理序
+  一致）；循环内取行换 Map.get，缺号映射缺位即原 null 分支（warn 文案逐字保持，留痕不阻断
+  同批放行）。通道过滤、CAS 放行、CAS 0 行重读定性、createDispense 建单入队、日志与幂等
+  语义全部原形态零触碰；N 号 N 查 → 恒 1 查。行为锚定测试「多 rxNo 清单（两待放行+一脏差异
+  缺号）批查恰一次+键集契约=清单全集+逐号 selectOne 零触达+缺号 warn 不阻断同批（两待放行
+  号仍按清单序 CAS 与建单入队）+放行输出（CREATED/rxNo 序/saveBatch 两次）等价」先红后绿
+  交付；既有 5 个放行用例桩面随实现由 selectOne 机械换至 selectList（断言零改动），其中
+  「单据精确放行」用例的「selectOne 恰一次」读形态断言随批查契约现代化为「selectList 恰
+  一次」（D-21 裁量：单点单次、严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（166 用例，+1 新锚定）+
+  `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-07：pharmacy 退费逆向作废三级级联 N+1 改三级键集前置批查（性能，行为保持）
+
+- **根因（OPT-07 / BE-C4-17 ↔ BE-B1-02 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 85）**：`DispenseServiceImpl.voidUndispensedByRx`（order.cancelled 退费逆向消费业务体）
+  @Transactional 内三级逐行查询链——①逐 rxNo `prescriptionMapper.selectOne` 查处方、②逐处方
+  `baseMapper.selectList` 查活动发药单、③逐发药单 `dispenseItemMapper.selectList` 查 NORMAL
+  明细，N 处方即 N+N×M+N×M×K 查询，refund.approved/order.cancelled 消费同步窗口查询数随
+  处方×单×行放大、拉长事务持锁（A.4.3-14 点名）。
+- **修复（行为保持）**：三级键集前置 IN 批查 + 原循环序逐行判定单趟——①清单 rxNos 一次批查
+  处方按 rxNo 映射（uk_rx_no 保证每号至多一行，与原逐号 selectOne 同语义，脏差异缺号映射
+  缺位即原 null 分支）；②活动发药单按「全部命中处方 rxNo 集」批查按 rxNo 分组（排除
+  CANCELLED、组内 id 升序，与原逐处方单查谓词/序一致；键集含守卫将跳过行——守卫在批查后
+  逐行判定，跳过行不消费自身分组，只扩大读面不改写面）；③NORMAL 明细按「全部涉及发药单
+  id 集」批查按单分组（组内 id 升序同原逐单单查）。分组容器 LinkedHashMap 遇序保序；各级
+  空键集短路零查询。逐行判定趟内状态分支守卫、日志、ISSUED 脏数据显式暴露、写侧逐行 CAS
+  （处方 CAS 先行→释放批次锁→明细退场→发药单 CAS）与作废留痕日志全部原语义原形态；
+  N+N×M+N×M×K → 恒 3 查。**保留未批查化**：处方 CAS 0 行后的 `selectById` 重读定性
+  （条件分支单查，批查快照过期/清单重复号的收敛锚，ChargingServiceImpl:136/:153 同性质
+  豁免先例）。行为锚定测试「多处方多单多明细三级批查各恰一次+键集契约（清单全集/命中
+  处方集/涉及发药单集）+处方逐号 selectOne 旧路径零触达+逐行作废输出（CAS 序/明细退场/
+  锁释放/发药单作废/守卫跳过行零写）等价+混合批次 ISSUED 脏守卫 PH-1009 保持」先红后绿
+  交付；既有 11 个作废用例桩面随实现机械换至批查面，其中 2 个用例的「活动单零读取」读
+  形态断言随批查契约现代化为「键集批查恰一次+零写面断言保持」（D-21 裁量：单点单次、
+  严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（165 用例，+2 新锚定）+
+  `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-05：pharmacy 处方开立逐药品 N+1 改 drugIds 去重批查（性能，行为保持）
+
+- **根因（OPT-05 / BE-C4-14 ↔ BE-B1-03 归并组，2026-09-28 全仓性能与代码质量优化清单，
+  评分 85）**：`PrescriptionServiceImpl.create` 明细装配循环内逐行
+  `drugMapper.selectById(itemReq.drugId())` 点查后 `validateLine`——多药品处方（常见 3-10 行）
+  即 3-10 次单查，开方为医生工作站高频操作、全院并发时往返线性放大（A.4.3-14 直接命中）；
+  同方法写侧已 `Db.saveBatch` 而读侧逐行，形态不一致。
+- **修复（行为保持）**：循环前收集全部 `itemReq.drugId()` 去重 → `drugMapper.selectByIds`
+  一次批查（MP BaseMapper 自带；selectByIds 为 3.5.17 非过时形态——selectBatchIds 已标
+  deprecated，与 pharmacy 模块 MedicationReviewServiceImpl 既有批查口径一致）→ 按 id 建
+  Map，循环内改 Map 取行；批查缺行（Map 无键）取 null 行进 `validateLine`，与旧逐行点查
+  缺行同一分支——PH-1003（409）+ 文案「药品不存在或已停用：drugId=请求行 id」逐字等价，
+  行序不变、首个无效行报错语义保持，`validateLine` 本体零触碰；键集空集零查询（空明细属
+  契约外形态，HTTP 面 @NotEmpty 已拒，与旧空循环零药品查询语义对齐）。N 行明细 N 查 → 恒
+  1 查，同药多行（不同频次）去重批查天然共享装载。行为锚定测试「多药品处方批查恰一次 +
+  逐行 selectById 零触达 + 重复药品多行明细/事件计费行逐字段等价 + 缺行错误码/HTTP 态/
+  文案三重逐字等价」先红后绿交付；既有 8 个开方用例桩面随实现机械换至批查面（断言零
+  改动，D-21 裁量：单点单次、严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-pharmacy -am test` 全绿（163 用例）+ `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-04：billing 划价链预计价逐行 2N~3N 单查链改键集批查 + 逐行补偿校验（性能，行为保持）
+
+- **根因（OPT-04 / BE-C4-13，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：
+  `PricingEngineServiceImpl.quote` 逐行单查链——行内 `requireActiveByCode` 逐行项目查询、
+  组合项 `listComponents` 逐项构成、成员 `memberItem` 逐成员（getById + 按码生效守卫再两查）、
+  `quoteLine` 逐行 snapshot（价格版本 + 医保对照再两查），N 行单据预计价 2N~3N 查询链
+  （A.4.3-14 直接点名），划价/开单高频界面直连。
+- **修复（行为保持）**：新增批量取数面——`IChargeItemService.listByCodes`（itemCode 去重 IN
+  批查，含停用行供补偿校验区分缺行/停用）与 `listComponentsByComboItemIds`（构成 IN 批查按
+  组合分组、组内 id 升序定序）、`IInsuranceMappingService.effectiveMappings`（ACTIVE 对照 IN
+  批查）、`IChargePriceService.snapshots`（价格版本区间判定 IN 批查 + 逐项目 effective_from
+  DESC 首行收敛，与单查同口径）；quote 改「三跳键集预取（项目 → 构成/成员 → 快照，四类取数
+  各恰一次）+ 逐行补偿校验」：缺行 BILL-1001/404、停用 BILL-1003/409、组合未维护构成与无
+  生效价格 BILL-1008/409 均与逐行单查同码同文案同 HTTP 态且行序不变（首个无效行报错）；
+  金额算式、组合展开（数量=行数量×构成默认量）、合计与快照装配零变化，取价时刻收敛为单次
+  求值（同一单据同一瞬时定价，区间判定语义与单查一致）；N 行单据 2N~3N 查询链 → 恒 3 查
+  （无组合）/5 查（含组合），与行数解耦。单查面（requireActiveByCode/listComponents/
+  effectiveMapping/snapshot）与 generateFromSource 实收链及其测试零触碰。行为锚定测试
+  「多行单据四类批查各恰一次 + 逐行单查链零触达 + 金额逐字段等价 + 补偿校验错误语义等价」
+  先红后绿交付；既有 3 个 quote 用例桩面随实现机械换至批查面（断言零改动，D-21 裁量：
+  单点单次、严格度不降、原子同 PR、提交 body 留痕）。
+- **验证**：`mvn -B -ntp -pl fuyun-billing -am test` 全绿 + `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-03：nursing 交接班生成在途任务 N+1 改 visitIds 单次批查 + 惰性逾期批量 CAS（性能，行为保持）
+
+- **根因（OPT-03 / BE-C4-01，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：
+  `ShiftHandoverServiceImpl.generate` 步骤③外层遍历在区患者、内层逐患者调
+  `inFlightByVisit` 单查在途任务（每次 selectList 单查 + markOverdueLazily 逐行惰性逾期
+  CAS），病区满员 50 人即 50 查 + 潜在 50 写（A.4.3-14 直接点名），交接班生成路径。
+- **修复（行为保持）**：`INursingTaskService` 新增 `inFlightByVisits(Collection)` 批量面
+  ——visitIds 键集前置已知（在区患者视图先行汇总），一次 IN 批查 + 内存按 visitId 分组，
+  交接班生成改走批量（50 查 → 1 查，输出序不变：患者床位序 + 组内计划时间升序）；守卫
+  判定（在途 + 未标记 + 越阈值）命中的越阈值未标记行收敛为单条 `casMarkOverdueBatch`
+  批量 CAS（病区级最坏 50 写 → 1 写），per-row overdue_flag=false 谓词保持仅首次递增、
+  escalation_count 生命周期至多一次递增（overdue_flag 单向置位无复位路径）故守卫行回写
+  与库态恒一致——批量 CAS 与逐行 CAS 语义逐行等价；`inFlightByVisit` 单查面保留（Task 3
+  详情卡仍消费），list/inFlightByVisit 既有逐行路径与其既有测试零触碰；行为锚定测试
+  「多患者交接班生成恰一次批查」先红后绿交付。
+- **验证**：`mvn -B -ntp -pl fuyun-nursing -am test` 全绿（211/0）+ `spotless:check` 通过。
+
+## 2026-09-29 · 性能清单修复环 OPT-06：V1105 outpatient.clinic_order 处方引用行 CAS 谓词补 ext_ref 部分索引（性能，行为保持）
+
+- **根因（OPT-06，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：`ClinicOrderMapper`
+  casRxRefCharged / casCancelRxRef / casMirrorDispensed / casMirrorReturned 四支 CAS 均以
+  ext_ref + order_type='RX_REF' + deleted 谓词定位行（settlement.completed /
+  prescription.cancelled / dispense.completed / dispense.returned 四类事件消费），V203 既有
+  索引均不含 ext_ref，引用行定位只能对 clinic_order 全表顺序扫描，随门诊开单量增长线性劣化。
+- **修复（行为保持）**：新增增量迁移 V1105 建 `idx_clinic_order_ext_ref (ext_ref)
+  WHERE order_type = 'RX_REF' AND deleted = 0`——四支 CAS 由顺序扫描 → 索引点查；部分谓词
+  与语句常量条件严格同构，非处方引用五类单据行（ext_ref 恒 NULL）不入索引，索引体量随处方量
+  而非开单总量增长；SQL 谓词与 Java 代码零改动，既有迁移 V203 未触碰（A.4.1-3 禁改红线）；
+  普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，V808/V900 同款取舍）。
+  注册表与 CHANGELOG 同 PR 先记再改。
+
+## 2026-09-29 · 性能清单修复环 OPT-02：V1104 billing.refund_fee_link 退费聚合驱动侧补 fee_id 前导部分索引（性能，行为保持）
+
+- **根因（OPT-02，2026-09-28 全仓性能与代码质量优化清单，评分 85）**：RefundRequestMapper.xml
+  两支可退余额聚合下推 SQL（PERF-01）以 `l.fee_id IN (...)` 驱动 JOIN refund_request，V603
+  uk_refund_fee (refund_id, fee_id) 前导列为 refund_id，fee_id 非前导不可用，聚合对
+  refund_fee_link 只能顺序扫描——退费 apply 超可退守卫为资金热路径，EXECUTED 终态 link 行
+  随运营年限单调增长。
+- **修复（行为保持）**：新增增量迁移 V1104 建 `idx_refund_fee_link_fee (fee_id)
+  WHERE deleted = 0`——驱动侧由顺序扫描 → 索引点查集；单列即足（JOIN 键与聚合列仍需回表，
+  扩列无 index-only 收益）；XML 内两支 SQL 语句零改动；同步修正 RefundRequestMapper.xml
+  头注释「索引聚合（fee_id 侧驱动）」与 V603 schema 的矛盾表述（改锚 V1104 索引实况，
+  RefundAggregateSqlGuardTest 逐子句守卫不受影响）；既有迁移 V603 未触碰（A.4.1-3 禁改
+  红线）；普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，V808/V900 同款取舍）。
+  注册表与 CHANGELOG 同 PR 先记再改。
+
+## 2026-09-29 · 性能清单修复环 OPT-01：V1103 billing.fee_record 发药链 CAS 谓词补 source_ref 前导部分索引（性能，行为保持）
+
+- **根因（OPT-01，2026-09-28 全仓性能与代码质量优化清单，评分 90）**：`FeeRecordMapper`
+  casMarkDispensed / casReleaseDispense 两支 CAS UPDATE 以 source_ref + trigger_point +
+  exec_occupy_status + deleted 谓词定位行（M06 dispense.completed / dispense.returned 事件
+  消费主路径，每张处方发药与全额退药各触发一次），V602 既有索引均不含 source_ref 前导列，
+  事件通道每次消费对 fee_record 全表顺序扫描，随费用明细量增长线性劣化。
+- **修复（行为保持）**：新增增量迁移 V1103 建 `idx_fee_source_ref_trigger (source_ref,
+  trigger_point) WHERE deleted = 0`——两支发药链 CAS 由顺序扫描 → 索引点查，O(全表) →
+  O(log n + 单据行数)；casConfirmByOrder / casCancelPendingByOrder 的 (visit_id, source_ref)
+  复合经评估不建（V602 idx_fee_visit_status 已对 visit_id + status 双等值前缀服务，第三条索引
+  纯冗余，本索引 source_ref 前导列另提供兜底路径）；SQL 谓词与 Java 代码零改动，既有迁移
+  V602 未触碰（A.4.1-3 禁改红线）；普通 CREATE INDEX（Flyway 事务内 CONCURRENTLY 不可用，
+  V808/V900 同款取舍）。注册表与 CHANGELOG 同 PR 先记再改。
+
+## 2026-09-29 · 风险清单修复环分流：BUG-24 被 Maven 依赖环阻塞登记 D-28（裁决留痕）
+
+- **背景**：2026-09-28 全仓高风险问题清单 BUG-24（BE-C3-09，低危）要求 integration 模块四治理写端点
+  （DeadLetterController replay/close、MdmSubscriptionController register/unregister）补 @AuditLog
+  （Spec 20-integration.md:170「通道配置与死信处理操作全量审计」）。
+- **阻塞事实**：注解契约 AuditLog/AuditActionType 落 com.fuyun.system.api，而 fuyun-system 已编译依赖
+  fuyun-integration（消费消息治理 api，pom 注释明示「无反向依赖」）；integration 反向依赖 system 即
+  Maven 反应堆成环（实测 cyclic reference 构建拒绝，任意 scope 同样成环）。切面 pointcut 为直接
+  @annotation 绑定，元注解/自建副本均不可拦截，无小改合规出口。
+- **裁决**：执行派发边界内默认项「挂账暂缓」登记 TASK.md D-28 待决策（用户未响应 ask_question，
+  取推荐项，可推翻）；结构性解法二选一待裁：①审计注解契约下沉 fuyun-common（67 文件/11 模块
+  import 更新 + 宪法留痕 + 全仓 CI）②反转 system→integration 边（消息治理契约搬家，更大）。
+  挂账期间四端点 service impl 已有 log.info 应用日志留痕，缺统一审计台账（system.audit_log）。
+- **同环交付**：BUG-21（fuyun-patient VisitCardServiceImpl bind/replace 补 info 留痕）不受阻塞，
+  独立提交完成（288d2fb）。
+
 ## 2026-09-28 · PR #57 合并前修复环收口：四笔修复 + scoped 复审 + 五条分流登记（先记再改）
 
 - ① **四笔修复（用户 2026-09-28 决策派发合并前修复环，范围锁定 B1/B2/P1/C2/C3 五项不扩大）**：

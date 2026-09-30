@@ -108,6 +108,7 @@ public class DictPublishedListener {
             payload = objectMapper.treeToValue(envelope.payload(), DictPublishedPayload.class);
         } catch (JsonProcessingException e) {
             // 载荷不合规（缺字段/类型错）等同业务失败：上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
+            // EX-19 C 类留痕：模块内部事件契约防御（非用户可达输入），保留 IllegalStateException 语义不转 400
             throw new IllegalStateException("字典发布载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(

@@ -2,6 +2,7 @@ package com.fuyun.iot.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -9,8 +10,11 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -45,6 +49,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -58,6 +64,11 @@ import org.springframework.test.util.ReflectionTestUtils;
  *
  * <p>Registry/四个 mapper 以 Mockito 模拟（真实 SQL 归 fuyun-app 集成面验证）；lambda 条件
  * 列名解析依赖 TableInfo（容器外单测需手动初始化一次）。
+ *
+ * <p>EX-37 批量写形态（2026-09-28 性能收拢组）：命令/映射全量替换的落新行断言点从逐行
+ * mapper.insert 改 Db.saveBatch 一次批插（A.4.3-16，MockedStatic 断言与 PERF-01 先例同款），
+ * 业务断言（行序/字段面/回显）零变化；EX-39 失配检测映射查询补 .select 投影契约用例
+ * （恰 property_name 单列，A.4.3-14）。
  */
 @ExtendWith(MockitoExtension.class)
 class ProductServiceImplTest {
@@ -86,9 +97,6 @@ class ProductServiceImplTest {
 
     @Captor
     private ArgumentCaptor<IotProductEntity> productCaptor;
-
-    @Captor
-    private ArgumentCaptor<IotProductCommandEntity> commandCaptor;
 
     private ProductServiceImpl service;
 
@@ -229,6 +237,29 @@ class ProductServiceImplTest {
     }
 
     @Test
+    @DisplayName("映射回显查询：命中回显全集 / 空配置回空清单 / 产品不存在 IOT-1002（404）")
+    void listMetricMappingsEchoesExistingRowsOrEmpty() {
+        when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCED));
+        when(mappingMapper.selectList(any()))
+                .thenReturn(List.of(
+                        mappingRow("heartRate", "MDC_ECG_HEART_RATE"), mappingRow("spo2", "MDC_PULSE_OXIM_SPO2")));
+
+        List<MetricMappingVO> result = service.listMetricMappings(PRODUCT_ID);
+
+        assertThat(result).as("既有映射全集回显（弹窗打开回填）").hasSize(2);
+        assertThat(result.get(0).propertyName()).isEqualTo("heartRate");
+        assertThat(result.get(1).metricCode()).isEqualTo("MDC_PULSE_OXIM_SPO2");
+        // 空配置态：回空清单（弹窗回落单空行快速录入）
+        when(mappingMapper.selectList(any())).thenReturn(List.of());
+        assertThat(service.listMetricMappings(PRODUCT_ID)).as("无映射配置回空清单").isEmpty();
+        // 产品不存在：404 守卫与详情同口径
+        when(productMapper.selectById("missing")).thenReturn(null);
+        assertThatThrownBy(() -> service.listMetricMappings("missing"))
+                .isInstanceOfSatisfying(BizException.class, ex -> assertThat(ex.getErrorCode())
+                        .isEqualTo(IotErrorCode.PRODUCT_NOT_FOUND));
+    }
+
+    @Test
     @DisplayName("映射编辑冲突：同批 propertyName 重复 IOT-1005（409），且不触库写路径")
     void updateMappingsRejectsDuplicatePropertyInBatch() {
         when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCING));
@@ -262,49 +293,94 @@ class ProductServiceImplTest {
     }
 
     @Test
-    @DisplayName("映射编辑成功：逻辑删旧行 + 落新行（RAW_PASSTHROUGH 缺省与显式指定并存）")
+    @DisplayName("映射编辑成功：逻辑删旧行 + 2 行恰 1 次 Db.saveBatch 批插（RAW_PASSTHROUGH 缺省与显式指定并存）")
     void updateMappingsReplacesRows() {
         when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCING));
         when(metricDictMapper.selectBatchIds(any()))
                 .thenReturn(List.of(dictRow("MDC_ECG_HEART_RATE"), dictRow("MDC_PULSE_OXIM_SPO2")));
 
-        List<MetricMappingVO> result = service.updateMetricMappings(
-                PRODUCT_ID,
-                new UpdateMappingsRequest(List.of(
-                        new UpdateMappingsRequest.MappingItem("heartRate", "MDC_ECG_HEART_RATE", null),
-                        new UpdateMappingsRequest.MappingItem(
-                                "spo2", "MDC_PULSE_OXIM_SPO2", MismatchStrategy.RAW_PASSTHROUGH))));
+        // EX-37 批插通道（A.4.3-16）：落新行断言点从逐行 mapper.insert 改 Db.saveBatch（MockedStatic）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            List<MetricMappingVO> result = service.updateMetricMappings(
+                    PRODUCT_ID,
+                    new UpdateMappingsRequest(List.of(
+                            new UpdateMappingsRequest.MappingItem("heartRate", "MDC_ECG_HEART_RATE", null),
+                            new UpdateMappingsRequest.MappingItem(
+                                    "spo2", "MDC_PULSE_OXIM_SPO2", MismatchStrategy.RAW_PASSTHROUGH))));
 
-        verify(mappingMapper).delete(any());
-        verify(mappingMapper).insert(mappingNamed("heartRate"));
-        verify(mappingMapper).insert(mappingNamed("spo2"));
-        assertThat(result).as("替换结果回显与入参同序同量").hasSize(2);
-        assertThat(result.get(0).mismatchStrategy())
-                .as("缺省策略回填 RAW_PASSTHROUGH（失配原文透传红线）")
-                .isEqualTo(MismatchStrategy.RAW_PASSTHROUGH);
+            verify(mappingMapper).delete(any());
+            // 恰 1 次批插（2 行一次落库）；逐行 insert 通道已下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<com.fuyun.iot.entity.IotMetricMappingEntity>> rowsCaptor =
+                    ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue())
+                    .as("批插行集与入参同序同量")
+                    .extracting(
+                            com.fuyun.iot.entity.IotMetricMappingEntity::getPropertyName,
+                            com.fuyun.iot.entity.IotMetricMappingEntity::getMetricCode)
+                    .containsExactly(tuple("heartRate", "MDC_ECG_HEART_RATE"), tuple("spo2", "MDC_PULSE_OXIM_SPO2"));
+            verify(mappingMapper, never()).insert(any(com.fuyun.iot.entity.IotMetricMappingEntity.class));
+            assertThat(result).as("替换结果回显与入参同序同量").hasSize(2);
+            assertThat(result.get(0).mismatchStrategy())
+                    .as("缺省策略回填 RAW_PASSTHROUGH（失配原文透传红线）")
+                    .isEqualTo(MismatchStrategy.RAW_PASSTHROUGH);
+        }
     }
 
     @Test
-    @DisplayName("命令安全等级默认面：SAFETY→allowed=true、TREATMENT→allowed=false、显式 allowed 覆盖生效")
+    @DisplayName("命令回显查询：命中回显全集 / 空配置回空清单 / 产品不存在 IOT-1002（404）")
+    void listCommandsEchoesExistingRowsOrEmpty() {
+        when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCED));
+        when(commandMapper.selectList(any()))
+                .thenReturn(List.of(commandRow("setWorkMode", CommandSafetyLevel.SAFETY, true)));
+
+        List<CommandVO> result = service.listCommands(PRODUCT_ID);
+
+        assertThat(result).as("既有命令标注全集回显（弹窗打开回填）").hasSize(1);
+        assertThat(result.get(0).commandName()).isEqualTo("setWorkMode");
+        assertThat(result.get(0).safetyLevel()).isEqualTo(CommandSafetyLevel.SAFETY);
+        assertThat(result.get(0).allowed()).as("放行状态随行回显（FU-M14-09 白名单数据源）").isTrue();
+        // 空配置态：回空清单（弹窗回落单空行快速录入）
+        when(commandMapper.selectList(any())).thenReturn(List.of());
+        assertThat(service.listCommands(PRODUCT_ID)).as("无命令标注回空清单").isEmpty();
+        // 产品不存在：404 守卫与详情同口径
+        when(productMapper.selectById("missing")).thenReturn(null);
+        assertThatThrownBy(() -> service.listCommands("missing"))
+                .isInstanceOfSatisfying(BizException.class, ex -> assertThat(ex.getErrorCode())
+                        .isEqualTo(IotErrorCode.PRODUCT_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("命令安全等级默认面：3 行恰 1 次 Db.saveBatch 批插，SAFETY→true/TREATMENT→false、显式 allowed 覆盖生效")
     void updateCommandsAppliesSafetyDefaults() {
         when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCING));
 
-        List<CommandVO> result = service.updateCommands(
-                PRODUCT_ID,
-                new UpdateCommandsRequest(List.of(
-                        new UpdateCommandsRequest.CommandItem("setWorkMode", "vital", CommandSafetyLevel.SAFETY, null),
-                        new UpdateCommandsRequest.CommandItem(
-                                "defibrillate", "treatment", CommandSafetyLevel.TREATMENT, null),
-                        new UpdateCommandsRequest.CommandItem(
-                                "calibrate", "vital", CommandSafetyLevel.SAFETY, Boolean.FALSE))));
+        // EX-37 批插通道（A.4.3-16）：落新行断言点从逐行 mapper.insert 改 Db.saveBatch（MockedStatic）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            List<CommandVO> result = service.updateCommands(
+                    PRODUCT_ID,
+                    new UpdateCommandsRequest(List.of(
+                            new UpdateCommandsRequest.CommandItem(
+                                    "setWorkMode", "vital", CommandSafetyLevel.SAFETY, null),
+                            new UpdateCommandsRequest.CommandItem(
+                                    "defibrillate", "treatment", CommandSafetyLevel.TREATMENT, null),
+                            new UpdateCommandsRequest.CommandItem(
+                                    "calibrate", "vital", CommandSafetyLevel.SAFETY, Boolean.FALSE))));
 
-        verify(commandMapper).delete(any());
-        verify(commandMapper, org.mockito.Mockito.times(3)).insert(commandCaptor.capture());
-        List<IotProductCommandEntity> inserted = commandCaptor.getAllValues();
-        assertThat(inserted.get(0).getAllowed()).as("安全级缺省放行").isTrue();
-        assertThat(inserted.get(1).getAllowed()).as("治疗级缺省禁放行").isFalse();
-        assertThat(inserted.get(2).getAllowed()).as("显式指定覆盖级别默认").isFalse();
-        assertThat(result).as("标注结果回显与入参同序同量").hasSize(3);
+            verify(commandMapper).delete(any());
+            // 恰 1 次批插（3 行一次落库）；逐行 insert 通道已下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<IotProductCommandEntity>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            List<IotProductCommandEntity> inserted = rowsCaptor.getValue();
+            assertThat(inserted).as("批插行集与入参同量").hasSize(3);
+            assertThat(inserted.get(0).getAllowed()).as("安全级缺省放行").isTrue();
+            assertThat(inserted.get(1).getAllowed()).as("治疗级缺省禁放行").isFalse();
+            assertThat(inserted.get(2).getAllowed()).as("显式指定覆盖级别默认").isFalse();
+            verify(commandMapper, never()).insert(any(IotProductCommandEntity.class));
+            assertThat(result).as("标注结果回显与入参同序同量").hasSize(3);
+        }
     }
 
     @Test
@@ -349,15 +425,34 @@ class ProductServiceImplTest {
                         .isEqualTo(IotErrorCode.PRODUCT_NOT_FOUND));
     }
 
+    // ===== EX-39：失配检测映射查询精确投影（A.4.3-14 按需取列锚定）=====
+
+    @Test
+    @DisplayName("失配检测映射查询投影契约：恰 1 列 property_name，谓词 product_id 零变化")
+    void detectMismatchMappingQueryProjectsOnlyPropertyName() {
+        when(productMapper.selectById(PRODUCT_ID)).thenReturn(productEntity(ProductSyncStatus.SYNCING));
+        when(mappingMapper.selectList(any())).thenReturn(List.of(mappingRow("heartRate", "MDC_ECG_HEART_RATE")));
+
+        service.syncModel(PRODUCT_ID);
+
+        // 投影契约（EX-39）：仅取 property_name 恰 1 列（失配比对仅消费属性名，映射宽行全列
+        //   取回徒增内存）；谓词零变化锚定：product_id 等值且携带产品标识（防投影修复顺带
+        //   改动失配判定行集口径）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<com.fuyun.iot.entity.IotMetricMappingEntity>> mappingCaptor =
+                ArgumentCaptor.forClass(Wrapper.class);
+        verify(mappingMapper).selectList(mappingCaptor.capture());
+        LambdaQueryWrapper<com.fuyun.iot.entity.IotMetricMappingEntity> mappingWrapper =
+                (LambdaQueryWrapper<com.fuyun.iot.entity.IotMetricMappingEntity>) mappingCaptor.getValue();
+        // 先物化 WHERE 段再断言参数（MP 条件参数惰性求值，顺序颠倒读到中间态）
+        assertThat(mappingWrapper.getSqlSegment()).contains("product_id");
+        assertThat(mappingWrapper.getParamNameValuePairs().values()).contains(PRODUCT_ID);
+        assertThat(mappingWrapper.getSqlSelect().trim()).isEqualTo("property_name");
+    }
+
     /** 产品规格匹配器（Registry 调用参数断言面：产品名透传） */
     private ProductSpec specWithProductName(String productName) {
         return org.mockito.ArgumentMatchers.argThat(spec -> spec != null && productName.equals(spec.productName()));
-    }
-
-    /** 映射插入行匹配器（按属性名区分两次 insert 的验证） */
-    private com.fuyun.iot.entity.IotMetricMappingEntity mappingNamed(String propertyName) {
-        return org.mockito.ArgumentMatchers.argThat(
-                entity -> entity != null && propertyName.equals(entity.getPropertyName()));
     }
 
     /** 产品实体夹具（V1007 列面） */
@@ -384,6 +479,17 @@ class ProductServiceImplTest {
         entity.setPropertyName(propertyName);
         entity.setMetricCode(metricCode);
         entity.setMismatchStrategy(MismatchStrategy.RAW_PASSTHROUGH);
+        return entity;
+    }
+
+    /** 命令标注实体夹具（回显查询 stub 载体） */
+    private static IotProductCommandEntity commandRow(
+            String commandName, CommandSafetyLevel safetyLevel, Boolean allowed) {
+        IotProductCommandEntity entity = new IotProductCommandEntity();
+        entity.setProductId(PRODUCT_ID);
+        entity.setCommandName(commandName);
+        entity.setSafetyLevel(safetyLevel);
+        entity.setAllowed(allowed);
         return entity;
     }
 

@@ -3,6 +3,7 @@ package com.fuyun.inpatient.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -23,15 +24,16 @@ import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.enums.PlanStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.OrderPlanService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
-import com.fuyun.inpatient.service.OrderTransferService;
+import com.fuyun.inpatient.service.IOrderPlanService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderTransferService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
 import java.time.LocalDate;
@@ -58,7 +60,7 @@ import org.springframework.transaction.annotation.Transactional;
  * order_transfer_log 双人核对留痕）→ 事务内发布 inpatient.order.transferred（V800 id 42
  * 载荷，transferType=医嘱类型子键小写形态——transferred 登记名不带子键故类型入载荷）→
  * 临时医嘱同步按明细行生成单次执行计划（plan_time=转抄时点+默认准备窗口，多项明细
- * plan_no 各异）；长期医嘱即时补生成当日剩余时点计划（OrderPlanService.compensateToday
+ * plan_no 各异）；长期医嘱即时补生成当日剩余时点计划（IOrderPlanService.compensateToday
  * ——Task 8 衔接面，转抄事务内加入）。嘱托触发（standbyTrigger）：长期备用嘱按需生成当次计划实例，医嘱头
  * 不迁移（回签面推进归 Task 8 W-33）。计划查询（listPlans）：日期窗口+病区分页，关联号
  * 映射批量承载免行级 N+1。转科三分钩子（redirectPlansOnWardTransfer）：临时 PENDING 计划
@@ -66,7 +68,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 线程安全：无状态 singleton；写操作 @Transactional 收口（钩子面 REQUIRED 传播加入编排事务）。
  */
 @Slf4j
-public class OrderTransferServiceImpl implements OrderTransferService {
+public class OrderTransferServiceImpl implements IOrderTransferService {
 
     /** 班次词表：白班（照 V801 病区班次定义 code，08:00–16:00） */
     private static final String SHIFT_DAY = "DAY";
@@ -99,11 +101,13 @@ public class OrderTransferServiceImpl implements OrderTransferService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final InpatientSeqGate seqGate;
 
-    private final OrderStateMachineService stateMachine;
+    private final IOrderStateMachineService stateMachine;
 
-    private final OrderPlanService orderPlanService;
+    private final IOrderPlanService orderPlanService;
 
     private final InpatientProperties properties;
 
@@ -116,7 +120,8 @@ public class OrderTransferServiceImpl implements OrderTransferService {
      * @param itemMapper         医嘱明细 mapper，非空；单次计划按明细行生成取数
      * @param transferLogMapper  转抄记录 mapper，非空；双人核对台账落行
      * @param planMapper         执行计划 mapper，非空；计划开立/查询/作废/重定向
-     * @param visitMapper        住院就诊 mapper，非空；病区聚合与号映射
+     * @param visitMapper        住院就诊 mapper，非空；病区聚合
+     * @param visitAccessor      住院就诊共享访问器（EX-44 下沉），非空；号映射与事件载荷取数
      * @param seqGate            住院业务号发号器（PL 计划号），非空
      * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
      * @param orderPlanService   医嘱执行计划服务（长期医嘱当日增量补偿——Task 8 衔接面），非空
@@ -129,9 +134,10 @@ public class OrderTransferServiceImpl implements OrderTransferService {
             OrderTransferLogMapper transferLogMapper,
             OrderExecutePlanMapper planMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
-            OrderStateMachineService stateMachine,
-            OrderPlanService orderPlanService,
+            IOrderStateMachineService stateMachine,
+            IOrderPlanService orderPlanService,
             InpatientProperties properties,
             ApplicationEventPublisher events) {
         this.orderMapper = orderMapper;
@@ -139,6 +145,7 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         this.transferLogMapper = transferLogMapper;
         this.planMapper = planMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
         this.orderPlanService = orderPlanService;
@@ -240,7 +247,10 @@ public class OrderTransferServiceImpl implements OrderTransferService {
                         HttpStatus.BAD_REQUEST,
                         "输血类医嘱转抄须双人核对（第二核对人必填）：" + orderNo);
             }
-            InpatientVisit visit = requireVisitByPk(order.getVisitId());
+            // 关联就诊定位（未命中 IP-1007 数据不一致——load+check 经共享访问器，文案参数化
+            // 保持对外契约零变化——EX-44）
+            InpatientVisit visit = visitAccessor.requireByPk(
+                    order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
             OffsetDateTime transferredAt = OffsetDateTime.now();
             // 状态机唯一迁移面（AUDITED→TRANSFERRED，留痕随状态机自动落 order_status_log）
             stateMachine.transition(order, OrderStatus.TRANSFERRED, REASON_TRANSFER_CHECK, operator);
@@ -345,7 +355,9 @@ public class OrderTransferServiceImpl implements OrderTransferService {
                     HttpStatus.CONFLICT,
                     "嘱托触发要求医嘱已经转抄（TRANSFERRED/EXECUTING）：orderNo=" + orderNo + "，当前状态=" + order.getStatus());
         }
-        InpatientVisit visit = requireVisitByPk(order.getVisitId());
+        // 关联就诊定位（未命中 IP-1007 数据不一致——共享访问器统一承载，EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
         long operator = parseOperatorAsEmployeeId();
         OffsetDateTime triggerAt = OffsetDateTime.now();
         // 单次计划生成与临时医嘱转抄同步生成共用实现（plan_time=触发时点+默认准备窗口）
@@ -388,7 +400,10 @@ public class OrderTransferServiceImpl implements OrderTransferService {
     /**
      * 单次执行计划生成（临时医嘱转抄同步生成/嘱托按需触发共用）：按明细行逐行开立计划实例
      * （计划粒度=明细行——执行回签与计价按项对齐）；plan_time=生成基准时点+默认准备窗口、
-     * shift=基准时点落班、plan_no=PL 流水逐行签发。
+     * shift=基准时点落班、plan_no=PL 流水逐行签发。计划行集一次 saveBatch 批插（EX-37：
+     * JDBC 批处理替代逐行 insert，行集与行序不变、ASSIGN_ID 自动填充 ID；批语句唯一冲突
+     * 经 Spring 翻译链仍抛 DuplicateKeyException——原逐行 catch 定性语义原样保留，失败即
+     * 抛随编排/触发事务整体回滚，无吞行/部分落库窗口）。
      *
      * @param order    所属医嘱行，非空
      * @param visit    关联就诊行（病区/就诊主键取数面），非空
@@ -419,17 +434,21 @@ public class OrderTransferServiceImpl implements OrderTransferService {
             plan.setStatus(PlanStatus.PENDING.getCode());
             plan.setCreatedBy(operatorText);
             plan.setUpdatedBy(operatorText);
-            try {
-                // 数据库写操作：计划行落库（uk_order_execute_plan_no/uk_plan_order_item_time 兜底幂等）
-                planMapper.insert(plan);
-            } catch (DuplicateKeyException e) {
-                // 并发窗口同项同时点重复生成（微秒级同瞬触发）——幂等拒绝定性冲突
-                throw new BizException(
-                        InpatientErrorCode.CONFLICT,
-                        HttpStatus.CONFLICT,
-                        "执行计划唯一冲突（同项同时点重复生成，幂等拒绝）：orderNo=" + order.getOrderNo());
-            }
             created.add(plan);
+        }
+        try {
+            // 数据库写操作：计划行一次批插（uk_order_execute_plan_no/uk_plan_order_item_time
+            // 兜底幂等；A.4.3-16 须在事务内调用——transferCheck/standbyTrigger 均
+            // @Transactional 承载，与转抄台账/事件同事务成败与共）
+            Db.saveBatch(created);
+        } catch (DuplicateKeyException e) {
+            // 并发窗口同项同时点重复生成（微秒级同瞬触发）——幂等拒绝定性冲突；批插后异常
+            // 出口不变：批语句唯一冲突经 Spring 翻译链仍抛 DuplicateKeyException，整批随
+            // 事务回滚（原逐行失败亦全量回滚——零部分落库窗口，语义与逐行时代完全一致）
+            throw new BizException(
+                    InpatientErrorCode.CONFLICT,
+                    HttpStatus.CONFLICT,
+                    "执行计划唯一冲突（同项同时点重复生成，幂等拒绝）：orderNo=" + order.getOrderNo());
         }
         return created;
     }
@@ -468,18 +487,6 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         return order;
     }
 
-    /** 按就诊主键定位行（未命中定性 IP-1007 数据不一致；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisitByPk(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit;
-    }
-
     /** 医嘱类型词表裁决（词表外=主数据脏数据，fail-closed 拒 IP-1023——OrderAuditServiceImpl 同款）。 */
     private OrderType requireOrderType(MedicalOrder order) {
         OrderType orderType = OrderType.fromCode(order.getOrderType());
@@ -516,10 +523,16 @@ public class OrderTransferServiceImpl implements OrderTransferService {
         return visit;
     }
 
-    /** 就诊下指定分类医嘱主键集（转科三分钩子的分野查询面；含全状态——计划归属以计划行状态裁决）。 */
+    /**
+     * 就诊下指定分类医嘱主键集（转科三分钩子的分野查询面；含全状态——计划归属以计划行状态
+     * 裁决）。.select 仅取 id 列（唯一消费面=组装计划批量更新 IN 集——EX-39 投影收敛，医嘱
+     * 宽行全列取回仅 map(getId)；行集不变仅列收敛，IN 集与全列取回完全等价）。
+     */
     private List<Long> orderIdsOfVisit(Long visitId, OrderClass orderClass) {
+        // 数据库读操作：分野查询仅取 id 恰 1 列（医嘱宽行禁入投影——EX-39/A.4.3-14）
         return orderMapper
                 .selectList(Wrappers.<MedicalOrder>lambdaQuery()
+                        .select(MedicalOrder::getId)
                         .eq(MedicalOrder::getVisitId, visitId)
                         .eq(MedicalOrder::getOrderClass, orderClass.getCode()))
                 .stream()

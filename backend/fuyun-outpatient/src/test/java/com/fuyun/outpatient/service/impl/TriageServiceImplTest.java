@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -31,6 +32,8 @@ import com.fuyun.outpatient.entity.VisitStatusLog;
 import com.fuyun.outpatient.enums.TicketStatus;
 import com.fuyun.outpatient.enums.TicketType;
 import com.fuyun.outpatient.enums.VisitStatus;
+import com.fuyun.outpatient.internal.QueueCalledPushEvent;
+import com.fuyun.outpatient.internal.QueueCalledPushListener;
 import com.fuyun.outpatient.mapper.QueueTicketMapper;
 import com.fuyun.outpatient.mapper.ScheduleMapper;
 import com.fuyun.outpatient.mapper.TriageRecordMapper;
@@ -55,6 +58,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
@@ -102,6 +106,9 @@ class TriageServiceImplTest {
     private SimpMessagingTemplate messagingTemplate;
 
     @Mock
+    private ApplicationEventPublisher events;
+
+    @Mock
     private PatientNameQuery patientNameQuery;
 
     @Captor
@@ -124,6 +131,9 @@ class TriageServiceImplTest {
 
     private ITriageService service;
 
+    /** 提交后推送监听器真实例（携 mock 消息模板）：单测经 dispatchPushEvents 模拟 AFTER_COMMIT 触达 */
+    private QueueCalledPushListener pushListener;
+
     @BeforeAll
     static void initTableInfo() {
         // lambda 条件列解析依赖 TableInfo（容器外单测手动初始化一次：visit/票/排班三实体）
@@ -134,6 +144,8 @@ class TriageServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // BUG-04 时序源同步：构造器第 8 参由 SimpMessagingTemplate 换为 ApplicationEventPublisher
+        // （事务内发布事件），WS 直推归 QueueCalledPushListener（提交后执行）
         service = new TriageServiceImpl(
                 visitMapper,
                 visitStatusLogMapper,
@@ -142,8 +154,9 @@ class TriageServiceImplTest {
                 scheduleMapper,
                 queueZsetStore,
                 redisTemplate,
-                messagingTemplate,
+                events,
                 patientNameQuery);
+        pushListener = new QueueCalledPushListener(messagingTemplate);
         // 队列当日序签发的公共底座（lenient：仅报到/转队列路径触达，call 系用例不使用不报严格桩告警）
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         lenient().when(valueOperations.increment(anyString())).thenReturn(1L);
@@ -212,6 +225,18 @@ class TriageServiceImplTest {
                 })
                 .when(queueTicketMapper)
                 .insert(any(QueueTicket.class));
+    }
+
+    /**
+     * 分发叫号推送事件（BUG-04 时序源同步）：单测无真实事务管理器，本方法承接「事务提交后
+     * AFTER_COMMIT 触达监听器」的时序——捕获服务发布的全部 QueueCalledPushEvent 并逐一经
+     * 真实监听器执行推送；既有 convertAndSend 断言（destination+载荷）语义不变，仅调用点
+     * 从 service 内同步直推改为本处分发后验证。
+     */
+    private void dispatchPushEvents() {
+        ArgumentCaptor<QueueCalledPushEvent> pushCaptor = ArgumentCaptor.forClass(QueueCalledPushEvent.class);
+        verify(events, atLeastOnce()).publishEvent(pushCaptor.capture());
+        pushCaptor.getAllValues().forEach(pushListener::onQueueCalled);
     }
 
     // ---------------------------------------------------------------- 冻结用例（16）
@@ -405,6 +430,8 @@ class TriageServiceImplTest {
         verify(queueTicketMapper).casCall(501L, "WAITING", "nurse001");
         assertThat(vo.status()).isEqualTo(TicketStatus.CALLED);
         assertThat(vo.calledCount()).isEqualTo(1);
+        // 时序源同步（BUG-04）：分发提交前发布的事件（模拟 AFTER_COMMIT）后再验推送
+        dispatchPushEvents();
         // 双 topic 推送：destination 与载荷逐项断言（脱敏姓名+ticketNo，无 visitId/patientId）
         verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/queue/DEP001"), noticeCaptor.capture());
         verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/doctor/DOC001"), noticeCaptor.capture());
@@ -414,6 +441,52 @@ class TriageServiceImplTest {
         assertThat(notice.patientName()).isEqualTo("张*");
         assertThat(notice.doctorId()).isEqualTo("DOC001");
         assertThat(notice.room()).isNull();
+    }
+
+    @Test
+    @DisplayName("BUG-04 时序：call 返回（=事务提交前）零 WS 直推——推送仅随提交后事件分发发生")
+    void callDefersWsPushUntilAfterCommit() {
+        QueueTicket first = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
+        when(queueTicketMapper.selectWaiting("DEP001")).thenReturn(List.of(first));
+        when(queueZsetStore.rebuildIfMissing(eq("DEP001"), any())).thenReturn(-1);
+        when(queueZsetStore.pollTop("DEP001", "DOC001")).thenReturn(501L);
+        when(queueTicketMapper.selectById(501L)).thenReturn(first);
+        when(queueTicketMapper.casCall(501L, "WAITING", "nurse001")).thenReturn(1);
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.WAITING, null, (short) 0));
+        when(patientNameQuery.displayNamesOf(anyCollection())).thenReturn(List.of(new PatientDisplayName(9L, "张*")));
+
+        QueueTicketVO vo = service.call(new QueueCallRequest("DEP001", "DOC001"));
+
+        assertThat(vo.status()).isEqualTo(TicketStatus.CALLED);
+        // 事务提交前（方法返回=事务体执行完毕）禁止任何 WS 推送（A.4.2-7：推送时序后移至提交后）
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(QueueCalledNotice.class));
+        // 提交后（分发事件模拟 AFTER_COMMIT 触达）双 topic 推送发生——推送内容与接收方不变
+        dispatchPushEvents();
+        verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/queue/DEP001"), any(QueueCalledNotice.class));
+        verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/doctor/DOC001"), any(QueueCalledNotice.class));
+    }
+
+    @Test
+    @DisplayName("BUG-04 复现：叫号后事务内步骤失败（出参组装异常→回滚）——全程零 WS 推送")
+    void callPushesNothingWhenPostPushStepFails() {
+        QueueTicket first = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
+        when(queueTicketMapper.selectWaiting("DEP001")).thenReturn(List.of(first));
+        when(queueZsetStore.rebuildIfMissing(eq("DEP001"), any())).thenReturn(-1);
+        when(queueZsetStore.pollTop("DEP001", "DOC001")).thenReturn(501L);
+        when(queueTicketMapper.selectById(501L)).thenReturn(first);
+        when(queueTicketMapper.casCall(501L, "WAITING", "nurse001")).thenReturn(1);
+        when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.WAITING, null, (short) 0));
+        // 首次解析（推送载荷组装）成功、二次解析（出参组装）故障：复现推送点后步骤异常→事务回滚场景
+        when(patientNameQuery.displayNamesOf(anyCollection()))
+                .thenReturn(List.of(new PatientDisplayName(9L, "张*")))
+                .thenThrow(new IllegalStateException("患者名查询故障（模拟推送点后步骤失败）"));
+
+        assertThatThrownBy(() -> service.call(new QueueCallRequest("DEP001", "DOC001")))
+                .isInstanceOf(IllegalStateException.class);
+        // 修复语义锚点：推送事件已在事务内发布（推迟而非取消），但事务回滚不触达监听器
+        verify(events).publishEvent(any(QueueCalledPushEvent.class));
+        // 回滚场景零推送：大屏/医生站不得先于库态展示「已叫号」（BUG-04 展示与库态不一致根因）
+        verify(messagingTemplate, never()).convertAndSend(anyString(), any(QueueCalledNotice.class));
     }
 
     @Test
@@ -459,6 +532,8 @@ class TriageServiceImplTest {
         verify(queueTicketMapper).casCall(501L, "PASSED", "nurse001");
         assertThat(vo.status()).isEqualTo(TicketStatus.CALLED);
         assertThat(vo.calledCount()).isEqualTo(2);
+        // 时序源同步（BUG-04）：分发提交前发布的事件（模拟 AFTER_COMMIT）后再验推送
+        dispatchPushEvents();
         verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/queue/DEP001"), any(QueueCalledNotice.class));
         verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/doctor/DOC002"), any(QueueCalledNotice.class));
     }
@@ -533,6 +608,8 @@ class TriageServiceImplTest {
         verify(queueTicketMapper).casCall(501L, "PASSED", "nurse001");
         assertThat(vo.status()).isEqualTo(TicketStatus.CALLED);
         assertThat(vo.calledCount()).isEqualTo(2);
+        // 时序源同步（BUG-04）：分发提交前发布的事件（模拟 AFTER_COMMIT）后再验推送
+        dispatchPushEvents();
         verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/queue/DEP001"), any(QueueCalledNotice.class));
         verify(messagingTemplate).convertAndSend(eq("/topic/outpatient/doctor/DOC001"), any(QueueCalledNotice.class));
     }
@@ -597,6 +674,63 @@ class TriageServiceImplTest {
 
         assertThat(vo.priorityScore()).isEqualTo(999);
         verify(queueZsetStore).enqueue("DEP001", 501L, 999 * SCORE_ENCODE_SCALE + 1);
+    }
+
+    // ---------------------------------------------------------------- BUG-07 并发防覆写回归锚
+
+    @Test
+    @DisplayName("BUG-07 并发防覆写：调级回写仅携本操作变更列——visit/票快照状态与叫号计数不落 SET" + "（对端 CAS 已迁移态不被覆写）")
+    void adjustLevelWriteOmitsStatusSnapshotColumns() {
+        // 复现口径：adjust 读点（visit/票 selectOne）返回快照后、落库前，对端叫号/接诊 CAS 已并发
+        // 迁移库端状态（票 WAITING→CALLED+called_count 累加、visit 可经接诊联动迁移）——若以读点
+        // 快照整行 updateById 回写，SET 子句携带快照 status/called_count，后提交者以快照覆写对端
+        // 已迁移态（状态回退+叫号计数归零）。单测以「回写实体不携状态类快照列」为不覆写判据
+        // （NOT_NULL 更新策略下 null 列不进 SET 子句），真栈并发时序由集成测试承载
+        Visit visit = visit(VisitStatus.WAITING, null, (short) 0);
+        QueueTicket ticket = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
+        when(visitMapper.selectOne(any())).thenReturn(visit);
+        when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
+
+        service.adjust(new TriageAdjustRequest("O2026092100001", "LEVEL_ADJUST", null, null, 1, null, "病情变化升Ⅰ级"));
+
+        // visit 分级回写仅携 triage_level/updated_by：status 快照列不携——不覆写对端 casStatus/
+        // casAdmit 已迁移的库端状态（如接诊后 IN_CONSULT 被快照 WAITING 覆写回候诊态）
+        ArgumentCaptor<Visit> visitWriteCaptor = ArgumentCaptor.forClass(Visit.class);
+        verify(visitMapper).updateById(visitWriteCaptor.capture());
+        assertThat(visitWriteCaptor.getValue().getStatus()).isNull();
+        assertThat(visitWriteCaptor.getValue().getTriageLevel()).isEqualTo(1);
+        assertThat(visitWriteCaptor.getValue().getUpdatedBy()).isEqualTo("nurse001");
+        // 票分值回写仅携 priority_score/ticket_no/updated_by：status/called_count/call_time 快照列
+        // 不携——对端 casCall 已累加的叫号计数与已迁移状态不被读点快照覆写；票号随回写同值保持
+        // （Spec :106 调级不改号）
+        ArgumentCaptor<QueueTicket> ticketWriteCaptor = ArgumentCaptor.forClass(QueueTicket.class);
+        verify(queueTicketMapper).updateById(ticketWriteCaptor.capture());
+        assertThat(ticketWriteCaptor.getValue().getStatus()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getCalledCount()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getCallTime()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getPriorityScore()).isEqualTo(900);
+        assertThat(ticketWriteCaptor.getValue().getTicketNo()).isEqualTo("A001");
+    }
+
+    @Test
+    @DisplayName("BUG-07 并发防覆写：RE_TRIAGE 改派医生回写仅携指派列——票快照状态与叫号计数不落 SET")
+    void adjustRetriageWriteOmitsStatusSnapshotColumns() {
+        // 快照口径：票已在读点前被叫过 2 次（calledCount=2）——若改派整行回写携快照，对端并发
+        // casCall 在窗口内累加的计数将被快照值覆写
+        Visit visit = visit(VisitStatus.WAITING, null, (short) 0);
+        QueueTicket ticket = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 2);
+        when(visitMapper.selectOne(any())).thenReturn(visit);
+        when(queueTicketMapper.selectOne(any())).thenReturn(ticket);
+
+        service.adjust(new TriageAdjustRequest("O2026092100001", "RE_TRIAGE", null, "DOC009", null, null, "家属要求换医生"));
+
+        ArgumentCaptor<QueueTicket> ticketWriteCaptor = ArgumentCaptor.forClass(QueueTicket.class);
+        verify(queueTicketMapper).updateById(ticketWriteCaptor.capture());
+        assertThat(ticketWriteCaptor.getValue().getStatus()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getCalledCount()).isNull();
+        assertThat(ticketWriteCaptor.getValue().getDoctorId()).isEqualTo("DOC009");
+        // RE_TRIAGE 不携分级入参——visit 零回写（分级回写仅请求携 triageLevel 时触发）
+        verify(visitMapper, never()).updateById(any(Visit.class));
     }
 
     // ---------------------------------------------------------------- 守卫用例（LINE=1.00 分支行覆盖）

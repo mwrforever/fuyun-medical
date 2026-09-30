@@ -184,6 +184,10 @@ public class TelemetryBatchAssembler implements SmartLifecycle {
         return 0;
     }
 
+    /**
+     * 覆写意图：显式声明攒批链随容器自动启动（SmartLifecycle 默认 true 的显式覆写，契约锚点
+     * 与 getPhase 配套：phase=0 先于消费者启动，保证消费线程首次 put 即有 flush 线程承接）。
+     */
     @Override
     public boolean isAutoStartup() {
         return true;

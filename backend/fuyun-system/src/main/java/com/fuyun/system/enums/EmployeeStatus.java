@@ -2,6 +2,9 @@ package com.fuyun.system.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.system.api.SystemErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 员工在职状态枚举（system.sys_employee.status 列值域，M01 Spec §4）。
@@ -40,7 +43,8 @@ public enum EmployeeStatus {
      *
      * @param code 存储值，来源：DB 列读取或外部入参；非空（列 NOT NULL）
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或版本不一致），建议上游按数据异常处置
+     * @throws BizException code 无对应枚举常量（400 SYS-1031，BE-C3-05/A.3-3 双层错误模型收口）：
+     *                       外部入参转枚举失败按非法请求处置；DB 脏数据触达同口径，禁止静默吞成 null
      */
     public static EmployeeStatus fromCode(String code) {
         for (EmployeeStatus status : values()) {
@@ -48,6 +52,7 @@ public enum EmployeeStatus {
                 return status;
             }
         }
-        throw new IllegalArgumentException("未知的员工状态 code: " + code);
+        // 未知 code 收口为 BizException 400（BE-C3-05）：外部入参转枚举失败按非法请求语义返回，禁散落裸 IAE
+        throw new BizException(SystemErrorCode.ENUM_VALUE_INVALID, HttpStatus.BAD_REQUEST, "未知的员工状态 code: " + code);
     }
 }

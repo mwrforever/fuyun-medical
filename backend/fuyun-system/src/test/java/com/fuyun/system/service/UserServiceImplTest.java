@@ -3,6 +3,7 @@ package com.fuyun.system.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -10,6 +11,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.entity.UserEntity;
 import com.fuyun.system.enums.UserStatus;
 import com.fuyun.system.mapper.UserMapper;
@@ -30,9 +32,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 /**
  * 用户账号服务单元测试（登录状态机写路径，M01 Spec §5 + SecurityConstants 阈值语义）。
  *
- * <p>覆盖：按登录名查询投影、失败计数累加（未达阈值不置锁定）、达阈值 5 次置 locked_until
- * （now+30 分钟）、成功复位（计数清零/锁定清空/最近登录时刻）。mapper 以 Mockito 模拟，
- * 更新内容经捕获的 Wrapper 参数断言（业务写回值，不绑定 SQL 细节）。
+ * <p>覆盖：按登录名查询投影、失败计数原子累加（EX-28：行内 +1 + SQL 侧 CASE 阈值判定，未达
+ * 阈值锁定列回写自身）、达阈值 5 次置 locked_until（now+30 分钟）、并发失败不丢计数护航、
+ * 成功复位（计数清零/锁定清空/最近登录时刻）。mapper 以 Mockito 模拟，更新内容经捕获的
+ * Wrapper 断言：失败路径的原子累加与锁定判定以 setSql 片段为业务契约（行内表达式即业务语义），
+ * 阈值与锁定时刻经绑定参数断言；成功复位路径仍以参数写回值断言。
  */
 @ExtendWith(MockitoExtension.class)
 class UserServiceImplTest {
@@ -73,7 +77,7 @@ class UserServiceImplTest {
     }
 
     @Test
-    @DisplayName("失败计数累加未达阈值：仅写 fail_count，不触碰锁定列")
+    @DisplayName("失败计数原子累加未达阈值：行内 +1，锁定列回写自身（不触碰既有锁定）")
     void recordLoginFailureIncrementsCountWithoutLockBelowThreshold() {
         UserEntity user = user(1);
 
@@ -81,9 +85,10 @@ class UserServiceImplTest {
 
         verify(userMapper).update(isNull(), updateWrapperCaptor.capture());
         LambdaUpdateWrapper<UserEntity> wrapper = asLambdaUpdateWrapper(updateWrapperCaptor.getValue());
-        // 业务写回断言：新计数=2；无任何时刻值写入（未置锁定）
-        assertThat(wrapper.getParamNameValuePairs().values()).contains(2);
-        assertThat(wrapper.getParamNameValuePairs().values()).noneMatch(value -> value instanceof OffsetDateTime);
+        // 业务写回断言（EX-28 换面）：计数为行内原子累加（不写计算字面值，并发不丢计数）
+        assertThat(wrapper.getSqlSet()).contains("fail_count = fail_count + 1");
+        // 未达阈值分支：锁定判定整体迁移 SQL 侧 CASE，"不触碰既有锁定"由 ELSE 回写自身承载
+        assertThat(wrapper.getSqlSet()).contains("ELSE locked_until END");
     }
 
     @Test
@@ -95,8 +100,10 @@ class UserServiceImplTest {
 
         verify(userMapper).update(isNull(), updateWrapperCaptor.capture());
         LambdaUpdateWrapper<UserEntity> wrapper = asLambdaUpdateWrapper(updateWrapperCaptor.getValue());
-        assertThat(wrapper.getParamNameValuePairs().values()).contains(5);
-        // 锁定截止时刻写入：与 now+30 分钟偏差在秒级内（锁定时长语义断言）
+        // SQL 侧阈值判定（EX-28 迁移）：判定式取「累加后值 ≥ 阈值」（快照 4+1=5），阈值经绑定参数 {0} 下发
+        assertThat(wrapper.getSqlSet()).contains("CASE WHEN fail_count + 1 >=");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(SecurityConstants.LOGIN_FAIL_LOCK_THRESHOLD);
+        // 锁定截止时刻写入：与 now+30 分钟偏差在秒级内（锁定时长语义断言，应用时钟口径不变）
         OffsetDateTime lockedUntil = wrapper.getParamNameValuePairs().values().stream()
                 .filter(OffsetDateTime.class::isInstance)
                 .map(OffsetDateTime.class::cast)
@@ -104,6 +111,24 @@ class UserServiceImplTest {
                 .orElseThrow();
         assertThat(lockedUntil).isAfter(OffsetDateTime.now().plusMinutes(29));
         assertThat(lockedUntil).isBefore(OffsetDateTime.now().plusMinutes(31));
+    }
+
+    @Test
+    @DisplayName("并发失败护航（EX-28）：同一加载快照两次失败各自独立 +1，禁止读-改-写丢计数")
+    void concurrentFailuresEachContributeIndependentIncrement() {
+        // 模拟两并发失败：两个请求共享同一账号加载快照（failCount=1），彼此更新提交前都已读到旧值
+        UserEntity loadedSnapshot = user(1);
+
+        service.recordLoginFailure(loadedSnapshot);
+        service.recordLoginFailure(loadedSnapshot);
+
+        verify(userMapper, times(2)).update(isNull(), updateWrapperCaptor.capture());
+        // 两次更新都必须是行内原子累加（fail_count = fail_count + 1）：
+        // 旧读-改-写两笔均写"快照值+1=2"同一字面值（DB 终值 2，只计 1 次，暴力破解防护被稀释）；
+        // 原子累加两笔各贡献一次 +1（DB 终值 3，两次都计），锁定判定由 SQL 侧 CASE 保证并发下不漏锁
+        assertThat(updateWrapperCaptor.getAllValues())
+                .extracting(wrapper -> asLambdaUpdateWrapper(wrapper).getSqlSet())
+                .allSatisfy(sqlSet -> assertThat(sqlSet).contains("fail_count = fail_count + 1"));
     }
 
     @Test

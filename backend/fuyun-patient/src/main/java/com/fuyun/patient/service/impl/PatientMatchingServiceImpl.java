@@ -5,8 +5,8 @@ import com.fuyun.patient.dto.PatientMatchCheckRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.properties.PatientEmpiProperties;
+import com.fuyun.patient.service.IPatientMatchingService;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PatientMatchingService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * NAME_ONLY=60），最高分 ≥ 阈值 → SUSPECT，否则 NO_MATCH。只读事务（A.4.2-7 查询标注只读）。
  */
 @Slf4j
-public class PatientMatchingServiceImpl implements PatientMatchingService {
+public class PatientMatchingServiceImpl implements IPatientMatchingService {
 
     /** 弱标识评分规则值（代码内固定规则表，仅阈值参数化——PatientEmpiProperties javadoc 口径） */
     private static final BigDecimal SCORE_NAME_SEX_BIRTH = new BigDecimal("95");

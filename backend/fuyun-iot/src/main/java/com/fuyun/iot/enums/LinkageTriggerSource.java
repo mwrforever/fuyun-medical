@@ -2,6 +2,9 @@ package com.fuyun.iot.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.iot.api.IotErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 联动触发来源枚举（iot.linkage_rule.trigger_source 列值域，FU-M14-10 三类触发源）。
@@ -45,8 +48,8 @@ public enum LinkageTriggerSource {
      *
      * @param code 存储值，来源：DB 列读取或管理台请求体；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或非法请求值），
-     *                                  建议调用方按校验失败/数据异常处置
+     * @throws BizException IOT-1026（400）：code 无对应枚举常量（脏数据或非法请求值），
+     *                      建议调用方按校验失败/数据异常处置
      */
     public static LinkageTriggerSource fromCode(String code) {
         for (LinkageTriggerSource source : values()) {
@@ -54,6 +57,8 @@ public enum LinkageTriggerSource {
                 return source;
             }
         }
-        throw new IllegalArgumentException("未知的联动触发来源 code: " + code);
+        // 词表外 code 收口（BE-C3-05）：BizException 400 + IOT-1026 直达边界渲染 ProblemDetail，
+        // MQ 解析链调用方（TelemetryFrameParser/快照读取）就地捕获包装，毒丸/降级语义不变
+        throw new BizException(IotErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的联动触发来源 code: " + code);
     }
 }

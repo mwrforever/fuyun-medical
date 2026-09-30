@@ -1,10 +1,12 @@
 // 划价结算页单测（FU-M13-02/03 前端面）：空就诊号点划价被前置拦截不出网、划价结果金额经
 // fenToYuanDisplay 渲染元文本且全程 string 无浮点转换（超大分值渲染即证）、确认结算以
-// 预结算回传 settleNo 出网（幂等键由后端承载，页面零运算零生成）。
+// 预结算回传 settleNo 出网（幂等键由后端承载，页面零运算零生成）、EX-45/FE-A1-05 待收费用
+// 回包判空兜底（content 缺省不驻留旧就诊费用）与切换就诊号在途竞态守卫（旧就诊慢回包丢弃）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { listFees, previewSettlement, quote, settle } from '@/api/billing';
+import { listFees, manualCharge, previewSettlement, quote, settle } from '@/api/billing';
+import type { FeeRecordVO } from '@/api/billing';
 import PricingSettleView from './PricingSettleView.vue';
 
 vi.mock('@/api/billing', () => ({
@@ -41,6 +43,19 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
     throw new Error(`未找到按钮：${text}`);
   }
   await button.trigger('click');
+}
+
+/** 待收费用行（FE-A1-05 用例数据源；status 可覆写） */
+function feeRow(partial: Partial<FeeRecordVO> = {}): FeeRecordVO {
+  return {
+    feeNo: 'F-001',
+    itemNameSnapshot: '检查费',
+    unitPriceSnapshot: '3500',
+    quantity: 1,
+    amount: '3500',
+    status: 'PENDING',
+    ...partial,
+  };
 }
 
 describe('划价结算页', () => {
@@ -134,6 +149,62 @@ describe('划价结算页', () => {
         payments: [{ method: 'CASH', amount: '7000' }],
       });
     });
+    wrapper.unmount();
+  });
+
+  it('待收费用回包 content 缺省兜底空清单，旧就诊费用不驻留（EX-45/FE-A1-05 判空）', async () => {
+    vi.mocked(listFees)
+      .mockResolvedValueOnce({
+        content: [feeRow({ feeNo: 'F-OLD' })],
+        page: 0,
+        size: 20,
+        total: '1',
+      })
+      .mockResolvedValueOnce({ content: undefined, page: 0, size: 20, total: '0' } as never);
+    const wrapper = mount(PricingSettleView);
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V001');
+    await clickButton(wrapper, '查询费用');
+    await flushPromises();
+    expect(wrapper.text()).toContain('F-OLD');
+    // 换就诊号重查遭遇契约外空回包（content 整包缺失）：兜底空清单，旧就诊费用不得驻留误导收费员
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V002');
+    await clickButton(wrapper, '查询费用');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('F-OLD');
+    wrapper.unmount();
+  });
+
+  it('切换就诊号在途竞态守卫：旧就诊慢回包整包丢弃（EX-45/FE-A1-05 竞态）', async () => {
+    vi.mocked(manualCharge).mockReset().mockResolvedValue('fee-9001');
+    // 旧就诊（V001）查询回包挂起至用例放行——复现「查询在途时改号补录」竞态窗口
+    let releaseOld: (page: unknown) => void = () => {};
+    vi.mocked(listFees)
+      .mockImplementationOnce(() => new Promise((resolve) => (releaseOld = resolve)) as never)
+      .mockResolvedValueOnce({
+        content: [feeRow({ feeNo: 'F-NEW' })],
+        page: 0,
+        size: 20,
+        total: '1',
+      });
+    const wrapper = mount(PricingSettleView);
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V001');
+    await clickButton(wrapper, '查询费用');
+    // 改号 V002 并经手工计费路径刷新待收表（该路径不受查询按钮 loading 态拦截，真实并发入口）
+    await wrapper.find('input[placeholder="患者号"]').setValue('1932000000000000002');
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V002');
+    await clickButton(wrapper, '手工计费');
+    await flushPromises();
+    await wrapper.find('input[placeholder="收费项目编码"]').setValue('C002');
+    await wrapper.find('textarea[placeholder="补录理由（审计留痕）"]').setValue('补录检查费');
+    await clickButton(wrapper, '确认计费');
+    await flushPromises();
+    // 新就诊（V002）待收费用先行落位
+    expect(wrapper.text()).toContain('F-NEW');
+    // 旧就诊慢回包晚到：过期回包丢弃，不得覆盖新就诊的待收表
+    releaseOld({ content: [feeRow({ feeNo: 'F-OLD' })], page: 0, size: 20, total: '1' });
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('F-OLD');
+    expect(wrapper.text()).toContain('F-NEW');
     wrapper.unmount();
   });
 });

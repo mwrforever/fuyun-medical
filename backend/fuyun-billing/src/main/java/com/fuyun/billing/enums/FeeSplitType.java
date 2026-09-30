@@ -2,6 +2,9 @@ package com.fuyun.billing.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.billing.api.BillingErrorCode;
+import com.fuyun.common.exception.BizException;
+import org.springframework.http.HttpStatus;
 
 /**
  * 费用归属切分类型（billing.fee_ownership_split.split_type 列值域，V1001）：住院费用归属
@@ -42,7 +45,8 @@ public enum FeeSplitType {
      *
      * @param code 存储值，来源：DB 列读取；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据），建议上游按数据异常处置
+     * @throws BizException BILL-1034（400）：code 无对应枚举常量（外部输入/存储值词表外，
+     *      显式拒禁静默兜底——BE-C3-05 收口，改抛前为裸 IllegalArgumentException 出 500）
      */
     public static FeeSplitType fromCode(String code) {
         for (FeeSplitType type : values()) {
@@ -50,6 +54,6 @@ public enum FeeSplitType {
                 return type;
             }
         }
-        throw new IllegalArgumentException("未知的费用归属切分类型 code: " + code);
+        throw new BizException(BillingErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的费用归属切分类型 code: " + code);
     }
 }

@@ -3,6 +3,8 @@ package com.fuyun.billing.service;
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.billing.dto.InsuranceMappingUpsertRequest;
 import com.fuyun.billing.entity.InsuranceMapping;
+import java.util.Collection;
+import java.util.Map;
 
 /**
  * 医保对照服务（billing.insurance_mapping，FU-M13-01 贯标载体）：项目级 22 项国家编码对照的
@@ -18,6 +20,16 @@ public interface IInsuranceMappingService extends IService<InsuranceMapping> {
      * @return ACTIVE 对照行；未贯标或对照已失效返回 null
      */
     InsuranceMapping effectiveMapping(long chargeItemId);
+
+    /**
+     * 批量取项目当前 ACTIVE 对照（批量快照取价消费，A.4.3-14 N+1 消除）：一次 IN 批查替代
+     * 逐项目 {@link #effectiveMapping} 单查；uk_mapping_item_active 保证每项目至多一条 ACTIVE
+     * 行，无重复键面。
+     *
+     * @param chargeItemIds 收费项目 id 键集，非空集合（空集零 SQL 触达直接返回空 Map）
+     * @return chargeItemId → ACTIVE 对照行（未贯标/已失效项目不出键，非 null）
+     */
+    Map<Long, InsuranceMapping> effectiveMappings(Collection<Long> chargeItemIds);
 
     /**
      * 对照登记（upsert）：存在 ACTIVE 行则原行改写为最新对照，无则插入新 ACTIVE 行。

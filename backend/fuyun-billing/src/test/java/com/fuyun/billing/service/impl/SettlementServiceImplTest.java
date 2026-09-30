@@ -331,6 +331,37 @@ class SettlementServiceImplTest {
     }
 
     @Test
+    @DisplayName("费用清单投影契约：恰 2 列 id+amount（勾稽求和+迁移 id 集仅消费此两列），谓词与排序零变化")
+    void settleFeeQueryProjectsOnlyIdAndAmountColumns() {
+        Settlement st = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
+        when(settlementMapper.selectOne(any())).thenReturn(st);
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(
+                        fee(1L, 3000L, OffsetDateTime.parse("2026-09-17T09:30+08:00")),
+                        fee(2L, 2000L, OffsetDateTime.parse("2026-09-17T08:00+08:00"))));
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
+        when(feeRecordMapper.casMarkFeesSettled(anyLong(), any())).thenReturn(2);
+
+        service.settle(new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null))));
+
+        // 投影契约（EX-39）：勾稽读仅消费 id（迁移 id 集与排序键）+amount（求和）恰 2 列，费用行宽列
+        //   （费用项/数量/单价/医保快照/来源单等）禁入投影（修复前全列取回）；谓词与排序零变化锚定：
+        //   visit_id+status 等值携带 PENDING、id 升序（行序=迁移 id 集序，A.4.3-17）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<FeeRecord>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(feeRecordMapper).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<FeeRecord> wrapper = (LambdaQueryWrapper<FeeRecord>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment())
+                .contains("visit_id")
+                .contains("status")
+                .containsIgnoringCase("ORDER BY");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(VISIT, FeeStatus.PENDING);
+        assertThat(wrapper.getSqlSelect().trim()).isEqualTo("id,amount");
+        // 行为等价锚：投影收敛不改勾稽与迁移——金额求和=总额（勾稽过）、迁移 id 集=行序集（满额迁移）
+        verify(feeRecordMapper).casMarkFeesSettled(900L, List.of(1L, 2L));
+    }
+
+    @Test
     @DisplayName("结算幂等：同 settleNo 已 SETTLED 重放直返，不重复扣费不重复发事件")
     void settleIsIdempotentOnSettledStatus() {
         Settlement st = settlement(900L, "S100", SettlementStatus.SETTLED, 5000L);

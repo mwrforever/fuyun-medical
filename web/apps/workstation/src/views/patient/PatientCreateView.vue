@@ -2,8 +2,10 @@
 // 患者建档页（FU-M02-01）：建档表单（实名制必填口径，11 字段按身份基础/证件介质/建档属性
 // 三分节降低扫描成本）+ 介质选择与读卡器占位按钮 + 建档前匹配预检（AUTO_MATCH 归一提示 /
 // SUSPECT 待审提示）；建档成功 ElMessage 反馈后跳详情（消除静默跳转）；弹错归响应拦截器（web A.3-2）。
+// 录入中离开路由守卫（EX-46/FE-A2-07）：表单偏离建档缺省态即视为草稿，离开前确认防误触
+// 导航丢录入；建档成功跳详情为既定流程，放行不确认。
 import { computed, reactive, ref, useTemplateRef } from 'vue';
-import { useRouter } from 'vue-router';
+import { onBeforeRouteLeave, useRouter } from 'vue-router';
 import type { FormInstance, FormRules } from 'element-plus';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage/ElMessageBox 在模板外使用，按需样式需手动引入（与 api/http.ts 同款口径，F-1 缺口补引）
@@ -73,6 +75,34 @@ const checkResult = ref<MatchCheckVO | null>(null);
 /** 急诊无名氏快捷态：档案来源切换时联动提示 */
 const isEmergency = computed(() => form.archiveSource === 'TEMP_ANONYMOUS');
 
+/** 打开页面时的表单缺省态快照（离开守卫脏判据：任一字段偏离即视为录入中草稿） */
+const pristineFormSnapshot = JSON.stringify(form);
+/** 建档成功放行标记：成功跳详情为既定流程，离开守卫不确认直接放行 */
+let leavePassGranted = false;
+
+/**
+ * 录入中离开路由守卫（EX-46/FE-A2-07）：建档表单有未提交录入时，路由离开（站内导航）
+ * 前确认——误触侧栏/返回不静默丢失录入内容；未录入或已建档成功则零打扰放行。
+ *
+ * @return true=放行离开；false=取消导航留在本页
+ */
+onBeforeRouteLeave(async () => {
+  if (leavePassGranted || JSON.stringify(form) === pristineFormSnapshot) {
+    return true;
+  }
+  try {
+    await ElMessageBox.confirm('建档表单尚未提交，离开将丢失已录入内容', '未保存提醒', {
+      type: 'warning',
+      confirmButtonText: '确认离开',
+      cancelButtonText: '留在此页',
+    });
+    return true;
+  } catch {
+    // 用户选择留页：中断导航，草稿驻留表单
+    return false;
+  }
+});
+
 /** 读卡器占位按钮：当前禁用并提示（禁伪造成功交互） */
 function onReaderClick(): void {
   if (readerAvailable) {
@@ -126,9 +156,17 @@ async function handleSubmit(): Promise<void> {
     // 成功时刻即时反馈（消除静默跳转）：提示先于路由跳转，详情页挂载后提示仍驻留至自动关闭
     void ElMessage.success('建档完成');
     const patientId = String(result.candidatePatientId ?? '');
-    await router.push(`/patients/${patientId}`);
+    // 建档成功跳详情为既定流程：先放行离开守卫再导航，成功跳转不触发未保存确认
+    leavePassGranted = true;
+    const failure = await router.push(`/patients/${patientId}`);
+    // 导航被其他守卫/重定向中止时 push 以 NavigationFailure 结算（不抛错、未真正离开）：
+    // 回置放行标记，防标志残留令后续手动离开静默绕过未保存确认（守卫旁路失效）
+    if (failure) {
+      leavePassGranted = false;
+    }
   } catch {
-    // 失败弹错归响应拦截器；表单驻留防数据丢失
+    // push 异常结算同样回置放行标记（防守卫被旁路）；失败弹错归响应拦截器，表单驻留防数据丢失
+    leavePassGranted = false;
   } finally {
     submitting.value = false;
   }

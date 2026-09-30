@@ -9,7 +9,6 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
-import axios from 'axios';
 import { telemetry } from '@/api/iot';
 import type { TelemetryPoint } from '@/api/iot';
 import {
@@ -24,17 +23,10 @@ import type {
   RegisterColdChainRecordRequest,
   SaveColdChainArchiveRequest,
 } from '@/api/ward';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 用途中文词表反查（用途列徽标） */
 function purposeLabel(code: string | undefined): string {
@@ -56,38 +48,24 @@ function recordTypeLabel(code: string | undefined): string {
   return COLD_RECORD_TYPE_LABELS[code ?? ''] ?? code ?? '—';
 }
 
-/** 时点展示串（MM-dd HH:mm，时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 /* ==================== 档案列表 ==================== */
-const rows = ref<ColdChainArchiveVO[]>([]);
-const listLoading = ref(false);
 /** 用途筛选（空串=全部四用途） */
 const purposeFilter = ref('');
 
-/** 加载档案列表（purpose 过滤由后端承载，overdue 到期标记由后端承载） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await coldChain.page({
-      purpose: purposeFilter.value === '' ? undefined : purposeFilter.value,
-      page: 0,
-      size: 50,
-    });
-    rows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载档案列表（purpose 过滤由后端承载，overdue 到期标记由后端承载）：页码/行集/加载态
+ * 经 usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败
+ * 弹错归响应拦截器；驻留旧清单） */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({
+    purpose: purposeFilter.value === '' ? undefined : purposeFilter.value,
+  }),
+  fetcher: ({ purpose, page, size }) => coldChain.page({ purpose, page, size }),
+  pageSize: 50,
+});
 
 /* ==================== 新建档案弹窗 ==================== */
 const createVisible = ref(false);
@@ -160,30 +138,31 @@ async function onCreate(): Promise<void> {
 
 /* ==================== 档案详情（记录 + 登记 + 温度曲线） ==================== */
 const detailVisible = ref(false);
-const detailLoading = ref(false);
 /** 详情目标档案（弹窗上下文锚点；详情回显与登记/曲线共用） */
 const detailArchive = ref<ColdChainArchiveVO | null>(null);
 const recordRows = ref<ColdChainRecordVO[]>([]);
 
-/** 打开详情弹窗：出网 detail 回显 + records 记录全集（失败弹错归拦截器，关窗兜底） */
+/** 装载详情出网（detail 权威回显 + records 记录全集并行拉取）：loading 骨架经 useAsyncTask
+ * 收拢（EX-42 范式迁移，失败兜底展示经 onError 注入 surfaceBizError，口径与迁移前一致） */
+const { loading: detailLoading, run: loadDetail } = useAsyncTask(
+  async (archiveNo: string) => {
+    const [archive, records] = await Promise.all([
+      coldChain.detail(archiveNo),
+      coldChain.records(archiveNo),
+    ]);
+    // detail 出参为权威回显源（行数据仅作入口锚点）
+    detailArchive.value = archive;
+    recordRows.value = records;
+  },
+  { onError: surfaceBizError },
+);
+
+/** 打开详情弹窗（前置锚定入口行并开窗）后发起装载（失败弹错归拦截器，关窗兜底） */
 async function openDetail(row: ColdChainArchiveVO): Promise<void> {
   detailArchive.value = row;
   detailVisible.value = true;
-  detailLoading.value = true;
-  try {
-    if (row.archiveNo !== undefined) {
-      const [archive, records] = await Promise.all([
-        coldChain.detail(row.archiveNo),
-        coldChain.records(row.archiveNo),
-      ]);
-      // detail 出参为权威回显源（行数据仅作入口锚点）
-      detailArchive.value = archive;
-      recordRows.value = records;
-    }
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    detailLoading.value = false;
+  if (row.archiveNo !== undefined) {
+    await loadDetail(row.archiveNo);
   }
 }
 
@@ -256,7 +235,6 @@ async function onRegister(): Promise<void> {
 /** 曲线查询指标编码（冷链温度指标编码未入 MDC 词表种子——联调期占位，对齐物模型后修订） */
 const curveMetricCode = ref('COLDCHAIN_TEMP');
 const curvePoints = ref<TelemetryPoint[]>([]);
-const curveLoading = ref(false);
 /** 曲线时间窗（毫秒）：最近 24 小时 */
 const CURVE_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** SVG 画布几何（viewBox 坐标系；内边距防折线贴边） */
@@ -264,7 +242,22 @@ const CURVE_W = 520;
 const CURVE_H = 160;
 const CURVE_PAD = 12;
 
-/** 查询温度曲线：scope=device 按档案设备查询最近 24h 聚合点列 */
+/** 曲线查询出网（scope=device 按档案设备查询最近 24h 聚合点列）：loading 骨架经
+ * useAsyncTask 收拢（EX-42 范式迁移，失败兜底展示经 onError 注入 surfaceBizError） */
+const { loading: curveLoading, run: loadCurve } = useAsyncTask(
+  async (deviceId: string) => {
+    curvePoints.value = await telemetry.series({
+      scope: 'device',
+      deviceId,
+      metricCode: curveMetricCode.value.trim(),
+      from: new Date(Date.now() - CURVE_WINDOW_MS).toISOString(),
+      to: new Date().toISOString(),
+    });
+  },
+  { onError: surfaceBizError },
+);
+
+/** 曲线查询入口：在途守卫与档案设备缺失 warning 早退留包装函数（前置拦截零出网） */
 async function onQueryCurve(): Promise<void> {
   if (curveLoading.value) {
     return;
@@ -274,20 +267,7 @@ async function onQueryCurve(): Promise<void> {
     void ElMessage.warning('档案未关联设备，无法查询温度曲线');
     return;
   }
-  curveLoading.value = true;
-  try {
-    curvePoints.value = await telemetry.series({
-      scope: 'device',
-      deviceId,
-      metricCode: curveMetricCode.value.trim(),
-      from: new Date(Date.now() - CURVE_WINDOW_MS).toISOString(),
-      to: new Date().toISOString(),
-    });
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    curveLoading.value = false;
-  }
+  await loadCurve(deviceId);
 }
 
 /** 折线点坐标（avg 优先、last 兜底；单点/空点渲染退化态） */

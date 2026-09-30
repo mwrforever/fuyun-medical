@@ -1,5 +1,6 @@
 package com.fuyun.billing.controller;
 
+import com.fuyun.billing.convert.PricingRuleConverter;
 import com.fuyun.billing.dto.PricingRuleUpsertRequest;
 import com.fuyun.billing.service.IPricingRuleService;
 import com.fuyun.billing.vo.PricingRuleVO;
@@ -59,7 +60,9 @@ public class PricingRuleController {
     @Operation(summary = "全量规则清单", operationId = "listPricingRules")
     @GetMapping("/pricing-rules")
     public List<PricingRuleVO> listAll() {
-        // 实体禁直出：清单逐行经静态工厂转 VO（出网边界唯一出口）
-        return pricingRuleService.listAll().stream().map(PricingRuleVO::from).toList();
+        // 实体禁直出：清单逐行经 MapStruct 转换器转 VO（出网边界唯一出口，BUG-23 迁入）
+        return pricingRuleService.listAll().stream()
+                .map(PricingRuleConverter.INSTANCE::toVO)
+                .toList();
     }
 }

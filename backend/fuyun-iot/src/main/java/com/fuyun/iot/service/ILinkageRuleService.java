@@ -1,8 +1,10 @@
 package com.fuyun.iot.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.dto.LinkageLogQueryRequest;
 import com.fuyun.iot.dto.SaveLinkageRuleRequest;
+import com.fuyun.iot.entity.IotLinkageRuleEntity;
 import com.fuyun.iot.vo.LinkageLogVO;
 import com.fuyun.iot.vo.LinkageRuleVO;
 import java.util.List;
@@ -14,15 +16,20 @@ import java.util.List;
  * <p>人工重推语义：仅 FAILED 行可重推（重执行动作 + CAS 迁移结果 + 发布 executed 事件同事务）；
  * 非终态行（SUCCESS/PENDING）、规则已删除/停用、并发窗口被他方承接均 IOT-1018 409 拒绝。
  * 装配归 fuyun-app IotConfig @Import（宪法 B.1）。
+ *
+ * <p>主表配对（宪法 A.4.3-20，EX-09 收拢）：CRUD 型服务主表 iot_linkage_rule，接口继承 IService、
+ * 实现继承 ServiceImpl；联动日志（iot_linkage_log）为副表，经实现侧注入的 logMapper 承载
+ * （分页与重推 CAS 通道）；视图出参的全量清单命名 listAll，避免与 IService#list()（返回实体
+ * List）返回类型冲突。
  */
-public interface ILinkageRuleService {
+public interface ILinkageRuleService extends IService<IotLinkageRuleEntity> {
 
     /**
      * 规则清单（全量，id 升序稳定输出；@TableLogic 自动携带 deleted=0）。
      *
      * @return 规则视图清单，非空；空表为空清单
      */
-    List<LinkageRuleVO> list();
+    List<LinkageRuleVO> listAll();
 
     /**
      * 规则登记（触发条件词表校验通过后落行，enabled 缺省补 true）。

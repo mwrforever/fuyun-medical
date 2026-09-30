@@ -6,7 +6,8 @@ import java.util.List;
 
 /**
  * 患者标识注册表 IService（A.4.3-20）：attach 与解析/清单/identifier.changed 事件发布本任务交付；
- * 按卡号查询（标识状态机写侧守卫入口，任何状态可查）由 Task 10 卡生命周期扩充。
+ * 按卡号查询（标识状态机写侧守卫入口，任何状态可查）由 Task 10 卡生命周期扩充；
+ * 就诊卡状态机四支 CAS 条件更新（EX-25 读后写收口）由卡生命周期并发加固扩充。
  */
 public interface IPatientIdentifierService extends IService<PatientIdentifier> {
 
@@ -66,4 +67,42 @@ public interface IPatientIdentifierService extends IService<PatientIdentifier> {
      * @param changeType      变更类型 BOUND/LOST/REPLACED/UNBOUND，非空
      */
     void publishChanged(long patientId, String identifierType, String identifierValue, String changeType);
+
+    /**
+     * 无主卡绑定 CAS 条件更新（EX-25 读后写收口）：仅未挂接（patient_id 空/零占位）行可绑定——
+     * 并发双 bind 同卡恰一赢，输家 0 行由调用方重读定性拒，后提交者不得覆写先到者的挂接
+     * （丢单链防线）。绑定目标与置 ACTIVE 同语句原子落库。
+     *
+     * @param id        标识行 id，非空；来源：卡操作入口 findByCardNo 读回行主键
+     * @param patientId 绑定目标患者主索引，非空
+     * @return 影响行数（1=抢得绑定权；0=卡已被并发绑定或行不可达，调用方重读定性报错）
+     */
+    int casBindUnowned(long id, long patientId);
+
+    /**
+     * 挂失 CAS 条件更新（EX-25）：仅 ACTIVE 可挂失——与解绑/补卡并发交错时 0 行由调用方重读
+     * 定性拒（ACTIVE→LOST 单次迁移）。LOST 与解绑时刻同语句原子落库（DB now()）。
+     *
+     * @param id 标识行 id，非空
+     * @return 影响行数（1=挂失抢锚成功；0=非 ACTIVE 被并发处理或行不可达，调用方重读定性报错）
+     */
+    int casMarkLost(long id);
+
+    /**
+     * 补卡旧卡退役 CAS 条件更新（EX-25）：仅 LOST 可补——并发双补卡恰一赢，输家 0 行由调用方
+     * 重读定性拒；新卡发号严格后置于本锚抢占成功（防重复发号）。
+     *
+     * @param id 旧卡标识行 id，非空
+     * @return 影响行数（1=旧卡退役成功；0=非 LOST 被并发处理或行不可达，调用方重读定性报错）
+     */
+    int casRetireReplaced(long id);
+
+    /**
+     * 解绑 CAS 条件更新（EX-25）：仅 ACTIVE 可解绑——与挂失/补卡并发交错时 0 行由调用方重读
+     * 定性拒（ACTIVE→DISABLED 单次迁移）。DISABLED 与解绑时刻同语句原子落库（DB now()）。
+     *
+     * @param id 标识行 id，非空
+     * @return 影响行数（1=解绑抢锚成功；0=非 ACTIVE 被并发处理或行不可达，调用方重读定性报错）
+     */
+    int casDisable(long id);
 }

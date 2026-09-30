@@ -135,10 +135,15 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
     /**
      * 审批并执行合并（双人角色 + SPI 前置检查 + 指针映射五步；FAILED 记录重跑执行序列）。
      *
+     * <p>并发收口（EX-21）：读快照守卫（终态/双人角色/SPI）通过后，以旧状态谓词 CAS 抢锚
+     * （PROCESSING/FAILED → PROCESSING + 审批人，{@link MergeRecordMapper#casApproveProcessing}）——
+     * 并发双批准恰一赢；输家 0 行重读定性拒（行消失 404 PAT-1007 / 已被并发处理 409 PAT-1008），
+     * 禁以过期快照重复执行合并序列。
+     *
      * @param id       合并记录 id，非空
      * @param operator 审批操作人，非空
      * @return 合并记录出参，非空
-     * @throws BizException PAT-1006/PAT-1007/PAT-1008
+     * @throws BizException PAT-1006/PAT-1007/PAT-1008（含并发双批准输家 CAS 0 行重读定性）
      */
     @Override
     @Transactional
@@ -153,10 +158,38 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         }
         // SPI 在途检查（事务内仅本地查询，M03/M04 经 OngoingVisitQuery 注册）
         checkOngoingVisits(record.getSurvivorPatientId(), record.getMergedPatientId());
+        // EX-21 审批抢锚 CAS（读后判收口，RefundServiceImpl BUG-10 同款时序）：谓词钉死
+        // PROCESSING/FAILED 可审批双态——并发双批准恰一赢（行锁上等待，先到者提交后谓词对新行
+        // 版本重评估不命中），输家 0 行重读定性拒，后提交者不得重复执行合并序列
+        if (baseMapper.casApproveProcessing(id, operator) != 1) {
+            throw concurrentApproveConflict(id);
+        }
         record.setApprovedBy(operator);
         record.setStatus(STATUS_PROCESSING);
         executeMerge(record);
         return toVO(record);
+    }
+
+    /**
+     * 审批 CAS 0 行命中的重读定性（EX-21，RefundServiceImpl 并发冲突定性同语义）：重读最新行——
+     * 行已消失归 404（PAT-1007，与入口查询语义一致禁漂移）；仍在表即状态已被并发事务迁移（他
+     * 审批人先落 COMPLETED），「已被并发处理」显式拒 PAT-1008——禁盲目重试，更禁以过期快照
+     * 整行覆写（合并序列重复执行的共根源）。
+     *
+     * @param id 合并记录 id，非空；来源：approve 入参
+     * @return 待抛业务异常（404 缺单 / 409 并发冲突），非空；调用方恒 throw
+     */
+    private BizException concurrentApproveConflict(long id) {
+        // 数据库读操作：CAS 败北后重读最新行定性（不可重试——状态机单次迁移，重试无正确性收益）
+        MergeRecord latest = getById(id);
+        if (latest == null) {
+            return new BizException(PatientErrorCode.MERGE_RECORD_NOT_FOUND, HttpStatus.NOT_FOUND, "合并记录不存在：" + id);
+        }
+        log.warn("合并审批并发冲突（CAS 0 行，已被并发处理）：id={}，当前状态={}", id, latest.getStatus());
+        return new BizException(
+                PatientErrorCode.MERGE_STATE_NOT_ALLOWED,
+                HttpStatus.CONFLICT,
+                "合并记录已被并发处理，当前状态不允许审批：" + latest.getStatus());
     }
 
     /**
@@ -185,7 +218,8 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         try {
             record.setPreSnapshot(objectMapper.writeValueAsString(snapshot));
         } catch (JsonProcessingException e) {
-            // 快照是拆分可逆的唯一依据：序列化失败即拒绝执行合并（fail-fast 防不可拆合并）
+            // 快照是拆分可逆的唯一依据：序列化失败即拒绝执行合并（fail-fast 防不可拆合并）；
+            // EX-19 收口 C 类：系统级序列化防御断言（非用户可达输入），保留 ISE 走全局 500 兜底
             throw new IllegalStateException("合并快照序列化失败", e);
         }
         // ②主档空字段补齐（字段级择优：主档空且从档非空才补，双方原值已在快照）
@@ -198,7 +232,9 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         }
         patientService.updateById(survivor);
         // ③从档标识整批重挂主档（原挂接在快照；is_primary 随行保留，历史业务行零改写仅改指针归属）
-        for (PatientIdentifier identifier : identifierService.listByPatient(merged.getPatientId())) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：从档标识单次装载，循环内纯迭代重挂
+        List<PatientIdentifier> identifiers = identifierService.listByPatient(merged.getPatientId());
+        for (PatientIdentifier identifier : identifiers) {
             identifier.setPatientId(survivor.getPatientId());
             identifierService.updateById(identifier);
         }
@@ -219,7 +255,7 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
     }
 
     /**
-     * 拆分恢复（COMPLETED→REVERSED 终态；标识按快照回挂）。
+     * 拆分恢复（COMPLETED→REVERSED 终态；标识按快照回挂——EX-38 键集批查+批量写收敛）。
      *
      * @param id     合并记录 id，非空
      * @param reason 拆分原因，非空
@@ -235,14 +271,30 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
         }
         Patient survivor = requireExists(record.getSurvivorPatientId());
         Patient merged = requireExists(record.getMergedPatientId());
-        // 标识按快照回挂（快照 identifier 清单原 patientId=从档；快照损坏显式暴露拒拆）
+        // 标识按快照回挂（快照 identifier 清单原 patientId=从档；快照损坏显式暴露拒拆）。
+        // EX-38 键集前置批量面（A.4.3-14「循环内单查改 in 批量」）：快照标识清单循环前一次 IN
+        // 批查建键 Map、循环内纯内存改挂、一次批量写——N 行回挂的 2N 次逐行读写收敛为
+        // 「1 查 + 1 批写」；行缺失（含逻辑删，listByIds 同样过滤）跳过不报错，与原逐行
+        // getById null 判容错语义一致
         List<Long> snapshotIds = extractSnapshotIdentifierIds(record.getPreSnapshot());
-        for (Long identifierId : snapshotIds) {
-            PatientIdentifier identifier = identifierService.getById(identifierId);
-            if (identifier != null) {
-                identifier.setPatientId(merged.getPatientId());
-                identifierService.updateById(identifier);
+        // 空键集守卫：MP listByIds 无内建空集短路（in() 空集生成非法 SQL），空快照零触达
+        // （与原空循环零查询语义保持一致；PricingEngineServiceImpl 同款守卫先例）
+        if (!snapshotIds.isEmpty()) {
+            Map<Long, PatientIdentifier> identifierById = new HashMap<>(snapshotIds.size());
+            for (PatientIdentifier loaded : identifierService.listByIds(snapshotIds)) {
+                identifierById.put(loaded.getId(), loaded);
             }
+            List<PatientIdentifier> rehangTargets = new ArrayList<>(snapshotIds.size());
+            for (Long identifierId : snapshotIds) {
+                PatientIdentifier identifier = identifierById.get(identifierId);
+                if (identifier != null) {
+                    // 恢复快照记录的原挂接（历史业务行零改写仅改指针归属，is_primary 随行保留）
+                    identifier.setPatientId(merged.getPatientId());
+                    rehangTargets.add(identifier);
+                }
+            }
+            // 数据库写操作：批量改挂（JDBC 批处理；全行缺失时空批写零语句，无副作用）
+            identifierService.updateBatchById(rehangTargets);
         }
         // 从档恢复 NORMAL 并清合并指针（与 executeMerge ④ 互逆）。指针置空必须显式 SET：
         // updateById 默认忽略 null 字段会遗留 merged_into_patient_id（真栈 IT 实证），
@@ -303,6 +355,8 @@ public class MergeRecordServiceImpl extends ServiceImpl<MergeRecordMapper, Merge
             }
             return ids;
         } catch (JsonProcessingException e) {
+            // EX-19 收口 C 类：快照 JSON 损坏的数据级防御断言（落库快照非用户直改输入），保留 ISE
+            // 显式暴露数据异常拒绝拆分，走全局 500 兜底，不转业务错误码
             throw new IllegalStateException("合并快照解析失败（数据损坏）", e);
         }
     }

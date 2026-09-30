@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
@@ -18,6 +19,7 @@ import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -41,6 +43,7 @@ import com.fuyun.outpatient.mapper.ScheduleTemplateMapper;
 import com.fuyun.outpatient.vo.NumberPoolVO;
 import com.fuyun.outpatient.vo.ScheduleTemplateVO;
 import com.fuyun.outpatient.vo.ScheduleVO;
+import java.sql.BatchUpdateException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -48,6 +51,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.exceptions.PersistenceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +61,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
@@ -194,70 +200,84 @@ class ScheduleServiceImplTest {
         when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1100000")));
         // 幂等预过滤读回：窗口内无已存在排班
         when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // 桩面迁移（EX-37）：原 insert doAnswer 主键回填两桩机械迁移至 saveBatch 批写桩（ASSIGN_ID
+        // 生产由 MP 批写填充；批一排班/批二池行按元素类型分派回填）
         AtomicLong scheduleSeq = new AtomicLong(100);
-        doAnswer(inv -> {
-                    Schedule inserting = inv.getArgument(0);
-                    inserting.setId(scheduleSeq.incrementAndGet());
-                    return 1;
-                })
-                .when(scheduleMapper)
-                .insert(any(Schedule.class));
         AtomicLong poolSeq = new AtomicLong(200);
-        doAnswer(inv -> {
-                    ApptNumberPool inserting = inv.getArgument(0);
-                    inserting.setId(poolSeq.incrementAndGet());
-                    return 1;
-                })
-                .when(apptNumberPoolMapper)
-                .insert(any(ApptNumberPool.class));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList())).thenAnswer(inv -> {
+                List<?> batch = inv.getArgument(0);
+                for (Object entity : batch) {
+                    if (entity instanceof Schedule schedule) {
+                        schedule.setId(scheduleSeq.incrementAndGet());
+                    } else if (entity instanceof ApptNumberPool pool) {
+                        pool.setId(poolSeq.incrementAndGet());
+                    }
+                }
+                return true;
+            });
 
-        int generated = service.generate(new ScheduleGenerateRequest(endDate, 7));
+            int generated = service.generate(new ScheduleGenerateRequest(endDate, 7));
 
-        assertThat(generated).isEqualTo(2);
-        // 排班断言：仅周一/周二各一行，母本字段（科室/医生/号别/时段/号数）逐项拷贝
-        ArgumentCaptor<Schedule> scheduleCaptor = ArgumentCaptor.forClass(Schedule.class);
-        verify(scheduleMapper, times(2)).insert(scheduleCaptor.capture());
-        assertThat(scheduleCaptor.getAllValues())
-                .extracting(Schedule::getSchedDate)
-                .containsExactly(LocalDate.of(2026, 9, 21), LocalDate.of(2026, 9, 22));
-        assertThat(scheduleCaptor.getAllValues())
-                .extracting(
-                        Schedule::getTemplateId,
-                        Schedule::getDeptCode,
-                        Schedule::getDoctorId,
-                        Schedule::getApptType,
-                        Schedule::getSession,
-                        Schedule::getTotalQuota,
-                        Schedule::getUsedQuota)
-                .containsExactly(
-                        tuple(1L, "DEP001", "DOC001", ApptType.EXPERT, SessionType.MORNING, 4, 0),
-                        tuple(1L, "DEP001", "DOC001", ApptType.EXPERT, SessionType.MORNING, 4, 0));
-        // 池行断言：total_quota=4（slot_quota 母本）、channel_quota JSON 逐字回读、schedule 关联成对
-        ArgumentCaptor<ApptNumberPool> poolCaptor = ArgumentCaptor.forClass(ApptNumberPool.class);
-        verify(apptNumberPoolMapper, times(2)).insert(poolCaptor.capture());
-        assertThat(poolCaptor.getAllValues())
-                .extracting(
-                        ApptNumberPool::getScheduleId, ApptNumberPool::getTotalQuota, ApptNumberPool::getChannelQuota)
-                .containsExactly(
-                        tuple(101L, 4, DEFAULT_CHANNEL_QUOTA_JSON), tuple(102L, 4, DEFAULT_CHANNEL_QUOTA_JSON));
-        // 池键 prime 预热断言：poolId 与 TTL（TTL=sched_date 次日 02:00 对账窗口缓冲）
-        ArgumentCaptor<Long> poolIdCaptor = ArgumentCaptor.forClass(Long.class);
-        ArgumentCaptor<Long> totalCaptor = ArgumentCaptor.forClass(Long.class);
-        ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
-        verify(poolRedisGate, times(2)).prime(poolIdCaptor.capture(), totalCaptor.capture(), ttlCaptor.capture());
-        assertThat(poolIdCaptor.getAllValues()).containsExactly(201L, 202L);
-        assertThat(totalCaptor.getAllValues()).containsExactly(4L, 4L);
-        // TTL 与「各自排班日次日 02:00」同刻（时钟取样误差放宽到 60s）：周一/周二两池键分别锚定
-        Duration expectedMonday =
-                Duration.between(LocalDateTime.now(), LocalDate.of(2026, 9, 22).atTime(2, 0));
-        Duration expectedTuesday =
-                Duration.between(LocalDateTime.now(), LocalDate.of(2026, 9, 23).atTime(2, 0));
-        assertThat(Math.abs(
-                        ttlCaptor.getAllValues().get(0).minus(expectedMonday).toSeconds()))
-                .isLessThan(60);
-        assertThat(Math.abs(
-                        ttlCaptor.getAllValues().get(1).minus(expectedTuesday).toSeconds()))
-                .isLessThan(60);
+            assertThat(generated).isEqualTo(2);
+            // 排班断言（批一）：仅周一/周二各一行，母本字段（科室/医生/号别/时段/号数）逐项拷贝
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Schedule>> schedulesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(schedulesCaptor.capture()), times(2));
+            List<Schedule> writtenSchedules = schedulesCaptor.getAllValues().get(0);
+            assertThat(writtenSchedules)
+                    .extracting(Schedule::getSchedDate)
+                    .containsExactly(LocalDate.of(2026, 9, 21), LocalDate.of(2026, 9, 22));
+            assertThat(writtenSchedules)
+                    .extracting(
+                            Schedule::getTemplateId,
+                            Schedule::getDeptCode,
+                            Schedule::getDoctorId,
+                            Schedule::getApptType,
+                            Schedule::getSession,
+                            Schedule::getTotalQuota,
+                            Schedule::getUsedQuota)
+                    .containsExactly(
+                            tuple(1L, "DEP001", "DOC001", ApptType.EXPERT, SessionType.MORNING, 4, 0),
+                            tuple(1L, "DEP001", "DOC001", ApptType.EXPERT, SessionType.MORNING, 4, 0));
+            // 池行断言（批二）：total_quota=4（slot_quota 母本）、channel_quota JSON 逐字回读、
+            // schedule 关联成对（批一主键回填后平行序回填外键）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ApptNumberPool>> poolsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(poolsCaptor.capture()), times(2));
+            List<ApptNumberPool> writtenPools = poolsCaptor.getAllValues().get(1);
+            assertThat(writtenPools)
+                    .extracting(
+                            ApptNumberPool::getScheduleId,
+                            ApptNumberPool::getTotalQuota,
+                            ApptNumberPool::getChannelQuota)
+                    .containsExactly(
+                            tuple(101L, 4, DEFAULT_CHANNEL_QUOTA_JSON), tuple(102L, 4, DEFAULT_CHANNEL_QUOTA_JSON));
+            // 池键 prime 预热断言：poolId 与 TTL（TTL=sched_date 次日 02:00 对账窗口缓冲）
+            ArgumentCaptor<Long> poolIdCaptor = ArgumentCaptor.forClass(Long.class);
+            ArgumentCaptor<Long> totalCaptor = ArgumentCaptor.forClass(Long.class);
+            ArgumentCaptor<Duration> ttlCaptor = ArgumentCaptor.forClass(Duration.class);
+            verify(poolRedisGate, times(2)).prime(poolIdCaptor.capture(), totalCaptor.capture(), ttlCaptor.capture());
+            assertThat(poolIdCaptor.getAllValues()).containsExactly(201L, 202L);
+            assertThat(totalCaptor.getAllValues()).containsExactly(4L, 4L);
+            // TTL 与「各自排班日次日 02:00」同刻（时钟取样误差放宽到 60s）：周一/周二两池键分别锚定
+            Duration expectedMonday = Duration.between(
+                    LocalDateTime.now(), LocalDate.of(2026, 9, 22).atTime(2, 0));
+            Duration expectedTuesday = Duration.between(
+                    LocalDateTime.now(), LocalDate.of(2026, 9, 23).atTime(2, 0));
+            assertThat(Math.abs(ttlCaptor
+                            .getAllValues()
+                            .get(0)
+                            .minus(expectedMonday)
+                            .toSeconds()))
+                    .isLessThan(60);
+            assertThat(Math.abs(ttlCaptor
+                            .getAllValues()
+                            .get(1)
+                            .minus(expectedTuesday)
+                            .toSeconds()))
+                    .isLessThan(60);
+        }
     }
 
     @Test
@@ -281,14 +301,95 @@ class ScheduleServiceImplTest {
     void generateAbortsBatchOnConcurrentUkConflict() {
         when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
         when(scheduleMapper.selectList(any())).thenReturn(List.of());
-        when(scheduleMapper.insert(any(Schedule.class))).thenThrow(new DuplicateKeyException("uk_schedule 冲突"));
+        // 桩面迁移（EX-37）：冲突源由逐条 insert 迁至批写 saveBatch（Spring 下批写冲突仍以
+        // DuplicateKeyException 冒出，catch 语义保持）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList())).thenThrow(new DuplicateKeyException("uk_schedule 冲突"));
 
-        assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
-                .isInstanceOfSatisfying(BizException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
-                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
-                });
-        verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    });
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "generate：批写抛 MyBatis 原生 PersistenceException（uk_schedule 唯一冲突，不经翻译链）——解包判定转 OP-1004/409 窗口期文案（EX-37 并发回归锚定）")
+    void generateAbortsBatchOnNativeBatchUniqueConflict() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // N5 验收场景 3a 真实异常形态（3/3 复现 500 的根因）：Db.saveBatch 批处理 uk 冲突经
+        // flushStatements 抛 MyBatis 原生 PersistenceException（cause 链 BatchUpdateException，
+        // SQLState 23505+约束名 uk_schedule），不经 Spring 翻译链——catch(DuplicateKeyException)
+        // 不命中即冒全局 500；本用例在旧实现下红（PersistenceException 原样冒出而非 BizException）
+        BatchUpdateException ukConflict = new BatchUpdateException(
+                "duplicate key value violates unique constraint \"uk_schedule\"", "23505", new int[0]);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList()))
+                    .thenThrow(new PersistenceException(
+                            "Error flushing statements. Cause: BatchExecutorException: ScheduleMapper.insert (batch index #1) failed.",
+                            ukConflict));
+
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        // 窗口期文案与逐条写时代码路径 DuplicateKeyException 分支逐字对齐（endDate=09-27、
+                        // days=7 → 窗口 09-21~09-27）
+                        assertThat(e.getMessage()).isEqualTo("放号并发冲突，整批已回滚请重试：window=2026-09-21~2026-09-27");
+                    });
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
+    }
+
+    @Test
+    @DisplayName("generate：批写唯一冲突缺 SQLState（驱动未填充）——消息含 uk_schedule 兜底判定同转 OP-1004/409（EX-37 解包兜底分支）")
+    void generateTreatsUkNameMessageAsUniqueConflictWhenSqlStateMissing() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // 部分驱动/代理链路（如连接池包装后的 BatchUpdateException）不填充 SQLState：唯一冲突
+        // 语义仅承载在消息文本（PG 约束名 uk_schedule）——解包判定不得因 SQLState 缺失漏判成
+        // 系统异常原样上抛（放号竞态输家会被误报 500 而非可重试 409）
+        BatchUpdateException ukConflictNoState = new BatchUpdateException(
+                "duplicate key value violates unique constraint \"uk_schedule\"", null, new int[0]);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList()))
+                    .thenThrow(new PersistenceException(
+                            "Error flushing statements. Cause: BatchExecutorException: ScheduleMapper.insert (batch index #1) failed.",
+                            ukConflictNoState));
+
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        // 与 SQLState 23505 命中分支同出参（scheduleConflictRolledBack 单一来源同文案）
+                        assertThat(e.getMessage()).isEqualTo("放号并发冲突，整批已回滚请重试：window=2026-09-21~2026-09-27");
+                    });
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
+    }
+
+    @Test
+    @DisplayName("generate：批写抛非唯一冲突 PersistenceException（连接类 SQLState 08006）——原样上抛不吞（不转 409）")
+    void generateRethrowsNonUniquePersistenceException() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // 非唯一冲突形态（连接失败 SQLState 08006）：解包判定不命中不得吞异常转 409——原样上抛交全局
+        // 处理器按系统异常定性，避免把基础设施故障误报为放号并发冲突
+        BatchUpdateException connectionFailure =
+                new BatchUpdateException("connection reset by peer", "08006", new int[0]);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList()))
+                    .thenThrow(new PersistenceException("Error flushing statements.", connectionFailure));
+
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOf(PersistenceException.class)
+                    .hasMessageContaining("Error flushing statements");
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
     }
 
     @Test
@@ -574,28 +675,78 @@ class ScheduleServiceImplTest {
         expiring.setEffTo(LocalDate.of(2026, 9, 21));
         when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(expiring));
         when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // 桩面迁移（EX-37）：同 generateExpands 用例——批写桩按元素类型回填主键
         AtomicLong scheduleSeq = new AtomicLong(300);
-        doAnswer(inv -> {
-                    Schedule inserting = inv.getArgument(0);
-                    inserting.setId(scheduleSeq.incrementAndGet());
-                    return 1;
-                })
-                .when(scheduleMapper)
-                .insert(any(Schedule.class));
         AtomicLong poolSeq = new AtomicLong(400);
-        doAnswer(inv -> {
-                    ApptNumberPool inserting = inv.getArgument(0);
-                    inserting.setId(poolSeq.incrementAndGet());
-                    return 1;
-                })
-                .when(apptNumberPoolMapper)
-                .insert(any(ApptNumberPool.class));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList())).thenAnswer(inv -> {
+                List<?> batch = inv.getArgument(0);
+                for (Object entity : batch) {
+                    if (entity instanceof Schedule schedule) {
+                        schedule.setId(scheduleSeq.incrementAndGet());
+                    } else if (entity instanceof ApptNumberPool pool) {
+                        pool.setId(poolSeq.incrementAndGet());
+                    }
+                }
+                return true;
+            });
 
-        int generated = service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7));
+            int generated = service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7));
 
-        assertThat(generated).isEqualTo(1);
-        ArgumentCaptor<Schedule> scheduleCaptor = ArgumentCaptor.forClass(Schedule.class);
-        verify(scheduleMapper, times(1)).insert(scheduleCaptor.capture());
-        assertThat(scheduleCaptor.getValue().getSchedDate()).isEqualTo(LocalDate.of(2026, 9, 21));
+            assertThat(generated).isEqualTo(1);
+            // 写形态断言迁移（EX-37，D-21 严格度不降）：批一恰一行且 schedDate=失效日当日
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Schedule>> schedulesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(schedulesCaptor.capture()), times(2));
+            List<Schedule> writtenSchedules = schedulesCaptor.getAllValues().get(0);
+            assertThat(writtenSchedules.get(0).getSchedDate()).isEqualTo(LocalDate.of(2026, 9, 21));
+        }
+    }
+
+    @Test
+    @DisplayName("generate：批写形态锚定（EX-37）——排班/池行各一次 saveBatch 携 N 行，逐条 insert 通道零触达")
+    void generateWritesSchedulesAndPoolsViaTwoBatchSaves() {
+        // endDate=2026-09-27、days=7 → 窗口 09-21~09-27；week_pattern=1100000 命中周一/周二两行放号
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1100000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        AtomicLong scheduleSeq = new AtomicLong(100);
+        AtomicLong poolSeq = new AtomicLong(200);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            // 批写主键回填桩：两批共用（排班批/池行批按元素类型分派），ASSIGN_ID 生产由 MP 批写填充
+            mockedDb.when(() -> Db.saveBatch(anyList())).thenAnswer(inv -> {
+                List<?> batch = inv.getArgument(0);
+                for (Object entity : batch) {
+                    if (entity instanceof Schedule schedule) {
+                        schedule.setId(scheduleSeq.incrementAndGet());
+                    } else if (entity instanceof ApptNumberPool pool) {
+                        pool.setId(poolSeq.incrementAndGet());
+                    }
+                }
+                return true;
+            });
+
+            int generated = service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7));
+
+            assertThat(generated).isEqualTo(2);
+            // 批写锚定：恰两次 saveBatch（批一=排班全集、批二=池行全集，调用序即列表序）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<Schedule>> schedulesCaptor = ArgumentCaptor.forClass(List.class);
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ApptNumberPool>> poolsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(schedulesCaptor.capture()), times(2));
+            mockedDb.verify(() -> Db.saveBatch(poolsCaptor.capture()), times(2));
+            List<Schedule> writtenSchedules = schedulesCaptor.getAllValues().get(0);
+            List<ApptNumberPool> writtenPools = poolsCaptor.getAllValues().get(1);
+            assertThat(writtenSchedules)
+                    .extracting(Schedule::getSchedDate)
+                    .containsExactly(LocalDate.of(2026, 9, 21), LocalDate.of(2026, 9, 22));
+            // 池行外键成对锚定：批一主键回填后批二外键逐行对应（scheduleId=101/102）
+            assertThat(writtenPools).extracting(ApptNumberPool::getScheduleId).containsExactly(101L, 102L);
+            // 逐条 insert 通道零触达：原 N×2 次循环内 insert 已被两次批写替换
+            verify(scheduleMapper, never()).insert(any(Schedule.class));
+            verify(apptNumberPoolMapper, never()).insert(any(ApptNumberPool.class));
+            // 池键预热仍在池行批写后执行（TTL 各锚排班日次日 02:00，不可批）
+            verify(poolRedisGate, times(2)).prime(anyLong(), anyLong(), any(Duration.class));
+        }
     }
 }

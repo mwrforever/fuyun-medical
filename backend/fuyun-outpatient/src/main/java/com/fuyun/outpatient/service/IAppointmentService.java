@@ -18,14 +18,17 @@ import java.util.List;
 public interface IAppointmentService {
 
     /**
-     * 统一预约/当日挂号。
+     * 统一预约/当日挂号。临时缓解①（EX-29，BE-A3-02 裁决③）：PORTAL 渠道先做单患者活跃预约数
+     * 上限拦截（防免登录冒名刷量占号），M18 患者账号体系上线后由归属校验取代。
      *
      * @param request 预约请求（patientId/poolId/channel），非空；契约校验由 @Valid 承载
      * @return 预约单出参（窗口/自助直达 TAKEN 携 visit_id；portal 为 RESERVED+payDeadline），非空
      * @throws com.fuyun.common.exception.BizException OP-1002（404 号源池不存在）/ OP-1003（409 号源不足）/
      *                                                 OP-1004（409 停诊或排班状态违例）/ OP-1005（409 同日同科限购）/
      *                                                 OP-1006（409 爽约限约期内）/ OP-1007（409 患者冻结拦截）/
-     *                                                 OP-1019（400 渠道词表外或 P1 未开放）时触发；
+     *                                                 OP-1019（400 渠道词表外或 P1 未开放）/
+     *                                                 OP-1022（409 PORTAL 单患者活跃预约数超上限，
+     *                                                 临时缓解①，仅 PORTAL 渠道）时触发；
      *                                                 建议处理策略：按 errorCode 提示用户
      */
     AppointmentVO book(AppointmentCreateRequest request);
@@ -57,6 +60,26 @@ public interface IAppointmentService {
      *                                                 建议处理策略：时限外单引导窗口办理
      */
     AppointmentVO cancel(String apptNo, String reason);
+
+    /**
+     * 退号（portal 免登录链路带介质归属校验，BUG-01 收口）：单号 AP+日期+顺序流水高度可枚举，
+     * 免登录通道禁仅凭单号退号——先比对介质解析患者与单据归属患者，不一致 403 OP-1021 阻断
+     * 匿名越权（退他人号源/触发他人退费链），一致后进入与两参 cancel 同一四分支语义；比对与
+     * 取消同事务完成，杜绝校验通过后状态变更的竞态窗口。
+     *
+     * @param apptNo         预约单业务号，非空；来源：portal 退号入口（路径参数）
+     * @param reason         退号原因，非空白；来源：患者录入（事件 reason 组件与审计留痕同源）
+     * @param ownerPatientId 介质解析出的归属患者主索引（patient api PatientIdentityQuery 产物），
+     *                       portal 链路必传非空；null 语义仅保留给已鉴权两参通道内部委托（免归属校验）
+     * @return 预约单出参（分支 1=CANCELLED；分支 2/3=原态占位待回执），非空
+     * @throws com.fuyun.common.exception.BizException OP-1021（403 归属不匹配）/ OP-1009（409 预约单
+     *                                                 不存在或终态不可退）/ OP-1010（409 线上退号时限外
+     *                                                 或已报到不可线上退）/ M13 退费守卫（BILL-*，经端口
+     *                                                 原样透传）/ PAT-1001（404 介质未命中，controller
+     *                                                 解析侧透出）时触发；建议处理策略：归属失败提示
+     *                                                 核对凭证，时限外单引导窗口办理
+     */
+    AppointmentVO cancel(String apptNo, String reason, Long ownerPatientId);
 
     /**
      * 改期（退旧号新，reschedule_of 链；先占新后退旧防两头空，Spec :137）：新池行全套预扣+CAS+

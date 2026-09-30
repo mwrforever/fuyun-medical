@@ -1,7 +1,5 @@
 package com.fuyun.nursing.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -200,14 +198,14 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
     @Override
     @Transactional(readOnly = true)
     public List<NursingAssessmentVO> listByVisit(String visitId, ScaleType scaleType) {
-        LambdaQueryWrapper<NursingAssessment> wrapper =
-                Wrappers.<NursingAssessment>lambdaQuery().eq(NursingAssessment::getVisitId, visitId);
+        // 主表链式查询（宪法 A.4.3-13）；条件分支保留 if：scaleType.getCode() 须空判后求值，
+        // 内联 boolean 重载会无条件求值实参致 NPE
+        var query = this.lambdaQuery().eq(NursingAssessment::getVisitId, visitId);
         if (scaleType != null) {
-            wrapper.eq(NursingAssessment::getScaleType, scaleType.getCode());
+            query.eq(NursingAssessment::getScaleType, scaleType.getCode());
         }
-        wrapper.orderByDesc(NursingAssessment::getAssessedAt);
         // 数据库读操作：患者评估清单（评估时点降序；命中 idx_nursing_assessment_visit；逻辑删自动过滤）
-        return baseMapper.selectList(wrapper).stream()
+        return query.orderByDesc(NursingAssessment::getAssessedAt).list().stream()
                 .map(row -> NursingAssessmentVO.from(row, readAnswers(row)))
                 .toList();
     }
@@ -359,6 +357,7 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
         try {
             return objectMapper.writeValueAsString(answers);
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（Map 结构固定，序列化失败仅可能为序列化器故障，非用户输入路径），保留 ISE
             throw new IllegalStateException("评估应答快照序列化失败：visitId=" + visitId, e);
         }
     }
@@ -375,6 +374,7 @@ public class NursingAssessmentServiceImpl extends ServiceImpl<NursingAssessmentM
         try {
             return objectMapper.readValue(row.getAnswers(), new TypeReference<LinkedHashMap<String, Integer>>() {});
         } catch (JsonProcessingException e) {
+            // EX-19 C 类收口留痕：内部断言（自写 JSONB 快照损坏属服务端数据异常，显式暴露不吞，非用户输入路径），保留 ISE
             throw new IllegalStateException("评估应答快照解析失败（服务端数据异常）：assessNo=" + row.getAssessNo(), e);
         }
     }

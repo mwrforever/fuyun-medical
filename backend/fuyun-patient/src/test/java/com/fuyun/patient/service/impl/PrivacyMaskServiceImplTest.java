@@ -5,12 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
@@ -21,14 +24,18 @@ import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.http.HttpStatus;
 
-/** 脱敏引擎单测（Spec §10 安全项）：五类规则掩码形态、停用规则透传、豁免角色判定、规则清单与维护。 */
+/** 脱敏引擎单测（Spec §10 安全项）：五类规则掩码形态、停用规则透传、豁免角色判定、规则清单与维护
+ * （含 SEC-01 维护门禁：非 ADMIN/空角色 403 PAT-1024 且规则行零触达）。 */
 class PrivacyMaskServiceImplTest {
 
     private PrivacyMaskRuleMapper ruleMapper;
@@ -46,13 +53,22 @@ class PrivacyMaskServiceImplTest {
     void setUp() {
         ruleMapper = mock(PrivacyMaskRuleMapper.class);
         maskService = new PrivacyMaskServiceImpl(ruleMapper);
-        when(ruleMapper.selectList(null))
+        // 规则维护主链用例统一以 ADMIN 角色种子过门禁（门禁用例自行覆盖角色，用例间隔离收尾必清）
+        RoleContextHolder.set(List.of("ADMIN"));
+        // 豁免判定经投影 wrapper 查询（OPT-11）：桩面由 selectList(null) 机械放宽为 any()
+        when(ruleMapper.selectList(any()))
                 .thenReturn(List.of(
                         rule("MASK_NAME", "name", "ADMIN", true),
                         rule("MASK_ID_CARD_NO", "idCardNo", "ADMIN", true),
                         rule("MASK_MOBILE", "mobile", "ADMIN", true),
                         rule("MASK_ADDRESS", "address", "ADMIN", true),
                         rule("MASK_BIRTH_DATE", "birthDate", "ADMIN", true)));
+    }
+
+    @AfterEach
+    void clearRoleContext() {
+        // 清理角色 ThreadLocal：门禁/主链用例显式 set 后防线程复用残留污染后续用例
+        RoleContextHolder.clear();
     }
 
     /** 规则行替身（maskPattern 按词表默认值，引擎按 target_field 分派不读 pattern——保留策略语义在常量词表） */
@@ -90,7 +106,7 @@ class PrivacyMaskServiceImplTest {
     @Test
     @DisplayName("规则停用（enabled=false）字段保持原值透传")
     void disabledRuleKeepsFieldUntouched() {
-        when(ruleMapper.selectList(null)).thenReturn(List.of(rule("MASK_NAME_OFF", "name", "ADMIN", false)));
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule("MASK_NAME_OFF", "name", "ADMIN", false)));
         PatientVO out = maskService.applyAll(new ArrayList<>(List.of(vo()))).get(0);
         assertThat(out.getName()).isEqualTo("张三丰");
     }
@@ -131,7 +147,7 @@ class PrivacyMaskServiceImplTest {
                 maskService.applyAll(new ArrayList<>(List.of(nullBirth))).get(0);
         assertThat(out.getBirthDate()).isNull();
         // 未识别 target_field：规则跳过（warn 留痕），字段保持原值
-        when(ruleMapper.selectList(null)).thenReturn(List.of(rule("MASK_UNKNOWN", "unknownField", "ADMIN", true)));
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule("MASK_UNKNOWN", "unknownField", "ADMIN", true)));
         PatientVO untouched =
                 maskService.applyAll(new ArrayList<>(List.of(vo()))).get(0);
         assertThat(untouched.getName()).isEqualTo("张三丰");
@@ -150,9 +166,44 @@ class PrivacyMaskServiceImplTest {
     }
 
     @Test
+    @DisplayName("批量豁免判定：四字段混合面规则查询恰一次（与字段数解耦），逐字段结果与单查口径等价")
+    void exemptFieldsLoadsRulesOnceAndMatchesSingleQueryDecisionPerField() {
+        when(ruleMapper.selectList(any()))
+                .thenReturn(List.of(
+                        rule("MASK_NAME", "name", "ADMIN", true),
+                        rule("MASK_MOBILE", "mobile", "NURSE", true),
+                        rule("MASK_ID_CARD_NO", "idCardNo", "", true)));
+        // 混合面：ADMIN 视角下 name 豁免；mobile 豁免集归 NURSE 不命中；idCardNo 空豁免集；unknownField 未登记词
+        Set<String> exempt =
+                maskService.exemptFields(List.of("ADMIN"), List.of("name", "mobile", "idCardNo", "unknownField"));
+        // 批量面规则查询恰一次：OPT-11 放大消除锚定（旧逐字段判定 4 字段即 4 次全表查询）
+        verify(ruleMapper, times(1)).selectList(any());
+        verify(ruleMapper, never()).selectOne(any());
+        assertThat(exempt).containsExactlyInAnyOrder("name");
+        // 逐字段等价：批量结果与单查 isExempt 口径逐词对照（豁免/不豁免/空豁免集/未登记四形态）
+        assertThat(maskService.isExempt(List.of("ADMIN"), "name")).isTrue();
+        assertThat(maskService.isExempt(List.of("ADMIN"), "mobile")).isFalse();
+        assertThat(maskService.isExempt(List.of("ADMIN"), "idCardNo")).isFalse();
+        assertThat(maskService.isExempt(List.of("ADMIN"), "unknownField")).isFalse();
+    }
+
+    @Test
+    @DisplayName("豁免判定查询投影契约：wrapper 仅取判定消费 3 列，禁全列取回")
+    void exemptQueryProjectsOnlyThreeConsumedColumns() {
+        maskService.isExempt(List.of("ADMIN"), "name");
+        ArgumentCaptor<Wrapper<PrivacyMaskRule>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(ruleMapper).selectList(captor.capture());
+        // 判定实际消费列=target_field/enabled/exempt_roles（A.4.3-14 按需取列）
+        assertThat(captor.getValue().getSqlSelect()).contains("target_field", "enabled", "exempt_roles");
+        // 非消费列（mask_pattern/rule_code/审计列）不得入投影（禁 SELECT * 语义）
+        assertThat(captor.getValue().getSqlSelect())
+                .doesNotContain("mask_pattern", "rule_code", "created_at", "updated_at");
+    }
+
+    @Test
     @DisplayName("规则清单 VO 化：exemptRoles 拆分清单输出，空串豁免为空清单")
     void listRulesSplitsExemptRolesToList() {
-        when(ruleMapper.selectList(null))
+        when(ruleMapper.selectList(any()))
                 .thenReturn(List.of(
                         rule("MASK_NAME", "name", "ADMIN, DOCTOR", true),
                         rule("MASK_BIRTH_DATE", "birthDate", "", true)));
@@ -164,6 +215,39 @@ class PrivacyMaskServiceImplTest {
         assertThat(rules.get(0).exemptRoles()).containsExactly("ADMIN", "DOCTOR");
         // 空串=无人豁免（种子默认口径），输出空清单而非含空元素
         assertThat(rules.get(1).exemptRoles()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("SEC-01：非 ADMIN 角色维护规则 PAT-1024 403 前置拒绝，规则行零触达（阻断自授豁免提权链）")
+    void updateRuleRejectedAs403ForNonAdminRole() {
+        // 业务角色（非管理员）试图改写规则：门禁 403 前置，规则行读/写零触达（exemptRoles 不可被污染）
+        RoleContextHolder.set(List.of("DOCTOR"));
+
+        assertThatThrownBy(() -> maskService.updateRule(
+                        "MASK_ID_CARD_NO", new PrivacyMaskRuleUpdateRequest(null, "DOCTOR", null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getErrorCode())
+                .isEqualTo(PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN);
+        // 传输语义逐字保持：403 与 PAT-1024 成对（下沉前后错误码/状态码零变化）
+        assertThatThrownBy(() ->
+                        maskService.updateRule("MASK_ID_CARD_NO", new PrivacyMaskRuleUpdateRequest(null, null, null)))
+                .extracting(e -> ((BizException) e).getHttpStatus())
+                .isEqualTo(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(ruleMapper);
+    }
+
+    @Test
+    @DisplayName("SEC-01：无角色上下文（空角色清单）维护规则同样 PAT-1024 403（拦截器未注入/无角色一并不放行）")
+    void updateRuleRejectedAs403ForEmptyRoles() {
+        // 空角色=非 ADMIN：显式置空清单覆盖「未设置」路径（get 回退空清单，门禁语义一致）
+        RoleContextHolder.set(List.of());
+
+        assertThatThrownBy(() ->
+                        maskService.updateRule("MASK_ID_CARD_NO", new PrivacyMaskRuleUpdateRequest(null, null, null)))
+                .isInstanceOf(BizException.class)
+                .extracting(e -> ((BizException) e).getErrorCode())
+                .isEqualTo(PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN);
+        verifyNoInteractions(ruleMapper);
     }
 
     @Test

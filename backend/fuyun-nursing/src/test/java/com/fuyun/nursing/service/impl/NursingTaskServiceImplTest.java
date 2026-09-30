@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -37,7 +38,9 @@ import com.fuyun.nursing.vo.NursingTaskVO;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -68,6 +71,9 @@ class NursingTaskServiceImplTest {
     /** I 型 14 位合法 visit_id（任务所属就诊） */
     private static final String VISIT = "I2026092200001";
 
+    /** 患者乙就诊号（批量在途查询分组用例载体） */
+    private static final String VISIT_B = "I2026092200002";
+
     /** 病区编码（任务清单检索键） */
     private static final String WARD = "W01";
 
@@ -76,6 +82,9 @@ class NursingTaskServiceImplTest {
 
     /** 首条插入行固定 id（insert 桩回填值；惰性逾期 CAS 用例载体） */
     private static final long ROW_ID = 601L;
+
+    /** 第二行固定 id（批量逾期 CAS 用例：多行受染键集载体） */
+    private static final long ROW_ID_B = 602L;
 
     @Mock
     private NursingTaskMapper taskMapper;
@@ -95,6 +104,9 @@ class NursingTaskServiceImplTest {
     @Captor
     private ArgumentCaptor<Wrapper<NursingTask>> queryCaptor;
 
+    @Captor
+    private ArgumentCaptor<Collection<Long>> batchIdsCaptor;
+
     private NursingTaskServiceImpl service;
 
     @BeforeAll
@@ -108,6 +120,8 @@ class NursingTaskServiceImplTest {
         // 阈值固定 30 分钟（NursingProperties 默认值，用例 6 惰性逾期判定基准）
         service = new NursingTaskServiceImpl(taskMapper, seqGate, events, new NursingProperties(30));
         ReflectionTestUtils.setField(service, "baseMapper", taskMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", NursingTask.class);
         OperatorContextHolder.set("nurse-01");
     }
 
@@ -352,6 +366,87 @@ class NursingTaskServiceImplTest {
         assertThat(wrapper.getSqlSegment()).contains("IN").contains("ORDER BY").contains("plan_time");
         // 在途行未逾期：零逾期 CAS 触达（惰性判定只在越阈值行上发生）
         verify(taskMapper, never()).casMarkOverdue(anyLong());
+    }
+
+    @Test
+    @DisplayName("批量在途查询：多就诊号恰一次批查按 visitId 分组返回，单人组内计划时间升序保持（A.4.3-14）")
+    void inFlightByVisitsBatchesQueryAndGroupsByVisitId() {
+        OffsetDateTime base = OffsetDateTime.now().plusMinutes(30);
+        NursingTask visitALate = taskRow("TK2026092200001", TaskStatus.PENDING, base.plusHours(2));
+        NursingTask visitBEarlier = taskRow("TK2026092200002", TaskStatus.IN_PROGRESS, base);
+        visitBEarlier.setVisitId(VISIT_B);
+        NursingTask visitAEarly = taskRow("TK2026092200003", TaskStatus.PENDING, base.plusHours(1));
+        // mock 按 DB 全局 plan_time 升序回放（乙早 → 甲早 → 甲晚），分组后单人组内须保持升序
+        when(taskMapper.selectList(any())).thenReturn(List.of(visitBEarlier, visitAEarly, visitALate));
+
+        Map<String, List<NursingTaskVO>> result = service.inFlightByVisits(List.of(VISIT, VISIT_B));
+
+        // 任务归属分组锚：两就诊号各得自在途清单，甲组内计划时间升序（与逐患者单查返回序一致）
+        assertThat(result).containsOnlyKeys(VISIT, VISIT_B);
+        assertThat(result.get(VISIT))
+                .extracting(NursingTaskVO::taskNo)
+                .containsExactly("TK2026092200003", "TK2026092200001");
+        assertThat(result.get(VISIT_B)).extracting(NursingTaskVO::taskNo).containsExactly("TK2026092200002");
+        // 批查收敛锚：两就诊号恰一次 selectList（visitId IN 批查替代逐患者单查）
+        verify(taskMapper, times(1)).selectList(queryCaptor.capture());
+        LambdaQueryWrapper<NursingTask> wrapper = rendered(queryCaptor.getValue());
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains(VISIT, VISIT_B, TaskStatus.PENDING.getCode(), TaskStatus.IN_PROGRESS.getCode());
+        // 在途行均未越阈值：零逾期写触达（批量/逐行两形态 CAS 均不触发）
+        verify(taskMapper, never()).casMarkOverdueBatch(anyCollection());
+        verify(taskMapper, never()).casMarkOverdue(anyLong());
+    }
+
+    @Test
+    @DisplayName("批量在途查询空键集：零 SQL 触达直接返回空 Map（空病区交接班零负担）")
+    void inFlightByVisitsWithEmptyKeysSkipsAllSql() {
+        Map<String, List<NursingTaskVO>> result = service.inFlightByVisits(List.of());
+
+        assertThat(result).isEmpty();
+        verify(taskMapper, never()).selectList(any());
+        verify(taskMapper, never()).casMarkOverdueBatch(anyCollection());
+    }
+
+    @Test
+    @DisplayName("批量在途查询惰性逾期：越阈值未标记行单条批量 CAS 一次触达并回写内存，已标记/未越阈值行零写")
+    void inFlightByVisitsMarksOverdueWithSingleBatchCas() {
+        // 受染两行（越阈值未标记）；第三行已标记（true/1）、第四行未越阈值——均不进入受染键集
+        NursingTask overdueA = taskRow(
+                "TK2026092200001", TaskStatus.PENDING, OffsetDateTime.now().minusMinutes(60));
+        overdueA.setId(ROW_ID);
+        NursingTask overdueB = taskRow(
+                "TK2026092200002", TaskStatus.PENDING, OffsetDateTime.now().minusMinutes(90));
+        overdueB.setId(ROW_ID_B);
+        NursingTask marked = taskRow(
+                "TK2026092200003", TaskStatus.PENDING, OffsetDateTime.now().minusMinutes(60));
+        marked.setOverdueFlag(true);
+        marked.setEscalationCount(1);
+        NursingTask future = taskRow(
+                "TK2026092200004", TaskStatus.PENDING, OffsetDateTime.now().plusMinutes(30));
+        when(taskMapper.selectList(any())).thenReturn(List.of(overdueA, overdueB, marked, future));
+        when(taskMapper.casMarkOverdueBatch(anyCollection())).thenReturn(2);
+
+        Map<String, List<NursingTaskVO>> result = service.inFlightByVisits(List.of(VISIT));
+
+        // 写收敛锚：受染键集恰为两未标记越阈值行 id，单条批量 CAS 恰一次触达（替代逐行 N 次 CAS）
+        verify(taskMapper, times(1)).casMarkOverdueBatch(batchIdsCaptor.capture());
+        assertThat(batchIdsCaptor.getValue()).containsExactly(ROW_ID, ROW_ID_B);
+        verify(taskMapper, never()).casMarkOverdue(anyLong());
+        // 守卫行回写（出参与库态一致）：两受染行 true/1；已标记行不重复递增保持 true/1；未越阈值行 false/0
+        assertThat(result.get(VISIT))
+                .extracting(NursingTaskVO::taskNo)
+                .containsExactly("TK2026092200001", "TK2026092200002", "TK2026092200003", "TK2026092200004");
+        assertThat(result.get(VISIT)).extracting(NursingTaskVO::overdueFlag).containsExactly(true, true, true, false);
+        assertThat(result.get(VISIT)).extracting(NursingTaskVO::escalationCount).containsExactly(1, 1, 1, 0);
+        // GC26 可执行锚：批量逾期标记必须为 @Update 注解 SQL 条件更新（per-row overdue_flag=false
+        // 谓词仅首次递增 + 显式 deleted=0，与逐行 casMarkOverdue 语义逐行等价）
+        String sql = recordSql("casMarkOverdueBatch", Collection.class);
+        assertThat(sql)
+                .contains("overdue_flag = true")
+                .contains("escalation_count = escalation_count + 1")
+                .contains("WHERE id IN")
+                .contains("overdue_flag = false")
+                .contains("deleted = 0");
     }
 
     @Test

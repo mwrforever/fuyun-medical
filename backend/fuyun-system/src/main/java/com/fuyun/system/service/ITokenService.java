@@ -4,6 +4,7 @@ import com.fuyun.system.record.RefreshedAccess;
 import com.fuyun.system.record.SessionData;
 import com.fuyun.system.record.SessionUser;
 import com.fuyun.system.record.TokenPair;
+import java.time.Duration;
 
 /**
  * 令牌服务契约（D-2 轻量 HMAC 令牌 + Redis 会话，BRIEF-PR3-01 §1）。
@@ -26,6 +27,23 @@ public interface ITokenService {
      * @return 令牌对，非空；accessToken/refreshToken 共享同一 sid
      */
     TokenPair issue(SessionUser user);
+
+    /**
+     * 签发短期单 access 令牌（无 refresh 伴随，BUG-19 大屏匿名订阅场景）。
+     *
+     * <p>与 {@link #issue} 的差异：仅签 access 且 TTL 由调用方给定（短期凭证，会话键 TTL 同值——
+     * 会话驻留不长于令牌本体）；不签 refresh（消费方为匿名设备通道，失效即整体重签，无刷新语义）。
+     * 令牌线格式与登录 access 完全同构（typ=access），经既有校验链（含 WS CONNECT 帧鉴权）无差别放行。
+     *
+     * <p>注意：校验链的滑动续期按 access TTL 配置值重置会话键 TTL——本方法签出的短期令牌本体 exp
+     * 不受续期影响，令牌失效即不可再用（会话键多驻留至续期后的 TTL 到期，不构成凭证延寿）。
+     *
+     * @param user      会话输入（匿名哨兵或认证身份），非空
+     * @param accessTtl 令牌与会话共用 TTL，正值；来源：调用方策略常量（如大屏 5 分钟）
+     * @return access 令牌原文（typ=access），非空
+     * @throws IllegalStateException 会话 JSON 序列化失败（系统级故障，交全局渲染器兜底 500）
+     */
+    String issueAccess(SessionUser user, Duration accessTtl);
 
     /**
      * 校验原始令牌并返回会话状态（认证拦截器与刷新端点的共用入口）。

@@ -40,6 +40,7 @@ import com.fuyun.iot.service.impl.ConsumeErrorLogServiceImpl;
 import com.fuyun.iot.service.impl.DashboardServiceImpl;
 import com.fuyun.iot.service.impl.DeviceManageServiceImpl;
 import com.fuyun.iot.service.impl.DeviceStatusServiceImpl;
+import com.fuyun.iot.service.impl.FallbackIngestServiceImpl;
 import com.fuyun.iot.service.impl.GatewayServiceImpl;
 import com.fuyun.iot.service.impl.LinkageRuleServiceImpl;
 import com.fuyun.iot.service.impl.MetricDictServiceImpl;
@@ -60,7 +61,9 @@ import org.springframework.context.annotation.Import;
  * 校验参数 fuyun.iot.telemetry.*——TelemetryIngestServiceImpl 消费）经
  * {@link EnableConfigurationProperties} 注册；遥测消费链三服务（入库/错误留痕/设备状态）与
  * B4.3 任务 B 四件（STOMP 推送服务/兜底鉴权/兜底端点/WS 端点配置）经 @Import 注册为 Bean
- * （com.fuyun.iot 不在扫描范围，宪法 B.1；mapper 由既有 @MapperScan 按注解自动覆盖）；
+ * （com.fuyun.iot 不在扫描范围，宪法 B.1；mapper 由既有 @MapperScan 按注解自动覆盖；
+ * EX-15 鉴权与消息组装自兜底端点下沉新增兜底入库编排服务 FallbackIngestServiceImpl，
+ * 兜底鉴权→兜底入库编排→兜底端点三件成链）；
  * P2 PR-2 Task 3 追加绑定管理域三件（绑定服务/绑定五端点/AL-CMD 发号器——发号器构造注入
  * Boot Redis 自动配置 StringRedisTemplate，InpatientSeqGate 同款形态）；P2 PR-2 Task 4 追加
  * 产品与物模型管理域四件（产品服务/MDC 字典服务/产品六端点/字典两端点）与注册中心双实现
@@ -107,6 +110,7 @@ import org.springframework.context.annotation.Import;
     DeviceStatusServiceImpl.class,
     TelemetryPushServiceImpl.class,
     IotFallbackAuthService.class,
+    FallbackIngestServiceImpl.class,
     IotFallbackIngestController.class,
     BindingServiceImpl.class,
     BindingController.class,

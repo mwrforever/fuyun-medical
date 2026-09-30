@@ -2,6 +2,9 @@ package com.fuyun.pharmacy.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 库存流水动作（批次账最小实现二值，主控裁决 2；采购/调拨/盘点动作随 P3 药房管理扩展）。
@@ -37,7 +40,7 @@ public enum LedgerAction {
      *
      * @param code 存储值，非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举（脏数据）
+     * @throws BizException PH-1022（400）code 无对应枚举（值域外 code 显式拒绝——EX-19 BE-C3-05 A 类收口）
      */
     public static LedgerAction fromCode(String code) {
         for (LedgerAction value : values()) {
@@ -45,6 +48,7 @@ public enum LedgerAction {
                 return value;
             }
         }
-        throw new IllegalArgumentException("未知的库存流水动作 code: " + code);
+        throw new BizException(
+                PharmacyErrorCode.ENUM_CODE_MALFORMED, HttpStatus.BAD_REQUEST, "未知的库存流水动作 code: " + code);
     }
 }

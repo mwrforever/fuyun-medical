@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.billing.dto.PriceDraftRequest;
 import com.fuyun.billing.entity.ChargeItemPrice;
 import com.fuyun.billing.record.PriceSnapshot;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 价格版本化服务（billing.charge_item_price，方案 3.4 版本化价格 + 计费快照）：
@@ -24,6 +26,22 @@ public interface IChargePriceService extends IService<ChargeItemPrice> {
      * @throws com.fuyun.common.exception.BizException BILL-1008（409 无生效价格版本）
      */
     PriceSnapshot snapshot(String itemCode, long chargeItemId);
+
+    /**
+     * 批量取项目当前生效价格快照（预计价多行单据批量取数，A.4.3-14 N+1 消除）：价格版本一次
+     * IN 批查 + 医保对照一次 IN 批查，替代逐项目 {@link #snapshot} 单查（N 行单据 3N 查询链
+     * 收敛为 3 查）。
+     *
+     * <p>生效判定与 {@link #snapshot} 同口径（半开区间 + status&lt;&gt;DRAFT + effective_from
+     * 倒序取首行），仅两点形态差异：①取价时刻收敛为单次求值——同一单据全部行按同一瞬时
+     * 定价（逐行单查各行间的微妙先后差本属未定义竞态，单瞬时口径更一致）；②无生效价格版本的
+     * 项目不出键也不抛错，由调用方按原行序逐行补偿校验（BILL-1008 同码同文案，首个无效行
+     * 报错语义不变）。
+     *
+     * @param chargeItemIds 项目 id 键集，非空集合（空集零 SQL 触达直接返回空 Map）
+     * @return chargeItemId → 价格快照（无生效版本项目不出键，非 null；对照字段可空=未对照仅自费）
+     */
+    Map<Long, PriceSnapshot> snapshots(Collection<Long> chargeItemIds);
 
     /**
      * 调价草稿落库（版本号项目内自增，不触发生效——生效须显式 publish）。

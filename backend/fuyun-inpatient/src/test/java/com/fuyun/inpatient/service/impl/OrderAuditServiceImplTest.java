@@ -38,13 +38,14 @@ import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderAuditMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -69,7 +70,7 @@ import org.springframework.http.HttpStatus;
  * （非用药过审/用药停留待审）、药师回执通过/驳回迁移与事件、重复回执幂等、作废拦截已执行、
  * 撤回仅转抄前、重整不改状态仅留痕 + 口头医嘱补录确认面 + 守卫补充面（脏类型/操作者非数字/
  * 回执定位失配/时点容错）。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册
- * 表信息；OrderStateMachineService 按冻结接口 mock（状态面语义由
+ * 表信息；IOrderStateMachineService 按冻结接口 mock（状态面语义由
  * OrderStateMachineServiceImplTest 独立承载）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -118,7 +119,7 @@ class OrderAuditServiceImplTest {
     private InpatientSeqGate seqGate;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
     private ApplicationEventPublisher events;
@@ -152,6 +153,8 @@ class OrderAuditServiceImplTest {
                 auditMapper,
                 statusLogMapper,
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 consultationMapper,
                 seqGate,
                 stateMachine,

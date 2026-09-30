@@ -18,7 +18,6 @@ import com.fuyun.pharmacy.mapper.DispenseMapper;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
-import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.vo.OccupancyVO;
 import java.math.BigDecimal;
@@ -53,9 +52,6 @@ class DispenseOccupancyTest {
     private DrugBatchMapper drugBatchMapper;
 
     @Mock
-    private StockLedgerMapper stockLedgerMapper;
-
-    @Mock
     private PrescriptionMapper prescriptionMapper;
 
     @Mock
@@ -85,13 +81,12 @@ class DispenseOccupancyTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十一参直注（Task 10 起第十参 masterDataCache、Task 11 扩第十一参 settlementQueryPort；
-        // objectMapper 用真实例，与本域单测同款）
+        // 构造器十参直注（Task 10 起第十参 masterDataCache、Task 11 扩第十一参 settlementQueryPort、
+        // EX-37 收敛十参——流水批插改 Db 通道后 StockLedgerMapper 依赖卸除；objectMapper 用真实例，与本域单测同款）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
                 drugBatchMapper,
-                stockLedgerMapper,
                 prescriptionMapper,
                 prescriptionItemMapper,
                 batchSelectService,
@@ -100,6 +95,8 @@ class DispenseOccupancyTest {
                 masterDataCache,
                 settlementQueryPort);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
+        // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
+        ReflectionTestUtils.setField(impl, "entityClass", Dispense.class);
         return impl;
     }
 

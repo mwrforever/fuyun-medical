@@ -1,7 +1,5 @@
 package com.fuyun.integration.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -62,23 +60,40 @@ public class DeadLetterServiceImpl extends ServiceImpl<DeadLetterMapper, DeadLet
         this.amqpAdmin = amqpAdmin;
     }
 
+    /**
+     * 分页查询死信台账（只读事务）：按状态/事件类型/事件 ID/来源队列等值过滤，首次死信
+     * 时间倒序 + 主键兜底排序（深翻页防漏行）。
+     *
+     * <p>最小暴露口径：列表行仅含载荷头部预览与 SHA-256 摘要，载荷全文只经 detail 端点。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200；来源：死信管理端点参数对象
+     * @return 分页出参（0 基页码），非空；无匹配时 content 为空清单
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<DeadLetterVO> query(DeadLetterQuery query) {
-        LambdaQueryWrapper<DeadLetter> wrapper = Wrappers.lambdaQuery(DeadLetter.class)
+        // 契约 0 基（A.3-6）↔ MP 分页器 1 基：服务层唯一转换点，进出各一次
+        Page<DeadLetter> page = this.lambdaQuery()
                 .eq(query.status() != null, DeadLetter::getStatus, query.status())
                 .eq(query.eventType() != null, DeadLetter::getEventType, query.eventType())
                 .eq(query.eventId() != null, DeadLetter::getEventId, query.eventId())
                 .eq(query.sourceQueue() != null, DeadLetter::getSourceQueue, query.sourceQueue())
                 // 排序唯一性约束（A.4.3-17）：时间相同时以主键兜底，防深翻页漏行
                 .orderByDesc(DeadLetter::getFirstDeadAt)
-                .orderByDesc(DeadLetter::getId);
-        // 契约 0 基（A.3-6）↔ MP 分页器 1 基：服务层唯一转换点，进出各一次
-        Page<DeadLetter> page = this.page(new Page<>(query.page() + 1L, query.size()), wrapper);
+                .orderByDesc(DeadLetter::getId)
+                .page(new Page<>(query.page() + 1L, query.size()));
         return PageResult.of(
                 converter.toDeadLetterVOs(page.getRecords()), page.getCurrent() - 1, page.getSize(), page.getTotal());
     }
 
+    /**
+     * 读取死信详情（只读事务）：含载荷全文与处置留痕（handler/handle_note/handled_at/
+     * replay_count），重放前人工核对的数据面。
+     *
+     * @param id 死信 ID，非空；来源：REST 路径参数
+     * @return 详情出参，非空
+     * @throws BizException 死信不存在（INT-1001，404）时触发；建议处理策略：前端提示并刷新列表
+     */
     @Override
     @Transactional(readOnly = true)
     public DeadLetterDetailVO detail(Long id) {
@@ -89,6 +104,25 @@ public class DeadLetterServiceImpl extends ServiceImpl<DeadLetterMapper, DeadLet
         return converter.toDeadLetterDetailVO(row);
     }
 
+    /**
+     * 重放死信（处置动作，Spec §5 状态机 PENDING → REPLAYED）：PENDING 守卫与重放次数上限
+     * 校验 → 路由键解析 → 来源队列在位校验（防不可路由静默丢失）→ 事务外原文重投 fy.topic
+     * → 单语句 CAS 写回状态并累加 replay_count。
+     *
+     * <p>投递语义：以 payload_body 原文重建消息（不走消息转换器，防二次序列化破坏信封线
+     * 格式）且保留原 eventId——同帧若已被消费过，由消费侧两层幂等防重复业务。
+     *
+     * <p>边界条件与并发：投递失败回到 PENDING 并累加次数后抛 INT-1005；CAS 影响 0 行 =
+     * 并发处置抢先（本次投递已发出，靠消费侧幂等兜底），抛 INT-1002 交前端刷新重试；
+     * 无可用路由键（信封不合规帧）或来源队列不在位抛 INT-1004 拒绝重放。
+     *
+     * @param id 死信 ID，非空；来源：REST 路径参数
+     * @return 重放后详情，非空；status=REPLAYED、replayCount 已递增、handler/handledAt 已留痕
+     * @throws BizException id 不存在（INT-1001）/ 非 PENDING 或并发抢先（INT-1002）/ 重放次数
+     *                      达上限（INT-1003）/ 无可用路由键或来源队列不在位（INT-1004）/ 投递
+     *                      失败（INT-1005）时触发；建议处理策略：按 errorCode 分支提示运维
+     *                      （状态冲突刷新重试、超限与不可重放转人工关闭）
+     */
     @Override
     public DeadLetterDetailVO replay(Long id) {
         DeadLetter row = requirePending(id, "重放");
@@ -133,6 +167,20 @@ public class DeadLetterServiceImpl extends ServiceImpl<DeadLetterMapper, DeadLet
         return detail(id);
     }
 
+    /**
+     * 关闭死信（处置动作，Spec §5 状态机 PENDING → CLOSED 终态，人工判定无需重放的场景）：
+     * PENDING 守卫载入后以单语句 CAS 置 CLOSED 并留痕处理人/备注/时间。
+     *
+     * <p>边界条件与并发：CAS 影响 0 行 = 并发处置抢先，抛 INT-1002 交前端刷新重试；CLOSED
+     * 为终态不得再重放；关闭原因属运维备注（可能含院内业务描述），日志只记长度不记原文
+     * （敏感信息禁入日志）。
+     *
+     * @param id      死信 ID，非空；来源：REST 路径参数
+     * @param request 关闭请求，非空；handleNote 为关闭原因（必填，JSR-303 校验在端点层）
+     * @return 关闭后详情，非空；status=CLOSED、handler/handledAt/handleNote 已留痕
+     * @throws BizException id 不存在（INT-1001）或状态非 PENDING（INT-1002，含并发处置抢先）时
+     *                      触发；建议处理策略：前端提示并刷新列表
+     */
     @Override
     public DeadLetterDetailVO close(Long id, DeadLetterCloseRequest request) {
         requirePending(id, "关闭");

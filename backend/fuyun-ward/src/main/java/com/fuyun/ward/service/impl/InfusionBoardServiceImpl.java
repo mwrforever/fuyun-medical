@@ -61,6 +61,17 @@ public class InfusionBoardServiceImpl implements IInfusionBoardService {
         this.callMapper = callMapper;
     }
 
+    /**
+     * 病区输液看板聚合（纯读视图）：活跃输液呼叫圈定设备集合 → 逐设备余量/滴速最新值
+     * （series 末点 last 聚合值）→ 三档告警映射（15ml 黄/10ml 橙/5ml 红——展示口径）。
+     *
+     * <p>边界条件：设备集合由本模块活跃 INFUSION 呼叫行派生（非 iot 绑定表——宪法 B.2-2
+     * 禁跨模块读表）；单设备遥测查询失败降级为空曲线不阻断整板（warn 留痕）；无活跃呼叫
+     * 时出空设备清单；5ml 红档系统级呼叫落行归事件消费链，看板不重复触发。
+     *
+     * @param wardId 病区 ID，非空；来源：看板端点路径变量
+     * @return 看板视图（设备行清单；无遥测数据的设备行余量/滴速为 null、档位 NONE）
+     */
     @Override
     @Transactional(readOnly = true)
     public InfusionBoardVO board(Long wardId) {
@@ -90,6 +101,17 @@ public class InfusionBoardServiceImpl implements IInfusionBoardService {
         return new InfusionBoardVO(wardId, devices);
     }
 
+    /**
+     * 设备维度输液历史追溯：24 小时余量/滴速双曲线（Port 自动路由聚合档位——超 24h 强制
+     * 1 小时档，当前窗口固定 24h 走 raw/1min 判定）。
+     *
+     * <p>边界条件：告警列表聚合缺位（iot/api 无告警查询端口——实测结论），以固定注记随出参
+     * 透出（P1 接口面补齐；实时告警面订阅 /topic/iot/alarm/{wardId}）；曲线查询异常降级
+     * 空曲线不阻断（warn 留痕）。
+     *
+     * @param deviceId IoTDA 设备标识，非空；来源：历史端点路径变量
+     * @return 历史视图（双曲线 + 告警缺位注记；曲线时序点 time 升序）
+     */
     @Override
     @Transactional(readOnly = true)
     public InfusionHistoryVO history(String deviceId) {

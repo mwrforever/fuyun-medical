@@ -24,14 +24,15 @@ import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderAuditMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -47,18 +48,18 @@ import org.springframework.transaction.annotation.Transactional;
  * V800 id 53/54 驱动迁移与 audit-rejected 发布，重复回执按已达态幂等跳过）。控制面：作废
  * （仅未产生执行，cancelled 事件驱动 M05 撤执行单）/撤回重审（仅转抄前，revoked 事件）/
  * 重整（只留痕不迁移状态）/口头医嘱补录确认（oral_confirmed_at 落值）。一切状态迁移唯一经
- * OrderStateMachineService（GC17——迁移留痕由状态机回接后的 order_status_log 自动落库，
+ * IOrderStateMachineService（GC17——迁移留痕由状态机回接后的 order_status_log 自动落库，
  * 本类仅重整留痕直写日志表——from=to 无迁移动作）。<b>CONSULT 类内部分发钩子</b>（FU-M04-09）：
  * 过审副作用收口链检测会诊类——audited.consult 子键事件照常发布（M13 计价需要）后自动创建
  * 会诊单草稿（order_ref 关联医嘱号，status=REQUESTED；业务流转归会诊流程，受邀科经
- * ConsultationService 接单面响应）；建单幂等锚=order_ref 存在性（审核重试/撤回重审再过审
+ * IConsultationService 接单面响应）；建单幂等锚=order_ref 存在性（审核重试/撤回重审再过审
  * 零重复建单），建单失败降级 warn 不阻断审核主链（可经 POST /consultations 人工补建）。
  * 事件载荷禁患者姓名/诊断文本（GC22）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口，回执消费路径事务由监听器线程
  * 经本类事务边界承载（AFTER_COMMIT 出 MQ 不落在事务内）。
  */
 @Slf4j
-public class OrderAuditServiceImpl implements OrderAuditService {
+public class OrderAuditServiceImpl implements IOrderAuditService {
 
     /** 审核结论：通过（V905 order_audit.conclusion 词表，与列注释逐字同源） */
     private static final String CONCLUSION_PASSED = "PASSED";
@@ -82,11 +83,13 @@ public class OrderAuditServiceImpl implements OrderAuditService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final ConsultationMapper consultationMapper;
 
     private final InpatientSeqGate seqGate;
 
-    private final OrderStateMachineService stateMachine;
+    private final IOrderStateMachineService stateMachine;
 
     private final ApplicationEventPublisher events;
 
@@ -97,7 +100,8 @@ public class OrderAuditServiceImpl implements OrderAuditService {
      * @param itemMapper         医嘱明细 mapper，非空；口头医嘱行存在性校验（oral_flag）
      * @param auditMapper        审核流水 mapper，非空；SYSTEM/PHARMACIST 两阶段结论落行
      * @param statusLogMapper    状态迁移日志 mapper，非空；重整留痕（from=to）直写面
-     * @param visitMapper        住院就诊 mapper，非空；事件载荷 visitId 号映射与钩子草稿申请科室取数
+     * @param visitMapper        住院就诊 mapper，非空；钩子草稿申请科室取数（缺失宽容面）
+     * @param visitAccessor      住院就诊共享访问器（EX-44 下沉），非空；事件载荷 visitId 号映射
      * @param consultationMapper 会诊单 mapper，非空；CONSULT 类钩子自动建草稿落库（V908）
      * @param seqGate            住院业务号发号器（CS 会诊号段），非空；钩子建单取号
      * @param stateMachine       医嘱状态机服务（状态迁移唯一执行面），非空
@@ -109,15 +113,17 @@ public class OrderAuditServiceImpl implements OrderAuditService {
             OrderAuditMapper auditMapper,
             OrderStatusLogMapper statusLogMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             ConsultationMapper consultationMapper,
             InpatientSeqGate seqGate,
-            OrderStateMachineService stateMachine,
+            IOrderStateMachineService stateMachine,
             ApplicationEventPublisher events) {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
         this.auditMapper = auditMapper;
         this.statusLogMapper = statusLogMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.consultationMapper = consultationMapper;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
@@ -278,7 +284,8 @@ public class OrderAuditServiceImpl implements OrderAuditService {
     @Override
     @Transactional
     public void reorganize(OrderReorganizeRequest req) {
-        InpatientVisit visit = requireVisit(req.visitId());
+        // 就诊定位（load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(req.visitId());
         long operator = parseOperatorAsEmployeeId();
         OffsetDateTime occurredAt = OffsetDateTime.now();
         for (String orderNo : req.orderNos()) {
@@ -520,26 +527,14 @@ public class OrderAuditServiceImpl implements OrderAuditService {
         return order;
     }
 
-    /** 按就诊号定位行（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
-        return visit;
-    }
-
-    /** 就诊主键→I 型号映射（事件载荷 visitId 号口径；未命中定性 IP-1007 数据不一致）。 */
+    /**
+     * 就诊主键→I 型号映射（事件载荷 visitId 号口径；未命中定性 IP-1007 数据不一致——load+check
+     * 经共享访问器承载，EX-44 下沉后本方法仅保留号映射语义）。
+     */
     private String visitNoOf(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit.getVisitId();
+        return visitAccessor
+                .requireByPk(visitPk, "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk)
+                .getVisitId();
     }
 
     /**

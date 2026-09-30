@@ -1,7 +1,5 @@
 package com.fuyun.nursing.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
@@ -25,7 +23,12 @@ import com.fuyun.nursing.vo.NursingTaskVO;
 import com.fuyun.patient.api.VisitIdValidator;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
@@ -36,8 +39,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 护理任务域服务实现（V805 nursing_task 业务面，任务最小载体）。创建七件套（code 校验 →
  * 补录红线 → 发号 → insert → created 事件）与完成/取消 CAS 终态流转（GC26 @Update 条件更新 +
  * 影响行数判定）+ completed 事件（事务内发布 AFTER_COMMIT 出站，GC8）；读时惰性逾期判定
- * （Spec :127 动作式逾期 + 偏差 3）：list/inFlightByVisit 对返回集内越阈值在途行执行
- * casMarkOverdue（overdue_flag=false 谓词仅首次递增），P1 不发布 nursing.task.overdue。
+ * （Spec :127 动作式逾期 + 偏差 3）：list/inFlightByVisit 逐行 casMarkOverdue、inFlightByVisits
+ * 批量 casMarkOverdueBatch（overdue_flag=false 谓词仅首次递增，批量形态逐行等价），
+ * P1 不发布 nursing.task.overdue。
  * 业务时间服务器时间（GC25）；IN_PROGRESS 为 P1 声明态（无迁移入口，P2 任务工作台）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
@@ -229,19 +233,19 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
     public List<NursingTaskVO> list(String wardId, TaskStatus status, LocalDate date) {
         // 读路径含惰性逾期写（markOverdueLazily 触发 casMarkOverdue UPDATE），禁 readOnly——
         // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
-        LambdaQueryWrapper<NursingTask> wrapper =
-                Wrappers.<NursingTask>lambdaQuery().eq(NursingTask::getWardId, wardId);
+        // 主表链式查询（宪法 A.4.3-13）；条件分支保留 if：status.getCode()/date.atStartOfDay()
+        // 须空判后求值，内联 boolean 重载会无条件求值实参致 NPE
+        var query = this.lambdaQuery().eq(NursingTask::getWardId, wardId);
         if (status != null) {
-            wrapper.eq(NursingTask::getStatus, status.getCode());
+            query.eq(NursingTask::getStatus, status.getCode());
         }
         if (date != null) {
             // 当日窗口含头不含尾（TIMESTAMPTZ 按时刻比较，与体征/出入量查询同口径）
-            wrapper.ge(NursingTask::getPlanTime, date.atStartOfDay())
+            query.ge(NursingTask::getPlanTime, date.atStartOfDay())
                     .lt(NursingTask::getPlanTime, date.plusDays(1).atStartOfDay());
         }
-        wrapper.orderByAsc(NursingTask::getPlanTime);
         // 数据库读操作：病区任务清单（计划时间升序；命中 idx_nursing_task_ward_status_plan；逻辑删自动过滤）
-        List<NursingTask> rows = baseMapper.selectList(wrapper);
+        List<NursingTask> rows = query.orderByAsc(NursingTask::getPlanTime).list();
         markOverdueLazily(rows);
         return rows.stream().map(NursingTaskVO::from).toList();
     }
@@ -259,12 +263,49 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
         // 读路径含惰性逾期写（markOverdueLazily 触发 casMarkOverdue UPDATE），禁 readOnly——
         // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
         // 数据库读操作：在途任务（status IN 谓词滤除终态行；命中 idx_nursing_task_visit_status）
-        List<NursingTask> rows = baseMapper.selectList(Wrappers.<NursingTask>lambdaQuery()
+        List<NursingTask> rows = this.lambdaQuery()
                 .eq(NursingTask::getVisitId, visitId)
                 .in(NursingTask::getStatus, TaskStatus.PENDING.getCode(), TaskStatus.IN_PROGRESS.getCode())
-                .orderByAsc(NursingTask::getPlanTime));
+                .orderByAsc(NursingTask::getPlanTime)
+                .list();
         markOverdueLazily(rows);
         return rows.stream().map(NursingTaskVO::from).toList();
+    }
+
+    /**
+     * 多患者在途任务批量清单（Task 9 交接班待续事项批量取数，A.4.3-14 N+1 消除）：visitIds
+     * 键集前置已知（在区患者视图先行汇总），一次 IN 批查替代逐患者单查——病区满员 50 人由
+     * 50 查收敛为 1 查；先查后标再返回，守卫命中的越阈值未标记行收敛为单条 id 集批量 CAS
+     * （病区级首查最坏 50 写收敛为 1 写，后续查询已标记行零写触达）。空键集零 SQL 触达直接
+     * 返回空 Map（空病区交接班零负担）。
+     *
+     * @param visitIds 住院就诊号键集，非空集合（空集返回空 Map）
+     * @return visitId → 在途任务出参清单（键集内无在途任务的患者不出键，非 null）；每人按计划时间升序
+     */
+    @Override
+    @Transactional
+    public Map<String, List<NursingTaskVO>> inFlightByVisits(Collection<String> visitIds) {
+        // 空键集守卫：MP in 谓词空集将生成非法 SQL，直接短路返回（与逐患者路径空病区零查询行为一致）
+        if (visitIds.isEmpty()) {
+            return Map.of();
+        }
+        // 读路径含惰性逾期写（markOverdueLazilyBatch 触发 casMarkOverdueBatch UPDATE），禁 readOnly——
+        // PG 只读事务内 UPDATE 直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）随外层事务生效
+        // 数据库读操作：多患者在途任务批查（visitId IN + status IN 双谓词滤除无关行；
+        // 命中 idx_nursing_task_visit_status，全局 plan_time 升序保证分组后单人维度仍升序）
+        List<NursingTask> rows = this.lambdaQuery()
+                .in(NursingTask::getVisitId, visitIds)
+                .in(NursingTask::getStatus, TaskStatus.PENDING.getCode(), TaskStatus.IN_PROGRESS.getCode())
+                .orderByAsc(NursingTask::getPlanTime)
+                .list();
+        markOverdueLazilyBatch(rows);
+        // 任务归属分组：全局 plan_time 升序逐行入组，LinkedHashMap 保序——单人组内计划时间
+        // 升序与逐患者单查返回序一致
+        return rows.stream()
+                .collect(Collectors.groupingBy(
+                        NursingTask::getVisitId,
+                        LinkedHashMap::new,
+                        Collectors.mapping(NursingTaskVO::from, Collectors.toList())));
     }
 
     /**
@@ -383,10 +424,46 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
         }
     }
 
+    /**
+     * 批量读时惰性逾期判定（Spec :127 动作式逾期 + 偏差 3，批量路径）：守卫判定（在途 + 未
+     * 标记 + 越阈值）先行收敛受染行键集，单条 casMarkOverdueBatch 一次触达，替代逐行
+     * markOverdueLazily 的 N 次独立 CAS（A.4.3-14 写放大收敛）。与逐行 CAS 的逐行等价性：
+     * ①per-row overdue_flag=false 谓词在 IN 批量语句中逐行独立生效，每行仅首次递增；
+     * ②escalation_count 生命周期内至多递增一次（overdue_flag 单向置位无复位路径），故守卫行
+     * 无条件回写 true/计数+1——无论由本语句或并发先行者标记，回写值与库态恒一致（逐行路径
+     * 对并发先行标记行保留快照旧值，本路径回写更贴库态）。P1 不发布 nursing.task.overdue
+     * （V800 占位登记，发布随 P2 延迟队列实装，禁在本方法私发）。
+     *
+     * @param rows 批查返回的全部任务行（跨患者），非空；守卫命中行按批量 CAS 结果原位回写
+     */
+    private void markOverdueLazilyBatch(List<NursingTask> rows) {
+        OffsetDateTime threshold = OffsetDateTime.now().minusMinutes(properties.taskOverdueMinutes());
+        List<NursingTask> guarded = new ArrayList<>();
+        for (NursingTask row : rows) {
+            boolean active = TaskStatus.PENDING.getCode().equals(row.getStatus())
+                    || TaskStatus.IN_PROGRESS.getCode().equals(row.getStatus());
+            // 未标记 + 在途 + 越阈值三条件齐备才入受染键集（已标记/未越阈值行零写触达）
+            if (active
+                    && !Boolean.TRUE.equals(row.getOverdueFlag())
+                    && row.getPlanTime().isBefore(threshold)) {
+                guarded.add(row);
+            }
+        }
+        if (guarded.isEmpty()) {
+            return;
+        }
+        // 数据库写操作：逾期标记批量 CAS（id 集单语句一次触达，per-row 谓词仅首次递增）
+        baseMapper.casMarkOverdueBatch(guarded.stream().map(NursingTask::getId).toList());
+        // 守卫行内存回写：count 至多一次递增保证回写值与库态一致（依据见方法注②）
+        for (NursingTask row : guarded) {
+            row.setOverdueFlag(true);
+            row.setEscalationCount(row.getEscalationCount() + 1);
+        }
+    }
+
     /** 按任务号回读任务行（逻辑删由 @TableLogic 自动过滤；未命中定性 NS-1016）。 */
     private NursingTask requireByTaskNo(String taskNo) {
-        NursingTask row =
-                baseMapper.selectOne(Wrappers.<NursingTask>lambdaQuery().eq(NursingTask::getTaskNo, taskNo));
+        NursingTask row = this.lambdaQuery().eq(NursingTask::getTaskNo, taskNo).one();
         if (row == null) {
             // CAS 与回读间被并发逻辑删的极端窗口：资源已不存在，禁继续出事件
             throw new BizException(NursingErrorCode.CONFLICT, HttpStatus.CONFLICT, "护理任务不存在：taskNo=" + taskNo);

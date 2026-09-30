@@ -2,6 +2,9 @@ package com.fuyun.ward.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.ward.api.WardErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 冷链记录类型枚举（cold_chain_record.record_type 三值词表，V1101 列注释冻结）：
@@ -42,8 +45,8 @@ public enum ColdChainRecordType {
      *
      * @param code 存储值，来源：DB 列读取或请求体文本；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或非法请求值），
-     *                                  建议调用方按校验失败/数据异常处置
+     * @throws BizException WD-1007（400，词表外 code——脏数据或非法请求值）；EX-19 收口 A 类：
+     *                      外部输入 code 转枚举失败按业务失败渲染，不再以裸 IAE 走 500 通道
      */
     public static ColdChainRecordType fromCode(String code) {
         for (ColdChainRecordType type : values()) {
@@ -51,6 +54,6 @@ public enum ColdChainRecordType {
                 return type;
             }
         }
-        throw new IllegalArgumentException("未知的冷链记录类型 code: " + code);
+        throw new BizException(WardErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的冷链记录类型 code: " + code);
     }
 }

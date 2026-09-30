@@ -16,6 +16,7 @@ import com.fuyun.outpatient.api.VisitCancelledPayload;
 import com.fuyun.outpatient.api.VisitRegisteredPayload;
 import com.fuyun.outpatient.cache.PoolRedisGate;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.AppointmentConverter;
 import com.fuyun.outpatient.dto.AppointmentCreateRequest;
 import com.fuyun.outpatient.dto.RescheduleRequest;
 import com.fuyun.outpatient.entity.Appointment;
@@ -86,6 +87,13 @@ public class AppointmentServiceImpl implements IAppointmentService {
     /** P1 开放预约渠道面（窗口/自助=当日挂号一步 TAKEN；portal=支付时限占位），其余词表位拒绝 */
     private static final Set<ApptChannel> P1_BOOK_CHANNELS =
             Set.of(ApptChannel.WINDOW, ApptChannel.KIOSK, ApptChannel.PORTAL);
+
+    /** portal 匿名通道单患者活跃预约数上限（临时缓解①，EX-29，BE-A3-02 裁决③）：同日同科限购
+     * （uk_appt_patient）仅拦同科重复、跨科占位无总量约束，匿名冒名可对单证件号刷量占号——按
+     * 三级医院实名患者正常就医路径（当日多科复诊）取 3 为异常判界，与爽约阈值 noShowThreshold=3
+     * 同量级保守取值；仅作用免登录 PORTAL 面（WINDOW/KIOSK 已鉴权渠道不受限）。
+     * 临时缓解：M18 患者账号体系上线后由归属校验取代。 */
+    private static final int PORTAL_ACTIVE_APPT_LIMIT = 3;
 
     /** 线上渠道面（P1 唯一线上预约渠道 PORTAL；退号时限 OP-1010 判定域——窗口/自助渠道不受限） */
     private static final Set<ApptChannel> ONLINE_CHANNELS = Set.of(ApptChannel.PORTAL);
@@ -205,23 +213,20 @@ public class AppointmentServiceImpl implements IAppointmentService {
     }
 
     /**
-     * 统一预约/当日挂号（主流程七步锁死，步骤注释即执行序）。
+     * 统一预约/当日挂号（主流程七步锁死，步骤注释即执行序）。临时缓解①（EX-29，BE-A3-02 裁决③）：
+     * PORTAL 渠道入口先做单患者活跃预约数上限拦截（防免登录冒名刷量占号，M18 后由归属校验取代）。
      *
      * @param request 预约请求，非空；来源：多渠道统一入口（portal 经介质解析换 patientId 后进入）
      * @return 预约单出参，非空；窗口/自助直达 TAKEN 携 visit_id
-     * @throws BizException OP-1002/OP-1003/OP-1004/OP-1005/OP-1006/OP-1007/OP-1019（语义见接口 javadoc）
+     * @throws BizException OP-1002/OP-1003/OP-1004/OP-1005/OP-1006/OP-1007/OP-1019（语义见接口 javadoc）/
+     *                      OP-1022（409 PORTAL 单患者活跃预约数超上限，临时缓解①）
      */
     @Override
     @Transactional
     public AppointmentVO book(AppointmentCreateRequest request) {
-        // ① 渠道解析与 P1 开放面校验：词表外或预留位渠道显式 400（禁裸 parse，W-22⑦ 口径）
-        ApptChannel channel;
-        try {
-            channel = ApptChannel.fromCode(request.channel());
-        } catch (IllegalArgumentException e) {
-            throw new BizException(
-                    OutpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "预约渠道词表外：" + request.channel());
-        }
+        // ① 渠道解析与 P1 开放面校验：词表外或预留位渠道显式 400（禁裸 parse，W-22⑦ 口径；
+        //    词表外由 ApptChannel.fromCode 枚举内直接抛 OP-1019——EX-19 A 类收口，转换点上移）
+        ApptChannel channel = ApptChannel.fromCode(request.channel());
         if (!P1_BOOK_CHANNELS.contains(channel)) {
             throw new BizException(
                     OutpatientErrorCode.PARAM_FORMAT_INVALID,
@@ -240,6 +245,26 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     OutpatientErrorCode.PATIENT_BLOCKED, HttpStatus.CONFLICT, "患者冻结中禁止挂号：" + context.blockReason());
         }
         long patientId = context.resolvedPatientId();
+        // 临时缓解①（EX-29，BE-A3-02 裁决③）：portal 匿名通道单患者活跃预约数上限——免登录面
+        // 可冒用他人证件号刷量占号，单患者 RESERVED/TAKEN 在约数达上限即拒（409 OP-1022）；
+        // 仅作用 PORTAL 渠道（已鉴权渠道不受限），M18 患者账号体系上线后由归属校验取代。
+        // 并发声明：本检查为 check-then-act 非原子（计数读与后续预约插入之间无锁），并发窗口内
+        // 多笔同患者预约可越限放行——定位为防刷量软上限非硬约束（硬约束语义待 M18 归属校验
+        // 体系取代后消亡，本处不引入额外锁/唯一约束以保持临时缓解最小实现）
+        if (channel == ApptChannel.PORTAL) {
+            // 数据库读操作：患者维度活跃预约计数（跨科累计，池行读取前 fail-fast 拒绝省读）
+            Long activeAppts = appointmentMapper.selectCount(Wrappers.<Appointment>lambdaQuery()
+                    .eq(Appointment::getPatientId, patientId)
+                    .in(Appointment::getStatus, ApptStatus.RESERVED, ApptStatus.TAKEN));
+            if (activeAppts != null && activeAppts >= PORTAL_ACTIVE_APPT_LIMIT) {
+                log.warn(
+                        "portal 匿名预约上限拦截：patientId={}，活跃在约={}，上限={}", patientId, activeAppts, PORTAL_ACTIVE_APPT_LIMIT);
+                throw new BizException(
+                        OutpatientErrorCode.PORTAL_APPT_LIMIT_EXCEEDED,
+                        HttpStatus.CONFLICT,
+                        "该证件号活跃预约数已达上限（" + PORTAL_ACTIVE_APPT_LIMIT + "），请先退号或到院窗口办理");
+            }
+        }
         // 限约/限购判定与单据冗余列依赖：池行与排班先行读（业务校验序不变）
         ApptNumberPool pool = apptNumberPoolMapper.selectById(request.poolId());
         if (pool == null) {
@@ -354,7 +379,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         // ⑦ 渠道分流：PORTAL 占位登记；WINDOW/KIOSK 一步直达 TAKEN（同事务签发 visit）
         if (channel == ApptChannel.PORTAL) {
             holdPortalSlot(appointment, pool, schedule, redisHeld);
-            return toAppointmentVO(appointment);
+            return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
         }
         return registerVisitAndTake(appointment, pool, schedule, operator);
     }
@@ -386,7 +411,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                         "预约单已取号但就诊记录缺失（数据异常）：apptNo=" + apptNo);
             }
             log.info("预约取号幂等返回（已 TAKEN）：apptNo={}，visitId={}", apptNo, existing.getVisitId());
-            return toVisitVO(existing);
+            return AppointmentConverter.INSTANCE.toVisitVO(existing);
         }
         // 签发在前（casTake 同步回填 visit_id）；CAS 落败时流水号跳号，业务无副作用
         String visitId = visitIdIssuer.issue();
@@ -411,9 +436,11 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Schedule schedule = pool == null ? null : scheduleMapper.selectById(pool.getScheduleId());
         if (pool == null || schedule == null) {
             // 取号 CAS 已成功但关联行缺失属数据异常（uk 外键语义由业务维护），fail-fast 回滚整单
+            // EX-19 C 类收口留痕：内部数据异常断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("预约取号失败：号源池/排班定位失败，apptNo=" + apptNo);
         }
         Visit visit = buildVisit(appointment, visitId, pool, schedule, OperatorContextHolder.get());
+        // 数据库写操作：预约取号 visit 落库（初始态 REGISTERED，visit_id 锚已由 casTake 回填）
         visitMapper.insert(visit);
         // 缓存操作：删除支付占位键（删除失败不阻断取号，TTL 兜底自然过期）
         deletePayHoldQuietly(apptNo);
@@ -424,7 +451,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 visitId,
                 appointment.getPatientId(),
                 appointment.getDeptCode());
-        return toVisitVO(visit);
+        return AppointmentConverter.INSTANCE.toVisitVO(visit);
     }
 
     /**
@@ -439,6 +466,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Appointment appointment = appointmentMapper.selectOne(
                 Wrappers.<Appointment>lambdaQuery().eq(Appointment::getApptNo, payload.apptNo()));
         if (appointment == null) {
+            // EX-19 C 类收口留痕：MQ 超时回调驱动的数据异常断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("预约支付超时释放失败：预约单不存在，apptNo=" + payload.apptNo());
         }
         // 业务态校验幂等守卫：RESERVED→NO_SHOW 影响 1 行才执行释放面——0 行=已取号 TAKEN/已取消 CANCELLED/
@@ -467,10 +495,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
     // ---------------------------------------------------------------- 退号退费联动（Task 6）
 
     /**
-     * 退号（四分支锁死，裁决 7——退费一律经 billing 端口免审档，appointment/visit 终态一律
-     * billing.refund.approved 回执后置）：入口守卫（存在性/终态/线上退号时限）后按状态分流——
-     * TAKEN 先核 visit 态（非 REGISTERED 即已报到/已接诊，OP-1010 拒线上退）再走退费链；
-     * RESERVED 按费态分流（已付有结算锚走退费链保持占位待回执，否则免退费直取消+回池）。
+     * 退号（工作站/自助等已鉴权链路入口，语义见接口 javadoc）：直接委托三参实现免归属校验。
      *
      * @param apptNo 预约单业务号，非空
      * @param reason 退号原因，非空白
@@ -481,12 +506,49 @@ public class AppointmentServiceImpl implements IAppointmentService {
     @Override
     @Transactional
     public AppointmentVO cancel(String apptNo, String reason) {
+        // 工作站鉴权链路：免介质归属校验（BUG-01 仅收口 portal 免登录面，已鉴权行为保持）
+        return cancel(apptNo, reason, null);
+    }
+
+    /**
+     * 退号（四分支锁死，裁决 7——退费一律经 billing 端口免审档，appointment/visit 终态一律
+     * billing.refund.approved 回执后置；BUG-01 增介质归属守卫）：入口守卫（存在性→归属比对→
+     * 终态→线上退号时限）后按状态分流——TAKEN 先核 visit 态（非 REGISTERED 即已报到/已接诊，
+     * OP-1010 拒线上退）再走退费链；RESERVED 按费态分流（已付有结算锚走退费链保持占位待回执，
+     * 否则免退费直取消+回池）。
+     *
+     * @param apptNo         预约单业务号，非空
+     * @param reason         退号原因，非空白
+     * @param ownerPatientId portal 免登录链路介质解析出的归属患者主索引，null 时跳过归属校验
+     *                       （已鉴权链路内部委托）
+     * @return 预约单出参（分支 1=CANCELLED；分支 2/3=原态占位待回执），非空
+     * @throws BizException OP-1021（403 归属不匹配）/ OP-1009（预约单不存在/终态不可退）/
+     *                      OP-1010（线上时限外/已报到拒线上退）/ M13 退费守卫（BILL-*，端口
+     *                      原样透传）时触发
+     */
+    @Override
+    @Transactional
+    public AppointmentVO cancel(String apptNo, String reason, Long ownerPatientId) {
         // 数据库读操作：按业务号定位预约单
         Appointment appointment =
                 appointmentMapper.selectOne(Wrappers.<Appointment>lambdaQuery().eq(Appointment::getApptNo, apptNo));
         if (appointment == null) {
             throw new BizException(
                     OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "预约单不存在：apptNo=" + apptNo);
+        }
+        // 介质归属校验（BUG-01 收口，portal 免登录链路）：单号顺序流水可枚举，匿名请求介质解析
+        // 患者与单据归属不一致即 403 拒绝，阻断遍历单号退他人号源/触发他人退费链；比对与取消
+        // 同事务完成，杜绝校验通过后状态变更的竞态窗口（null 仅限已鉴权链路内部委托）
+        if (ownerPatientId != null && !ownerPatientId.equals(appointment.getPatientId())) {
+            log.warn(
+                    "免登录退号归属校验拒绝：apptNo={}，介质解析患者 {} 与单据归属患者 {} 不一致",
+                    apptNo,
+                    ownerPatientId,
+                    appointment.getPatientId());
+            throw new BizException(
+                    OutpatientErrorCode.APPT_OWNER_MISMATCH,
+                    HttpStatus.FORBIDDEN,
+                    "预约单归属校验失败，仅患者本人介质可退号：apptNo=" + apptNo);
         }
         ApptStatus status = appointment.getStatus();
         if (status != ApptStatus.RESERVED && status != ApptStatus.TAKEN) {
@@ -613,6 +675,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 == 0) {
             releaseRedisHoldQuietly(newPool, newSchedule, redisHeld);
             deletePayHoldQuietly(fresh.getApptNo());
+            // EX-19 C 类收口留痕：并发 CAS 落败断言（服务端并发竞争，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("改期失败：旧单并发状态迁移（CAS 落败）：apptNo=" + apptNo);
         }
         // ⑥ 旧池回池+旧占位键清理（version 谓词条件回池，与超时释放/退号取消共用释放面）
@@ -634,7 +697,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 old.getPatientId(),
                 newPool.getId(),
                 newSchedule.getSchedDate());
-        return toAppointmentVO(fresh);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(fresh);
     }
 
     /**
@@ -746,7 +809,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                         .eq(ApptCreditRecord::getPatientId, patientId)
                         .orderByDesc(ApptCreditRecord::getId))
                 .stream()
-                .map(AppointmentServiceImpl::toCreditVO)
+                .map(AppointmentConverter.INSTANCE::toCreditVO)
                 .toList();
     }
 
@@ -785,7 +848,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 record.getPatientId(),
                 record.getRestrictTo(),
                 reason);
-        return toCreditVO(record);
+        return AppointmentConverter.INSTANCE.toCreditVO(record);
     }
 
     // ---------------------------------------------------------------- 私有辅助
@@ -898,11 +961,14 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private AppointmentVO registerVisitAndTake(
             Appointment appointment, ApptNumberPool pool, Schedule schedule, String operator) {
         String visitId = visitIdIssuer.issue();
+        // 数据库写操作：当日挂号一步取号 CAS（新建行 RESERVED→TAKEN+visit_id 同步回填）
         if (appointmentMapper.casTake(appointment.getId(), visitId) == 0) {
             // 新建行 CAS 落败属数据异常（行状态被并发篡改），fail-fast 回滚整单（含 visit 签发流水跳号，无副作用）
+            // EX-19 C 类收口留痕：并发 CAS 落败断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("当日挂号 casTake 落败（新建行状态异常）：apptNo=" + appointment.getApptNo());
         }
         Visit visit = buildVisit(appointment, visitId, pool, schedule, operator);
+        // 数据库写操作：当日挂号 visit 落库（初始态 REGISTERED，与预约单取号同事务签发）
         visitMapper.insert(visit);
         appointment.setStatus(ApptStatus.TAKEN);
         appointment.setVisitId(visitId);
@@ -914,7 +980,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 appointment.getPatientId(),
                 appointment.getDeptCode(),
                 appointment.getChannel().getCode());
-        return toAppointmentVO(appointment);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
     }
 
     /**
@@ -1019,11 +1085,14 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private String issueApptNo() {
         String today = LocalDate.now().format(SEQ_DATE);
         String seqKey = APPT_SEQ_KEY_PREFIX + today;
+        // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
+            // EX-19 C 类收口留痕：基础设施异常断言（Redis 流水缺失，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("预约单号签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {
+            // 首签续期 48h TTL（禁无过期键；后续签发不重复设置，保持 TTL 单次语义）
             redisTemplate.expire(seqKey, APPT_SEQ_KEY_TTL);
         }
         return "AP" + today + String.format("%06d", seq);
@@ -1042,6 +1111,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
             return;
         }
         try {
+            // 缓存写操作：预约失败回补池键余量（Lua 单步原子+越界封顶；-1=键缺失已跳过）
             long remain =
                     poolRedisGate.release(pool.getId(), pool.getTotalQuota(), poolKeyTtl(schedule.getSchedDate()));
             log.info("预约失败回补 Redis 持有：poolId={}，池键余量={}（-1=键缺失已跳过）", pool.getId(), remain);
@@ -1060,6 +1130,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
      */
     private void releasePoolKeyQuietly(long poolId, long total, LocalDate schedDate, String apptNo) {
         try {
+            // 缓存写操作：超时/退号回池后池键余量同步回补（快路径立即可约；-1=键缺失已跳过）
             long remain = poolRedisGate.release(poolId, total, poolKeyTtl(schedDate));
             log.info("超时回池 Redis 快路径已回补：apptNo={}，poolId={}，池键余量={}（-1=键缺失已跳过）", apptNo, poolId, remain);
         } catch (DataAccessException e) {
@@ -1074,6 +1145,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
      */
     private void deletePayHoldQuietly(String apptNo) {
         try {
+            // 缓存写操作：删除支付占位键（取号完成/占位失效路径；TTL 兜底自然过期）
             redisTemplate.delete(payHoldKey(apptNo));
         } catch (DataAccessException e) {
             log.error("支付占位键删除失败（TTL 兜底自然过期）：apptNo={}，原因={}", apptNo, e.getMessage(), e);
@@ -1110,6 +1182,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private Schedule scheduleOf(Appointment appointment) {
         Schedule schedule = scheduleMapper.selectById(appointment.getScheduleId());
         if (schedule == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("booked 事件组装失败：排班定位缺失，scheduleId=" + appointment.getScheduleId());
         }
         return schedule;
@@ -1133,6 +1206,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Visit visit =
                 visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, appointment.getVisitId()));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（TAKEN 单必有 visit 锚，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("退号失败：就诊记录缺失（数据异常）：apptNo=" + appointment.getApptNo());
         }
         if (visit.getStatus() != VisitStatus.REGISTERED) {
@@ -1147,7 +1221,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     "已报到/已接诊不可线上退号，请到窗口按「未诊即退」规则办理：apptNo=" + appointment.getApptNo());
         }
         triggerRegistrationRefund(appointment, reason);
-        return toAppointmentVO(appointment);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
     }
 
     /**
@@ -1162,7 +1236,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
     private AppointmentVO cancelReserved(Appointment appointment, String reason) {
         if (appointment.getFeeStatus() == FeeStatusType.PAID && appointment.getFeeSettlementId() != null) {
             triggerRegistrationRefund(appointment, reason);
-            return toAppointmentVO(appointment);
+            return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
         }
         // 分支 1：状态 CAS 幂等守卫（0 行=并发已迁移/已超时释放，info 跳过禁二次回池）
         int flipped = appointmentMapper.casStatus(
@@ -1173,7 +1247,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     "退号幂等跳过（当前态 {}）：apptNo={}",
                     current == null ? "UNKNOWN" : current.getStatus().getCode(),
                     appointment.getApptNo());
-            return toAppointmentVO(appointment);
+            return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
         }
         appointment.setStatus(ApptStatus.CANCELLED);
         releasePoolConditionally(appointment.getPoolId(), appointment.getApptNo());
@@ -1187,7 +1261,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 appointment.getPatientId(),
                 appointment.getPoolId(),
                 reason);
-        return toAppointmentVO(appointment);
+        return AppointmentConverter.INSTANCE.toAppointmentVO(appointment);
     }
 
     /**
@@ -1226,6 +1300,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 .map(fee -> new VisitRefundCommand.Line(fee.feeId(), REGISTRATION_REFUND_QUANTITY))
                 .toList();
         if (lines.isEmpty()) {
+            // EX-19 C 类收口留痕：内部数据异常断言（已支付单必有可退费用行，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("已支付预约单无可退费用行（数据异常）：apptNo=" + appointment.getApptNo() + "，settlementId="
                     + appointment.getFeeSettlementId());
         }
@@ -1317,6 +1392,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         Visit visit =
                 visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, appointment.getVisitId()));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（TAKEN 单必有 visit，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("退号回执回滚失败：就诊记录缺失（数据异常）：apptNo=" + appointment.getApptNo());
         }
         // visit 状态机合法迁移 REGISTERED→CANCELLED：CAS 命中才记日志与事件（并发已迁移幂等跳过）
@@ -1353,6 +1429,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
             log.warn("回池跳过（池行不存在）：apptNo={}，poolId={}", apptNo, poolId);
             return;
         }
+        // 数据库写操作：池行条件回池（version 乐观锁防并发双回补；used_count 回减 1）
         int released = apptNumberPoolMapper.casRelease(pool.getId(), pool.getVersion() == null ? 0 : pool.getVersion());
         if (released != 1) {
             ApptNumberPool latest = apptNumberPoolMapper.selectById(poolId);
@@ -1369,63 +1446,5 @@ public class AppointmentServiceImpl implements IAppointmentService {
             return;
         }
         releasePoolKeyQuietly(pool.getId(), pool.getTotalQuota(), schedule.getSchedDate(), apptNo);
-    }
-
-    /** 实体 → 信用记录出参投影（Task 6 管理面）。 */
-    private static ApptCreditVO toCreditVO(ApptCreditRecord record) {
-        return new ApptCreditVO(
-                record.getId(),
-                record.getPatientId(),
-                record.getAction(),
-                record.getOccurredAt(),
-                record.getWindowDays(),
-                record.getRestrictFrom(),
-                record.getRestrictTo(),
-                record.getReleaseReason());
-    }
-
-    /**
-     * 实体 → 预约单出参投影。
-     *
-     * @param appointment 预约单实体，非空
-     * @return 预约单出参，非空
-     */
-    private AppointmentVO toAppointmentVO(Appointment appointment) {
-        return new AppointmentVO(
-                appointment.getId(),
-                appointment.getApptNo(),
-                appointment.getPatientId(),
-                appointment.getScheduleId(),
-                appointment.getPoolId(),
-                appointment.getApptType(),
-                appointment.getSchedDate(),
-                appointment.getSlotStart(),
-                appointment.getSlotEnd(),
-                appointment.getChannel(),
-                appointment.getFeeStatus(),
-                appointment.getPayDeadline(),
-                appointment.getVisitId(),
-                appointment.getStatus());
-    }
-
-    /**
-     * 实体 → 就诊记录出参投影。
-     *
-     * @param visit 就诊实体，非空
-     * @return 就诊记录出参，非空
-     */
-    private VisitVO toVisitVO(Visit visit) {
-        return new VisitVO(
-                visit.getId(),
-                visit.getVisitId(),
-                visit.getPatientId(),
-                visit.getApptId(),
-                visit.getDeptCode(),
-                visit.getDoctorId(),
-                visit.getVisitType(),
-                visit.getIsRevisit(),
-                visit.getTriageLevel(),
-                visit.getStatus(),
-                visit.getRegisteredAt());
     }
 }

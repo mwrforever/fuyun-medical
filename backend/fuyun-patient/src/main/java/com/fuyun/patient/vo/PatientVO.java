@@ -7,7 +7,7 @@ import lombok.Setter;
 
 /**
  * 患者档案出参（GET /patients/{id} 与 /patients/search 行载体）：敏感字段为脱敏后文本
- * （PrivacyMaskService 就地脱敏），明文只经明文查阅 API 且双留痕（M02 红线 3）。
+ * （IPrivacyMaskService 就地脱敏），明文只经明文查阅 API 且双留痕（M02 红线 3）。
  */
 @Getter
 @Setter

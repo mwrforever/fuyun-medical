@@ -59,7 +59,7 @@ class AlarmRuleControllerTest {
     @Test
     @DisplayName("清单：GET 出网规则视图（类型/级别词表回显）")
     void listReturnsRuleVos() throws Exception {
-        when(alarmRuleService.list()).thenReturn(List.of(ruleVo()));
+        when(alarmRuleService.listAll()).thenReturn(List.of(ruleVo()));
 
         mockMvc.perform(get("/api/v1/iot/alarm-rules").accept(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())

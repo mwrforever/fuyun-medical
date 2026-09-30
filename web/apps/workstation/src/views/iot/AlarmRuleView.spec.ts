@@ -2,12 +2,14 @@
 // 源徽标渲染（fuy-rule-tag--{type} 机器判据）、THRESHOLD 规则缺持续时长/恢复带零出网
 // 显式校验、THRESHOLD 完整提交出网携阈值参数并刷新、模拟回放动态近一日默认窗出网并在
 // 弹窗展示扫描行数与触发清单、活跃告警等级徽标渲染与确认出网、关闭缺原因零出网拦截与
-// 携原因出网（后端 casClose 实况允许 ACTIVE/ACKNOWLEDGED 关闭）。
+// 携原因出网（后端 casClose 实况允许 ACTIVE/ACKNOWLEDGED 关闭）、EX-46/FE-A2-08 编辑
+// 保存版本比对（远端 updatedAt 偏离打开基线=他人已改 → 冲突提示：取消零出网/确认覆盖）。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），断言业务结果不绑定实现细节。
+// 桩面：版本冲突确认走 ElMessageBox.confirm 替身（默认确认放行，用例按需 mockRejectedValueOnce 覆写）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { alarmRules, alarms } from '@/api/iot';
 import type { AlarmRuleVO, AlarmVO } from '@/api/iot';
 import AlarmRuleView from './AlarmRuleView.vue';
@@ -38,12 +40,13 @@ vi.mock('@/api/iot', () => ({
   alarms: { list: vi.fn(), acknowledge: vi.fn(), close: vi.fn() },
 }));
 
-// 仅替身 ElMessage（提示断言用），其余导出原样保留供组件解析
+// 仅替身 ElMessage/ElMessageBox（提示与版本冲突确认断言用），其余导出原样保留供组件解析
 vi.mock('element-plus', async (importOriginal) => {
   const mod = await importOriginal<typeof import('element-plus')>();
   return {
     ...mod,
     ElMessage: { warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+    ElMessageBox: { ...mod.ElMessageBox, confirm: vi.fn().mockResolvedValue('confirm') },
   };
 });
 
@@ -171,6 +174,8 @@ describe('告警规则页', () => {
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.error).mockClear();
     vi.mocked(ElMessage.success).mockClear();
+    // 确认框替身调用记录清零（实现默认确认放行，单用例按需 mockRejectedValueOnce 覆写）
+    vi.mocked(ElMessageBox.confirm).mockClear();
     // 只读面兜底空：防未 stub 的 resolve 断链
     vi.mocked(alarmRules.list).mockResolvedValue([]);
     vi.mocked(alarms.list).mockResolvedValue(emptyPage());
@@ -334,5 +339,66 @@ describe('告警规则页', () => {
     });
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
     expect(alarms.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('编辑规则保存时远端已被他人修改：冲突提示后取消零出网（EX-46/FE-A2-08）', async () => {
+    // 初载（T1 基线）→ 保存时重拉（T2=他人已改）
+    vi.mocked(alarmRules.list)
+      .mockResolvedValueOnce([ruleMock({ id: 'rule-2', updatedAt: '2026-09-25T10:00:00+08:00' })])
+      .mockResolvedValueOnce([ruleMock({ id: 'rule-2', updatedAt: '2026-09-26T08:00:00+08:00' })]);
+    const wrapper = mount(AlarmRuleView);
+    await flushPromises();
+    await clickRowButton(wrapper, '心率超阈告警', '编辑');
+    // 表单已预填 THRESHOLD 四必填项，直接保存触发版本比对：远端偏离基线 → 冲突确认
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel');
+    await clickButton(wrapper, '保存规则');
+    await flushPromises();
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('已被他人修改'),
+      '版本冲突提醒',
+      expect.anything(),
+    );
+    // 取消：零出网，表单驻留可复核
+    expect(alarmRules.update).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('编辑规则保存时远端已被他人修改：确认后覆盖出网（EX-46/FE-A2-08）', async () => {
+    vi.mocked(alarmRules.list)
+      .mockResolvedValueOnce([ruleMock({ id: 'rule-2', updatedAt: '2026-09-25T10:00:00+08:00' })])
+      .mockResolvedValueOnce([ruleMock({ id: 'rule-2', updatedAt: '2026-09-26T08:00:00+08:00' })]);
+    vi.mocked(alarmRules.update).mockResolvedValue(ruleMock());
+    const wrapper = mount(AlarmRuleView);
+    await flushPromises();
+    await clickRowButton(wrapper, '心率超阈告警', '编辑');
+    await clickButton(wrapper, '保存规则');
+    await flushPromises();
+    // 冲突确认（替身默认放行）恰一次后按操作者意图覆盖出网
+    expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1);
+    expect(alarmRules.update).toHaveBeenCalledTimes(1);
+    expect(alarmRules.update).toHaveBeenCalledWith(
+      'rule-2',
+      expect.objectContaining({ ruleName: '心率超阈告警' }),
+    );
+    wrapper.unmount();
+  });
+
+  it('编辑规则保存时远端未变更：零冲突提示直接出网（EX-46/FE-A2-08）', async () => {
+    // 初载与保存时重拉的 updatedAt 一致（T1=T1）→ 无冲突零打扰
+    vi.mocked(alarmRules.list)
+      .mockResolvedValueOnce([ruleMock({ id: 'rule-2', updatedAt: '2026-09-25T10:00:00+08:00' })])
+      .mockResolvedValueOnce([ruleMock({ id: 'rule-2', updatedAt: '2026-09-25T10:00:00+08:00' })]);
+    vi.mocked(alarmRules.update).mockResolvedValue(ruleMock());
+    const wrapper = mount(AlarmRuleView);
+    await flushPromises();
+    await clickRowButton(wrapper, '心率超阈告警', '编辑');
+    await clickButton(wrapper, '保存规则');
+    await flushPromises();
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled();
+    expect(alarmRules.update).toHaveBeenCalledWith(
+      'rule-2',
+      expect.objectContaining({ ruleName: '心率超阈告警' }),
+    );
+    wrapper.unmount();
   });
 });

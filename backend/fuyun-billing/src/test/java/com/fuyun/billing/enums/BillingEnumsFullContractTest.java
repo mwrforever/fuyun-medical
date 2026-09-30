@@ -3,11 +3,14 @@ package com.fuyun.billing.enums;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fuyun.billing.api.BillingErrorCode;
+import com.fuyun.common.exception.BizException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 /**
  * 24 枚举全量契约测试（A.2-7 code↔enum 双向映射统一模板验证）：每个枚举常量
@@ -67,13 +70,33 @@ class BillingEnumsFullContractTest {
                 assertThat(valueOf.invoke(null, ((Enum<?>) constant).name())).isSameAs(constant);
             }
 
-            // 值域外拒绝：fromCode/valueOf 均抛 IllegalArgumentException（反射调用统一包装为 InvocationTargetException）
+            // 值域外拒绝：fromCode 抛 BizException（BILL-1034/400，BE-C3-05 A 类收口；原断言裸
+            // IAE 属待改进实现细节——D-21 断言现代化出口同步迁移，锚定新错误码契约）、valueOf 系
+            // JDK 生成方法保持原生 IAE（反射调用统一包装为 InvocationTargetException，取根因断言）
             assertThatThrownBy(() -> fromCode.invoke(null, "__UNKNOWN__"))
                     .isInstanceOf(InvocationTargetException.class)
-                    .hasRootCauseInstanceOf(IllegalArgumentException.class);
+                    .cause()
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.ENUM_CODE_INVALID);
+                        assertThat(e.getErrorCode().getCode()).isEqualTo("BILL-1034");
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    });
             assertThatThrownBy(() -> valueOf.invoke(null, "__UNKNOWN__"))
                     .isInstanceOf(InvocationTargetException.class)
                     .hasRootCauseInstanceOf(IllegalArgumentException.class);
         }
+    }
+
+    @Test
+    @DisplayName("fromCode 词表外直抛 BizException（BILL-1034/400）：直接调用锚定（BE-C3-05 A 类）")
+    void fromCodeOutOfRangeThrowsBizExceptionWithErrorCode() {
+        // 直接调用（不经反射包装）：锚定词表外值 → 双层错误模型（错误码+HTTP 状态）完整契约
+        assertThatThrownBy(() -> FeeStatus.fromCode("__UNKNOWN__"))
+                .isInstanceOf(BizException.class)
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.ENUM_CODE_INVALID);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                })
+                .hasMessageContaining("未知的费用状态");
     }
 }

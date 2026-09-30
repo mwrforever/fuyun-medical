@@ -1,24 +1,34 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.NursingTaskCancelRequest;
 import com.fuyun.nursing.dto.NursingTaskCreateRequest;
+import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.vo.NursingTaskVO;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 护理任务域服务（V805 nursing_task 业务面；Task 8 评估高危联动、Task 9 交接班待续事项、
  * Task 10 PDA 巡视打卡与 Task 3 详情卡在途任务段的消费契约来源）。P1 仅落「任务最小载体」：
  * 创建（发号 + 默认 PENDING + created 事件）、完成/取消（CAS 终态流转 + completed 事件）、
- * 病区清单与患者在途查询（读时惰性逾期判定）、巡视打卡（直落 COMPLETED）。任务工作台
+ * 病区清单与患者在途查询（单查/批量，读时惰性逾期判定）、巡视打卡（直落 COMPLETED）。任务工作台
  * （分组/认领/模板批量生成）归 P2——IN_PROGRESS 为 P1 声明态（仅注册迁移对，无迁移入口）。
  * 逾期口径（Spec :127 动作式逾期）：overdue_flag + escalation_count 为动作落点，读时惰性
  * 判定单次递增，P1 不发布 nursing.task.overdue（V800 占位登记，发布随 P2 延迟队列）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：单主表 nursing_task 与实现侧
+ * {@code ServiceImpl<NursingTaskMapper, NursingTask>} 配对，接口侧收拢
+ * {@code extends IService<NursingTask>}——主表通用 CRUD 直接复用 IService 契约面；
+ * 终态流转（complete/cancel 的 CAS 行数判定 + 事件发布）与读时惰性逾期写为带守卫链的
+ * 自有方法承载（禁经 IService 通用面绕行——通用面不盖操作者审计列、不发领域事件）。
  */
-public interface INursingTaskService {
+public interface INursingTaskService extends IService<NursingTask> {
 
     /**
      * 护理任务创建（手工开立）：①taskType/source/priority code 显式校验（非法 NS-1019）→
@@ -71,13 +81,26 @@ public interface INursingTaskService {
     List<NursingTaskVO> list(String wardId, TaskStatus status, LocalDate date);
 
     /**
-     * 患者在途任务清单（仅 PENDING/IN_PROGRESS，计划时间升序）：Task 9 交接班待续事项与
-     * Task 3 详情卡「在途任务」段的消费落点。先查后标再返回，惰性逾期 CAS 同 {@link #list}。
+     * 患者在途任务清单（仅 PENDING/IN_PROGRESS，计划时间升序）：Task 3 详情卡「在途任务」段的
+     * 消费落点（Task 9 交接班待续事项已改走 {@link #inFlightByVisits} 批量取数）。先查后标再
+     * 返回，惰性逾期 CAS 同 {@link #list}。
      *
      * @param visitId 住院就诊号，非空；来源：路径/载荷
      * @return 在途任务出参清单（无行返回空清单，非 null）；按计划时间升序
      */
     List<NursingTaskVO> inFlightByVisit(String visitId);
+
+    /**
+     * 多患者在途任务批量清单（仅 PENDING/IN_PROGRESS，每人计划时间升序）：Task 9 交接班待续
+     * 事项的批量取数落点——visitIds 键集前置已知（在区患者视图先行汇总），一次 IN 批查替代
+     * 逐患者单查（N+1 消除，宪法 A.4.3-14）。先查后标再返回：守卫判定（在途 + 未标记 + 越阈值）
+     * 命中行收敛为单条 id 集批量 CAS（casMarkOverdueBatch），per-row overdue_flag=false 谓词
+     * 保持与逐行 {@link #inFlightByVisit} 的仅首次递增语义逐行等价。
+     *
+     * @param visitIds 住院就诊号键集，非空集合（空集零 SQL 触达直接返回空 Map）；来源：在区患者视图行
+     * @return visitId → 在途任务出参清单（键集内无在途任务的患者不出键，非 null）；每人按计划时间升序
+     */
+    Map<String, List<NursingTaskVO>> inFlightByVisits(Collection<String> visitIds);
 
     /**
      * 巡视打卡（Task 10 PDA 面 {@code POST /pda/patrol} 落点）：建 PATROL 行并直落 COMPLETED

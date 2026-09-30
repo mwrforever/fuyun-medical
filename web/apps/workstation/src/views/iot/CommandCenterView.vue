@@ -11,30 +11,11 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
-import axios from 'axios';
 import { commands, devices, COMMAND_STATUS_LABELS, SAFETY_LEVEL_LABELS } from '@/api/iot';
 import type { CommandLogVO, ConfirmChallengeVO, DeviceVO } from '@/api/iot';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，下发/结果时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+import { usePagedList } from '@/composables/usePagedList';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 命令状态中文词表反查（状态列徽标） */
 function statusLabel(code: string | undefined): string {
@@ -176,28 +157,23 @@ const challengeExpiryText = computed(() => {
 });
 
 /* ==================== 命令日志 ==================== */
-const logRows = ref<CommandLogVO[]>([]);
-const logLoading = ref(false);
 /** 状态筛选（空串=全部五态） */
 const statusFilter = ref('');
 
-/** 加载命令日志（status/deviceId 过滤由后端承载，前端按返回序直出） */
-async function loadLogs(): Promise<void> {
-  logLoading.value = true;
-  try {
-    const page = await commands.page({
-      status:
-        statusFilter.value === '' ? undefined : (statusFilter.value as CommandLogVO['status']),
-      page: 0,
-      size: 50,
-    });
-    logRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    logLoading.value = false;
-  }
-}
+/** 加载命令日志（status/deviceId 过滤由后端承载，前端按返回序直出）：页码/行集/加载态经
+ * usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错
+ * 归响应拦截器；驻留旧清单） */
+const {
+  rows: logRows,
+  loading: logLoading,
+  fetch: loadLogs,
+} = usePagedList({
+  params: () => ({
+    status: statusFilter.value === '' ? undefined : (statusFilter.value as CommandLogVO['status']),
+  }),
+  fetcher: ({ status, page, size }) => commands.page({ status, page, size }),
+  pageSize: 50,
+});
 
 onMounted(() => {
   void loadDevices();

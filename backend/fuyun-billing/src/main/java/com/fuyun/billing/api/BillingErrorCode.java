@@ -79,7 +79,10 @@ public enum BillingErrorCode implements ErrorCode {
     /** 挂账审批单不存在（404；approval_no 无命中，M13 住院联动 P2 PR-1 Task 13） */
     ARREARS_APPROVAL_NOT_FOUND("BILL-1032"),
     /** 挂账审批状态不允许该操作（409；非 PENDING_APPROVAL 态决出/并发被抢，P2 PR-1 Task 13） */
-    ARREARS_APPROVAL_STATE_NOT_ALLOWED("BILL-1033");
+    ARREARS_APPROVAL_STATE_NOT_ALLOWED("BILL-1033"),
+    /** 枚举 code 词表外（400；fromCode 双向映射查询侧 code 无对应枚举常量——外部输入/存储值
+     *  词表外显式拒，禁静默兜底；BE-C3-05 模式级收口，24 枚举共用一码最小化新增） */
+    ENUM_CODE_INVALID("BILL-1034");
 
     /** 码值（如 BILL-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

@@ -64,18 +64,43 @@ public interface NursingWardPatientMapper extends BaseMapper<NursingWardPatient>
             @Param("survivorPatientId") long survivorPatientId, @Param("restoredPatientId") long restoredPatientId);
 
     /**
-     * 风险标识回写（appendRiskFlag 消费体，Task 8 评估高危回写）：整体置合并后的逗号分隔值
-     * （合并/去重逻辑归服务层，本语句仅承载最终值）。
+     * 风险标识原子追加（appendRiskFlag 消费体，Task 8 评估高危回写，EX-26）：单语句 DB 侧拼接——
+     * 行级锁串行化并发追加互不覆盖（杜绝服务层读-改-写整串回写丢标记）；空串/NULL 首追加经 CASE
+     * 直落标识（无前置逗号）；WHERE 侧「首尾补逗 position 定位」谓词与 Java 侧 tokens.contains
+     * 逐字等价，拦截并发重复追加同标识（0 行幂等，不产生重复标记）。
      *
      * @param visitId   住院就诊号，非空
-     * @param riskFlags 合并后的风险标识串（逗号分隔），非空
+     * @param flag      风险标识 code（如 FALL/PRESSURE），非空
      * @param updatedBy 回写操作者（评估流程操作者，审计留痕），非空
-     * @return 影响行数（0=在区行不存在，调用方定性 NS-1001）
+     * @return 影响行数（0=在区行不存在或已含该标识，调用方按幂等容忍）
      */
-    @Update("UPDATE nursing.nursing_ward_patient SET risk_flags = #{riskFlags}, updated_by = #{updatedBy} "
-            + "WHERE visit_id = #{visitId} AND status = 'IN_WARD' AND deleted = 0")
-    int updateRiskFlags(
-            @Param("visitId") String visitId,
-            @Param("riskFlags") String riskFlags,
-            @Param("updatedBy") String updatedBy);
+    @Update("UPDATE nursing.nursing_ward_patient "
+            + "SET risk_flags = CASE WHEN COALESCE(risk_flags, '') = '' THEN #{flag} "
+            + "ELSE risk_flags || ',' || #{flag} END, updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND status = 'IN_WARD' AND deleted = 0 "
+            + "AND position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') = 0")
+    int casAppendRiskFlag(
+            @Param("visitId") String visitId, @Param("flag") String flag, @Param("updatedBy") String updatedBy);
+
+    /**
+     * 风险标识原子移除（removeRiskFlag 消费体，评估复评降级回写，EX-26 N7 收口与追加侧对称化）：
+     * 单语句 DB 侧摘除——string_to_array→array_remove→array_to_string 原生数组三连仅摘目标标识
+     * （剩余标识保持既有顺序，末位摘除落空串，契合 DDL NOT NULL 默认空串口径）；WHERE 侧
+     * 「首尾补逗 position 定位」谓词与追加侧同形态取反向（当前值含该标识才施写），与追加侧
+     * 共用行级锁串行化——并发追加/移除交错双向不互吞（杜绝服务层读快照拼剩余串整串置值
+     * 抹掉并发追加标记的安全信号丢失窗口）。0 行 = 在区行不存在或当前值已不含该标识，
+     * 调用方重读定性。
+     *
+     * @param visitId   住院就诊号，非空
+     * @param flag      风险标识 code（如 FALL/PRESSURE），非空
+     * @param updatedBy 回写操作者（评估流程操作者，审计留痕），非空
+     * @return 影响行数（0=在区行不存在或已不含该标识，调用方重读定性）
+     */
+    @Update("UPDATE nursing.nursing_ward_patient "
+            + "SET risk_flags = array_to_string(array_remove(string_to_array(risk_flags, ','), #{flag}), ','), "
+            + "updated_by = #{updatedBy} "
+            + "WHERE visit_id = #{visitId} AND status = 'IN_WARD' AND deleted = 0 "
+            + "AND position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') > 0")
+    int casRemoveRiskFlag(
+            @Param("visitId") String visitId, @Param("flag") String flag, @Param("updatedBy") String updatedBy);
 }

@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.tngtech.archunit.core.domain.JavaClass;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.modulith.core.ApplicationModules;
 
 /**
@@ -17,13 +19,16 @@ import org.springframework.modulith.core.ApplicationModules;
  */
 class ModulithBoundaryTest {
 
+    /** 测试类日志器：模块布局等排查信息统一走 SLF4J，禁止裸 System.out（宪法 A.1-11） */
+    private static final Logger log = LoggerFactory.getLogger(ModulithBoundaryTest.class);
+
     @Test
     @DisplayName("模块边界校验：internal 跨模块访问与依赖环零容忍")
     void verifyModuleBoundaries() {
         ApplicationModules modules =
                 ApplicationModules.of(FuyunApplication.class, JavaClass.Predicates.resideInAPackage("com.fuyun.app.."));
-        // 控制台输出模块布局（本地/CI 日志排查用，含各模块暴露接口与 Spring Bean 清单）
-        System.out.println(modules);
+        // 日志输出模块布局（本地/CI 日志排查用，含各模块暴露接口与 Spring Bean 清单）
+        log.info("{}", modules);
         // failOnEmptyShould=false 的补偿防线：模型为空（排除谓词被误放宽）时显式失败，
         // 杜绝边界守护静默失效（守护面现 4 模块，随装配依赖扩大自动增长）
         assertThat(modules.stream().count()).as("模块模型不得为空：排除谓词误放宽将使边界校验静默绿过").isGreaterThanOrEqualTo(4);

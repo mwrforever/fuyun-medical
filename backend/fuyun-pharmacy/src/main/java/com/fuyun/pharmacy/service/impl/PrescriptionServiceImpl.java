@@ -33,6 +33,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
@@ -48,6 +49,8 @@ import org.springframework.transaction.annotation.Transactional;
  * practice/check 执业授权校验已接线（PR-5 Task 9，裁决 9 纵深防御，Spec :226）：落库前处方权
  * （PRESCRIPTION）一次，明细聚合后按命中集追加抗菌药最高分级与麻精类（至多两次）——任一未过
  * PH-1017（403，工号脱敏出文案），与 M03 开方入口校验（OP-1017）构成纵深两层。
+ * 查询形态（宪法 A.4.3-13）：主表（prescription）查询统一走 ServiceImpl 内置 lambdaQuery 链式；
+ * 子表查询（prescription_item/drug）不经本服务继承链，保留 Wrappers 手构——副表面无继承面可复用。
  */
 @Slf4j
 public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Prescription>
@@ -94,7 +97,7 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
      *
      * @param prescriptionMapper     处方 mapper（ServiceImpl 继承 baseMapper 同源），非空
      * @param prescriptionItemMapper 明细 mapper，非空
-     * @param drugMapper             药品 mapper（开方逐行取药），非空
+     * @param drugMapper             药品 mapper（开方明细 drugIds 去重批查装载），非空
      * @param prescriptionFeePort    billing 费用作废端口（未缴费作废联动），非空
      * @param practiceCheckPort      执业授权校验端口（system api），非空；处方权/抗菌/麻精纵深校验
      * @param events                 应用事件发布器，非空
@@ -113,6 +116,30 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         this.events = events;
     }
 
+    /**
+     * 开方主链（CREATED→APPROVED 同事务，Spec :132）：① 执业授权纵深第一段（运行态
+     * userId 直作 employeeId 查处方权，未过 PH-1017 零写）→ 就诊号/类型守卫 → 请求面
+     * 数量解析（PH-1006，结果随行复用禁二次 parse）→ 处方主行落库并 CAS 放行 APPROVED
+     * （预检占位恒通过级，主控裁决 5——P3 审方引擎接入前固定 PASS）→ 药品去重键集一次
+     * IN 批查（OPT-05 拒 N+1）→ 逐明细行守卫（停用/未对照/途径集外）+ 皮试/毒麻/抗菌
+     * 命中集聚合 + 计费行快照装配 → ② 纵深第二段（命中集追加抗菌最高分级与麻精权校验，
+     * 未过 PH-1017）→ 明细一次批插 → 皮试/类别标志回写主行 → 事务内发布
+     * prescription.created（计费行携 usageSummary，M-4 裁决唯一携带源；Modulith
+     * event_publication 同事务落库保证可靠投递）。适用场景：M03 医生工作站开方 /
+     * PrescriptionOpenPort 跨模块转调。
+     *
+     * @param req 开方请求（visitId O 型 14 位、rxType 白名单 OUTPATIENT/EMERGENCY、items
+     *            逐行 quantity DECIMAL string），非空；来源：M03 开方提交/端口镜像映射
+     * @return 处方 VO（status=APPROVED 终态口径、明细清单、skinTestRequired/rxCategory
+     *         聚合面），非空
+     * @throws BizException PH-1017（403 处方权/抗菌最高分级/麻精授权未过——文案工号脱敏，
+     *                      建议处理：联系医务授权管理，禁重试直发）/ PH-1016（400 操作者
+     *                      标识非数字）/ PH-1007（400 就诊号非 O 型 14 位）/ PH-1006（400
+     *                      类型白名单外/数量非数字串或 ≤0/药品未关联收费项目）/ PH-1003
+     *                      （409 药品不存在或已停用）/ PH-1015（400 途径不在药品途径集）
+     * @throws IllegalStateException CREATED→APPROVED 并发被抢改或抗菌分级词表外脏数据
+     *                      （数据异常显式暴露，人工对账）
+     */
     @Override
     @Transactional
     public PrescriptionVO create(PrescriptionCreateRequest req) {
@@ -139,7 +166,8 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         rx.setStatus("CREATED");
         baseMapper.insert(rx);
         if (baseMapper.casApprove(rx.getId()) != 1) {
-            // 同事务内 CREATED 被并发抢改属数据异常，显式暴露（禁静默带 CREATED 生效）
+            // 同事务内 CREATED 被并发抢改属数据异常，显式暴露（禁静默带 CREATED 生效）；
+            // EX-19 C 类留痕：内部并发防御断言（非用户输入路径），保留 ISE 同事务回滚，不在 A/B 收口范围
             throw new IllegalStateException("处方放行迁移失败（CREATED→APPROVED），rxNo=" + rx.getRxNo());
         }
         // 内存态与 DB 迁移同步：出参 VO status 口径取迁移后终态（APPROVED），防出参与库不一致
@@ -152,9 +180,19 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         // ② 纵深防御命中集聚合：抗菌药最高分级对应授权（null=纯非抗菌药不追加）+ 麻精命中标记
         String topAntibioGrant = null;
         boolean narcoticHit = false;
+        // 数据库读操作：本方全部药品一次批查（A.4.3-14 循环内行级点查禁 N+1，OPT-05；selectByIds
+        //   为 MP 3.5.17 非过时形态）——drugIds 去重后单次往返装载、按 id 建 Map 供逐行取用，同药
+        //   多行（不同频次）共享一次装载；批查缺行（Map 无键）取 null 行进 validateLine，与旧逐行
+        //   点查缺行同一分支同文案；键集空集零查询（空明细属契约外形态——HTTP 面 @NotEmpty 已拒，
+        //   与旧空循环零药品查询语义对齐）
+        List<Long> drugIds =
+                req.items().stream().map(RxItemRequest::drugId).distinct().toList();
+        Map<Long, Drug> drugById = drugIds.isEmpty()
+                ? Map.of()
+                : drugMapper.selectByIds(drugIds).stream().collect(Collectors.toMap(Drug::getId, Function.identity()));
         for (int i = 0; i < req.items().size(); i++) {
             RxItemRequest itemReq = req.items().get(i);
-            Drug drug = drugMapper.selectById(itemReq.drugId());
+            Drug drug = drugById.get(itemReq.drugId());
             validateLine(drug, itemReq);
             PrescriptionItem row = new PrescriptionItem();
             row.setPrescriptionId(rx.getId());
@@ -218,12 +256,28 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         return PrescriptionVO.from(rx, toItemVOs(items));
     }
 
+    /**
+     * 处方作废（仅未缴费 APPROVED/PENDING_FEE 两态）：按 rx_no 定位（uk 唯一）→ 状态守卫
+     * （PENDING_DISPENSE/DISPENSING 已缴费 PH-1014 拒并引导退费/退药链；其余状态机外
+     * PH-1005 拒）→ 无条件联动 billing PENDING 费用行同事务作废（主控裁决 7 幂等——
+     * 堵读态与 CAS 间 TOCTOU 资金窗口：fee.created 消费可落在其间，按读态跳过会留
+     * 「处方已作废而费用仍可结算」漏洞；port 仅作废 PENDING 行，无费用行时 no-op）→
+     * CAS 终态 CANCELLED（0 行 PH-1005 并发被抢拒）→ 事务内发布 prescription.cancelled
+     * （M03 引用联动；billing 不订阅——费用已同事务作废）。适用场景：M03 医生站作废 /
+     * PrescriptionCancelPort 跨模块转调。
+     *
+     * @param rxNo   处方号（uk_rx_no 唯一），非空；来源：医生站处方列表
+     * @param reason 作废原因（留痕与 cancelled 事件透传），可空
+     * @throws BizException PH-1004（404 处方不存在）/ PH-1014（409 已缴费拒作废——建议
+     *                      处理：收费窗口退费后走退药受理收敛终态）/ PH-1005（409 状态
+     *                      机外或 CAS 并发被抢——刷新状态后重试）
+     */
     @Override
     @Transactional
     public void cancel(String rxNo, String reason) {
-        // 数据库读操作：按业务号定位（uk 唯一）
-        Prescription rx =
-                baseMapper.selectOne(Wrappers.<Prescription>lambdaQuery().eq(Prescription::getRxNo, rxNo));
+        // 数据库读操作：按业务号定位（uk 唯一）；主表查询走 ServiceImpl 内置 lambdaQuery 链式
+        //   （宪法 A.4.3-13），条件谓词与链式化前逐字等价
+        Prescription rx = lambdaQuery().eq(Prescription::getRxNo, rxNo).one();
         if (rx == null) {
             throw new BizException(PharmacyErrorCode.PRESCRIPTION_NOT_FOUND, HttpStatus.NOT_FOUND, "处方不存在：" + rxNo);
         }
@@ -257,19 +311,35 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         log.info("处方作废：rxNo={}，原状态={}，原因={}", rxNo, status, reason);
     }
 
+    /**
+     * 处方分页检索（只读事务，工作台回显）：四条件任意组合等值过滤（visitId/patientId/
+     * rxNo/status，空白/空不过滤）+ id 升序（A.4.3-17 唯一顺序约束）→ MP 分页（0 基转
+     * 1 基）→ 空页短路 → 本页明细一次 IN 批装载（A.4.3-14 拒 N+1，prescription_id+id
+     * 升序保每处方内明细相对序）→ VO 组装（全状态处方含 CANCELLED 历史行）。适用场景：
+     * M03 医生站处方列表 / M06 药房处方查询。
+     *
+     * @param visitId   就诊号（O 型 14 位等值过滤），可空/空白（不过滤）；来源：工作台筛选
+     * @param patientId 患者 id 等值过滤，可空（不过滤）；来源：工作台筛选/患者维度查询
+     * @param rxNo      处方号等值过滤（uk 精确定位），可空/空白（不过滤）；来源：扫码/检索
+     * @param status    处方状态 code 等值过滤（PrescriptionStatus 词表），可空/空白（不过滤）；
+     *                  来源：工作台状态筛选
+     * @param page      页码（0 基），&ge;0；来源：分页组件
+     * @param size      页大小，&gt;0；来源：分页组件
+     * @return 分页结果（处方 VO 含明细清单），非空；无命中为空 content 页
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<PrescriptionVO> list(
             String visitId, Long patientId, String rxNo, String status, int page, int size) {
-        // 数据库读操作：四条件任意组合 + id 升序（A.4.3-17 唯一顺序约束）
-        Page<Prescription> result = baseMapper.selectPage(
-                new Page<>(page + 1, size),
-                Wrappers.<Prescription>lambdaQuery()
-                        .eq(visitId != null && !visitId.isBlank(), Prescription::getVisitId, visitId)
-                        .eq(patientId != null, Prescription::getPatientId, patientId)
-                        .eq(rxNo != null && !rxNo.isBlank(), Prescription::getRxNo, rxNo)
-                        .eq(status != null && !status.isBlank(), Prescription::getStatus, status)
-                        .orderByAsc(Prescription::getId));
+        // 数据库读操作：四条件任意组合 + id 升序（A.4.3-17 唯一顺序约束）；主表查询走 ServiceImpl
+        //   内置 lambdaQuery 链式（宪法 A.4.3-13），条件/序键与链式化前逐字等价
+        Page<Prescription> result = lambdaQuery()
+                .eq(visitId != null && !visitId.isBlank(), Prescription::getVisitId, visitId)
+                .eq(patientId != null, Prescription::getPatientId, patientId)
+                .eq(rxNo != null && !rxNo.isBlank(), Prescription::getRxNo, rxNo)
+                .eq(status != null && !status.isBlank(), Prescription::getStatus, status)
+                .orderByAsc(Prescription::getId)
+                .page(new Page<>(page + 1, size));
         List<Prescription> records = result.getRecords();
         if (records.isEmpty()) {
             // 空页短路：不发起明细 in 批查（空 id 集不出网）
@@ -405,6 +475,7 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
         }
         String candidate = ANTIBIO_GRANT_BY_CLASS.get(antibioClass);
         if (candidate == null) {
+            // EX-19 C 类留痕：主数据脏数据 fail-closed 防御（非用户输入路径），保留 ISE 人工对账，不在 A/B 收口范围
             throw new IllegalStateException("药品抗菌药分级词表外（主数据异常，人工对账）：antibioClass=" + antibioClass);
         }
         if (current == null) {

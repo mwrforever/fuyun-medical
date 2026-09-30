@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -63,6 +64,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -171,6 +173,8 @@ class WardMetaServiceImplTest {
                 taskService,
                 new ObjectMapper());
         ReflectionTestUtils.setField(service, "baseMapper", wardPatientMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", NursingWardPatient.class);
         OperatorContextHolder.set("nurse-01");
     }
 
@@ -509,18 +513,19 @@ class WardMetaServiceImplTest {
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
         row.setRiskFlags("FALL");
         when(wardPatientMapper.selectOne(any())).thenReturn(row);
-        when(wardPatientMapper.updateRiskFlags(VISIT, "FALL,PRESSURE", "nurse-01"))
-                .thenReturn(1);
+        when(wardPatientMapper.casAppendRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(1);
 
         service.appendRiskFlag(VISIT, "PRESSURE");
 
-        verify(wardPatientMapper).updateRiskFlags(VISIT, "FALL,PRESSURE", "nurse-01");
+        // 断言换锚（EX-26，同 EX-28 先例的 D-21 出口机械换面）：原「整串合并值 FALL,PRESSURE 传
+        // updateRiskFlags」锚定的是被本次修复废止的服务层拼串细节；业务语义（追加缺失项发生携带
+        // 审计操作者的写）不变，换锚为原子调用只携新标识（合并归 DB 侧拼接），严格度不低于原
+        verify(wardPatientMapper).casAppendRiskFlag(VISIT, "PRESSURE", "nurse-01");
 
         // 已含 FALL：不重复追加、零写入
         when(wardPatientMapper.selectOne(any())).thenReturn(row);
         service.appendRiskFlag(VISIT, "FALL");
-        verify(wardPatientMapper, never()).updateRiskFlags(VISIT, "FALL", "nurse-01");
-        verify(wardPatientMapper, never()).updateRiskFlags(VISIT, "FALL,FALL", "nurse-01");
+        verify(wardPatientMapper, never()).casAppendRiskFlag(VISIT, "FALL", "nurse-01");
     }
 
     @Test
@@ -815,42 +820,168 @@ class WardMetaServiceImplTest {
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
         row.setRiskFlags("");
         when(wardPatientMapper.selectOne(any())).thenReturn(row);
-        when(wardPatientMapper.updateRiskFlags(VISIT, "FALL", "nurse-01")).thenReturn(1);
+        when(wardPatientMapper.casAppendRiskFlag(VISIT, "FALL", "nurse-01")).thenReturn(1);
 
         service.appendRiskFlag(VISIT, "FALL");
 
-        verify(wardPatientMapper).updateRiskFlags(VISIT, "FALL", "nurse-01");
+        // 断言换锚（EX-26）：首标记「无前置逗号」业务规则由 SQL CASE 空串分支承载（调用只携新标识），
+        // 换锚后同时钉死调用面与 SQL 面，严格度不低于原「服务层拼好 FALL 整串回写」
+        verify(wardPatientMapper).casAppendRiskFlag(VISIT, "FALL", "nurse-01");
+        assertThat(wardPatientSql("casAppendRiskFlag", String.class, String.class, String.class))
+                .contains("CASE WHEN COALESCE(risk_flags, '') = '' THEN #{flag}");
     }
 
     @Test
-    @DisplayName("风险标识移除（复评降级消费面）：移除指定项整体回写剩余标识（保持顺序、清空落空串）；" + "不含该标识零写入幂等")
-    void removeRiskFlagRemovesTargetAndSkipsAbsent() {
-        // 双标识行移除其一：剩余标识保持既有顺序整体回写
+    @DisplayName("风险标识原子追加（EX-26）：非空串追加走 DB 侧拼接单语句，SQL 契约（拼接/去重谓词/在区谓词）钉死")
+    void appendRiskFlagAppendsAtomicallyViaDbSideConcat() {
+        NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
+        row.setRiskFlags("FALL");
+        when(wardPatientMapper.selectOne(any())).thenReturn(row);
+        when(wardPatientMapper.casAppendRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(1);
+
+        service.appendRiskFlag(VISIT, "PRESSURE");
+
+        // 原子契约调用面：只携新标识与审计操作者（不再服务层拼整串），禁回退整串置值旧形态
+        verify(wardPatientMapper).casAppendRiskFlag(VISIT, "PRESSURE", "nurse-01");
+        String sql = wardPatientSql("casAppendRiskFlag", String.class, String.class, String.class);
+        // DB 侧拼接锚：非空串分支追加 ','+新标识（行级锁串行化，并发追加互不覆盖）
+        assertThat(sql).contains("risk_flags || ',' || #{flag}");
+        // 幂等去重锚：首尾补逗 position 定位谓词（与 Java 侧 tokens.contains 逐字等价，并发同标识 0 行）
+        assertThat(sql).contains("position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') = 0");
+        assertThat(sql).contains("status = 'IN_WARD'");
+        assertThat(sql).contains("deleted = 0");
+    }
+
+    @Test
+    @DisplayName("风险标识首标记边界（EX-26）：空串行首追加仍只携新标识，无前置逗号语义由 SQL 空串分支承载")
+    void appendRiskFlagFirstFlagOnEmptyGoesDbSideWithoutLeadingComma() {
+        NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
+        row.setRiskFlags("");
+        when(wardPatientMapper.selectOne(any())).thenReturn(row);
+        when(wardPatientMapper.casAppendRiskFlag(VISIT, "FALL", "nurse-01")).thenReturn(1);
+
+        service.appendRiskFlag(VISIT, "FALL");
+
+        // 空串不含任何标记：前置短路不拦截，原子调用直携首个标识（分隔符处理归 DB 侧 CASE）
+        verify(wardPatientMapper).casAppendRiskFlag(VISIT, "FALL", "nurse-01");
+    }
+
+    @Test
+    @DisplayName("并发追加护航（EX-26）：两并发追加不同标识互不覆盖（两标识都在）；并发同标识谓词去重不重复")
+    void appendRiskFlagConcurrentAppendsBothSurvive() {
+        // 交错窗口模拟：两并发请求均在对方提交前完成快照读（共享同一陈旧快照 riskFlags=空串），
+        // 读-改-写旧形态各基于该快照整串回写互相覆盖只留一个（缺陷锚定）；DB 侧拼接两笔都落
+        AtomicReference<String> dbRiskFlags = new AtomicReference<>("");
+        NursingWardPatient staleSnapshot = inWardRow(5L, 7L, "W01", "01");
+        staleSnapshot.setRiskFlags("");
+        when(wardPatientMapper.selectOne(any())).thenReturn(staleSnapshot);
+        // 模拟 DB 侧行为（与 @Update SQL 契约逐字对应：行级锁串行化拼接 + 谓词去重）
+        when(wardPatientMapper.casAppendRiskFlag(any(), any(), any())).thenAnswer(inv -> {
+            String flag = inv.getArgument(1, String.class);
+            String current = dbRiskFlags.get();
+            // 谓词去重：已含同标记 → 0 行幂等（不产生重复标记）
+            if (("," + current + ",").contains("," + flag + ",")) {
+                return 0;
+            }
+            // DB 侧拼接：空串直落标识（无前置逗号），非空串补逗号拼接
+            dbRiskFlags.set(current.isEmpty() ? flag : current + "," + flag);
+            return 1;
+        });
+
+        // 两并发追加不同标识：原子拼接下 DB 终值两标识都在（FALL,PRESSURE）
+        service.appendRiskFlag(VISIT, "FALL");
+        service.appendRiskFlag(VISIT, "PRESSURE");
+        assertThat(dbRiskFlags.get()).contains("FALL", "PRESSURE");
+
+        // 并发同标识重复追加：SQL 侧谓词拦截（0 行），终值无重复
+        service.appendRiskFlag(VISIT, "FALL");
+        assertThat(dbRiskFlags.get()).isEqualTo("FALL,PRESSURE");
+    }
+
+    @Test
+    @DisplayName("风险标识原子移除（EX-26 N7 收口对称化）：DB 侧 array_remove 单语句摘除只携目标标识，" + "SQL 契约（移除/含标识谓词/在区谓词）钉死；不含该标识零写入幂等")
+    void removeRiskFlagRemovesAtomicallyViaDbSideArrayRemove() {
+        // 双标识行移除其一：原子调用只携目标标识与审计操作者（不再服务层拼剩余串整串回写）
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
         row.setRiskFlags("FALL,PRESSURE");
         when(wardPatientMapper.selectOne(any())).thenReturn(row);
-        when(wardPatientMapper.updateRiskFlags(VISIT, "FALL", "nurse-01")).thenReturn(1);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(1);
 
         service.removeRiskFlag(VISIT, "PRESSURE");
 
-        verify(wardPatientMapper).updateRiskFlags(VISIT, "FALL", "nurse-01");
+        verify(wardPatientMapper).casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01");
+        String sql = wardPatientSql("casRemoveRiskFlag", String.class, String.class, String.class);
+        // DB 侧移除锚：string_to_array→array_remove→array_to_string 原生数组三连单语句摘除
+        // （与追加侧原子拼接共用行级锁串行化，并发追加/移除双向不互吞）
+        assertThat(sql).contains("array_to_string(array_remove(string_to_array(risk_flags, ','), #{flag}), ',')");
+        // 幂等谓词锚：首尾补逗 position 定位「当前值含该标识」才施写（与追加侧同形态取反向）
+        assertThat(sql).contains("position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') > 0");
+        assertThat(sql).contains("status = 'IN_WARD'");
+        assertThat(sql).contains("deleted = 0");
 
-        // 仅存标识被移除：回写空串（DDL NOT NULL 默认空串口径，非 NULL）
+        // 仅存标识被移除：同样只携目标标识原子摘除（末位摘除落空串由 array_remove 自然承载）
         NursingWardPatient single = inWardRow(5L, 7L, "W01", "01");
         single.setRiskFlags("PRESSURE");
         when(wardPatientMapper.selectOne(any())).thenReturn(single);
-        when(wardPatientMapper.updateRiskFlags(VISIT, "", "nurse-01")).thenReturn(1);
 
         service.removeRiskFlag(VISIT, "PRESSURE");
 
-        verify(wardPatientMapper).updateRiskFlags(VISIT, "", "nurse-01");
+        verify(wardPatientMapper, times(2)).casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01");
 
-        // 不含目标标识（本就非高危的复评）：零写入幂等，无多余写触达
+        // 不含目标标识（本就非高危的复评）：快照前置短路零写入——原子移除总触达仍为前两段的 2 次
         NursingWardPatient noFlag = inWardRow(5L, 7L, "W01", "01");
         noFlag.setRiskFlags("");
         when(wardPatientMapper.selectOne(any())).thenReturn(noFlag);
         service.removeRiskFlag(VISIT, "PRESSURE");
-        verify(wardPatientMapper, never()).updateRiskFlags(VISIT, "PRESSURE", "nurse-01");
+        verify(wardPatientMapper, times(2)).casRemoveRiskFlag(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("风险标识移除 0 行幂等命中（EX-26 N7 收口）：目标已被并发移除先行，重读定性为幂等容忍不报错不重试")
+    void removeRiskFlagZeroRowWithFlagAlreadyRemovedToleratedAsIdempotent() {
+        // 交错模拟：快照读含目标 → 移除 CAS 施写前并发移除已先行提交（0 行）→ 重读行仍在且不含目标
+        NursingWardPatient snapshot = inWardRow(5L, 7L, "W01", "01");
+        snapshot.setRiskFlags("PRESSURE");
+        NursingWardPatient latest = inWardRow(5L, 7L, "W01", "01");
+        latest.setRiskFlags("");
+        when(wardPatientMapper.selectOne(any())).thenReturn(snapshot, latest);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(0);
+
+        service.removeRiskFlag(VISIT, "PRESSURE");
+
+        // 幂等命中非冲突：恰一次原子移除触达，无异常上抛、无二次施写（复评降级消费正常收敛）
+        verify(wardPatientMapper, times(1)).casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01");
+    }
+
+    @Test
+    @DisplayName("风险标识移除 0 行重读行已不在区：NS-1001 定性（与入口缺行语义一致，禁静默吞掉）")
+    void removeRiskFlagZeroRowWithVanishedRowClassifiedAsNs1001() {
+        // 交错模拟：快照读在区 → 移除 CAS 施写前患者已被并发移出病区（0 行）→ 重读无在区行
+        NursingWardPatient snapshot = inWardRow(5L, 7L, "W01", "01");
+        snapshot.setRiskFlags("PRESSURE");
+        when(wardPatientMapper.selectOne(any())).thenReturn(snapshot, (NursingWardPatient) null);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(0);
+
+        assertThatThrownBy(() -> service.removeRiskFlag(VISIT, "PRESSURE"))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(NursingErrorCode.WARD_PATIENT_NOT_FOUND));
+    }
+
+    @Test
+    @DisplayName("风险标识移除 0 行重读标识复现：让位并发重新追加（保留最新判级高危标记，重试会误删）")
+    void removeRiskFlagZeroRowYieldsToConcurrentReappend() {
+        // 交错模拟：移除 CAS 0 行（并发移除先行）后、重读前并发新评估又追加同标识——本轮移除
+        // 意向对应旧判级，让位最新判级：正常返回不报错、不再二次施写（防误删新评估高危标记）
+        NursingWardPatient snapshot = inWardRow(5L, 7L, "W01", "01");
+        snapshot.setRiskFlags("PRESSURE");
+        NursingWardPatient latest = inWardRow(5L, 7L, "W01", "01");
+        latest.setRiskFlags("PRESSURE");
+        when(wardPatientMapper.selectOne(any())).thenReturn(snapshot, latest);
+        when(wardPatientMapper.casRemoveRiskFlag(VISIT, "PRESSURE", "nurse-01")).thenReturn(0);
+
+        service.removeRiskFlag(VISIT, "PRESSURE");
+
+        verify(wardPatientMapper, times(1)).casRemoveRiskFlag(any(), any(), any());
     }
 
     @Test

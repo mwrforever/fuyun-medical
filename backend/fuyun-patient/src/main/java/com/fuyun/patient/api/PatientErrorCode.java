@@ -83,7 +83,11 @@ public enum PatientErrorCode implements ErrorCode {
 
     /** 脱敏规则维护未授权（403；规则维护写端点仅限 ADMIN 角色，SEC-01 安全收口——阻断
      * 非管理员改写 exemptRoles 自授豁免、再经 unmask 提权解密的攻击链） */
-    PRIVACY_RULE_MAINTENANCE_FORBIDDEN("PAT-1024");
+    PRIVACY_RULE_MAINTENANCE_FORBIDDEN("PAT-1024"),
+
+    /** 枚举落库词词表外（400；ofColumn 反查无命中——请求字段词/规则表存储值词表外显式拒，
+     * 禁静默兜底；BE-C3-05/EX-19 收口 A 类，MaskTargetField 词表收口点共用） */
+    ENUM_CODE_INVALID("PAT-1025");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

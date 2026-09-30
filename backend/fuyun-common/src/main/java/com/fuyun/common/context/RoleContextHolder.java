@@ -7,7 +7,7 @@ import java.util.List;
  *
  * <p>与 {@link OperatorContextHolder} 同构同契约：不跨线程传播（@Async 场景显式传递，A.1-10）、
  * 请求结束必须 clear（AuthTokenInterceptor afterCompletion 统一清理）。变更属 M01/common 交界
- * 契约，PR 描述申报（PR-2 消费方：PrivacyMaskService 豁免判定）。
+ * 契约，PR 描述申报（PR-2 消费方：IPrivacyMaskService 豁免判定）。
  */
 public final class RoleContextHolder {
 

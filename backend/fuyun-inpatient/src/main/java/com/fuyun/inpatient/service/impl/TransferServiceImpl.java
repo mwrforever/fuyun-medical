@@ -1,6 +1,5 @@
 package com.fuyun.inpatient.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.inpatient.api.InpatientErrorCode;
@@ -13,12 +12,13 @@ import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
-import com.fuyun.inpatient.service.BedService;
-import com.fuyun.inpatient.service.MedicalOrderService;
-import com.fuyun.inpatient.service.OrderTransferService;
-import com.fuyun.inpatient.service.TransferService;
+import com.fuyun.inpatient.service.IBedService;
+import com.fuyun.inpatient.service.IMedicalOrderService;
+import com.fuyun.inpatient.service.IOrderTransferService;
+import com.fuyun.inpatient.service.ITransferService;
 import com.fuyun.inpatient.vo.TransferResultVO;
 import java.time.OffsetDateTime;
 import java.util.Objects;
@@ -29,11 +29,11 @@ import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 护理单元变更编排实现（转科四阶段/转床轻量路径，04-inpatient Spec §3.5 时序冻结）：
- * 单 @Transactional 编排事务 = ①MedicalOrderService.stopAllForTransfer 转出病区长期医嘱
+ * 单 @Transactional 编排事务 = ①IMedicalOrderService.stopAllForTransfer 转出病区长期医嘱
  * 自动停嘱（Task 5 impl，停嘱联动未来计划作废随 Task 7 V906 回接落库）→②在途三分
  * （医嘱停嘱由①承载；<b>计划三分数据面操作——临时[order_class=stat]PENDING 计划保留随患者
- * 病区重定向、长期 PENDING 计划作废——已由 Task 7 OrderTransferService.redirectPlansOnWardTransfer
- * 回接本编排钩子点；费用不改写归 M13 日切切分）→③床位流转（BedService.transferOut 转出床
+ * 病区重定向、长期 PENDING 计划作废——已由 Task 7 IOrderTransferService.redirectPlansOnWardTransfer
+ * 回接本编排钩子点；费用不改写归 M13 日切切分）→③床位流转（IBedService.transferOut 转出床
  * →DISINFECTING 闭合流水 / occupyForTransfer 目标床 CAS 占床开新流水 / visit current_ward/
  * current_bed 原子 CAS 更新）→④事务内发布 VisitTransferredPayload（V800 id 49 六字段）。
  * 任一阶段失败异常传播整体回滚（转出床状态复原由回滚语义保证）。转科/转床均为 ADMITTED
@@ -41,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 线程安全：无状态 singleton；两编排入口各自 @Transactional 收口。
  */
 @Slf4j
-public class TransferServiceImpl implements TransferService {
+public class TransferServiceImpl implements ITransferService {
 
     /** 无登录上下文场景的操作者回退值（与 V902 审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
@@ -51,22 +51,25 @@ public class TransferServiceImpl implements TransferService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final BedMapper bedMapper;
 
-    private final BedService bedService;
+    private final IBedService bedService;
 
-    private final MedicalOrderService medicalOrderService;
+    private final IMedicalOrderService medicalOrderService;
 
-    private final OrderTransferService orderTransferService;
+    private final IOrderTransferService orderTransferService;
 
     private final ApplicationEventPublisher events;
 
     /**
-     * 全参构造器（装配归 InpatientWebConfig @Import；MedicalOrderService 实现归 Task 5——
-     * MedicalOrderServiceImpl 落地后装配链闭合；Task 7 追加 OrderTransferService——阶段②
+     * 全参构造器（装配归 InpatientWebConfig @Import；IMedicalOrderService 实现归 Task 5——
+     * MedicalOrderServiceImpl 落地后装配链闭合；Task 7 追加 IOrderTransferService——阶段②
      * 计划三分钩子回接面）。
      *
-     * @param visitMapper          住院就诊 mapper，非空；在院态定位与 current_* 原子更新
+     * @param visitMapper          住院就诊 mapper，非空；current_* 原子更新
+     * @param visitAccessor        住院就诊共享访问器（EX-44 下沉），非空；在院态定位 load+check
      * @param bedMapper            床位 mapper，非空；目标床位归属校验（只读）
      * @param bedService           床位管理服务（CAS 流转与流水开账权威），非空
      * @param medicalOrderService  住院医嘱服务（转科自动停嘱，Task 5 impl），非空
@@ -75,12 +78,14 @@ public class TransferServiceImpl implements TransferService {
      */
     public TransferServiceImpl(
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             BedMapper bedMapper,
-            BedService bedService,
-            MedicalOrderService medicalOrderService,
-            OrderTransferService orderTransferService,
+            IBedService bedService,
+            IMedicalOrderService medicalOrderService,
+            IOrderTransferService orderTransferService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.bedMapper = bedMapper;
         this.bedService = bedService;
         this.medicalOrderService = medicalOrderService;
@@ -222,13 +227,9 @@ public class TransferServiceImpl implements TransferService {
         return transferredAt;
     }
 
-    /** 在院就诊定位（未命中 IP-1007；非 ADMITTED 态 IP-1008——转科/转床限在院患者）。 */
+    /** 在院就诊定位（未命中 IP-1007——load+check 经共享访问器 EX-44；非 ADMITTED 态 IP-1008——转科/转床限在院患者）。 */
     private InpatientVisit requireOngoingVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
             throw new BizException(
                     InpatientErrorCode.VISIT_STATE_NOT_ALLOWED,

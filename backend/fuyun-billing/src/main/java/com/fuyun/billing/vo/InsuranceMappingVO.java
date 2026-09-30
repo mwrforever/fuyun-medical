@@ -1,6 +1,5 @@
 package com.fuyun.billing.vo;
 
-import com.fuyun.billing.entity.InsuranceMapping;
 import com.fuyun.billing.enums.InsurancePayType;
 import com.fuyun.billing.enums.MapType;
 import com.fuyun.billing.enums.MappingStatus;
@@ -11,6 +10,8 @@ import lombok.Setter;
 /**
  * 医保对照出参（FU-M13-01 贯标管理面）：项目级 22 项编码对照查询回显载体。
  * id/limitPrice（分）经 Long 包装出网（金额红线出参口径）；selfPayRatio 按列精度 DECIMAL(5,4) 直出。
+ * 实体→出参直映归 {@link com.fuyun.billing.convert.InsuranceMappingConverter}（BUG-23 迁入，
+ * 限价/比例原样透传零换算，禁实体直出）。
  */
 @Getter
 @Setter
@@ -45,25 +46,4 @@ public class InsuranceMappingVO {
 
     /** 对照校验回执摘要（可空） */
     private String checkReceipt;
-
-    /**
-     * 实体 → 出参静态工厂（controller 出网边界专用，禁实体直出）。
-     *
-     * @param mapping 对照实体，非空；来源：service 事务内查询结果
-     * @return 出参 VO，非空
-     */
-    public static InsuranceMappingVO from(InsuranceMapping mapping) {
-        InsuranceMappingVO vo = new InsuranceMappingVO();
-        vo.setId(mapping.getId());
-        vo.setChargeItemId(mapping.getChargeItemId());
-        vo.setMapType(mapping.getMapType());
-        vo.setNhsaCode(mapping.getNhsaCode());
-        vo.setCatalogVersion(mapping.getCatalogVersion());
-        vo.setSelfPayRatio(mapping.getSelfPayRatio());
-        vo.setLimitPrice(mapping.getLimitPrice());
-        vo.setInsurancePayType(mapping.getInsurancePayType());
-        vo.setStatus(mapping.getStatus());
-        vo.setCheckReceipt(mapping.getCheckReceipt());
-        return vo;
-    }
 }

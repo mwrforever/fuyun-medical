@@ -17,6 +17,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.ISqlSegment;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.billing.api.OutpatientBillingPort;
@@ -79,6 +80,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.stubbing.Answer;
 import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -1204,5 +1206,98 @@ class AppointmentServiceImplTest {
         });
         verify(apptNumberPoolMapper, times(3)).casOccupy(eq(31L), anyInt());
         verify(poolRedisGate, never()).release(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    // ------------------------------------------------- EX-29 临时缓解①：portal 匿名通道活跃预约上限
+
+    /**
+     * selectCount 分流替身：上限查询（patient_id+status 谓词，无 sched_date）与限购查询
+     * （含 sched_date 谓词）共用 selectCount mock，按 SQL 片段是否含 sched_date 列分流取值——
+     * 支撑「活跃 2 单未达上限可续约 / 活跃 3 单超限拒约」的差异化桩面。
+     *
+     * @param activeCount  上限查询返回值（患者 RESERVED/TAKEN 在约总数）
+     * @param dupCount     限购查询返回值（同日同科有效单数）
+     * @return thenAnswer 分流桩
+     */
+    private Answer<Long> selectCountByWrapper(long activeCount, long dupCount) {
+        return inv -> {
+            // lambda 条件列解析依赖 TableInfo（@BeforeAll 已初始化），片段含 sched_date 即限购查询
+            String segment = ((ISqlSegment) inv.getArgument(0)).getSqlSegment();
+            return segment.contains("sched_date") ? dupCount : activeCount;
+        };
+    }
+
+    @Test
+    @DisplayName("EX-29 缓解①：PORTAL 单患者活跃预约达上限 3——拒 OP-1022 409，零扣减零落库（防冒名刷量占号）")
+    void portalBookingRejectedWhenActiveAppointmentsReachLimit() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        // 活跃在约 3 单（跨科累计，非同日同科——限购谓词返回 0 不触发 OP-1005）
+        when(appointmentMapper.selectCount(any())).thenAnswer(selectCountByWrapper(3L, 0L));
+
+        assertThatThrownBy(() -> service.book(request("PORTAL"))).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.PORTAL_APPT_LIMIT_EXCEEDED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        // 上限拒绝在池行复核与扣减之前：号源零占用零落库
+        verify(apptNumberPoolMapper, never()).selectById(anyLong());
+        verify(appointmentMapper, never()).insert(any(Appointment.class));
+        verify(poolRedisGate, never()).deduct(anyLong(), anyLong(), any(Duration.class));
+    }
+
+    @Test
+    @DisplayName("EX-29 缓解①：PORTAL 活跃 2 单未达上限 3——照常受理 RESERVED 占位（边界：上限-1 放行）")
+    void portalBookingAllowedBelowActiveLimit() {
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        when(appointmentMapper.selectCount(any())).thenAnswer(selectCountByWrapper(2L, 0L));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(
+                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                .thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
+
+        AppointmentVO vo = service.book(request("PORTAL"));
+
+        // 未达上限照常进入统一主流程：RESERVED 占位 + PORTAL 哨兵操作者
+        assertThat(vo.status()).isEqualTo(ApptStatus.RESERVED);
+        ArgumentCaptor<Appointment> apptCaptor = ArgumentCaptor.forClass(Appointment.class);
+        verify(appointmentMapper).insert(apptCaptor.capture());
+        assertThat(apptCaptor.getValue().getCreatedBy()).isEqualTo("PORTAL");
+    }
+
+    @Test
+    @DisplayName("EX-29 缓解①：WINDOW 已鉴权渠道不受匿名上限约束——活跃 3 单照常当日挂号 TAKEN（缓解仅收口免登录面）")
+    void windowBookingUnaffectedByPortalActiveLimit() {
+        String today = LocalDate.now().format(SEQ_DATE);
+        when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptCreditRecordMapper.selectList(any())).thenReturn(List.of());
+        // 上限查询返回 3（若误作用 WINDOW 渠道即被拒），限购查询返回 0 放行
+        when(appointmentMapper.selectCount(any())).thenAnswer(selectCountByWrapper(3L, 0L));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("fy:outpatient:appt-seq:" + today)).thenReturn(1L);
+        when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
+        doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
+        when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
+        String visitId = "O" + today + "00001";
+        when(visitIdIssuer.issue()).thenReturn(visitId);
+        when(appointmentMapper.casTake(101L, visitId)).thenReturn(1);
+        doAnswer(inv -> {
+                    inv.getArgument(0, Visit.class).setId(501L);
+                    return 1;
+                })
+                .when(visitMapper)
+                .insert(any(Visit.class));
+
+        AppointmentVO vo = service.book(request("WINDOW"));
+
+        // 已鉴权窗口渠道不受匿名上限影响：照常一步直达 TAKEN
+        assertThat(vo.status()).isEqualTo(ApptStatus.TAKEN);
+        assertThat(vo.visitId()).isEqualTo(visitId);
     }
 }

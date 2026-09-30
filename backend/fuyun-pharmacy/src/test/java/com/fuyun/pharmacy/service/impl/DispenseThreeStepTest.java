@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
@@ -27,7 +28,6 @@ import com.fuyun.pharmacy.mapper.DispenseMapper;
 import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
-import com.fuyun.pharmacy.mapper.StockLedgerMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -41,6 +41,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -60,9 +62,6 @@ class DispenseThreeStepTest {
 
     @Mock
     private DrugBatchMapper drugBatchMapper;
-
-    @Mock
-    private StockLedgerMapper stockLedgerMapper;
 
     @Mock
     private PrescriptionMapper prescriptionMapper;
@@ -102,14 +101,14 @@ class DispenseThreeStepTest {
     }
 
     private DispenseServiceImpl newService() {
-        // 构造器十一参直注（Task 6 起构造器承载 batchSelectService/events/objectMapper、Task 10 扩第十参
-        // masterDataCache、Task 11 扩第十一参 settlementQueryPort，objectMapper 用真实例承载 JSON 读写）；
+        // 构造器十参直注（Task 6 起构造器承载 batchSelectService/events/objectMapper、Task 10 扩第十参
+        // masterDataCache、Task 11 扩第十一参 settlementQueryPort、EX-37 收敛十参——流水批插改 Db
+        // 通道后 StockLedgerMapper 依赖卸除；objectMapper 用真实例承载 JSON 读写）；
         // ServiceImpl 继承字段 baseMapper 反射注入（Global Constraints 单测范式）
         DispenseServiceImpl impl = new DispenseServiceImpl(
                 dispenseMapper,
                 dispenseItemMapper,
                 drugBatchMapper,
-                stockLedgerMapper,
                 prescriptionMapper,
                 prescriptionItemMapper,
                 batchSelectService,
@@ -118,6 +117,8 @@ class DispenseThreeStepTest {
                 masterDataCache,
                 settlementQueryPort);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
+        // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
+        ReflectionTestUtils.setField(impl, "entityClass", Dispense.class);
         return impl;
     }
 
@@ -179,18 +180,91 @@ class DispenseThreeStepTest {
         rx.setId(100L);
         when(prescriptionMapper.selectOne(any())).thenReturn(rx);
 
-        impl.pick("D20260918000001", pickRequest().items());
+        // EX-37 桩面通道迁移：明细回填通道从逐行 updateById 改 Db.updateBatchById 批更（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.pick("D20260918000001", pickRequest().items());
 
-        verify(drugBatchMapper).lockQuantity(55L, new BigDecimal("2"));
-        ArgumentCaptor<DispenseItem> itemCaptor = ArgumentCaptor.forClass(DispenseItem.class);
-        verify(dispenseItemMapper).updateById(itemCaptor.capture());
-        assertThat(itemCaptor.getValue().getTraceCodes()).contains("TR-A1B2").contains("TR-C3D4");
-        assertThat(itemCaptor.getValue().getBatchNo()).isEqualTo("B20260601");
+            verify(drugBatchMapper).lockQuantity(55L, new BigDecimal("2"));
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> itemCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(itemCaptor.capture()));
+            assertThat(itemCaptor.getValue().get(0).getTraceCodes())
+                    .contains("TR-A1B2")
+                    .contains("TR-C3D4");
+            assertThat(itemCaptor.getValue().get(0).getBatchNo()).isEqualTo("B20260601");
+        }
         // 留痕实体状态与 CAS 迁移终态同步（禁携带 CAS 前旧状态落库覆写状态机——PR-4 IT 实证缺陷回归守卫）
         ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
         verify(dispenseMapper).updateById(dispenseCaptor.capture());
         assertThat(dispenseCaptor.getValue().getStatus()).isEqualTo("PICKING");
         assertThat(dispenseCaptor.getValue().getPicker()).isEqualTo("dispenser-01");
+    }
+
+    @Test
+    @DisplayName("pick 批量写锚定（EX-37）：两行回填一次批更（N 行 N 更收敛 1 批）+ 补丁仅携 id+批次三列 " + "+ 批次锁定 CAS 逐行保留（0 行并发防线禁批量吞语义）")
+    void pickBatchesItemBackfillPatchOnceWithLockCasKeptPerRow() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("CREATED"));
+        when(dispenseMapper.casStatus(900L, "CREATED", "PICKING")).thenReturn(1);
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "DISPENSING"))
+                .thenReturn(1);
+        DispenseItem first = item(1L); // id=1/prescriptionItemId=10/qty=2/批次 55
+        DispenseItem second = new DispenseItem();
+        second.setId(2L);
+        second.setDispenseId(900L);
+        second.setPrescriptionItemId(20L);
+        second.setDrugId(11L);
+        second.setItemCode("C0131230900158");
+        second.setRequestedQty(new BigDecimal("3"));
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        DrugBatch secondBatch = batch();
+        secondBatch.setId(66L);
+        secondBatch.setBatchNo("B20260701");
+        when(batchSelectService.selectForDispense(11L, "OUTP_PHARM", new BigDecimal("2")))
+                .thenReturn(batch());
+        when(batchSelectService.selectForDispense(11L, "OUTP_PHARM", new BigDecimal("3")))
+                .thenReturn(secondBatch);
+        when(drugBatchMapper.lockQuantity(55L, new BigDecimal("2"))).thenReturn(1);
+        when(drugBatchMapper.lockQuantity(66L, new BigDecimal("3"))).thenReturn(1);
+        when(dispenseMapper.updateById(any(Dispense.class))).thenReturn(1);
+        com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
+        rx.setId(100L);
+        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.pick(
+                    "D20260918000001",
+                    List.of(new PickLine("10", List.of("TR-A1B2", "TR-C3D4")), new PickLine("20", List.of("TR-E5F6"))));
+
+            // 批次锁定条件更新逐行保留（0 行=并发超发硬防线，选批依赖前序锁定状态禁批量化）
+            verify(drugBatchMapper).lockQuantity(55L, new BigDecimal("2"));
+            verify(drugBatchMapper).lockQuantity(66L, new BigDecimal("3"));
+            // 明细批次/追溯码回填一次批更（A.4.3-16），旧逐行 updateById 通道下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> patchesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(patchesCaptor.capture()));
+            verify(dispenseItemMapper, never()).updateById(any(DispenseItem.class));
+            List<DispenseItem> patches = patchesCaptor.getValue();
+            assertThat(patches).hasSize(2);
+            assertThat(patches.get(0).getId()).isEqualTo(1L);
+            assertThat(patches.get(0).getBatchId()).isEqualTo(55L);
+            assertThat(patches.get(0).getBatchNo()).isEqualTo("B20260601");
+            assertThat(patches.get(0).getTraceCodes()).contains("TR-A1B2").contains("TR-C3D4");
+            assertThat(patches.get(1).getId()).isEqualTo(2L);
+            assertThat(patches.get(1).getBatchNo()).isEqualTo("B20260701");
+            // EX-24 补丁纪律：仅携 id+批次三列，读点快照列（应发数/明细状态/药品等）不进 SET——
+            //   跨队乱序窗口内对端写面（退药累计回写等）不被读点快照覆写吞掉
+            assertThat(patches).allSatisfy(patch -> {
+                assertThat(patch.getDispenseId()).isNull();
+                assertThat(patch.getPrescriptionItemId()).isNull();
+                assertThat(patch.getDrugId()).isNull();
+                assertThat(patch.getItemCode()).isNull();
+                assertThat(patch.getRequestedQty()).isNull();
+                assertThat(patch.getIssuedQty()).isNull();
+                assertThat(patch.getReturnedQty()).isNull();
+                assertThat(patch.getItemStatus()).isNull();
+            });
+        }
     }
 
     @Test
@@ -336,9 +410,81 @@ class DispenseThreeStepTest {
         ArgumentCaptor<Dispense> captor = ArgumentCaptor.forClass(Dispense.class);
         verify(dispenseMapper).updateById(captor.capture());
         assertThat(captor.getValue().getVerifier()).isEqualTo("verify-02"); // 核对留痕=第二人
-        assertThat(captor.getValue().getPicker()).isEqualTo("dispenser-01"); // 调配留痕不变（分权不改写）
+        // EX-24 断言现代化（D-21 回归红线出口，逐次批准单点单次）：原「picker 等值断言」冻结整行
+        // 回写实现细节（以携读点快照同值落库作为「分权不改写」的可观测面）；指定列补丁回写下
+        // 「不改写调配留痕」由 picker 列不进 SET 承载，isNull 为更严格契约——断言业务意图不变且强化
+        assertThat(captor.getValue().getPicker()).isNull(); // 调配留痕列不携带（分权不改写）
         // 留痕实体状态与 CAS 迁移终态同步（禁携带 CAS 前旧状态落库覆写状态机——PR-4 IT 实证缺陷回归守卫）
         assertThat(captor.getValue().getStatus()).isEqualTo("PICKED");
+    }
+
+    @Test
+    @DisplayName("pick 留痕并发防覆写（EX-24）：单据头补丁回写仅携 id+状态同值+调配人，读点快照列不进 SET")
+    void pickWritesDispenseHeaderPatchWithoutSnapshotColumns() {
+        DispenseServiceImpl impl = newService();
+        when(dispenseMapper.selectOne(any())).thenReturn(dispense("CREATED"));
+        when(dispenseMapper.casStatus(900L, "CREATED", "PICKING")).thenReturn(1);
+        when(prescriptionMapper.casStatus(100L, "PENDING_DISPENSE", "DISPENSING"))
+                .thenReturn(1);
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(item(1L)));
+        when(batchSelectService.selectForDispense(11L, "OUTP_PHARM", new BigDecimal("2")))
+                .thenReturn(batch());
+        when(drugBatchMapper.lockQuantity(55L, new BigDecimal("2"))).thenReturn(1);
+        when(dispenseMapper.updateById(any(Dispense.class))).thenReturn(1);
+        com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
+        rx.setId(100L);
+        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+
+        // EX-37 桩面补位：明细回填改 Db.updateBatchById 批更（静态 Db 桩内执行；靶点仍为单据头补丁列集）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.pick("D20260918000001", pickRequest().items());
+
+            ArgumentCaptor<Dispense> dispenseCaptor = ArgumentCaptor.forClass(Dispense.class);
+            verify(dispenseMapper).updateById(dispenseCaptor.capture());
+            Dispense saved = dispenseCaptor.getValue();
+            // 目标面精确：id 定位 + 状态同值（上方 CAS 已置 PICKING，补写同值维持内存/DB 同步纪律）+ 调配人留痕
+            assertThat(saved.getId()).isEqualTo(900L);
+            assertThat(saved.getStatus()).isEqualTo("PICKING");
+            assertThat(saved.getPicker()).isEqualTo("dispenser-01");
+            // 非目标列零携带：NOT_NULL 更新策略下 null 不进 SET——读改写窗口内对端写面（状态机 CAS
+            //   列更新、核对/发药留痕通道）对单号/处方号/患者/库房/核对发药列的提交不被读点快照覆写吞掉
+            assertThat(saved.getDispenseNo()).isNull();
+            assertThat(saved.getRxNo()).isNull();
+            assertThat(saved.getPatientId()).isNull();
+            assertThat(saved.getVisitId()).isNull();
+            assertThat(saved.getStorehouse()).isNull();
+            assertThat(saved.getVerifier()).isNull();
+            assertThat(saved.getIssuer()).isNull();
+        }
+    }
+
+    @Test
+    @DisplayName("verify 留痕并发防覆写（EX-24）：单据头补丁回写仅携 id+状态同值+核对人，调配留痕等快照列不进 SET")
+    void verifyWritesDispenseHeaderPatchWithoutSnapshotColumns() {
+        DispenseServiceImpl impl = newService();
+        Dispense d = dispense("PICKING");
+        d.setPicker("dispenser-01");
+        when(dispenseMapper.selectOne(any())).thenReturn(d);
+        when(dispenseMapper.casStatus(900L, "PICKING", "PICKED")).thenReturn(1);
+        when(dispenseMapper.updateById(any(Dispense.class))).thenReturn(1);
+        OperatorContextHolder.set("verify-02"); // 换第二账号绕开 PH-1011 前置（双签分权）
+
+        impl.verify("D20260918000001", null);
+
+        ArgumentCaptor<Dispense> captor = ArgumentCaptor.forClass(Dispense.class);
+        verify(dispenseMapper).updateById(captor.capture());
+        Dispense saved = captor.getValue();
+        // 目标面精确：id 定位 + 状态同值（上方 CAS 已置 PICKED）+ 核对人留痕
+        assertThat(saved.getId()).isEqualTo(900L);
+        assertThat(saved.getStatus()).isEqualTo("PICKED");
+        assertThat(saved.getVerifier()).isEqualTo("verify-02");
+        // 非目标列零携带：调配留痕（picker）在补丁形态下一并不进 SET——「verify 不改写调配留痕」
+        //   由列不携带承载（禁同值覆写形态），读改写窗口内对端提交不被吞
+        assertThat(saved.getPicker()).isNull();
+        assertThat(saved.getDispenseNo()).isNull();
+        assertThat(saved.getRxNo()).isNull();
+        assertThat(saved.getPatientId()).isNull();
+        assertThat(saved.getStorehouse()).isNull();
     }
 
     @Test
@@ -368,7 +514,6 @@ class DispenseThreeStepTest {
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(item(1L)));
         when(drugBatchMapper.deductLocked(55L, new BigDecimal("2"))).thenReturn(1);
         when(prescriptionMapper.casStatus(anyLong(), anyString(), anyString())).thenReturn(1);
-        when(stockLedgerMapper.insert(any(StockLedger.class))).thenReturn(1);
         com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
         rx.setId(100L);
         rx.setRxNo("R20260918000001");
@@ -377,29 +522,102 @@ class DispenseThreeStepTest {
         DispenseItem withTraces = item(1L);
         withTraces.setTraceCodes("[\"TR-A1B2\",\"TR-C3D4\"]");
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(withTraces));
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
 
-        impl.issue("D20260918000001");
+        // EX-37 桩面通道迁移：出库流水从逐行 insert 改 Db.saveBatch 批插、实发回写从逐行
+        //   updateById 改 Db.updateBatchById 批更（静态 Db 桩内执行；批插/批更桩默认打桩移除）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.issue("D20260918000001");
 
-        verify(drugBatchMapper).deductLocked(55L, new BigDecimal("2"));
-        ArgumentCaptor<StockLedger> ledgerCaptor = ArgumentCaptor.forClass(StockLedger.class);
-        verify(stockLedgerMapper).insert(ledgerCaptor.capture());
-        assertThat(ledgerCaptor.getValue().getAction()).isEqualTo("ISSUE");
-        assertThat(ledgerCaptor.getValue().getQuantity()).isEqualByComparingTo("-2");
-        assertThat(ledgerCaptor.getValue().getRefDoc()).isEqualTo("D20260918000001");
-        // 处方终态迁移 DISPENSED
-        verify(prescriptionMapper).casStatus(100L, "DISPENSING", "DISPENSED");
-        // completed 事件：批次摘要与追溯码逐码携出（Task 8 billing 占用回写载荷源）
-        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(events).publishEvent(eventCaptor.capture());
-        com.fuyun.pharmacy.internal.PharmacyDomainEvent published =
-                (com.fuyun.pharmacy.internal.PharmacyDomainEvent) eventCaptor.getValue();
-        assertThat(published.eventType()).isEqualTo("pharmacy.dispense.completed");
-        DispenseCompletedPayload payload = (DispenseCompletedPayload) published.payload();
-        assertThat(payload.rxNo()).isEqualTo("R20260918000001");
-        assertThat(payload.lines()).hasSize(1);
-        assertThat(payload.lines().get(0).batchNo()).isEqualTo("B20260601");
-        assertThat(payload.lines().get(0).traceCodes()).containsExactly("TR-A1B2", "TR-C3D4");
+            verify(drugBatchMapper).deductLocked(55L, new BigDecimal("2"));
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<StockLedger>> ledgerCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(ledgerCaptor.capture()));
+            assertThat(ledgerCaptor.getValue().get(0).getAction()).isEqualTo("ISSUE");
+            assertThat(ledgerCaptor.getValue().get(0).getQuantity()).isEqualByComparingTo("-2");
+            assertThat(ledgerCaptor.getValue().get(0).getRefDoc()).isEqualTo("D20260918000001");
+            // 处方终态迁移 DISPENSED
+            verify(prescriptionMapper).casStatus(100L, "DISPENSING", "DISPENSED");
+            // completed 事件：批次摘要与追溯码逐码携出（Task 8 billing 占用回写载荷源）
+            ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+            verify(events).publishEvent(eventCaptor.capture());
+            com.fuyun.pharmacy.internal.PharmacyDomainEvent published =
+                    (com.fuyun.pharmacy.internal.PharmacyDomainEvent) eventCaptor.getValue();
+            assertThat(published.eventType()).isEqualTo("pharmacy.dispense.completed");
+            DispenseCompletedPayload payload = (DispenseCompletedPayload) published.payload();
+            assertThat(payload.rxNo()).isEqualTo("R20260918000001");
+            assertThat(payload.lines()).hasSize(1);
+            assertThat(payload.lines().get(0).batchNo()).isEqualTo("B20260601");
+            assertThat(payload.lines().get(0).traceCodes()).containsExactly("TR-A1B2", "TR-C3D4");
+        }
+    }
+
+    @Test
+    @DisplayName("issue 批量写锚定（EX-37）：流水一次批插+实发回写一次批更（N 行 2N 写收敛 2 批）+ 扣减 CAS 逐行保留 " + "+ 实发补丁仅携 id+issuedQty")
+    void issueBatchesLedgerInsertAndIssuedQtyPatchWithDeductCasKeptPerRow() {
+        DispenseServiceImpl impl = newService();
+        Dispense d = dispense("PICKED");
+        when(dispenseMapper.selectOne(any())).thenReturn(d);
+        when(dispenseMapper.casIssue(org.mockito.ArgumentMatchers.eq(900L), anyString(), any(OffsetDateTime.class)))
+                .thenReturn(1);
+        DispenseItem first = item(1L); // id=1/batchId=55/qty=2
+        first.setTraceCodes("[\"TR-A1B2\",\"TR-C3D4\"]");
+        DispenseItem second = new DispenseItem();
+        second.setId(2L);
+        second.setDispenseId(900L);
+        second.setPrescriptionItemId(20L);
+        second.setDrugId(11L);
+        second.setItemCode("C0131230900158");
+        second.setRequestedQty(new BigDecimal("3"));
+        second.setBatchId(66L);
+        second.setBatchNo("B20260701");
+        second.setTraceCodes("[\"TR-E5F6\"]");
+        when(dispenseItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        // 扣减条件更新逐行保留：0 行=未锁先发违例硬防线（禁批量吞 CAS 语义）
+        when(drugBatchMapper.deductLocked(55L, new BigDecimal("2"))).thenReturn(1);
+        when(drugBatchMapper.deductLocked(66L, new BigDecimal("3"))).thenReturn(1);
+        when(prescriptionMapper.casStatus(anyLong(), anyString(), anyString())).thenReturn(1);
+        com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
+        rx.setId(100L);
+        rx.setRxNo("R20260918000001");
+        when(prescriptionMapper.selectOne(any())).thenReturn(rx);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.issue("D20260918000001");
+
+            verify(drugBatchMapper).deductLocked(55L, new BigDecimal("2"));
+            verify(drugBatchMapper).deductLocked(66L, new BigDecimal("3"));
+            // 出库流水一次批插（红线 2 勾稽行集与行序不变，ASSIGN_ID 自动填充），旧逐行 insert 通道下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<StockLedger>> ledgersCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(ledgersCaptor.capture()));
+            assertThat(ledgersCaptor.getValue()).hasSize(2);
+            assertThat(ledgersCaptor.getValue()).allSatisfy(ledger -> {
+                assertThat(ledger.getAction()).isEqualTo("ISSUE");
+                assertThat(ledger.getRefDoc()).isEqualTo("D20260918000001");
+                assertThat(ledger.getQuantity()).isNegative(); // 负数量出库行
+            });
+            // 实发回写一次批更（A.4.3-16），旧逐行 updateById 通道下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<DispenseItem>> patchesCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.updateBatchById(patchesCaptor.capture()));
+            verify(dispenseItemMapper, never()).updateById(any(DispenseItem.class));
+            assertThat(patchesCaptor.getValue()).hasSize(2);
+            assertThat(patchesCaptor.getValue().get(0).getId()).isEqualTo(1L);
+            assertThat(patchesCaptor.getValue().get(0).getIssuedQty()).isEqualByComparingTo("2");
+            assertThat(patchesCaptor.getValue().get(1).getId()).isEqualTo(2L);
+            assertThat(patchesCaptor.getValue().get(1).getIssuedQty()).isEqualByComparingTo("3");
+            // EX-24 补丁纪律：仅携 id+实发数，读点快照列（批次/追溯码/应发数等）不进 SET
+            assertThat(patchesCaptor.getValue()).allSatisfy(patch -> {
+                assertThat(patch.getDispenseId()).isNull();
+                assertThat(patch.getPrescriptionItemId()).isNull();
+                assertThat(patch.getDrugId()).isNull();
+                assertThat(patch.getRequestedQty()).isNull();
+                assertThat(patch.getBatchId()).isNull();
+                assertThat(patch.getBatchNo()).isNull();
+                assertThat(patch.getTraceCodes()).isNull();
+                assertThat(patch.getItemStatus()).isNull();
+            });
+        }
     }
 
     @Test
@@ -473,7 +691,6 @@ class DispenseThreeStepTest {
         corrupt.setTraceCodes("not-a-json-array");
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(corrupt));
         when(drugBatchMapper.deductLocked(55L, new BigDecimal("2"))).thenReturn(1);
-        when(stockLedgerMapper.insert(any(StockLedger.class))).thenReturn(1);
         com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
         rx.setId(100L);
         rx.setRxNo("R20260918000001");
@@ -513,12 +730,15 @@ class DispenseThreeStepTest {
         rx.setRxNo("R20260918000001");
         when(prescriptionMapper.selectOne(any())).thenReturn(rx);
 
-        assertThatThrownBy(() -> impl.issue("D20260918000001"))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.STOCK_INSUFFICIENT));
-        verify(stockLedgerMapper, never()).insert(any(StockLedger.class));
-        verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
-        verify(events, never()).publishEvent(any());
+        // EX-37 桩面通道迁移：零流水断言从旧 insert 通道迁至 Db.saveBatch 批插通道（静态 Db 桩内执行）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.issue("D20260918000001"))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.STOCK_INSUFFICIENT));
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+            verify(prescriptionMapper, never()).casStatus(anyLong(), anyString(), anyString());
+            verify(events, never()).publishEvent(any());
+        }
     }
 
     @Test
@@ -532,17 +752,19 @@ class DispenseThreeStepTest {
         withTraces.setTraceCodes("[\"TR-A1B2\",\"TR-C3D4\"]"); // 行摘要汇总在处方 CAS 之前，须合法 JSON 过 fromJson
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(withTraces));
         when(drugBatchMapper.deductLocked(55L, new BigDecimal("2"))).thenReturn(1);
-        when(stockLedgerMapper.insert(any(StockLedger.class))).thenReturn(1);
-        when(dispenseItemMapper.updateById(any(DispenseItem.class))).thenReturn(1);
         when(prescriptionMapper.casStatus(100L, "DISPENSING", "DISPENSED")).thenReturn(0);
         com.fuyun.pharmacy.entity.Prescription rx = new com.fuyun.pharmacy.entity.Prescription();
         rx.setId(100L);
         rx.setRxNo("R20260918000001");
         when(prescriptionMapper.selectOne(any())).thenReturn(rx);
 
-        assertThatThrownBy(() -> impl.issue("D20260918000001"))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PharmacyErrorCode.PRESCRIPTION_STATE_NOT_ALLOWED));
-        verify(events, never()).publishEvent(any());
+        // EX-37 桩面补位：流水/实发批写在处方 CAS 前已发生（真实库随 CAS 违例整事务回滚），
+        //   静态 Db 桩内执行；insert/updateById 旧通道桩移除
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            assertThatThrownBy(() -> impl.issue("D20260918000001"))
+                    .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                            .isEqualTo(PharmacyErrorCode.PRESCRIPTION_STATE_NOT_ALLOWED));
+            verify(events, never()).publishEvent(any());
+        }
     }
 }

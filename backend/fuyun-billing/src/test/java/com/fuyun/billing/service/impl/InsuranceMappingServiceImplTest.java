@@ -18,6 +18,8 @@ import com.fuyun.billing.enums.MapType;
 import com.fuyun.billing.enums.MappingStatus;
 import com.fuyun.billing.mapper.InsuranceMappingMapper;
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,6 +93,59 @@ class InsuranceMappingServiceImplTest {
             assertThat(wrapper.getSqlSegment()).contains("charge_item_id").contains("status");
             assertThat(wrapper.getParamNameValuePairs().values()).contains(5L, MappingStatus.ACTIVE);
         }
+    }
+
+    @Test
+    @DisplayName("ACTIVE 对照批查：一次 IN 批查按键返回，无 ACTIVE 行项目不出键，空键集零 SQL")
+    void effectiveMappingsBatchesActiveRowsByKey() {
+        InsuranceMapping active = new InsuranceMapping();
+        active.setId(9L);
+        active.setChargeItemId(5L);
+        active.setStatus(MappingStatus.ACTIVE);
+        // 项目 6 无 ACTIVE 行（未贯标/已失效）：不出键（与单查返 null 同口径）
+        when(insuranceMappingMapper.selectList(any())).thenReturn(List.of(active));
+
+        Map<Long, InsuranceMapping> result = service.effectiveMappings(List.of(5L, 6L));
+
+        assertThat(result).containsOnlyKeys(5L);
+        assertThat(result.get(5L)).isSameAs(active);
+        // 批查 SQL 守卫钉死：IN 键集落在 charge_item_id 列 + status=ACTIVE 等值参数——
+        // ACTIVE 过滤是取价快照对照腿的数据前提（与单查谓词同构，防静默删 ACTIVE 过滤）
+        ArgumentCaptor<Wrapper<InsuranceMapping>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(insuranceMappingMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<InsuranceMapping> wrapper = (LambdaQueryWrapper<InsuranceMapping>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("charge_item_id").contains("status");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(5L, 6L, MappingStatus.ACTIVE);
+        // 空键集零 SQL 触达（MP in 谓词空集生成非法 SQL，前置短路）
+        assertThat(service.effectiveMappings(List.of())).isEmpty();
+        verify(insuranceMappingMapper, times(1)).selectList(any());
+    }
+
+    @Test
+    @DisplayName("ACTIVE 对照批查遇重复 chargeItemId 脏数据：保留首行不抛异常（部分唯一索引防御兜底）")
+    void effectiveMappingsKeepsFirstRowOnDuplicateChargeItemId() {
+        // 脏数据场景：uk_mapping_item_active 部分唯一索引被绕过（历史数据/人工改库），
+        // 批查结果同一 chargeItemId 返回两条 ACTIVE 行——无 merge 函数时 toMap 将抛
+        // IllegalStateException 使整单快照取价失败，merge 语义为保留批查结果中的首行
+        InsuranceMapping first = new InsuranceMapping();
+        first.setId(9L);
+        first.setChargeItemId(5L);
+        first.setNhsaCode("NHBZ-TREAT-001");
+        first.setStatus(MappingStatus.ACTIVE);
+        InsuranceMapping duplicate = new InsuranceMapping();
+        duplicate.setId(10L);
+        duplicate.setChargeItemId(5L);
+        duplicate.setNhsaCode("NHBZ-TREAT-002");
+        duplicate.setStatus(MappingStatus.ACTIVE);
+        when(insuranceMappingMapper.selectList(any())).thenReturn(List.of(first, duplicate));
+
+        Map<Long, InsuranceMapping> result = service.effectiveMappings(List.of(5L));
+
+        // 保留首行：键收敛为 1，值身份与字段均指向批查结果中的第一条 ACTIVE 行
+        assertThat(result).containsOnlyKeys(5L);
+        assertThat(result.get(5L)).isSameAs(first);
+        assertThat(result.get(5L).getId()).isEqualTo(9L);
+        assertThat(result.get(5L).getNhsaCode()).isEqualTo("NHBZ-TREAT-001");
     }
 
     @Test

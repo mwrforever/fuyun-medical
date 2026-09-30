@@ -12,7 +12,6 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
-import axios from 'axios';
 import {
   MEDICATION_ORDER_TYPES,
   ORDER_CLASS_OPTIONS,
@@ -27,28 +26,9 @@ import {
 import type { MedicalOrderVO, OrderItemPayload, TraceEntry } from '@/api/inpatient';
 import { wardPatients } from '@/api/nursing';
 import type { WardPatientVO } from '@/api/nursing';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，医嘱开立时间列与追溯环节共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 护理级别中文词表（后端 NursingLevel 三值，与 nursing 域同源） */
 const NURSING_LEVEL_LABELS: Record<string, string> = {
@@ -67,7 +47,6 @@ const NURSING_LEVEL_BADGE: Record<string, string> = {
 /* ==================== 左栏：在院患者列表 ==================== */
 const wardId = ref(WARD_OPTIONS[0].code);
 const patients = ref<WardPatientVO[]>([]);
-const patientsLoading = ref(false);
 /** 欠费在院集合（arrears 聚合按 visitId 命中行内「欠费」标识） */
 const arrearsVisitIds = ref<Set<string>>(new Set());
 /** 过敏标识缓存（选中行 detail 懒加载回填；true=过敏，false=已查无过敏） */
@@ -75,31 +54,30 @@ const allergyFlagMap = ref<Map<string, boolean>>(new Map());
 /** 当前选中在院患者 */
 const selectedVisit = ref<WardPatientVO | null>(null);
 
-/** 加载在院患者列表与病区欠费清单（病区切换/操作后刷新共用） */
-async function loadPatients(): Promise<void> {
-  patientsLoading.value = true;
-  try {
-    const [rows, arrears] = await Promise.all([
-      wardPatients.list(wardId.value),
-      visits.arrears(wardId.value),
-    ]);
-    patients.value = rows;
-    arrearsVisitIds.value = new Set(
-      arrears.map((row) => row.visitId ?? '').filter((id) => id !== ''),
-    );
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    patientsLoading.value = false;
-  }
-}
+/** 加载在院患者列表与病区欠费清单（病区切换/操作后刷新共用）：loading 骨架经 useAsyncTask
+ * 收拢（EX-42 范式迁移，行为与迁移前一致——失败弹错归响应拦截器、驻留旧清单）。回包判空
+ * 兜底（EX-45/FE-A1-09）随任务体原样保留：契约外整包缺失（rows/arrears 为 null）时兜底
+ * 空数组，防渲染层 patients.length 空指针白屏与旧清单驻留误导。 */
+const { loading: patientsLoading, run: loadPatients } = useAsyncTask(async () => {
+  const [rows, arrears] = await Promise.all([
+    wardPatients.list(wardId.value),
+    visits.arrears(wardId.value),
+  ]);
+  // 判空兜底：rows 缺失兜空清单（渲染层不再接触 undefined），arrears 缺失兜空集
+  patients.value = rows ?? [];
+  arrearsVisitIds.value = new Set(
+    (arrears ?? []).map((row) => row.visitId ?? '').filter((id) => id !== ''),
+  );
+});
 
-/** 行点击选中：驱动中列上下文与医嘱列表，并懒加载过敏标识（行内与上下文徽标共用缓存） */
+/** 行点击选中：驱动中列上下文与医嘱列表，并懒加载过敏标识（行内与上下文徽标共用缓存）；
+ * 换患者即复位开立草稿——前患者未提交的明细行/频次不跨患者滞留，否则续提即开错患者（用药安全） */
 async function selectPatient(row: WardPatientVO): Promise<void> {
   selectedVisit.value = row;
   orderRows.value = [];
   selectedOrder.value = null;
   traceEntries.value = [];
+  resetOrderDraft();
   if (row.visitId !== undefined && !allergyFlagMap.value.has(row.visitId)) {
     try {
       const detail = await wardPatients.detail(row.visitId);
@@ -118,29 +96,30 @@ function allergyFlagOf(row: WardPatientVO): boolean {
 
 /* ==================== 中栏：医嘱列表与开立 ==================== */
 const orderRows = ref<MedicalOrderVO[]>([]);
-const ordersLoading = ref(false);
 /** 当前点选医嘱（追溯锚点） */
 const selectedOrder = ref<MedicalOrderVO | null>(null);
 
-/** 拉取在院医嘱分页（开立时间倒序，开立/选中患者后重刷共用） */
-async function loadOrders(): Promise<void> {
-  if (selectedVisit.value?.visitId === undefined) {
+/** 拉取在院医嘱分页（开立时间倒序，开立/选中患者后重刷共用）：loading 骨架经 useAsyncTask
+ * 收拢（EX-42 范式迁移）。EX-45/FE-A1-03 竞态守卫随任务体原样保留：发起时锚定当前选中
+ * 患者，回包时已切换患者则整包丢弃——旧患者慢回包晚到不得覆盖新患者的医嘱列表（守卫形态
+ * 同 nursing useWardContext 系先例）。 */
+const { loading: ordersLoading, run: loadOrders } = useAsyncTask(async () => {
+  const visitId = selectedVisit.value?.visitId;
+  if (visitId === undefined) {
     return;
   }
-  ordersLoading.value = true;
-  try {
-    const page = await orders.list({
-      visitId: selectedVisit.value.visitId,
-      page: 0,
-      size: 50,
-    });
-    orderRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    ordersLoading.value = false;
+  // 发起时锚定当前选中患者：回包前再切换患者即形成在途竞态（EX-45/FE-A1-03）
+  const page = await orders.list({
+    visitId,
+    page: 0,
+    size: 50,
+  });
+  // 过期回包丢弃：旧患者慢回包晚到不得覆盖新患者的医嘱列表
+  if (selectedVisit.value?.visitId !== visitId) {
+    return;
   }
-}
+  orderRows.value = page.content ?? [];
+});
 
 /** 医嘱行点选：驱动右栏闭环追溯 */
 async function selectOrder(row: MedicalOrderVO): Promise<void> {
@@ -208,6 +187,16 @@ function removeItemRow(index: number): void {
   }
 }
 
+/** 复位开立草稿：明细行归一空行 + 长期项（频次/嘱托）清空，类型/分类为医生录入偏好保留
+ * （与提交成功后复位同口径），换患者选中与开立成功共用，防前患者草稿跨上下文续提。 */
+function resetOrderDraft(): void {
+  itemRows.value = [
+    { itemCode: '', itemName: '', dosage: '', dosageUnit: '', route: '', quantity: 1 },
+  ];
+  createForm.value.freqCode = '';
+  createForm.value.standbyFlag = false;
+}
+
 /**
  * 保存医嘱（开立）：显式格式校验（IP-1011 类）零出网 → 出网 → CREATED 返回后按用药类
  * 提示「待药师审」并刷新医嘱列表。入口在途早退守卫防双击重复开立。
@@ -269,11 +258,8 @@ async function onSaveOrder(): Promise<void> {
     } else {
       void ElMessage.success(`医嘱 ${saved.orderNo ?? ''} 已开立`);
     }
-    itemRows.value = [
-      { itemCode: '', itemName: '', dosage: '', dosageUnit: '', route: '', quantity: 1 },
-    ];
-    createForm.value.freqCode = '';
-    createForm.value.standbyFlag = false;
+    // 开立成功后复位草稿（与换患者复位同口径）
+    resetOrderDraft();
     await loadOrders();
   } catch (error) {
     // 执业授权 IP-1012/过敏冲突 IP-1013 等业务拒绝：detail 中文原文兜底透出
@@ -284,26 +270,20 @@ async function onSaveOrder(): Promise<void> {
 }
 
 /* ==================== 右栏：闭环追溯 ==================== */
-const traceLoading = ref(false);
 const traceEntries = ref<TraceEntry[]>([]);
 const traceStatus = ref('');
 
-/** 拉取选中医嘱闭环追溯（开立→审核→转抄→执行→状态迁移时间线） */
-async function loadTrace(): Promise<void> {
+/** 拉取选中医嘱闭环追溯（开立→审核→转抄→执行→状态迁移时间线）：loading 骨架经
+ * useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——失败弹错归响应拦截器、驻留旧
+ * 时间线）。 */
+const { loading: traceLoading, run: loadTrace } = useAsyncTask(async () => {
   if (selectedOrder.value?.orderNo === undefined) {
     return;
   }
-  traceLoading.value = true;
-  try {
-    const trace = await orders.trace(selectedOrder.value.orderNo);
-    traceEntries.value = trace.entries ?? [];
-    traceStatus.value = trace.status ?? '';
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧时间线
-  } finally {
-    traceLoading.value = false;
-  }
-}
+  const trace = await orders.trace(selectedOrder.value.orderNo);
+  traceEntries.value = trace.entries ?? [];
+  traceStatus.value = trace.status ?? '';
+});
 
 /** 环节中文词表反查（时间线环节名） */
 function stageLabel(code: string | undefined): string {

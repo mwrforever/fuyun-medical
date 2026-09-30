@@ -71,7 +71,23 @@ public enum OutpatientErrorCode implements ErrorCode {
 
     /** 医生站自身视角身份不匹配（403；请求 doctorId 与认证会话身份不一致，SEC-02 IDOR
      * 收口——阻断任意登录用户传他人 doctorId 横向窥看他医生候诊队列） */
-    DOCTOR_QUEUE_IDENTITY_MISMATCH("OP-1020");
+    DOCTOR_QUEUE_IDENTITY_MISMATCH("OP-1020"),
+
+    /** 预约单归属患者不匹配（403；portal 免登录退号介质解析患者与单据归属患者不一致，BUG-01
+     * 收口——单号顺序流水可枚举，阻断匿名遍历单号退任意在约患者号源/触发他人退费链） */
+    APPT_OWNER_MISMATCH("OP-1021"),
+
+    /** portal 匿名预约单患者活跃预约数超上限（409；EX-29 临时缓解①——免登录通道单患者
+     * RESERVED/TAKEN 在约数达上限拒新约，阻断冒名/刷量占号；上限取值依据见
+     * AppointmentServiceImpl.PORTAL_ACTIVE_APPT_LIMIT。
+     * 临时缓解：M18 患者账号体系上线后由归属校验取代（BE-A3-02，裁决③） */
+    PORTAL_APPT_LIMIT_EXCEEDED("OP-1022"),
+
+    /** portal 证件号解析失败频控冷却中（429；EX-29 临时缓解②——同一证件号计数窗口内连续
+     * 解析失败（与档案不符）达阈值后进入限流冷却，阻断匿名枚举探测他人证件号；阈值/窗口/
+     * 冷却取值依据见 PortalCredentialRateGuard。
+     * 临时缓解：M18 患者账号体系上线后由归属校验取代（BE-A3-02，裁决③） */
+    PORTAL_CREDENTIAL_RATE_LIMITED("OP-1023");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

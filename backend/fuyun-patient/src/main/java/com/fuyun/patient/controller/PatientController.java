@@ -6,9 +6,9 @@ import com.fuyun.patient.dto.PatientCreateRequest;
 import com.fuyun.patient.dto.PatientMatchCheckRequest;
 import com.fuyun.patient.dto.PatientSearchQuery;
 import com.fuyun.patient.dto.PatientUpdateRequest;
+import com.fuyun.patient.service.IPatientMatchingService;
+import com.fuyun.patient.service.IPatientRegistrationService;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PatientMatchingService;
-import com.fuyun.patient.service.PatientRegistrationService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import com.fuyun.patient.vo.PatientVO;
 import com.fuyun.system.api.AuditActionType;
@@ -37,9 +37,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/patient")
 public class PatientController {
 
-    private final PatientRegistrationService registrationService;
+    private final IPatientRegistrationService registrationService;
 
-    private final PatientMatchingService matchingService;
+    private final IPatientMatchingService matchingService;
 
     private final IPatientService patientService;
 
@@ -51,8 +51,8 @@ public class PatientController {
      * @param patientService      患者主索引服务（详情/更新/检索/冻结），非空
      */
     public PatientController(
-            PatientRegistrationService registrationService,
-            PatientMatchingService matchingService,
+            IPatientRegistrationService registrationService,
+            IPatientMatchingService matchingService,
             IPatientService patientService) {
         this.registrationService = registrationService;
         this.matchingService = matchingService;

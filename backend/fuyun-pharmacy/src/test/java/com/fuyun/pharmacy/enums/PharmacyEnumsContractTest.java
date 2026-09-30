@@ -2,17 +2,20 @@ package com.fuyun.pharmacy.enums;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
+import com.fuyun.common.exception.BizException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 /**
  * 十五枚举全量契约测试（A.2-7 code↔enum 双向映射统一模板验证）：带 fromCode 的十五枚举逐常量
  * 验证 code 与枚举名一致（V700/V701/V703/V1000 列注释直读口径）、fromCode/getCode 双向闭环、
- * valueOf 同源、值域外 code 显式拒绝（脏数据禁静默）；DrugChangeType 为广播出向专用（无
+ * valueOf 同源、值域外 code 显式拒绝（PH-1022 400 业务异常禁静默）；DrugChangeType 为广播出向专用（无
  * fromCode——仅 @JsonValue 出向，Task 4 发布器消费），单独断言该形态。
  */
 class PharmacyEnumsContractTest {
@@ -57,10 +60,17 @@ class PharmacyEnumsContractTest {
                 assertThat(valueOf.invoke(null, ((Enum<?>) constant).name())).isSameAs(constant);
             }
 
-            // 值域外拒绝：fromCode/valueOf 均抛 IllegalArgumentException（反射调用统一包装为 InvocationTargetException）
-            assertThatThrownBy(() -> fromCode.invoke(null, "__UNKNOWN__"))
-                    .isInstanceOf(InvocationTargetException.class)
-                    .hasRootCauseInstanceOf(IllegalArgumentException.class);
+            // 值域外拒绝（EX-19 BE-C3-05 A 类收口，D-21 断言语义迁移留痕）：fromCode 由裸
+            // IllegalArgumentException 收口为 BizException PH-1022（400）——错误码与状态双锚；
+            // valueOf 为 JDK 语言内建行为，仍 IllegalArgumentException 不在收口范围
+            // （反射调用统一包装为 InvocationTargetException）
+            Throwable fromCodeThrown = catchThrowable(() -> fromCode.invoke(null, "__UNKNOWN__"));
+            assertThat(fromCodeThrown).isInstanceOf(InvocationTargetException.class);
+            assertThat(((InvocationTargetException) fromCodeThrown).getCause())
+                    .isInstanceOfSatisfying(BizException.class, ex -> {
+                        assertThat(ex.getErrorCode().getCode()).isEqualTo("PH-1022");
+                        assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    });
             assertThatThrownBy(() -> valueOf.invoke(null, "__UNKNOWN__"))
                     .isInstanceOf(InvocationTargetException.class)
                     .hasRootCauseInstanceOf(IllegalArgumentException.class);

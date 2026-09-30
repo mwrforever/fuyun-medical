@@ -1,13 +1,36 @@
 package com.fuyun.pharmacy.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
+import com.fuyun.pharmacy.dto.DispenseReturnRequest;
+import com.fuyun.pharmacy.dto.PickLine;
+import com.fuyun.pharmacy.entity.Dispense;
+import com.fuyun.pharmacy.vo.DispenseVO;
+import com.fuyun.pharmacy.vo.OccupancyVO;
+import java.util.List;
+
 /**
  * 发药服务（FU-M06-04 门诊发药闭环）：Task 5 交付缴费放行与费用回执两消费入口；
  * Task 6 补齐调剂三段（pick/verify/issue）与工作台回显；Task 7 扩展退药受理两时点
  * （acceptReturn）与 refund.approved 终态收敛；Task 10 追加执行占用查询（occupancy，供 M13 位）；
  * PR-5 Task 11 放行链回切——放行/退费收口按单据精确清单承载、verify 增可选凭证核验、
  * order.cancelled 未发药作废路径实装（接口方法只增不改形）。
+ * 配对纪律（宪法 A.4.3-20）：本服务以 dispense 为主表（实现侧已 extends
+ * ServiceImpl&lt;DispenseMapper, Dispense&gt;），接口侧对应 extends IService&lt;Dispense&gt;——
+ * 主表通用能力（分页/批量/链式查询等默认方法集）复用 IService 契约面，属契约面扩展；自有
+ * 方法与 IService 默认方法无同名同参冲突（getByRxNo 与 getById/getOne 系列不同名）。本服务
+ * 状态机浓度高：处方/发药单双状态机 CAS 与跨表编排（prescription、prescription_item、
+ * dispense_item、drug_batch 条件锁定/扣减/回补、stock_ledger 出入库流水）全为自有方法承载——
+ * IService 通用写面（save/updateById/removeById 等）不承载状态语义，PH-1xxx 状态迁移一律走
+ * 自有 CAS/编排方法，禁经通用写面直写绕开 CAS 并发守卫（0 行=并发被抢显式拒绝）与消费幂等
+ * 收敛。状态迁移入口清单：处方侧 APPROVED→PENDING_FEE（markPendingFee）、PENDING_FEE→
+ * PENDING_DISPENSE+建单入队（releaseByRxNos）、CAS 作废（voidUndispensedByRx）、DISPENSED→
+ * PART/FULL_RETURNED 退费终态镜像（confirmRefundTerminalByRx）；发药单侧调剂三段 pick
+ * （CREATED→PICKING）→ verify（PICKING→PICKED，双签守卫）→ issue（PICKED→ISSUED，处方同步
+ * 转 DISPENSED）、退药受理 acceptReturn（ISSUED/PART_RETURNED→PART/FULL_RETURNED 终态与
+ * DISPENSING_CANCEL 明细退场两时点）及未发药作废（voidUndispensedByRx 同步发药单 CANCELLED
+ * 与批次锁定释放）。
  */
-public interface IDispenseService {
+public interface IDispenseService extends IService<Dispense> {
 
     /**
      * 缴费放行（charged 消费业务）：按结算覆盖的处方号精确清单放行——逐 rxNo 定位
@@ -18,7 +41,7 @@ public interface IDispenseService {
      * @param rxNos 本次结算覆盖的处方号精确清单，非 null（可空清单=合法跳过面）；
      *              来源：outpatient.order.charged 载荷 rxNos（V204 id 25 冻结契约）
      */
-    void releaseByRxNos(java.util.List<String> rxNos);
+    void releaseByRxNos(List<String> rxNos);
 
     /**
      * 费用回执（fee.created 消费业务）：处方通道（trigger_point=PRESCRIPTION_EFFECTIVE，
@@ -37,7 +60,7 @@ public interface IDispenseService {
      * @throws BizException PH-1008（调剂单缺单）/ PH-1009（调剂单状态违例）/ PH-1004（处方缺单）/
      *                      PH-1005（处方状态违例）/ PH-1010（批次不足）
      */
-    void pick(String dispenseNo, java.util.List<com.fuyun.pharmacy.dto.PickLine> lines);
+    void pick(String dispenseNo, List<PickLine> lines);
 
     /**
      * 扫码核对（PICKING→PICKED）：核对药师=当前登录者，双签守卫 verifier≠picker（PH-1011）；
@@ -78,7 +101,7 @@ public interface IDispenseService {
      *                      PH-1012（追溯码不一致或缺码，防回流拒）/ PH-1013（模式未知、状态违例、
      *                      缺行、超可退数、回补/释放条件更新 0 行——整事务回滚零写面）
      */
-    void acceptReturn(com.fuyun.pharmacy.dto.DispenseReturnRequest req);
+    void acceptReturn(DispenseReturnRequest req);
 
     /**
      * 退费终态收敛（refund.approved 消费业务，PR-5 单据化收口——注记⑦误伤面闭合）：按反查
@@ -91,7 +114,7 @@ public interface IDispenseService {
      * @param rxNos 退费涉及的处方号精确清单（调用方经 billing SettlementQueryPort 反查承载，
      *              非空清单；来源：sourceRefsOfSettlement(settlementId).rxRefs()）
      */
-    void confirmRefundTerminalByRx(java.util.List<String> rxNos);
+    void confirmRefundTerminalByRx(List<String> rxNos);
 
     /**
      * 未发药作废（order.cancelled 消费业务，PR-5 注记⑥回切）：按退费逆向处方号清单逐 rxNo
@@ -104,7 +127,7 @@ public interface IDispenseService {
      *              载荷 rxNos（V204 id 31 冻结契约，经 billing SettlementQueryPort 反查扇出）
      * @param reason 退费原因（载荷透传，作废留痕日志锚点），可空
      */
-    void voidUndispensedByRx(java.util.List<String> rxNos, String reason);
+    void voidUndispensedByRx(List<String> rxNos, String reason);
 
     /**
      * 执行占用查询（供 M13 退费前置校验调用位，Spec :172；billing 不切——BILL-1017 维持
@@ -115,7 +138,7 @@ public interface IDispenseService {
      * @param itemCode  收费项目 code，可空
      * @return 占用行集（处方×明细×发药单三维投影；无命中返回空集）
      */
-    java.util.List<com.fuyun.pharmacy.vo.OccupancyVO> occupancy(long patientId, String visitId, String itemCode);
+    List<OccupancyVO> occupancy(long patientId, String visitId, String itemCode);
 
     /**
      * 按处方号查发药单（前端工作台回显）：排除 CANCELLED 取消态历史行（W-24——
@@ -124,5 +147,5 @@ public interface IDispenseService {
      * @param rxNo 处方号，非空
      * @return 发药单出参；无活动单返回 null
      */
-    com.fuyun.pharmacy.vo.DispenseVO getByRxNo(String rxNo);
+    DispenseVO getByRxNo(String rxNo);
 }

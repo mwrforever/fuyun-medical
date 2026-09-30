@@ -33,13 +33,16 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -73,9 +76,14 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 同事务承载（AFTER_COMMIT 语义：回滚事务不发布）——不挂 @Transactional 方法级事务以规避
  * 编排器自调用代理失效。归 internal/ 包：模块内编排设施禁外引（宪法 B.1），装配归 IotConfig
  * @Import；JaCoCo 核心包规则成员，单测全覆盖。
+ *
+ * <p><b>线程池与生命周期（EX-32 风险修复）</b>：同步下发池为有界 ThreadPoolExecutor（核心
+ * 4/上限 16/队列 32/CallerRuns——参数依据见 {@link #createDeliveryExecutor()}），替代原无界
+ * 缓存池；实现 DisposableBean，容器停机时 destroy 显式收口（shutdown → 限时 awaitTermination
+ * → shutdownNow 中断兜底），不再依赖 daemon 线程随 JVM 退出自回收。
  */
 @Slf4j
-public class CommandDispatcher {
+public class CommandDispatcher implements DisposableBean {
 
     /** 二次确认凭证键前缀：fy:iot:cmd:challenge:（A.5-1 命名，拼 challengeId 为完整键） */
     static final String CHALLENGE_KEY_PREFIX = "fy:iot:cmd:challenge:";
@@ -91,6 +99,27 @@ public class CommandDispatcher {
 
     /** 审计留痕系统操作人（无登录上下文回退值，与审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
+
+    /**
+     * 同步下发池核心线程数：命令下发为低频管理面操作（人工二次确认后触发），常态并发同步
+     * 下发为个位数（护士站/管理台并行下发），4 线程承接常态峰值。
+     */
+    private static final int DELIVERY_CORE_THREADS = 4;
+
+    /**
+     * 同步下发池线程数上限：同步等待占用线程至 syncTimeout（默认 30s）到时，突发并发放大
+     * 占用——按全院管理面并发同步下发峰值 16 线程封顶（超限走 CallerRuns，见工厂注释）。
+     */
+    private static final int DELIVERY_MAX_THREADS = 16;
+
+    /** 同步下发池有界队列容量：突发下发缓冲 32 深（队列满才扩线程至上限，双满载走 CallerRuns） */
+    private static final int DELIVERY_QUEUE_CAPACITY = 32;
+
+    /** 同步下发池空闲线程存活时限（秒）：低频面空闲快速回收（allowCoreThreadTimeOut 同开） */
+    private static final long DELIVERY_KEEP_ALIVE_SECONDS = 60L;
+
+    /** 停机等待在途下发线程限时（秒）：对齐 syncTimeout 默认 30s 量级取 30——在途同步等待自然到时后线程自行退出 */
+    private static final int STOP_AWAIT_SECONDS = 30;
 
     private final IotDeviceMapper deviceMapper;
 
@@ -113,14 +142,79 @@ public class CommandDispatcher {
     private final CommandProperties properties;
 
     /**
-     * 同步命令守护线程池：Registry.sendCommand 的执行载体（有界等待的提交面）。守护线程随
-     * JVM 退出、空闲 60s 自回收；命令下发为低频管理面操作，缓存池不设上界（拒绝策略不适用）。
+     * 同步命令守护线程池（有界）：Registry.sendCommand 的执行载体（有界等待的提交面），
+     * 停机由 {@link #destroy()} 显式收口（EX-32：原无界缓存池改有界池 + 生命周期收口）。
      */
-    private final ExecutorService deliveryExecutor = Executors.newCachedThreadPool(runnable -> {
-        Thread thread = new Thread(runnable, "iot-cmd-delivery");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ThreadPoolExecutor deliveryExecutor = createDeliveryExecutor();
+
+    /**
+     * 构造同步下发有界线程池。参数依据（现场吞吐特征）：命令下发为低频管理面操作（人工二次
+     * 确认后触发，无设备侧自动重试洪峰），常态并发同步下发为个位数——核心 4 线程承接；
+     * 同步等待占用线程至 syncTimeout（默认 30s）到时，突发并发放大占用——上限 16 线程封顶
+     * + 32 深有界队列缓冲。拒绝策略取 CallerRuns：命令下发不可丢，过载时（线程与队列双满）
+     * 由调用线程（HTTP 工作线程）就地执行 sendCommand——提交即执行、后续 get 立即返回，
+     * 等待语义退化为同步执行，属过载兜底而非常态路径；Abort/Discard 族会丢命令，禁用。
+     * 停机窗口语义：shutdown 后 CallerRuns 静默丢弃新提交（不执行不外抛），调用方 get 以
+     * syncTimeout 超时置 TIMEOUT 终态——容器停机窗口内可接受（不下发新命令是停机本意）。
+     *
+     * @return 已就绪的有界线程池（daemon 线程 + 核心线程可超时回收，低频面空闲缩至零）
+     */
+    private static ThreadPoolExecutor createDeliveryExecutor() {
+        AtomicInteger threadSeq = new AtomicInteger(0);
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                DELIVERY_CORE_THREADS,
+                DELIVERY_MAX_THREADS,
+                DELIVERY_KEEP_ALIVE_SECONDS,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(DELIVERY_QUEUE_CAPACITY),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "iot-cmd-delivery-" + threadSeq.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy());
+        // 低频面空闲时核心线程同样按 keepAlive 回收，池可缩至零（驻留线程最小化；下次提交按需重建）
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    /**
+     * 下发池载体（EX-32 生命周期用例断言锚点：停机态与拒收断言；IotAmqpTelemetryConsumer
+     * 包内载体访问器同形态）。
+     *
+     * @return 同步下发线程池，非空
+     */
+    ExecutorService deliveryExecutor() {
+        return deliveryExecutor;
+    }
+
+    /**
+     * 优雅停机（DisposableBean，容器关闭期调用；EX-32 生命周期收口）：shutdown 停收新提交 →
+     * 限时等待在途同步下发（最长 30s，对齐 syncTimeout 默认量级——在途等待自然到时后线程退出）
+     * → 超时 shutdownNow 中断兜底；daemon 线程为 JVM 退出的双保险而非依赖项。在途命令被中断
+     * 的终态由 deliverSync 承接（池线程中断以 ExecutionException 面、调用线程中断走其
+     * InterruptedException 分支，均置 FAILED），不产生悬挂行。
+     */
+    @Override
+    public void destroy() {
+        log.info(
+                "同步下发线程池停机开始：poolSize={}，queued={}，maxThreads={}",
+                deliveryExecutor.getPoolSize(),
+                deliveryExecutor.getQueue().size(),
+                DELIVERY_MAX_THREADS);
+        deliveryExecutor.shutdown();
+        try {
+            if (!deliveryExecutor.awaitTermination(STOP_AWAIT_SECONDS, TimeUnit.SECONDS)) {
+                log.warn("同步下发线程池停机等待超时（{}s），中断兜底：残余任务由中断分支置 FAILED", STOP_AWAIT_SECONDS);
+                deliveryExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("同步下发线程池停机等待被中断，中断兜底");
+            deliveryExecutor.shutdownNow();
+        }
+        log.info("同步下发线程池已停机");
+    }
 
     /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1；TransactionTemplate 为 Boot

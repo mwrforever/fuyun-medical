@@ -16,10 +16,11 @@ import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedAssignMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.BedMapVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -46,7 +47,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
-public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedService {
+public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements IBedService {
 
     /** 无登录上下文场景的操作者回退值（与 V903 审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
@@ -59,19 +60,26 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final ApplicationEventPublisher events;
 
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import）。
      *
-     * @param assignMapper 床位占用流水 mapper，非空；开账/闭合只增表操作
-     * @param visitMapper  住院就诊 mapper，非空；占床主体解析与床位图摘要聚合
-     * @param events       进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
+     * @param assignMapper  床位占用流水 mapper，非空；开账/闭合只增表操作
+     * @param visitMapper   住院就诊 mapper，非空；床位图摘要聚合
+     * @param visitAccessor 住院就诊共享访问器（EX-44 下沉），非空；占床主体资格定位 load+check
+     * @param events        进程内事件发布器（InpatientEventPublisher AFTER_COMMIT 出 MQ），非空
      */
     public BedServiceImpl(
-            BedAssignMapper assignMapper, InpatientVisitMapper visitMapper, ApplicationEventPublisher events) {
+            BedAssignMapper assignMapper,
+            InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
+            ApplicationEventPublisher events) {
         this.assignMapper = assignMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.events = events;
     }
 
@@ -85,9 +93,12 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
     @Override
     @Transactional(readOnly = true)
     public List<BedMapVO> bedMap(String wardId) {
-        // 数据库读操作：病区床位全量（床号升序——床位图排序键）
-        List<Bed> beds = baseMapper.selectList(
-                Wrappers.<Bed>lambdaQuery().eq(Bed::getWardId, wardId).orderByAsc(Bed::getBedNo));
+        // 数据库读操作：病区床位全量（床号升序——床位图排序键；主表查询走 ServiceImpl 内置
+        // lambdaQuery 链式（宪法 A.4.3-13），条件/排序谓词与链式化前逐字等价）
+        List<Bed> beds = lambdaQuery()
+                .eq(Bed::getWardId, wardId)
+                .orderByAsc(Bed::getBedNo)
+                .list();
         if (beds.isEmpty()) {
             return List.of();
         }
@@ -100,7 +111,8 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
         if (occupiedVisitIds.isEmpty()) {
             return beds.stream().map(bed -> BedMapVO.from(bed, null)).toList();
         }
-        // 数据库读操作：占用就诊批量解析（visit_id 唯一索引承载 in 查询）
+        // 数据库读操作：占用就诊批量解析（visit_id 唯一索引承载 in 查询；visit 非本服务主表，
+        // Wrappers 手构保留——A.4.3-13 副表面）
         Map<String, InpatientVisit> visits = visitMapper
                 .selectList(Wrappers.<InpatientVisit>lambdaQuery().in(InpatientVisit::getVisitId, occupiedVisitIds))
                 .stream()
@@ -143,13 +155,9 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
     @Override
     @Transactional
     public void assign(Long bedId, BedAssignRequest req) {
-        // 占用主体资格先行：就诊在位且待入科/在院（已出院床位禁再分配）
-        InpatientVisit visit = visitMapper.selectOne(
-                Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, req.visitId()));
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + req.visitId());
-        }
+        // 占用主体资格先行：就诊在位且待入科/在院（已出院床位禁再分配；visit 非本服务主表，
+        // load+check 经共享访问器统一承载——EX-44，A.4.3-21 禁复制查询逻辑）
+        InpatientVisit visit = visitAccessor.requireByVisitId(req.visitId());
         if (!ASSIGNABLE_VISIT_STATUSES.contains(visit.getStatus())) {
             throw new BizException(
                     InpatientErrorCode.VISIT_STATE_NOT_ALLOWED,
@@ -394,6 +402,16 @@ public class BedServiceImpl extends ServiceImpl<BedMapper, Bed> implements BedSe
                     HttpStatus.CONFLICT,
                     "床位占用流水未闭合行唯一冲突（并发开账，本次操作回滚）：bedId=" + bed.getId() + "，visitId=" + visitId);
         }
+        // 写操作留痕：开账 insert 成功（bed 为 CAS 前快照，其状态即迁移前态；后态已由 casOccupy 落为 OCCUPIED）
+        log.info(
+                "占用流水开账写库：bedId={}，bedNo={}，visitId={}，assignType={}，床位状态迁移={}→{}，operator={}",
+                bed.getId(),
+                bed.getBedNo(),
+                visitId,
+                type.getCode(),
+                bed.getStatus(),
+                BedStatus.OCCUPIED.getCode(),
+                operator);
     }
 
     /** 床位定位（未命中定性 IP-1004；逻辑删由 @TableLogic 自动过滤）。 */

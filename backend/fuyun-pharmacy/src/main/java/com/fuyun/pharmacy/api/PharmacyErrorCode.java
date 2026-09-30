@@ -62,7 +62,12 @@ public enum PharmacyErrorCode implements ErrorCode {
     /** 审方任务状态不允许该操作（409；非 PENDING 决策、驳回缺意见、CAS 并发被抢等三态机违例） */
     REVIEW_TASK_STATE_NOT_ALLOWED("PH-1020"),
     /** 住院用药快照不存在（404；m04_order_no 无命中或任务关联快照缺失——数据不一致面） */
-    MEDICATION_ORDER_NOT_FOUND("PH-1021");
+    MEDICATION_ORDER_NOT_FOUND("PH-1021"),
+    /**
+     * 枚举 code 值域外（400；fromCode 查询侧收到词表外 code——EX-19 BE-C3-05 裸 IAE 收口 A 类，
+     * 15 枚举共用一码，禁 IllegalArgumentException 直穿 500；PH-1021 已占，本码接续顺延）
+     */
+    ENUM_CODE_MALFORMED("PH-1022");
 
     /** 码值（如 PH-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

@@ -10,13 +10,15 @@ import com.fuyun.patient.dto.PatientMatchCheckRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PossibleDuplicate;
 import com.fuyun.patient.mapper.PossibleDuplicateMapper;
+import com.fuyun.patient.service.IPatientMatchingService;
 import com.fuyun.patient.service.IPatientService;
 import com.fuyun.patient.service.IPossibleDuplicateService;
-import com.fuyun.patient.service.PatientMatchingService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import com.fuyun.patient.vo.PossibleDuplicateVO;
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.factory.Mappers;
 import org.springframework.dao.DuplicateKeyException;
@@ -47,7 +49,7 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
 
     private final IPatientService patientService;
 
-    private final PatientMatchingService matchingService;
+    private final IPatientMatchingService matchingService;
 
     /**
      * 全参构造器（装配归 PatientWebConfig @Import）。
@@ -55,7 +57,7 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
      * @param patientService  患者主表服务（批量扫描近窗档来源），非空
      * @param matchingService EMPI 匹配引擎（同名候选评分），非空
      */
-    public PossibleDuplicateServiceImpl(IPatientService patientService, PatientMatchingService matchingService) {
+    public PossibleDuplicateServiceImpl(IPatientService patientService, IPatientMatchingService matchingService) {
         this.patientService = patientService;
         this.matchingService = matchingService;
     }
@@ -144,13 +146,21 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
     /**
      * 批量增量扫描（近 7 天档 × 同名存量评分；逐条独立小事务，禁长事务包裹）。
      *
+     * <p>近窗档装载 .select 精确投影（EX-39，A.4.3-14）：循环仅消费 patient_id/name/sex/
+     * birth_date 恰 4 列，宽行密文/盲索引/住址等列禁入内存；行集由 created_at 谓词决定，
+     * 投影仅收敛列面，评分入参与自配对守卫取值不变。
+     *
      * @return 新增待审行数
      */
     @Override
     public int scanBatch() {
         OffsetDateTime since = OffsetDateTime.now().minusDays(SCAN_WINDOW_DAYS);
-        List<Patient> recent =
-                patientService.lambdaQuery().ge(Patient::getCreatedAt, since).list();
+        // 数据库读操作：近窗增量档装载——恰 4 列投影（修复前全列取回仅用少量列，A.4.3-14）
+        List<Patient> recent = patientService
+                .lambdaQuery()
+                .select(Patient::getPatientId, Patient::getName, Patient::getSex, Patient::getBirthDate)
+                .ge(Patient::getCreatedAt, since)
+                .list();
         int created = 0;
         for (Patient candidate : recent) {
             PatientMatchCheckVO check = matchingService.preCheck(new PatientMatchCheckRequest(
@@ -195,7 +205,7 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
         if (rules == null || rules.isEmpty()) {
             return "[]";
         }
-        return "[" + rules.stream().map(r -> "\"" + r + "\"").collect(java.util.stream.Collectors.joining(",")) + "]";
+        return "[" + rules.stream().map(r -> "\"" + r + "\"").collect(Collectors.joining(",")) + "]";
     }
 
     /**
@@ -217,7 +227,7 @@ public class PossibleDuplicateServiceImpl extends ServiceImpl<PossibleDuplicateM
         }
         // 统一剥除引号/空白后按逗号切分（两形态共同超集）
         String normalized = body.replace("\"", "").replace("'", "");
-        return java.util.Arrays.stream(normalized.split(","))
+        return Arrays.stream(normalized.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .toList();

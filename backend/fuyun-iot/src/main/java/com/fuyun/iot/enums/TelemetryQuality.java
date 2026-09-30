@@ -2,6 +2,9 @@ package com.fuyun.iot.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.iot.api.IotErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 遥测数据质量枚举（iot.iot_telemetry.quality 列值域，值域与 CF-7 标准遥测消息 quality 字符串一致）。
@@ -45,8 +48,8 @@ public enum TelemetryQuality {
      *
      * @param code 存储值，来源：DB 列读取或 CF-7 报文 quality 字段；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（报文值域越界或脏数据），
-     *                                  建议调用方按解析失败处置
+     * @throws BizException IOT-1026（400）：code 无对应枚举常量（报文值域越界或脏数据），
+     *                      建议调用方按解析失败处置
      */
     public static TelemetryQuality fromCode(String code) {
         for (TelemetryQuality quality : values()) {
@@ -54,6 +57,8 @@ public enum TelemetryQuality {
                 return quality;
             }
         }
-        throw new IllegalArgumentException("未知的遥测数据质量 code: " + code);
+        // 词表外 code 收口（BE-C3-05）：BizException 400 + IOT-1026 直达边界渲染 ProblemDetail，
+        // MQ 解析链调用方（TelemetryFrameParser/快照读取）就地捕获包装，毒丸/降级语义不变
+        throw new BizException(IotErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的遥测数据质量 code: " + code);
     }
 }

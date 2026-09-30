@@ -1,7 +1,9 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.constants.ScaleDefinition;
 import com.fuyun.nursing.dto.NursingAssessmentCreateRequest;
+import com.fuyun.nursing.entity.NursingAssessment;
 import com.fuyun.nursing.enums.ScaleType;
 import com.fuyun.nursing.vo.NursingAssessmentVO;
 import com.fuyun.nursing.vo.ScaleDefinitionVO;
@@ -15,8 +17,14 @@ import java.util.List;
  * 红线 2 注记）：assessed_at 为临床实际评估时刻（请求携带强校验），审计列为服务器时间。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：主表 nursing_assessment 与实现侧
+ * {@code ServiceImpl<NursingAssessmentMapper, NursingAssessment>} 配对，接口侧收拢
+ * {@code extends IService<NursingAssessment>}——主表通用 CRUD 直接复用 IService 契约面；
+ * 高危联动（防范任务生成/风险标识回写）为跨服务编排，由自有方法 {@link #create} 承载，
+ * 判级校验与联动原子性在自有方法内收口（禁经 IService 通用面绕行）。
  */
-public interface INursingAssessmentService {
+public interface INursingAssessmentService extends IService<NursingAssessment> {
 
     /**
      * 评估量表定义清单（五量表冻结定义全量暴露）：BRADEN/MORSE/NRS/BARTHEL/MEWS 条目词表、

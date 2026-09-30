@@ -8,6 +8,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OrderCreatedPayload;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.ClinicOrderConverter;
 import com.fuyun.outpatient.dto.OrderCreateRequest;
 import com.fuyun.outpatient.dto.OrderItemRequest;
 import com.fuyun.outpatient.dto.PrescriptionOpenRequest;
@@ -243,7 +244,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 request.orderType(),
                 order.getOrderDoctorId(),
                 itemRows.size());
-        return toVO(order, itemRows);
+        return ClinicOrderConverter.INSTANCE.toClinicOrderVO(order, itemRows);
     }
 
     /**
@@ -313,7 +314,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 rx.rxNo(),
                 order.getOrderDoctorId());
         // ⑤ 出参直出（extRef 承载 rxNo；引用行零明细行）
-        return toVO(order, List.of());
+        return ClinicOrderConverter.INSTANCE.toClinicOrderVO(order, List.of());
     }
 
     /**
@@ -406,7 +407,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 order.getVisitId(),
                 voidedFees,
                 reason);
-        return toVO(order, itemsOf(order.getId()));
+        return ClinicOrderConverter.INSTANCE.toClinicOrderVO(order, itemsOf(order.getId()));
     }
 
     /**
@@ -434,7 +435,8 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
                 .stream()
                 .collect(Collectors.groupingBy(ClinicOrderItem::getOrderId));
         return orders.stream()
-                .map(order -> toVO(order, itemsByOrder.getOrDefault(order.getId(), List.of())))
+                .map(order -> ClinicOrderConverter.INSTANCE.toClinicOrderVO(
+                        order, itemsByOrder.getOrDefault(order.getId(), List.of())))
                 .toList();
     }
 
@@ -452,6 +454,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
         ClinicOrder order =
                 clinicOrderMapper.selectOne(Wrappers.<ClinicOrder>lambdaQuery().eq(ClinicOrder::getOrderNo, orderNo));
         if (order == null) {
+            // EX-19 C 类收口留痕：MQ 回执驱动的数据异常断言（非用户输入路径），保留 ISE 死信留痕零行为变化
             throw new IllegalStateException("缴费回执推进失败：申请单缺失（数据异常，人工对账）：orderNo=" + orderNo);
         }
         // 数据库写操作：单据 CAS CREATED→PENDING_FEE；0 行=重投幂等/竞态，重读定性
@@ -568,6 +571,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
         // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
+            // EX-19 C 类收口留痕：基础设施异常断言（Redis 流水缺失，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("申请单号签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {
@@ -575,6 +579,7 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
             redisTemplate.expire(seqKey, ORDER_SEQ_KEY_TTL);
         }
         if (seq > DAILY_SEQ_CAP) {
+            // EX-19 C 类收口留痕：签发上限防御断言（违例值禁落库，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("申请单号签发失败：当日流水超 6 位上限（seq=" + seq + "），seqKey=" + seqKey);
         }
         return "OP" + today + String.format("%0" + SEQ_WIDTH + "d", seq);
@@ -628,31 +633,5 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
     private List<ClinicOrderItem> itemsOf(Long orderId) {
         return clinicOrderItemMapper.selectList(
                 Wrappers.<ClinicOrderItem>lambdaQuery().eq(ClinicOrderItem::getOrderId, orderId));
-    }
-
-    /**
-     * 实体+明细 → 申请单出参投影（quantity DECIMAL string 透传，禁数值化——D-18 同源）。
-     *
-     * @param order 申请单实体，非空
-     * @param items 明细行清单，非空
-     * @return 申请单出参，非空
-     */
-    private static ClinicOrderVO toVO(ClinicOrder order, List<ClinicOrderItem> items) {
-        return new ClinicOrderVO(
-                order.getId(),
-                order.getOrderNo(),
-                order.getVisitId(),
-                order.getPatientId(),
-                order.getOrderType(),
-                order.getExtRef(),
-                order.getOrderDoctorId(),
-                order.getValidTo(),
-                order.getStatus(),
-                // 发药回流镜像透传（D-3：M06 发药/退药事件 CAS 回写值，null=未发药）
-                order.getDispenseStatus(),
-                order.getFeeSettlementId(),
-                items.stream()
-                        .map(row -> new ClinicOrderVO.Item(row.getItemCode(), row.getQuantity(), row.getUsageSummary()))
-                        .toList());
     }
 }

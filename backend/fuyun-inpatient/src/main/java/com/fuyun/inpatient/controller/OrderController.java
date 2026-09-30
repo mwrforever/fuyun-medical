@@ -6,8 +6,8 @@ import com.fuyun.inpatient.dto.OrderCreateRequest;
 import com.fuyun.inpatient.dto.OrderReorganizeRequest;
 import com.fuyun.inpatient.dto.OrderStopRequest;
 import com.fuyun.inpatient.enums.OrderClass;
-import com.fuyun.inpatient.service.MedicalOrderService;
-import com.fuyun.inpatient.service.OrderAuditService;
+import com.fuyun.inpatient.service.IMedicalOrderService;
+import com.fuyun.inpatient.service.IOrderAuditService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
 import com.fuyun.system.api.AuditActionType;
@@ -41,9 +41,9 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class OrderController {
 
-    private final MedicalOrderService medicalOrderService;
+    private final IMedicalOrderService medicalOrderService;
 
-    private final OrderAuditService orderAuditService;
+    private final IOrderAuditService orderAuditService;
 
     /**
      * 医嘱开立：在院校验→四层校验（执业授权/过敏/明细频次/嘱托限定）→CREATED 落库→

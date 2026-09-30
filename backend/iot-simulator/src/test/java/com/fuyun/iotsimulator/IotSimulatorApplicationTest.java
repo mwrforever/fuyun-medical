@@ -8,6 +8,7 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
 import com.fuyun.iotsimulator.config.SimulatorConfig;
+import com.fuyun.iotsimulator.mqtt.CommandSubscriber;
 import com.fuyun.iotsimulator.mqtt.IotdaMqttClient;
 import com.fuyun.iotsimulator.telemetry.TelemetryPayloadBuilder;
 import java.util.concurrent.ScheduledExecutorService;
@@ -75,11 +76,30 @@ class IotSimulatorApplicationTest {
         IotSimulatorApplication.stopReporting(
                 startedScheduler.schedule(() -> {}, 0, TimeUnit.SECONDS),
                 startedScheduler,
+                null,
                 mqttClient,
                 ONE_SECOND_CONFIG.deviceId());
 
         assertThat(startedScheduler.isShutdown()).as("调度器已停").isTrue();
         verify(mqttClient).close();
+    }
+
+    @Test
+    @DisplayName("优雅停机含订阅器（EX-33）：关命令订阅器先于断连接（在途回执尽量发出后再断链）")
+    void stopReportingClosesCommandSubscriberBeforeClient() {
+        startedScheduler = IotSimulatorApplication.launchReporting(ONE_SECOND_CONFIG, mqttClient);
+        CommandSubscriber subscriber = org.mockito.Mockito.mock(CommandSubscriber.class);
+
+        IotSimulatorApplication.stopReporting(
+                startedScheduler.schedule(() -> {}, 0, TimeUnit.SECONDS),
+                startedScheduler,
+                subscriber,
+                mqttClient,
+                ONE_SECOND_CONFIG.deviceId());
+
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(subscriber, mqttClient);
+        inOrder.verify(subscriber).close();
+        inOrder.verify(mqttClient).close();
     }
 
     @Test

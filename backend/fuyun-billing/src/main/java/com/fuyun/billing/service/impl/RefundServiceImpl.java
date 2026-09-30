@@ -63,7 +63,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 免审/一级/二级）由 {@link ApprovalLevel} 单一判定承载：L2 单一级批后转待二级且不发事件、
  * 二级批终批才发事件；收费组长/财务/医保办角色硬校验随 PR-5 RBAC 接线。并发收口：apply 目标
  * 费用行集 SELECT FOR UPDATE 行锁（{@link FeeRecordMapper#lockByIds}）串行化并发申请，锁内
- * 重读聚合做超可退守卫，根除「双读 refundedFen 互不可见双双过守卫」的 TOCTOU。
+ * 重读聚合做超可退守卫，根除「双读 refundedFen 互不可见双双过守卫」的 TOCTOU。approve/reject
+ * 两入口以旧状态谓词 CAS 条件更新收口（BUG-10，{@link RefundRequestMapper#casEscalateFirstApproval}
+ * 等三支，与 D-13 条件更新收口裁决同源）：并发双一级审批恰一赢、firstApprover 不被后到者覆盖
+ * （BILL-1020 分权链并发面），已 EXECUTED 单驳回被 0 行拦下（资金动作与单据状态不背离）；
+ * CAS 0 行重读定性转 BizException，禁盲目重试或以过期快照覆写。
  */
 @Slf4j
 public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRequest> implements IRefundService {
@@ -224,6 +228,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 throw new BizException(
                         BillingErrorCode.REFUND_AMOUNT_EXCEEDED, HttpStatus.CONFLICT, "退费金额超可退余额：" + fee.getId());
             }
+            // 退费金额累加（资金口径=服务端逐行算额求和入 amount，禁前端传额——红线 1 退侧同源；
+            //   lineAmounts 与请求行序一一对应，供 link 负向台账逐行落 refund_amount 明细）
             lineAmounts.add(lineAmount);
             amount += lineAmount;
             // 跨日判定：任一费用行计费日早于今日 → 全单按跨日分级（保守须审批）
@@ -299,11 +305,16 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
      * CF-4 `billing.refund.approved` 契约冻结）；待一级且级别 L1 或待二级 → 落终批审批人/时刻、置
      * APPROVED 并发事件（autoApproved 恒 false，载荷与免审区分不变）。
      *
+     * <p>并发收口（BUG-10）：两写点均先以旧状态谓词 CAS 条件更新抢锚（一级升批钉死
+     * PENDING_APPROVAL 单态、终批钉死读快照精确旧态）再回写——并发双一级审批恰一赢、
+     * firstApprover 不被后到者覆盖（BILL-1020 分权链并发面）；0 行重读定性拒，禁盲目重试。
+     *
      * <p>角色分权（收费组长一级 / 财务·医保办二级）属 PR-5 RBAC 面：本 PR 以「级别 × 双人链」近似，
      * 待 PR-5 权限点接线后叠加角色硬校验（注释显式声明，禁静默滞留）。
      *
      * @param id 退费申请 id；来源：审批列表选行
-     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态）/
+     * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态，含读后被并发处理——
+     *                      他审批人先落/被驳回/被执行，CAS 0 行重读定性拒）/
      *                      BILL-1020（403 终批人=申请人，或二级终批人=一级审批人，等保分权）
      */
     @Override
@@ -337,10 +348,17 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         }
         if (refund.getStatus() == RefundStatus.PENDING_APPROVAL
                 && resolveApprovalLevel(refund.getRefundType(), refund.getAmount()) == ApprovalLevel.SECOND) {
-            // 一级审批（L2 单）：状态推进待二级 + 审批链一级留痕（连批守卫比对位）；不发事件（时点=终批）
+            // BUG-10 一级审批 CAS 抢锚（与 execute 的 casMarkExecuted 同款时序）：谓词钉死
+            //   PENDING_APPROVAL 单态——两一级审批人并发批同一 L2 单恰一赢，输家 0 行重读定性拒，
+            //   后提交者不得覆盖 firstApprover（覆盖会使原一级审批人获得连批二级机会，BILL-1020
+            //   分权链被破坏）；审批链两列随条件更新同 SET，抢锚后 updateById 全行回写通道保持
+            OffsetDateTime firstApprovedAt = OffsetDateTime.now();
+            if (baseMapper.casEscalateFirstApproval(id, approver, firstApprovedAt) != 1) {
+                throw concurrentApprovalConflict(id, "审批");
+            }
             refund.setStatus(RefundStatus.PENDING_SECOND_APPROVAL);
             refund.setFirstApprover(approver);
-            refund.setFirstApprovedAt(OffsetDateTime.now());
+            refund.setFirstApprovedAt(firstApprovedAt);
             updateById(refund);
             log.info(
                     "退费一级审批通过（升二级）：refundNo={}，firstApprover={}，金额={}分",
@@ -349,10 +367,23 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     refund.getAmount());
             return;
         }
-        // 终批（L1 一级即终批 / L2 二级终批）：APPROVED 迁移 + 审批人/时刻留痕 + 发事件（同事务）
+        // BUG-10 终批 CAS 抢锚：谓词携带读快照精确旧态（L1 一级即终批=PENDING_APPROVAL /
+        //   L2 二级终批=PENDING_SECOND_APPROVAL，禁放宽 IN 双态——宽谓词会使 L1 终批人在并发
+        //   升批后跳级终批，连批守卫基于读快照评估即被绕过）；与驳回/执行并发交错时 0 行拦截，
+        //   先落库者胜、后到者重读定性拒（禁以过期快照整行覆写先到者的终态迁移）
+        OffsetDateTime approvedAt = OffsetDateTime.now();
+        if (baseMapper.casFinalApprove(
+                        id, approver, approvedAt, refund.getStatus().getCode())
+                != 1) {
+            throw concurrentApprovalConflict(id, "审批");
+        }
+        // 数据库写操作：终批状态落库回写（前态 L1 一级即终批=PENDING_APPROVAL / L2 二级终批=
+        //   PENDING_SECOND_APPROVAL → APPROVED——资金放行语义，后续 execute 才动卡退钱；
+        //   终批人/时刻已经 casFinalApprove 同语句原子落表，此处全行回写内存镜像，
+        //   保证同事务后续事件载荷取值与库内一致）
         refund.setStatus(RefundStatus.APPROVED);
         refund.setApprover(approver);
-        refund.setApprovedAt(OffsetDateTime.now());
+        refund.setApprovedAt(approvedAt);
         updateById(refund);
         // 事务内发应用事件（A.4.2-7 禁事务内直发 MQ）：AFTER_COMMIT 经 BillingEventPublisher 出 fy.topic
         events.publishEvent(new BillingDomainEvent(
@@ -371,10 +402,14 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     /**
      * 退费驳回（PENDING_APPROVAL/PENDING_SECOND_APPROVAL → REJECTED 终态，理由必填留痕）。
      *
+     * <p>并发收口（BUG-10）：终态迁移以旧状态谓词 CAS 条件更新抢锚（待审双态 → REJECTED）——
+     * 与审批/执行并发交错时 0 行拦截，已 EXECUTED 单（动卡退钱完成）不得被整行覆写回 REJECTED，
+     * 资金动作与单据状态不背离；0 行重读定性转 BizException，禁盲目重试。
+     *
      * @param id     退费申请 id；来源：审批列表选行
      * @param reason 驳回理由，非空白；来源：审批人录入（@NotBlank 边界已保，服务层不重复校验）
      * @throws BizException BILL-1018（404 缺单）/ BILL-1019（409 非待审态——已审批单
-     *                      走业务逆流程而非驳回）
+     *                      走业务逆流程而非驳回，含读后被并发处理 CAS 0 行重读定性拒）
      */
     @Override
     @Transactional
@@ -392,11 +427,44 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     HttpStatus.CONFLICT,
                     "退费申请状态不允许驳回，当前状态：" + refund.getStatus().getCode());
         }
+        // BUG-10 驳回 CAS 抢锚（与 casMarkExecuted 同款时序）：谓词 IN 待审双态——与审批/执行
+        //   并发交错时 0 行拦截，输家重读定性拒；驳回理由随条件更新同 SET 原子留痕，
+        //   抢锚后 updateById 全行回写通道保持
+        if (baseMapper.casReject(id, reason) != 1) {
+            throw concurrentApprovalConflict(id, "驳回");
+        }
         // 数据库写操作：终态迁移 + 驳回理由留痕（同事务）
         refund.setStatus(RefundStatus.REJECTED);
         refund.setRejectReason(reason);
         updateById(refund);
         log.info("退费申请驳回：refundNo={}，rejector={}，reason={}", refund.getRefundNo(), OperatorContextHolder.get(), reason);
+    }
+
+    /**
+     * 审批/驳回 CAS 0 行命中的重读定性（BUG-10，与 execute 的 W-16 输家分流同语义）：
+     * 重读最新行——行已消失归 404（BILL-1018，与入口查询语义一致禁漂移）；仍在表即状态已被
+     * 并发事务迁移（他审批人先落/驳回/执行），「已被并发处理」显式拒 BILL-1019——禁盲目重试，
+     * 更禁以过期快照整行覆写（分权绕过与账实背离的共根源）。
+     *
+     * @param id     退费申请 id
+     * @param action 冲突动作描述（审批/驳回），非空；来源：调用方入口名，仅用于异常文案与日志
+     * @return 待抛业务异常（404 缺单 / 409 并发冲突），非空；调用方恒 throw
+     */
+    private BizException concurrentApprovalConflict(long id, String action) {
+        // 数据库读操作：CAS 败北后重读最新行定性（不可重试——状态机单次迁移，重试无正确性收益）
+        RefundRequest latest = getById(id);
+        if (latest == null) {
+            return new BizException(BillingErrorCode.REFUND_NOT_FOUND, HttpStatus.NOT_FOUND, "退费申请不存在：" + id);
+        }
+        log.warn(
+                "退费审批/驳回并发冲突（CAS 0 行，已被并发处理）：refundId={}，当前状态={}，冲突动作={}",
+                id,
+                latest.getStatus().getCode(),
+                action);
+        return new BizException(
+                BillingErrorCode.REFUND_STATE_NOT_ALLOWED,
+                HttpStatus.CONFLICT,
+                "退费申请已被并发处理，当前状态不允许" + action + "：" + latest.getStatus().getCode());
     }
 
     /**
@@ -442,7 +510,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         //   使 channelRef 缺失/null 文本行抛 NumberFormatException 出 500
         Map<Long, Long> cardChannels = new LinkedHashMap<>();
         try {
-            for (JsonNode detail : objectMapper.readTree(st.getPaymentDetails())) {
+            // 循环前批量取数（BE-C4 判据①形态收拢）：payment_details JSON 单次解析为树，循环内纯迭代
+            JsonNode paymentDetailsTree = objectMapper.readTree(st.getPaymentDetails());
+            for (JsonNode detail : paymentDetailsTree) {
                 if ("CARD_BALANCE".equals(detail.path("method").asText())) {
                     // 卡引用先守卫后聚合（2026-09-18 修复）：写入侧 settle 只对 >0 卡行解析引用，
                     //   读回侧不可复制该漏洞——缺失/null/空文本/非数字在此即 BILL-1012 拒，
@@ -455,6 +525,8 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             }
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             // 落库文本解析失败=数据不一致显式暴露（禁静默跳过退回）
+            // 内部断言：非用户输入路径——payment_details 系本模块 settle 写入的自有数据，破损即
+            // 数据完整性违约（编程契约）；execute 端点入参仅 refundId，用户不可达此分支（BE-C3-05 C 类）
             throw new IllegalStateException("payment_details 解析失败，settleNo=" + st.getSettleNo(), e);
         }
         // W-16 读回侧守卫（F6）：卡行原付金额必须为正；退款额不得超卡侧原付合计
@@ -475,6 +547,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                     HttpStatus.CONFLICT,
                     "退款额超卡侧原付合计：refund=" + refund.getAmount() + "，cardTotal=" + cardTotal);
         }
+        // 资金写操作（跨模块 M02 卡台账，同事务）：每卡单次全额贷记退费额 refund.getAmount()——
+        //   与写入侧「同卡多行求和一笔出账」口径对称（上文书签口径已去重），台账记 REFUND 入账；
+        //   回填台账流水 id 至 paymentRefundRef 作资金溯源锚（卡账户对账依据）
         for (Map.Entry<Long, Long> channel : cardChannels.entrySet()) {
             long accountId = channel.getKey();
             long txnId = cardAccountLedger.record(
@@ -504,17 +579,30 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
                 : feeRecordMapper.selectBatchIds(linkFeeIds).stream()
                         .collect(Collectors.toMap(FeeRecord::getId, f -> f));
         Map<Long, Long> decidedFenByFeeId = linkFeeIds.isEmpty() ? Map.of() : decidedRefundedFenByFeeIds(linkFeeIds);
+        // EX-37：费用行判态回写逐行 updateById 改一次批量写（Db.updateBatchById JDBC 批处理，先例 apply
+        //   侧 link 批插与 DispenseServiceImpl，A.4.3-16 须在事务内调用——本方法 @Transactional 承载）：
+        //   本写点纯按预载聚合内存判态、无状态 CAS 谓词依赖（casMarkExecuted 抢锚已在方法首步完成，
+        //   BUG-10 审批链 CAS 与本循环互不相干，批量收口零触碰），行集、行序与每行终态和逐行写完全一致；
+        //   空清单短路——MP Db 空集合无法解析实体类（Assert 拒），零 link 时保持零语句写（与旧空循环对齐）
+        List<FeeRecord> judgedFees = new ArrayList<>(links.size());
         for (RefundFeeLink link : links) {
             FeeRecord fee = feeById.get(link.getFeeId());
             long refunded = decidedFenByFeeId.getOrDefault(link.getFeeId(), 0L);
             fee.setStatus(refunded >= fee.getAmount() ? FeeStatus.FULL_REFUND : FeeStatus.PART_REFUND);
-            feeRecordMapper.updateById(fee);
+            judgedFees.add(fee);
+        }
+        if (!judgedFees.isEmpty()) {
+            // 数据库写操作：判态终态一次批量回写（fee_record 按 id 整行更新，逐行语义不变）
+            Db.updateBatchById(judgedFees);
         }
         // 结算单全额退完转 REFUNDED（同上聚合口径判定 ≥ 结算总额）；部分退留 SETTLED
         if (totalRefundedFen(st.getId()) >= st.getTotalAmount()) {
             st.setStatus(SettlementStatus.REFUNDED);
             settlementMapper.updateById(st);
         }
+        // 数据库写操作：退费单终态落库（APPROVED→EXECUTED，资金动作已全部完成的单据收口；
+        //   事务首步 casMarkExecuted 已抢锚置库内状态，此处全行回写补 payment_refund_ref
+        //   卡台账流水引用与内存镜像，供日志/后续审计取值）
         refund.setStatus(RefundStatus.EXECUTED);
         updateById(refund);
         log.info(
@@ -671,14 +759,18 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
     /**
      * 结算单累计已退金额（分；仅已决口径——APPROVED/EXECUTED 态退费单 link 负向聚合，按结算单维度
      * 归集，与 {@link #decidedRefundedFenByFeeIds(List)} 费用行判态同口径；在途单不参与结算终态判定；
-     * 单次调用非循环热路径，维持 id 集两步查询形态）。
+     * 单次调用非循环热路径，维持 id 集两步查询形态）。两步均 .select 精确投影——第一步仅消费 id 列、
+     * 第二步仅消费 refund_amount 列，宽行全列取回徒增内存占用（A.4.3-14）；谓词、空集短路与求和
+     * 算式不因投影而变。
      *
      * @param settlementId 结算单 id；来源：原路退回目标结算行
      * @return 累计已退金额（分，无历史已退为 0）
      */
     private long totalRefundedFen(long settlementId) {
-        // 数据库读操作：本结算单 APPROVED/EXECUTED 态退费单 id 集（部分退多次累计口径）
+        // 数据库读操作：本结算单 APPROVED/EXECUTED 态退费单 id 集（部分退多次累计口径）——
+        //   仅消费 id 列，.select 精确投影免退费单金额/渠道等宽行全列入内存（A.4.3-14）
         List<Long> refundIds = lambdaQuery()
+                .select(RefundRequest::getId)
                 .eq(RefundRequest::getSettlementId, settlementId)
                 .in(RefundRequest::getStatus, RefundStatus.APPROVED, RefundStatus.EXECUTED)
                 .list()
@@ -688,9 +780,12 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
         if (refundIds.isEmpty()) {
             return 0L;
         }
-        // 数据库读操作：集内全部 link 负向金额求和（退费负向表达唯一载体=link 表）
+        // 数据库读操作：集内全部 link 负向金额求和（退费负向表达唯一载体=link 表）——
+        //   仅消费 refund_amount 列，投影不改谓词与求和语义（求和结果与全列取回完全等价）
         return refundFeeLinkMapper
-                .selectList(Wrappers.<RefundFeeLink>lambdaQuery().in(RefundFeeLink::getRefundId, refundIds))
+                .selectList(Wrappers.<RefundFeeLink>lambdaQuery()
+                        .select(RefundFeeLink::getRefundAmount)
+                        .in(RefundFeeLink::getRefundId, refundIds))
                 .stream()
                 .mapToLong(RefundFeeLink::getRefundAmount)
                 .sum();

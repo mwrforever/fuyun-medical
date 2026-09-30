@@ -75,6 +75,7 @@ public class OutpatientFeeCreatedListener {
         String billingKey = payload.path("billingKey").asText("");
         String[] segments = billingKey.split("\\|");
         // billingKey 守卫：缺失或段数不符即不合规帧显式抛出（对账锚点损坏，人工核查兜底）
+        // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
         if (billingKey.isBlank() || segments.length != BILLING_KEY_SEGMENTS) {
             throw new IllegalStateException(
                     "缴费回执载荷不合规（billingKey 非五段）：eventType=" + envelope.eventType() + "，billingKey=" + billingKey);

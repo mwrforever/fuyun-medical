@@ -1,5 +1,6 @@
 package com.fuyun.billing.controller;
 
+import com.fuyun.billing.convert.ChargeItemPriceConverter;
 import com.fuyun.billing.dto.PriceDraftRequest;
 import com.fuyun.billing.service.IChargePriceService;
 import com.fuyun.billing.vo.ChargeItemPriceVO;
@@ -80,9 +81,9 @@ public class PriceAdjustmentController {
     @Operation(summary = "列项目价格版本链", operationId = "listChargeItemPrices")
     @GetMapping("/charge-items/{id}/prices")
     public List<ChargeItemPriceVO> listVersions(@PathVariable long id) {
-        // 实体禁直出：查询结果经静态工厂逐行转 VO（出网边界唯一出口）
+        // 实体禁直出：查询结果经 MapStruct 转换器逐行转 VO（出网边界唯一出口，BUG-23 迁入）
         return chargePriceService.listVersions(id).stream()
-                .map(ChargeItemPriceVO::from)
+                .map(ChargeItemPriceConverter.INSTANCE::toVO)
                 .toList();
     }
 }

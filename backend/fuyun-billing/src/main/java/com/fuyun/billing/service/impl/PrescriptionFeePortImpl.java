@@ -34,6 +34,21 @@ public class PrescriptionFeePortImpl implements PrescriptionFeePort {
         this.engine = engine;
     }
 
+    /**
+     * 按来源单据号作废处方触发的在途 PENDING 费用行组（M06 处方作废联动，语义与 REST
+     * {@code POST /fees/{id}/cancel} 同源，契约全量见 {@link PrescriptionFeePort}）。
+     *
+     * <p>执行流程：三段定位谓词（source_ref + trigger_point=PRESCRIPTION_EFFECTIVE +
+     * status=PENDING）查在途行组 → 逐行复用引擎 {@code cancel}（PENDING→CANCELLED，行保留
+     * 释放 billing_key，无第二套作废逻辑）→ 返回实际作废行数；REQUIRED 传播加入 M06 调用方
+     * 事务（处方作废与费用作废一体成败），行级异常随调用方事务整体回滚。
+     *
+     * @param sourceRef 来源单据引用（=rx_no，PRESCRIPTION_EFFECTIVE 通道），非空；来源：M06 处方作废入参
+     * @param reason    作废原因（审计留痕），非空白；来源：M06 处方作废理由
+     * @return 实际作废费用行数（0=无在途 PENDING 费用，幂等合法）
+     * @throws com.fuyun.common.exception.BizException 行状态竞态经引擎 cancel 抛 BILL-1011
+     *                 （PENDING 已被并发迁移，0 行命中显式拒），随 M06 调用方事务统一回滚
+     */
     @Override
     @Transactional
     public int cancelPendingBySourceRef(String sourceRef, String reason) {

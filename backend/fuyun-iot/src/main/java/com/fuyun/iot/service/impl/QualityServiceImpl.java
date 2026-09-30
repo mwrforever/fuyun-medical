@@ -13,6 +13,7 @@ import com.fuyun.iot.entity.IotDataQualityStatEntity;
 import com.fuyun.iot.entity.IotDeviceEntity;
 import com.fuyun.iot.entity.IotMetricDictEntity;
 import com.fuyun.iot.entity.IotMetricMappingEntity;
+import com.fuyun.iot.enums.DeviceStatus;
 import com.fuyun.iot.internal.IotAmqpMetrics;
 import com.fuyun.iot.internal.IotDomainEvent;
 import com.fuyun.iot.mapper.IotConsumerStatMapper;
@@ -213,7 +214,7 @@ public class QualityServiceImpl implements IQualityService {
         }
         BigDecimal freqPerMin = loadDeviceNominalFreq(device.getProductId());
         // 在线时长近似（类注释申报）：ONLINE 记全天 1440 分钟，其余状态记 0——精确时长随 P3 完善
-        int onlineMinutes = device.getStatus() == com.fuyun.iot.enums.DeviceStatus.ONLINE ? FULL_DAY_MINUTES : 0;
+        int onlineMinutes = device.getStatus() == DeviceStatus.ONLINE ? FULL_DAY_MINUTES : 0;
         long expected = freqPerMin == null
                 ? 0
                 : freqPerMin
@@ -261,7 +262,8 @@ public class QualityServiceImpl implements IQualityService {
 
     /**
      * 装载设备产品的最大标称频率（批级两次查询：产品映射 → 字典标称频率）：未挂产品/无映射/无
-     * 登记标称频率返回 null（期望记 0，缺数率恒 0 防误报）。
+     * 登记标称频率返回 null（期望记 0，缺数率恒 0 防误报）。产品映射查询仅消费指标编码列，
+     * .select 精确投影免映射宽行全列入内存（A.4.3-14；行集不变仅列收敛，distinct 语义等价）。
      *
      * @param productId 设备产品标识，可空（未挂产品）
      * @return 最大标称频率（次/分钟）；无可定位登记返回 null
@@ -270,9 +272,12 @@ public class QualityServiceImpl implements IQualityService {
         if (productId == null || productId.isBlank()) {
             return null;
         }
-        // 数据库读操作：产品已映射指标编码单次 IN 前置查询（@TableLogic 自动过滤已删映射）
+        // 数据库读操作：产品已映射指标编码单次 IN 前置查询（@TableLogic 自动过滤已删映射）——
+        //   仅消费 metric_code 列，.select 精确投影免映射宽行全列入内存（A.4.3-14；行集不变
+        //   仅列收敛，指标编码集合与全列取回完全等价）
         List<String> metricCodes = metricMappingMapper
                 .selectList(Wrappers.<IotMetricMappingEntity>lambdaQuery()
+                        .select(IotMetricMappingEntity::getMetricCode)
                         .eq(IotMetricMappingEntity::getProductId, productId))
                 .stream()
                 .map(IotMetricMappingEntity::getMetricCode)
@@ -283,9 +288,11 @@ public class QualityServiceImpl implements IQualityService {
         }
         // 数据库读操作：字典标称频率单次 IN 查询，取最大值（设备多指标按最高频指标推算期望）
         BigDecimal max = null;
-        for (IotMetricDictEntity dict : metricDictMapper.selectList(Wrappers.<IotMetricDictEntity>lambdaQuery()
+        // 循环前批量取数（BE-C4 判据①形态收拢）：字典标称频率行单次装载，循环内纯迭代取最大
+        List<IotMetricDictEntity> dictRows = metricDictMapper.selectList(Wrappers.<IotMetricDictEntity>lambdaQuery()
                 .in(IotMetricDictEntity::getMetricCode, metricCodes)
-                .isNotNull(IotMetricDictEntity::getNominalFreqPerMin))) {
+                .isNotNull(IotMetricDictEntity::getNominalFreqPerMin));
+        for (IotMetricDictEntity dict : dictRows) {
             BigDecimal freq = dict.getNominalFreqPerMin();
             if (freq.signum() > 0 && (max == null || freq.compareTo(max) > 0)) {
                 max = freq;
@@ -337,7 +344,7 @@ public class QualityServiceImpl implements IQualityService {
     public int detectTelemetryAnomalies() {
         // 数据库读操作：在线候选设备扫描（LIMIT 硬顶泄压，截断 warn 留痕）
         List<IotDeviceEntity> onlineDevices = deviceMapper.selectList(Wrappers.<IotDeviceEntity>lambdaQuery()
-                .eq(IotDeviceEntity::getStatus, com.fuyun.iot.enums.DeviceStatus.ONLINE)
+                .eq(IotDeviceEntity::getStatus, DeviceStatus.ONLINE)
                 // 排序兜底：last_online_at 升序——状态最久未刷新者优先处置
                 .orderByAsc(IotDeviceEntity::getLastOnlineAt)
                 .last("LIMIT " + ANOMALY_SCAN_LIMIT));
@@ -351,13 +358,17 @@ public class QualityServiceImpl implements IQualityService {
                 onlineDevices.stream().map(IotDeviceEntity::getDeviceId).toList();
         // 数据库读操作：末次有效采集时刻批级一次聚合下推（禁循环内单查）
         Map<String, OffsetDateTime> lastByKey = new HashMap<>(deviceIds.size() * 2);
-        for (DeviceMetricLastRow row : telemetryMapper.selectLastOccurredByDeviceMetric(deviceIds)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：末次采集时刻行单次装载，循环内纯迭代组装映射
+        List<DeviceMetricLastRow> lastRows = telemetryMapper.selectLastOccurredByDeviceMetric(deviceIds);
+        for (DeviceMetricLastRow row : lastRows) {
             lastByKey.put(row.deviceId() + ":" + row.metricCode(), row.lastOccurredAt());
         }
         // 数据库读操作：登记标称频率的字典行单次装载（指标 → 次/分钟）
         Map<String, BigDecimal> freqByMetric = new HashMap<>();
-        for (IotMetricDictEntity dict : metricDictMapper.selectList(
-                Wrappers.<IotMetricDictEntity>lambdaQuery().isNotNull(IotMetricDictEntity::getNominalFreqPerMin))) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：字典标称频率行单次装载，循环内纯迭代组装映射
+        List<IotMetricDictEntity> dictRows = metricDictMapper.selectList(
+                Wrappers.<IotMetricDictEntity>lambdaQuery().isNotNull(IotMetricDictEntity::getNominalFreqPerMin));
+        for (IotMetricDictEntity dict : dictRows) {
             if (dict.getNominalFreqPerMin().signum() > 0) {
                 freqByMetric.put(dict.getMetricCode(), dict.getNominalFreqPerMin());
             }

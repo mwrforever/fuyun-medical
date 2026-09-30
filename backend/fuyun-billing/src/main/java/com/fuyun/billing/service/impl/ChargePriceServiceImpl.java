@@ -19,7 +19,11 @@ import com.fuyun.billing.service.IInsuranceMappingService;
 import com.fuyun.common.exception.BizException;
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -112,8 +116,56 @@ public class ChargePriceServiceImpl extends ServiceImpl<ChargeItemPriceMapper, C
             throw new BizException(BillingErrorCode.PRICING_UNAVAILABLE, HttpStatus.CONFLICT, "项目无生效价格版本：" + itemCode);
         }
         InsuranceMapping mapping = mappingService.effectiveMapping(chargeItemId);
+        return toSnapshot(current, mapping);
+    }
+
+    /**
+     * 批量取项目当前生效价格快照（预计价多行单据批量取数，A.4.3-14 N+1 消除）。
+     *
+     * <p>与逐项目 {@link #snapshot} 单查的等价性：区间谓词逐字段同构（status &lt;&gt; DRAFT +
+     * 半开区间覆盖 now + effective_from 倒序），仅取价时刻收敛为单次求值（同一单据同一瞬时
+     * 定价，见接口 javadoc①）；每项目命中行取 effective_from 最新一行的口径，由「全局 DESC
+     * 回放 + 逐项目首行收敛（putIfAbsent）」承载，与单查「ORDER BY effective_from DESC
+     * LIMIT 1」一致（区间交叉脏数据同为起点最新行定序）。无生效版本项目不出键不抛错，
+     * BILL-1008 守卫移交调用方逐行补偿校验（见接口 javadoc②）。
+     *
+     * @param chargeItemIds 项目 id 键集，非空集合（空集零 SQL 触达直接返回空 Map）
+     * @return chargeItemId → 价格快照（无生效版本项目不出键，非 null）
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, PriceSnapshot> snapshots(Collection<Long> chargeItemIds) {
+        // 空键集守卫：MP in 谓词空集将生成非法 SQL，直接短路返回（单据无待取价项目即零触达）
+        if (chargeItemIds.isEmpty()) {
+            return Map.of();
+        }
+        // 取价时刻：注入时钟单次求 now——同一单据全部行按同一瞬时定价（区间判定基准同 snapshot）
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        // 数据库读操作：批量时间区间判定取各项目命中行（谓词与单查同构；无 LIMIT 1——
+        //   逐项目取首行由下方 DESC 回放 + putIfAbsent 收敛，跨项目一次取回）
+        List<ChargeItemPrice> currents = lambdaQuery()
+                .in(ChargeItemPrice::getChargeItemId, chargeItemIds)
+                .ne(ChargeItemPrice::getStatus, PriceStatus.DRAFT)
+                .le(ChargeItemPrice::getEffectiveFrom, now)
+                .and(w -> w.isNull(ChargeItemPrice::getEffectiveTo).or().gt(ChargeItemPrice::getEffectiveTo, now))
+                .orderByDesc(ChargeItemPrice::getEffectiveFrom)
+                .list();
+        // 数据库读操作：对照批查（键集=命中行项目；一次 IN 批查替代逐项目 effectiveMapping 单查）
+        Map<Long, InsuranceMapping> mappings = mappingService.effectiveMappings(
+                currents.stream().map(ChargeItemPrice::getChargeItemId).collect(Collectors.toSet()));
+        Map<Long, PriceSnapshot> result = new LinkedHashMap<>();
+        for (ChargeItemPrice current : currents) {
+            // DESC 回放顺序下每项目首行即该项目的起点最新行，putIfAbsent 丢弃同项目后续行
+            //   （区间交叉脏数据定序口径与单查 DESC LIMIT 1 一致）
+            result.putIfAbsent(current.getChargeItemId(), toSnapshot(current, mappings.get(current.getChargeItemId())));
+        }
+        return result;
+    }
+
+    /** 版本行 + 对照行 → 计费快照装配（单查/批查共用；未对照字段全 null=仅自费，不阻断取价）。 */
+    private PriceSnapshot toSnapshot(ChargeItemPrice current, InsuranceMapping mapping) {
         return new PriceSnapshot(
-                chargeItemId,
+                current.getChargeItemId(),
                 current.getPrice(),
                 current.getVersion(),
                 mapping == null ? null : mapping.getNhsaCode(),

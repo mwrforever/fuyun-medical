@@ -5,7 +5,9 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.iot.constants.IotMessagingConstants;
+import com.fuyun.iot.entity.IotAlarmEntity;
 import com.fuyun.iot.entity.IotConsumerStatEntity;
+import com.fuyun.iot.entity.IotDataQualityStatEntity;
 import com.fuyun.iot.entity.IotDeviceEntity;
 import com.fuyun.iot.entity.IotMetricMappingEntity;
 import com.fuyun.iot.enums.AlarmStatus;
@@ -256,9 +258,8 @@ public class DashboardServiceImpl implements IDashboardService {
         long offline = safeCount(deviceMapper.selectCount(
                 Wrappers.<IotDeviceEntity>lambdaQuery().eq(IotDeviceEntity::getStatus, DeviceStatus.OFFLINE)));
         long total = safeCount(deviceMapper.selectCount(null));
-        long activeAlarms =
-                safeCount(alarmMapper.selectCount(Wrappers.<com.fuyun.iot.entity.IotAlarmEntity>lambdaQuery()
-                        .eq(com.fuyun.iot.entity.IotAlarmEntity::getStatus, AlarmStatus.ACTIVE)));
+        long activeAlarms = safeCount(alarmMapper.selectCount(
+                Wrappers.<IotAlarmEntity>lambdaQuery().eq(IotAlarmEntity::getStatus, AlarmStatus.ACTIVE)));
         boolean stormActive = hasAnyStormKey();
         BigDecimal backlog = readBacklogEstimate();
         BigDecimal quality = readAverageQualityScore();
@@ -281,7 +282,8 @@ public class DashboardServiceImpl implements IDashboardService {
                         .build())) {
                     return cursor.hasNext();
                 } catch (Exception e) {
-                    // SCAN 游走异常包装为运行时上抛，由外层统一降级
+                    // 内部断言：受检异常→运行时桥接（RedisCallback 签名约束），外层 catch 即时捕获
+                    // 降级为非风暴，非用户输入路径；保留 ISE 包装语义
                     throw new IllegalStateException("风暴键扫描失败：" + e.getMessage(), e);
                 }
             });
@@ -315,7 +317,7 @@ public class DashboardServiceImpl implements IDashboardService {
      */
     private BigDecimal readAverageQualityScore() {
         // 数据库读操作：单值 AVG 聚合（QueryWrapper 列名直书——单标量聚合不值得落 XML，A.4.3-15）
-        List<Object> rows = statMapper.selectObjs(new QueryWrapper<com.fuyun.iot.entity.IotDataQualityStatEntity>()
+        List<Object> rows = statMapper.selectObjs(new QueryWrapper<IotDataQualityStatEntity>()
                 .select("AVG(quality_score)")
                 .eq("stat_date", LocalDate.now(ZoneOffset.UTC)));
         if (rows.isEmpty() || rows.get(0) == null) {
@@ -374,8 +376,10 @@ public class DashboardServiceImpl implements IDashboardService {
             return Map.of();
         }
         Map<String, List<String>> metricsByProduct = new HashMap<>();
-        for (IotMetricMappingEntity mapping : metricMappingMapper.selectList(
-                Wrappers.<IotMetricMappingEntity>lambdaQuery().in(IotMetricMappingEntity::getProductId, productIds))) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：产品映射行单次装载，循环内纯迭代展开
+        List<IotMetricMappingEntity> mappings = metricMappingMapper.selectList(
+                Wrappers.<IotMetricMappingEntity>lambdaQuery().in(IotMetricMappingEntity::getProductId, productIds));
+        for (IotMetricMappingEntity mapping : mappings) {
             metricsByProduct
                     .computeIfAbsent(mapping.getProductId(), k -> new ArrayList<>())
                     .add(mapping.getMetricCode());
@@ -417,7 +421,8 @@ public class DashboardServiceImpl implements IDashboardService {
 
     /**
      * 解析单条最新值快照（「值|毫秒时间戳」管道文本，AlarmEngine 写入面同源）：缺席/形态损坏
-     * 返回 null 跳过（快照为辅助面，单行损坏不阻断整墙装配）。
+     * 返回 null 跳过（快照为辅助面，单行损坏不阻断整墙装配）；数值段解析失败降级时 warn
+     * 留痕设备/指标定位与原因（写入面同源键可对账）。
      *
      * @param deviceId   设备标识，非空
      * @param metricCode 指标编码，非空
@@ -440,6 +445,14 @@ public class DashboardServiceImpl implements IDashboardService {
                     OffsetDateTime.ofInstant(
                             Instant.ofEpochMilli(Long.parseLong(payload.substring(separator + 1))), ZoneOffset.UTC));
         } catch (NumberFormatException e) {
+            // 数值段非法降级跳过（契约保持：损坏行不阻断整墙）；静默改 warn 留痕（EX-31）。
+            // 不采用 isNumeric 前置守卫：BigDecimal 合法接受负数/小数/科学计数文本，守卫口径
+            // 与其不一致将误杀合法值改变出网契约，故保留 catch + 留痕收口（择优结论）
+            log.warn(
+                    "最新值快照数值解析失败（跳过该行，快照写入面同源键可对账）：deviceId={}，metricCode={}，原因={}",
+                    deviceId,
+                    metricCode,
+                    e.getMessage());
             return null;
         }
     }

@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.service.OrderAuditService;
+import com.fuyun.inpatient.service.IOrderAuditService;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +25,7 @@ public class PharmacyAuditReplyListener {
 
     private final IdempotentConsumerSupport consumerSupport;
 
-    private final OrderAuditService orderAuditService;
+    private final IOrderAuditService orderAuditService;
 
     /**
      * 全参构造器（装配归 InpatientMessagingConfig @Import；消费模板多候选 @Qualifier 定绑
@@ -36,7 +36,7 @@ public class PharmacyAuditReplyListener {
      */
     public PharmacyAuditReplyListener(
             @Qualifier("inpatientConsumerSupport") IdempotentConsumerSupport consumerSupport,
-            OrderAuditService orderAuditService) {
+            IOrderAuditService orderAuditService) {
         this.consumerSupport = consumerSupport;
         this.orderAuditService = orderAuditService;
     }
@@ -96,6 +96,7 @@ public class PharmacyAuditReplyListener {
         // 驳回必附药师意见（医生站重提修改依据——缺失定性不合规帧）
         String rejectReason = textOrNull(payload, "rejectReason");
         if (rejectReason == null || rejectReason.isBlank()) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "审方驳回回执载荷不合规（缺 rejectReason 药师意见）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }
@@ -117,6 +118,7 @@ public class PharmacyAuditReplyListener {
     private static String requireTarget(EventEnvelope envelope, JsonNode payload) {
         String orderNo = textOrNull(payload, "target");
         if (orderNo == null || orderNo.isBlank()) {
+            // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
             throw new IllegalStateException(
                     "审方回执载荷不合规（缺 target 医嘱号）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }

@@ -4,10 +4,14 @@
 // 操作）；显式格式校验（失焦 + 提交双触发，错误贴字段 + aria-describedby）；出票卡 fuy-ticket
 // 过冲编排（emphasis）+「打印出票」色条 + 支付时限倒计时（单一 setInterval 卸载即清）。
 // 无 Element Plus，控件全部原生 + tokens（§4.4 portal 基线）；失败弹错归字段级文案。
-import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
-import { bookPortalAppointment, listPortalPools, resolveErrorCopy } from '@/api/outpatient';
-import type { AppointmentVO, CredentialType, NumberPoolVO } from '@/api/outpatient';
-import { PortalApiError } from '@/api/http';
+// 状态逻辑下沉 composables（EX-48 巨型组件收口，web 宪法 B.3-6）：useNumberPools 号源查询/
+// 选择、useAppointment 提交状态机、useCountdown 支付倒计时；本组件只留三步流编排与视图动作
+//（滚动/焦点），提交时序、倒计时节奏与错误文案逐字保持。
+import { computed, nextTick, ref } from 'vue';
+import type { CredentialType, NumberPoolVO } from '@/api/outpatient';
+import { useAppointment } from '@/composables/useAppointment';
+import { useCountdown } from '@/composables/useCountdown';
+import { useNumberPools } from '@/composables/useNumberPools';
 
 /** 介质 tab 词表（与后端 portal 通道准入词表同源） */
 const CREDENTIAL_TABS: ReadonlyArray<{ type: CredentialType; label: string }> = [
@@ -35,20 +39,12 @@ const APPT_TYPE_LABELS: Record<string, string> = {
 const credentialType = ref<CredentialType>('ID_CARD');
 const credentialNo = ref('');
 const identityError = ref('');
-const pools = ref<NumberPoolVO[]>([]);
-const poolsLoading = ref(false);
-const poolsError = ref('');
-const selectedPool = ref<NumberPoolVO | null>(null);
 const deptCode = ref('DEPT-INT');
 /** 就诊日（第 2 步日期横滑条默认首格=今日，yyyy-MM-dd） */
 const schedDate = ref(toIsoDate(new Date()));
 
 /** 第 1 步完成判定：介质输入存在即视为完成（格式校验在提交/失焦双触发，此处不做硬校验） */
 const identityDone = computed(() => credentialNo.value.trim() !== '');
-/** 第 2 步完成判定：已选中号源 */
-const poolDone = computed(() => selectedPool.value !== null);
-/** 当前步指示（1/2/3：供步骤指示条圆点态） */
-const currentStep = computed(() => (poolDone.value ? 3 : identityDone.value ? 2 : 1));
 
 /** RFC 文案：yyyy-MM-dd（本地时区，禁 toISOString 的 UTC 偏移坑） */
 function toIsoDate(date: Date): string {
@@ -145,26 +141,23 @@ async function focusField(id: string): Promise<void> {
   document.getElementById(id)?.focus();
 }
 
-/* ---------- 第 2 步：选择号源（日期横滑条 + 号源卡列表，加载骨架） ---------- */
+/* ---------- 第 2 步：选择号源（日期横滑条 + 号源卡列表，加载骨架）----------
+   查询/选中/失败文案下沉 useNumberPools，组件承接 chip 切换重查与选中后滚动展开；查询准入
+   守卫（身份未完成零出网——卡片置灰由模板承载，composable 内双保险）经回调注入 */
+const {
+  pools,
+  poolsLoading,
+  poolsError,
+  selectedPool,
+  queryPools: onQueryPools,
+  selectPool,
+  resetPools,
+} = useNumberPools({ deptCode, schedDate, canQuery: () => identityDone.value });
 
-/** 查询可约号源：诊区/日期变化即查（身份未完成不可达本区——卡片置灰由模板承载） */
-async function onQueryPools(): Promise<void> {
-  if (!identityDone.value || poolsLoading.value) {
-    return;
-  }
-  poolsLoading.value = true;
-  poolsError.value = '';
-  try {
-    pools.value = await listPortalPools({ deptCode: deptCode.value, date: schedDate.value });
-    // 号源刷新后清空已选，防携带失效选择提交
-    selectedPool.value = null;
-  } catch (error: unknown) {
-    poolsError.value =
-      error instanceof PortalApiError ? resolveErrorCopy(error) : '网络异常，请稍后重试';
-  } finally {
-    poolsLoading.value = false;
-  }
-}
+/** 第 2 步完成判定：已选中号源 */
+const poolDone = computed(() => selectedPool.value !== null);
+/** 当前步指示（1/2/3：供步骤指示条圆点态） */
+const currentStep = computed(() => (poolDone.value ? 3 : identityDone.value ? 2 : 1));
 
 /** 切诊区/日期 chip：重查号源并滚动到本步 */
 function onDeptChip(code: string): void {
@@ -177,110 +170,52 @@ function onDateChip(value: string): void {
   void onQueryPools();
 }
 
-/** 选号源卡（余 0 禁点）：完成后自动展开第 3 步 */
+/** 选号源卡（余 0 禁点：useNumberPools 守卫拒选零副作用）；选中后自动展开第 3 步 */
 async function onSelectPool(pool: NumberPoolVO): Promise<void> {
-  if ((pool.remaining ?? 0) <= 0) {
-    return;
+  if (selectPool(pool)) {
+    await scrollStepIntoView('step-confirm');
   }
-  selectedPool.value = pool;
-  await scrollStepIntoView('step-confirm');
 }
 
-/* ---------- 第 3 步：确认出票（提交 → fuy-ticket 出票卡 + 倒计时） ---------- */
-const submitting = ref(false);
-const ticket = ref<AppointmentVO | null>(null);
-const ticketError = ref('');
-/** 出票卡 DOM 锚（出票后焦点移入 §5.4） */
-const ticketCard = ref<HTMLElement | null>(null);
+/* ---------- 第 3 步：确认出票（提交 → fuy-ticket 出票卡 + 倒计时）----------
+   支付倒计时先接（出票成功回调要起表），提交状态机下沉 useAppointment（在途守卫/校验兜底/
+   号源未选守卫/错误码文案映射均在 composable 内，时序逐字保持：出票成功先起倒计时再移焦点） */
+/** 支付时限倒计时（mm:ss，.fuy-num 防抖；剩 5 分钟内转预警色 §5.4；卸载即清） */
+const { countdownText, countdownUrgent, startCountdown, stopCountdown } = useCountdown();
+
+/* 提交状态机（含出票卡 DOM 锚 ticketCard——出票后焦点移入 §5.4）；校验/焦点/载荷经回调注入，
+   onBooked 时序与原内联一致：出票落定先起倒计时，nextTick 后焦点移入出票卡 */
+const {
+  submitting,
+  ticket,
+  ticketError,
+  ticketCard,
+  submit: onSubmit,
+  resetTicket,
+} = useAppointment({
+  validate: validateIdentity,
+  onInvalid: () => focusField('credential-input'),
+  buildPayload: () =>
+    selectedPool.value === null
+      ? null
+      : {
+          credentialType: credentialType.value,
+          credentialNo: credentialNo.value.trim(),
+          poolId: selectedPool.value.id ?? '',
+        },
+  onBooked: (booked) => startCountdown(booked.payDeadline),
+});
 
 /** 确认预约可提交：身份 + 号源双齐备 */
 const canSubmit = computed(() => identityDone.value && poolDone.value);
 
-/**
- * 提交预约：显式校验兜底（提交前触发）→ 出网 → 出票卡替换表单区；失败驻留所选号源卡并按
- * 错误码映射文案（OP-1003/1006/1007 → §5.4 定稿文案）。提交中全表单禁用防重复出号。
- */
-async function onSubmit(): Promise<void> {
-  if (submitting.value) {
-    return;
-  }
-  if (!validateIdentity()) {
-    await focusField('credential-input');
-    return;
-  }
-  if (selectedPool.value === null) {
-    ticketError.value = '请先选择号源';
-    return;
-  }
-  ticketError.value = '';
-  submitting.value = true;
-  try {
-    ticket.value = await bookPortalAppointment({
-      credentialType: credentialType.value,
-      credentialNo: credentialNo.value.trim(),
-      poolId: selectedPool.value.id ?? '',
-    });
-    startCountdown();
-    await nextTick();
-    ticketCard.value?.focus();
-  } catch (error: unknown) {
-    ticketError.value =
-      error instanceof PortalApiError ? resolveErrorCopy(error) : '网络异常，请稍后重试';
-  } finally {
-    submitting.value = false;
-  }
-}
-
-/** 支付时限倒计时（mm:ss，.fuy-num 防抖；剩 5 分钟内转预警色 §5.4） */
-const countdownText = ref('--:--');
-const countdownUrgent = ref(false);
-let countdownTimer: ReturnType<typeof setInterval> | null = null;
-
-function startCountdown(): void {
-  stopCountdown();
-  const deadline = ticket.value?.payDeadline;
-  if (!deadline) {
-    countdownText.value = '--:--';
-    return;
-  }
-  const tick = (): void => {
-    const remainMs = new Date(deadline).getTime() - Date.now();
-    if (remainMs <= 0) {
-      countdownText.value = '00:00';
-      countdownUrgent.value = true;
-      stopCountdown();
-      return;
-    }
-    const totalSeconds = Math.floor(remainMs / 1000);
-    const mm = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
-    const ss = String(totalSeconds % 60).padStart(2, '0');
-    countdownText.value = `${mm}:${ss}`;
-    countdownUrgent.value = remainMs <= 5 * 60 * 1000;
-  };
-  tick();
-  countdownTimer = setInterval(tick, 1000);
-}
-
-function stopCountdown(): void {
-  if (countdownTimer !== null) {
-    clearInterval(countdownTimer);
-    countdownTimer = null;
-  }
-}
-
 /** 「再约一个」复位到第 1 步（保留介质输入），清出票与倒计时 */
 function onBookAgain(): void {
   stopCountdown();
-  ticket.value = null;
-  selectedPool.value = null;
-  pools.value = [];
-  ticketError.value = '';
+  resetTicket();
+  resetPools();
   void scrollStepIntoView('step-identity');
 }
-
-onBeforeUnmount(() => {
-  stopCountdown();
-});
 </script>
 
 <template>

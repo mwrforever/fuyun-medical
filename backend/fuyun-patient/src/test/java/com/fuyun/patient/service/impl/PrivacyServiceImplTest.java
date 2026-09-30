@@ -3,9 +3,11 @@ package com.fuyun.patient.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -19,6 +21,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.CareRelationQuery;
 import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.dto.PrivacyAccessLogQuery;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PrivacyAccessLog;
@@ -26,11 +29,12 @@ import com.fuyun.patient.enums.MaskTargetField;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.mapper.PrivacyAccessLogMapper;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -43,16 +47,18 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.HttpStatus;
 
 /**
  * 明文查阅与留痕服务单测（FU-M02-06 双留痕出口）：403 无豁免前置拒绝不落台账、豁免放行台账落痕、
- * 档案不存在守卫、台账空页与词表收口抛错；明文值断言仅存活于用例内，日志红线（禁打印明文）由实现保证。
+ * 档案不存在守卫、台账空页/分页条数收敛 1-200（检索条件编排归本层）与词表收口抛错；明文值断言
+ * 仅存活于用例内，日志红线（禁打印明文）由实现保证。
  */
 @ExtendWith(MockitoExtension.class)
 class PrivacyServiceImplTest {
 
     @Mock
-    private PrivacyMaskService privacyMaskService;
+    private IPrivacyMaskService privacyMaskService;
 
     @Mock
     private IPatientService patientService;
@@ -107,7 +113,7 @@ class PrivacyServiceImplTest {
     @Test
     @DisplayName("明文查阅无豁免角色：PAT-1018 403 前置拒绝，不触档案不落查阅台账（留痕归审计 FAIL 行）")
     void unmaskWithoutExemptRoleRejectedBeforeAnyTrace() {
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(false);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection())).thenReturn(Set.of());
 
         assertThatThrownBy(() -> privacyService.unmask(new UnmaskRequest(5L, List.of("idCardNo"), "临床核验")))
                 .isInstanceOf(BizException.class)
@@ -122,7 +128,9 @@ class PrivacyServiceImplTest {
     @Test
     @DisplayName("明文查阅豁免放行：全词表五字段解密直出，台账落 UNMASK_QUERY 行（操作人/目的/字段/traceId null 安全）")
     void unmaskWithExemptRoleReturnsPlaintextAndWritesLedger() {
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(true);
+        // 桩面机械迁移（OPT-11）：全字段统一豁免=原 isExempt 恒 true 语义的批量等价
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
         when(patientService.getById(5L)).thenReturn(patient());
         when(crypto.decrypt("card-cipher")).thenReturn("110101199003077890");
         when(crypto.decrypt("mobile-cipher")).thenReturn("13800001234");
@@ -156,7 +164,8 @@ class PrivacyServiceImplTest {
     @Test
     @DisplayName("明文查阅档案不存在：PAT-1001 404 拒绝且不落台账（无查阅事实）")
     void unmaskMissingArchiveRejectedAndNoLedgerRow() {
-        when(privacyMaskService.isExempt(anyList(), anyString())).thenReturn(true);
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
         when(patientService.getById(5L)).thenReturn(null);
 
         assertThatThrownBy(() -> privacyService.unmask(new UnmaskRequest(5L, List.of("name"), "临床核验")))
@@ -165,6 +174,21 @@ class PrivacyServiceImplTest {
                 .isEqualTo(PatientErrorCode.PATIENT_NOT_FOUND);
 
         verify(privacyAccessLogMapper, never()).insert(any(PrivacyAccessLog.class));
+    }
+
+    @Test
+    @DisplayName("豁免判定恰一次批量调用：多字段查阅与字段数解耦（不再逐字段单查 isExempt）")
+    void unmaskResolvesExemptionInSingleBatchCallRegardlessOfFieldCount() {
+        when(privacyMaskService.exemptFields(anyList(), anyCollection()))
+                .thenAnswer(inv -> Set.copyOf(inv.getArgument(1)));
+        when(patientService.getById(5L)).thenReturn(patient());
+
+        privacyService.unmask(
+                new UnmaskRequest(5L, List.of("name", "idCardNo", "mobile", "address", "birthDate"), "临床核验"));
+
+        // 五字段批量豁免判定恰一次（OPT-11 解耦锚定）；逐字段单查面零触达
+        verify(privacyMaskService, times(1)).exemptFields(anyList(), anyCollection());
+        verify(privacyMaskService, never()).isExempt(anyList(), anyString());
     }
 
     @Test
@@ -177,7 +201,7 @@ class PrivacyServiceImplTest {
             return page;
         });
 
-        PageResult<PrivacyAccessLogVO> result = privacyService.listAccessLogs(5L, 0, 20);
+        PageResult<PrivacyAccessLogVO> result = privacyService.listAccessLogs(new PrivacyAccessLogQuery(5L, 0, 20));
 
         assertThat(result.content()).isEmpty();
         assertThat(result.page()).isZero();
@@ -186,8 +210,38 @@ class PrivacyServiceImplTest {
     }
 
     @Test
-    @DisplayName("词表收口：未知落库词经 MaskTargetField.ofColumn 抛 IllegalArgumentException（脏数据显式暴露）")
+    @DisplayName("查阅台账分页条数收敛：越界 size 收敛 1-200（500→200、0→1），收敛值直达分页查询与回显")
+    void listAccessLogsClampsPageSizeIntoBoundedRange() {
+        when(privacyAccessLogMapper.selectPage(any(), any())).thenAnswer(inv -> {
+            Page<PrivacyAccessLog> page = inv.getArgument(0);
+            page.setRecords(List.of());
+            page.setTotal(0);
+            return page;
+        });
+
+        PageResult<PrivacyAccessLogVO> oversized =
+                privacyService.listAccessLogs(new PrivacyAccessLogQuery(null, 0, 500));
+        PageResult<PrivacyAccessLogVO> undersized =
+                privacyService.listAccessLogs(new PrivacyAccessLogQuery(null, 0, 0));
+
+        // 收敛后值直达 MP 分页（防超大单页拖库），并按收敛口径回显出参
+        ArgumentCaptor<Page<PrivacyAccessLog>> captor = ArgumentCaptor.forClass(Page.class);
+        verify(privacyAccessLogMapper, times(2)).selectPage(captor.capture(), any());
+        assertThat(captor.getAllValues()).extracting(Page::getSize).containsExactly(200L, 1L);
+        assertThat(oversized.size()).isEqualTo(200);
+        assertThat(undersized.size()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("词表收口：未知落库词经 MaskTargetField.ofColumn 抛 PAT-1025/400（EX-19 A 类收口，脏数据显式暴露）")
     void ofColumnThrowsOnUnknownWord() {
-        assertThatThrownBy(() -> MaskTargetField.ofColumn("unknown")).isInstanceOf(IllegalArgumentException.class);
+        // D-21 断言语义迁移（EX-19 收口）：原锚裸 IllegalArgumentException，随 ofColumn 转 BizException
+        // 升级锚定错误码 PAT-1025 与 400 状态（严格度不低于原断言）
+        assertThatThrownBy(() -> MaskTargetField.ofColumn("unknown"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("未知脱敏目标字段落库词")
+                .satisfies(e ->
+                        assertThat(((BizException) e).getErrorCode().getCode()).isEqualTo("PAT-1025"))
+                .satisfies(e -> assertThat(((BizException) e).getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
     }
 }

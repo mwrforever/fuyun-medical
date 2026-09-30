@@ -90,6 +90,7 @@
 
 **REST（节选）**：
 - `POST /api/v1/system/auth/login|logout|refresh`
+- `POST /api/v1/system/auth/bigscreen-token`（匿名白名单：按大屏哨兵会话签发 5 分钟短期单 access 订阅令牌，供 web-bigscreen /ws/outpatient STOMP CONNECT 帧鉴权运行期获取——BUG-19 删除构建期 VITE_ 内联；与 HTTP 认证共用校验链的过渡态随 P2 WS 通道演进收敛，锚 TASK.md W-39）
 - `GET/POST/PUT /api/v1/system/orgs|users|roles|grants`（管理端 CRUD）
 - `POST /api/v1/system/practice/check`（业务校验，被 M03/M04/M06/M10 高频调用）
 - `GET /api/v1/system/dicts/{type}?version=`（业务读字典，带缓存头）

@@ -2,6 +2,7 @@ package com.fuyun.outpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -9,6 +10,7 @@ import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.api.ScheduleStoppedPayload;
 import com.fuyun.outpatient.cache.PoolRedisGate;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.ScheduleConverter;
 import com.fuyun.outpatient.dto.ScheduleGenerateRequest;
 import com.fuyun.outpatient.dto.SchedulePageQuery;
 import com.fuyun.outpatient.dto.ScheduleTemplateSaveRequest;
@@ -26,15 +28,18 @@ import com.fuyun.outpatient.service.IScheduleService;
 import com.fuyun.outpatient.vo.NumberPoolVO;
 import com.fuyun.outpatient.vo.ScheduleTemplateVO;
 import com.fuyun.outpatient.vo.ScheduleVO;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.ibatis.exceptions.PersistenceException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
@@ -62,6 +67,12 @@ public class ScheduleServiceImpl implements IScheduleService {
 
     /** 单次加号数量上限（超出判 OP-1019；契约 @Max(50) 与服务端双层校验） */
     private static final int EXTRA_QUOTA_MAX = 50;
+
+    /**
+     * 排班唯一约束名（uk_schedule：template_id+sched_date+session 部分唯一索引，DDL 见
+     * V200__create_schedule_and_pool.sql）——批写原生异常解包判定的约束名依据（SQLState 缺失时兜底）
+     */
+    private static final String UNIQUE_KEY_SCHEDULE = "uk_schedule";
 
     /** 池键 TTL 锚点时刻：排班日次日 02:00（Redis↔池行每日对账窗口缓冲，A.5-1） */
     private static final LocalTime POOL_KEY_TTL_ANCHOR = LocalTime.of(2, 0);
@@ -98,6 +109,15 @@ public class ScheduleServiceImpl implements IScheduleService {
         this.poolRedisGate = poolRedisGate;
     }
 
+    /**
+     * 保存排班模板（id 空=登记 ACTIVE 模板；非空=按 id 全量覆盖请求面字段，契约见接口 javadoc）。
+     * 实现要点：号段起止倒挂服务端显式拒绝（OP-1019，库端 CHECK 为最终防线）；更新 0 行=模板
+     * 不存在判 OP-1004。
+     *
+     * @param request 保存请求，非空；来源：ScheduleController 模板维护端点（已过 JSR-303 校验）
+     * @return 保存后的模板出参（登记路径含回填 id），非空
+     * @throws BizException OP-1019/400 slotStart 不早于 slotEnd；OP-1004/409 更新时模板不存在
+     */
     @Override
     @Transactional
     public ScheduleTemplateVO saveTemplate(ScheduleTemplateSaveRequest request) {
@@ -125,6 +145,7 @@ public class ScheduleServiceImpl implements IScheduleService {
             template.setStatus(TEMPLATE_STATUS_ACTIVE);
             template.setCreatedBy(operator);
             template.setUpdatedBy(operator);
+            // 数据库写操作：排班模板登记落库（id 空=登记路径，新建初始态 ACTIVE；放号展开取此为母本）
             scheduleTemplateMapper.insert(template);
             log.info(
                     "排班模板已创建：templateId={}，deptCode={}，doctorId={}，weekPattern={}",
@@ -149,9 +170,17 @@ public class ScheduleServiceImpl implements IScheduleService {
                     template.getDeptCode(),
                     template.getDoctorId());
         }
-        return toTemplateVO(template);
+        return ScheduleConverter.INSTANCE.toTemplateVO(template);
     }
 
+    /**
+     * 排班模板分页清单（id 升序唯一顺序，契约见接口 javadoc）。实现要点：API 契约 0 基页码与
+     * MP Page 1 基归一（入参 +1 平移、出参回显 0 基）。
+     *
+     * @param page 页码（0 基），来源：清单端点查询参数（缺省 0）
+     * @param size 单页条数，来源：清单端点查询参数（缺省 20）
+     * @return 分页出参 {content,page,size,total}，非空；无数据返回空 content
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<ScheduleTemplateVO> listTemplates(int page, int size) {
@@ -160,9 +189,25 @@ public class ScheduleServiceImpl implements IScheduleService {
                 new Page<>(page + 1L, size),
                 Wrappers.<ScheduleTemplate>lambdaQuery().orderByAsc(ScheduleTemplate::getId));
         return PageResult.of(
-                result.getRecords().stream().map(this::toTemplateVO).toList(), page, size, result.getTotal());
+                result.getRecords().stream()
+                        .map(ScheduleConverter.INSTANCE::toTemplateVO)
+                        .toList(),
+                page,
+                size,
+                result.getTotal());
     }
 
+    /**
+     * T+N 放号生成（契约见接口 javadoc）：ACTIVE 模板按 week_pattern 位串×日期窗口
+     * [endDate-(days-1), endDate] 展开排班日历+号源池行+池键预热。实现要点：窗口内已存在
+     * 排班键循环前预过滤幂等跳过（warn 留痕，重放零插入）；生成行装配后集中两次批写（EX-37：排班批+
+     * 池行批各一次 saveBatch，替代循环内逐条 insert；排班批 ASSIGN_ID 回填主键后按平行序回填池行
+     * 外键）；预过滤后并发 uk 冲突抛 OP-1004 整批回滚（PG 事务 aborted 语义禁循环内捕获续跑）。
+     *
+     * @param request 放号请求，非空；endDate 为窗口截止日、days 为窗口天数
+     * @return 本次实际生成排班行数（预过滤跳过不计入）
+     * @throws BizException OP-1004/409 并发放号冲突（整批已回滚，重试即幂等）
+     */
     @Override
     @Transactional
     public int generate(ScheduleGenerateRequest request) {
@@ -184,6 +229,10 @@ public class ScheduleServiceImpl implements IScheduleService {
                 .collect(Collectors.toSet());
         String operator = OperatorContextHolder.get();
         int generated = 0;
+        // 批写暂存（EX-37）：排班与池行按生成序平行列表暂存（Entity←Entity 装配块维持现状，仅逐条
+        // insert 迁出循环）；两列表同长同序——批写一回填的排班主键按平行序与池行一一对应
+        List<Schedule> schedules = new ArrayList<>();
+        List<ApptNumberPool> pools = new ArrayList<>();
         for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
             for (ScheduleTemplate template : templates) {
                 if (!matchesWeekAndValidity(template, date)) {
@@ -210,24 +259,8 @@ public class ScheduleServiceImpl implements IScheduleService {
                 schedule.setRoom(template.getRoom());
                 schedule.setCreatedBy(operator);
                 schedule.setUpdatedBy(operator);
-                try {
-                    // 数据库写操作：排班日历行落库；此处 uk 冲突=预过滤后的并发放号抢先落行（窗口外竞态）
-                    scheduleMapper.insert(schedule);
-                } catch (DuplicateKeyException e) {
-                    // PG 事务 aborted 语义：冲突后本事务后续语句全部拒续，不得继续循环——抛业务异常
-                    // 整批回滚（@Transactional 生效），调用方重试即走预过滤幂等路径
-                    log.warn(
-                            "放号并发冲突整批回滚：templateId={}，schedDate={}，session={}",
-                            template.getId(),
-                            date,
-                            template.getSession());
-                    throw new BizException(
-                            OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
-                            HttpStatus.CONFLICT,
-                            "放号并发冲突，整批已回滚请重试：schedDate=" + date);
-                }
                 ApptNumberPool pool = new ApptNumberPool();
-                pool.setScheduleId(schedule.getId());
+                // 外键 schedule_id 留待批写一回填排班主键后按平行序回填（原逐条 insert 后即取 id 的等价迁移）
                 pool.setApptType(template.getApptType());
                 pool.setSlotStart(template.getSlotStart());
                 pool.setSlotEnd(template.getSlotEnd());
@@ -235,17 +268,60 @@ public class ScheduleServiceImpl implements IScheduleService {
                 pool.setChannelQuota(DEFAULT_CHANNEL_QUOTA);
                 pool.setCreatedBy(operator);
                 pool.setUpdatedBy(operator);
-                // 数据库写操作：号源池行落库（used_count/version 走库默认 0）
-                apptNumberPoolMapper.insert(pool);
-                // 缓存写操作：池键预热 SET total+TTL（预约抢号第一道闸自本调用起生效）
-                poolRedisGate.prime(pool.getId(), pool.getTotalQuota(), poolKeyTtl(date));
+                schedules.add(schedule);
+                pools.add(pool);
                 generated++;
+            }
+        }
+        // 幂等全跳过（generated=0）零批写零预热——与原重放零插入语义对齐
+        if (generated > 0) {
+            try {
+                // 数据库批量写一：排班日历一次批插（Db.saveBatch：JDBC 批处理+ASSIGN_ID 批写回填主键，
+                // 先例 DispenseServiceImpl A.4.3-16）；此处 uk 冲突=预过滤后的并发放号抢先落行（窗口外竞态）
+                Db.saveBatch(schedules);
+                // 池行外键回填：批一回填的排班主键按平行序写入（两列表同长同序）
+                for (int i = 0; i < schedules.size(); i++) {
+                    pools.get(i).setScheduleId(schedules.get(i).getId());
+                }
+                // 数据库批量写二：号源池行一次批插（used_count/version 走库默认 0）
+                Db.saveBatch(pools);
+                // 缓存写操作：池键预热 SET total+TTL（预约抢号第一道闸自本调用起生效）；TTL 各锚
+                // 排班日次日 02:00 对账窗口（A.5-1），逐键不可批，按生成序执行
+                for (int i = 0; i < pools.size(); i++) {
+                    poolRedisGate.prime(
+                            pools.get(i).getId(),
+                            pools.get(i).getTotalQuota(),
+                            poolKeyTtl(schedules.get(i).getSchedDate()));
+                }
+            } catch (DuplicateKeyException e) {
+                // PG 事务 aborted 语义：批写任一语句 uk 冲突后本事务后续语句全部拒续，不得续跑——抛
+                // 业务异常整批回滚（@Transactional 生效），调用方重试即走预过滤幂等路径（Spring 环境下
+                // 批写冲突经 MyBatisExceptionTranslator 以 DuplicateKeyException 冒出，原逐条语义保持）
+                throw scheduleConflictRolledBack(start, end);
+            } catch (PersistenceException e) {
+                // MyBatis 原生批处理异常（EX-37 并发回归修复，N5 验收场景 3a）：Db.saveBatch 经
+                // MybatisBatch.flushStatements 抛出的 PersistenceException 不经 Spring 异常翻译链
+                // （翻译仅覆盖 SqlSessionTemplate 常规执行路径），沿 cause 链解包找 SQLException
+                // （BatchUpdateException 等）按 SQLState 23xxx/约束名 uk_schedule 判定唯一冲突——
+                // 命中转 409 与翻译型分支同语义；非唯一冲突原样上抛（不吞连接类等其他异常，交全局
+                // 处理器按系统异常定性）
+                if (isUniqueConstraintViolation(e)) {
+                    throw scheduleConflictRolledBack(start, end);
+                }
+                throw e;
             }
         }
         log.info("放号生成完成：endDate={}，days={}，模板数={}，生成排班={}", end, request.days(), templates.size(), generated);
         return generated;
     }
 
+    /**
+     * 排班日历分页清单（sched_date+id 双列升序保证跨页唯一顺序，契约见接口 javadoc）；
+     * deptCode/dateFrom/dateTo 均为可选过滤。
+     *
+     * @param query 查询对象（过滤条件+分页参数），非空
+     * @return 分页出参 {content,page,size,total}，非空；无匹配返回空 content
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<ScheduleVO> listSchedules(SchedulePageQuery query) {
@@ -263,12 +339,22 @@ public class ScheduleServiceImpl implements IScheduleService {
                         .orderByAsc(Schedule::getSchedDate)
                         .orderByAsc(Schedule::getId));
         return PageResult.of(
-                result.getRecords().stream().map(this::toScheduleVO).toList(),
+                result.getRecords().stream()
+                        .map(ScheduleConverter.INSTANCE::toScheduleVO)
+                        .toList(),
                 query.page(),
                 query.size(),
                 result.getTotal());
     }
 
+    /**
+     * 停诊（契约见接口 javadoc）：schedule CAS NORMAL→STOPPED + 整池行批量 STOPPED + 事务内
+     * 发布 schedule.stopped（AFTER_COMMIT 出 MQ，已约患者改期/退费联动依据）。
+     *
+     * @param scheduleId 排班主键；来源：stop 端点路径参数
+     * @param reason     停诊原因（事件与 stop_reason 留痕载体），非空
+     * @throws BizException OP-1004/409 排班不存在或状态违例（CAS 0 行）
+     */
     @Override
     @Transactional
     public void stop(long scheduleId, String reason) {
@@ -304,6 +390,14 @@ public class ScheduleServiceImpl implements IScheduleService {
                 operator);
     }
 
+    /**
+     * 恢复停诊（契约见接口 javadoc）：过期排班（sched_date 早于当日）拒绝——号源已无业务价值；
+     * schedule CAS STOPPED→NORMAL + 整池行批量迁回 ACTIVE。恢复无事件面（schedule.stopped
+     * 仅停诊方向发布）。
+     *
+     * @param scheduleId 排班主键；来源：resume 端点路径参数
+     * @throws BizException OP-1004/409 排班不存在、已过期或状态违例（CAS 0 行）
+     */
     @Override
     @Transactional
     public void resume(long scheduleId) {
@@ -336,6 +430,15 @@ public class ScheduleServiceImpl implements IScheduleService {
                 operator);
     }
 
+    /**
+     * 可约号源查询（余量对外查询，供全渠道与 M18 复用，契约见接口 javadoc）：仅 ACTIVE 且
+     * used_count&lt;total_quota 行（谓词由 mapper 注解 SQL 承载），slot_start 升序。
+     *
+     * @param deptCode 开诊科室编码，非空；来源：可约号源查询端点入参
+     * @param date     排班日期，非空；来源：可约号源查询端点入参
+     * @param apptType 号别过滤，可空（null=全部号别）；来源：可约号源查询端点入参
+     * @return 可约池行出参集（含服务端计算余量 remaining），非空；无可约号源返回空列表
+     */
     @Override
     @Transactional(readOnly = true)
     public List<NumberPoolVO> availablePools(String deptCode, LocalDate date, ApptType apptType) {
@@ -355,6 +458,15 @@ public class ScheduleServiceImpl implements IScheduleService {
                 .toList();
     }
 
+    /**
+     * 加号授权（契约见接口 javadoc）：池行 total_quota 增量 count（CAS 条件更新，预约余量谓词
+     * 自然放行加号段），加号占用计数走 extra_used；CAS 命中后同步对池键 INCRBY count 并续期
+     * TTL（快路径立即可约，键缺失跳过不造凭空键）。
+     *
+     * @param poolId 池行主键；来源：extra-quota 端点路径参数
+     * @param count  加号数量（1~50，契约与服务端双层校验）
+     * @throws BizException OP-1019/400 count 越界；OP-1002/404 池行不存在或非 ACTIVE
+     */
     @Override
     @Transactional
     public void extraQuota(long poolId, int count) {
@@ -397,6 +509,51 @@ public class ScheduleServiceImpl implements IScheduleService {
     }
 
     /**
+     * 放号并发冲突业务异常构造（翻译型 DuplicateKeyException 分支与原生批处理
+     * PersistenceException 分支共用出参，单一来源保证同错误码同状态码同文案）：PG 事务 aborted
+     * 语义下整批已回滚，调用方重试即走预过滤幂等路径。
+     *
+     * @param start 放号窗口起始日（endDate-days+1 推算），非空
+     * @param end   放号窗口截止日（请求 endDate 原值），非空
+     * @return OP-1004/409 业务异常（窗口期文案），由调用方直接抛出
+     */
+    private BizException scheduleConflictRolledBack(LocalDate start, LocalDate end) {
+        // 竞态输家的预期路径（非系统故障）：warn 留痕窗口区间，供对账放号重放排查
+        log.warn("放号并发冲突整批回滚：window={}~{}", start, end);
+        return new BizException(
+                OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
+                HttpStatus.CONFLICT,
+                "放号并发冲突，整批已回滚请重试：window=" + start + "~" + end);
+    }
+
+    /**
+     * 沿 cause 链解包判定唯一约束冲突：Db.saveBatch 批处理 uk 冲突以 MyBatis 原生
+     * PersistenceException 冒出（cause 链含 BatchUpdateException，实测链形态见 N5 验收场景
+     * 3a），二选一命中即判唯一冲突——SQLState 23xxx（完整性约束违例类，PG 唯一冲突 23505
+     * 属之）或异常消息携带排班唯一约束名 uk_schedule（SQLState 缺失时兜底）。
+     *
+     * @param e 批写冒出的 MyBatis 原生持久化异常，非空
+     * @return true=唯一约束冲突（转放号并发冲突 409）；false=其他异常形态（调用方原样上抛）
+     */
+    private boolean isUniqueConstraintViolation(PersistenceException e) {
+        // 逐层解包（getCause 自引用场景 JDK 保证返回 null，循环天然终止）：约束冲突语义只承载在
+        // SQLException 节点（BatchUpdateException/SQLIntegrityConstraintViolationException 均其子类）
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current instanceof SQLException sqlException) {
+                String sqlState = sqlException.getSQLState();
+                if (sqlState != null && sqlState.startsWith("23")) {
+                    return true;
+                }
+                if (sqlException.getMessage() != null
+                        && sqlException.getMessage().contains(UNIQUE_KEY_SCHEDULE)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * 模板×日期匹配判定：生效窗口含当日（eff_from &lt;= date &lt;= eff_to，eff_to 空=长期）且
      * week_pattern 对应星期位为 1。week_pattern 位序周一~周日与 DayOfWeek（周一=1~周日=7）对齐。
      *
@@ -434,52 +591,5 @@ public class ScheduleServiceImpl implements IScheduleService {
      */
     private Duration poolKeyTtl(LocalDate schedDate) {
         return Duration.between(LocalDateTime.now(), schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
-    }
-
-    /**
-     * 实体 → 模板出参投影。
-     *
-     * @param template 排班模板实体，非空
-     * @return 模板出参，非空
-     */
-    private ScheduleTemplateVO toTemplateVO(ScheduleTemplate template) {
-        return new ScheduleTemplateVO(
-                template.getId(),
-                template.getDeptCode(),
-                template.getDoctorId(),
-                template.getEffFrom(),
-                template.getEffTo(),
-                template.getWeekPattern(),
-                template.getSession(),
-                template.getApptType(),
-                template.getSlotStart(),
-                template.getSlotEnd(),
-                template.getSlotQuota(),
-                template.getRoom(),
-                template.getReleaseDays(),
-                template.getReleaseTime(),
-                template.getStatus());
-    }
-
-    /**
-     * 实体 → 排班出参投影。
-     *
-     * @param schedule 排班日历实体，非空
-     * @return 排班出参，非空
-     */
-    private ScheduleVO toScheduleVO(Schedule schedule) {
-        return new ScheduleVO(
-                schedule.getId(),
-                schedule.getTemplateId(),
-                schedule.getSchedDate(),
-                schedule.getSession(),
-                schedule.getDeptCode(),
-                schedule.getDoctorId(),
-                schedule.getApptType(),
-                schedule.getTotalQuota(),
-                schedule.getUsedQuota(),
-                schedule.getRoom(),
-                schedule.getStatus(),
-                schedule.getStopReason());
     }
 }

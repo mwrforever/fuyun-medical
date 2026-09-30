@@ -43,8 +43,10 @@ import com.fuyun.nursing.vo.WardPatientDetailVO;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -135,6 +137,8 @@ class VitalSignServiceImplTest {
         service =
                 new VitalSignServiceImpl(vitalMapper, wardMetaService, recordService, chartService, events, txManager);
         ReflectionTestUtils.setField(service, "baseMapper", vitalMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", VitalSignRecord.class);
         OperatorContextHolder.set("nurse-01");
     }
 
@@ -520,6 +524,34 @@ class VitalSignServiceImplTest {
                 .doesNotContain("measured_at >=")
                 .contains("ORDER BY")
                 .contains("measured_at");
+    }
+
+    @Test
+    @DisplayName("查询窗时区锚（BUG-03）：JVM 默认时区为 UTC（未注入 TZ 的容器基底）时，from/to 窗口边界仍按北京时区 +08:00 偏移绑定")
+    void listByPatientWindowBindsBeijingZoneUnderUtcDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 复现缺陷环境：镜像基底 eclipse-temurin:17-jre 默认 UTC，窗口边界偏移随 systemDefault 漂移
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            when(vitalMapper.selectList(any())).thenReturn(List.of());
+
+            // 北京时区 2026-09-22 当日窗 [00:00+08, 次日 00:00+08) 的时刻形态（UTC 16:00 前一日）
+            service.listByPatient(7L, Instant.parse("2026-09-21T16:00:00Z"), Instant.parse("2026-09-22T16:00:00Z"));
+
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            verify(vitalMapper).selectList(queryCaptor.capture());
+            LambdaQueryWrapper<VitalSignRecord> wrapper = rendered(queryCaptor.getValue());
+            assertThat(wrapper.getParamNameValuePairs().values())
+                    .contains(
+                            Instant.parse("2026-09-21T16:00:00Z")
+                                    .atZone(beijing)
+                                    .toOffsetDateTime(),
+                            Instant.parse("2026-09-22T16:00:00Z")
+                                    .atZone(beijing)
+                                    .toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

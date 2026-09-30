@@ -2,6 +2,7 @@ package com.fuyun.inpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -22,14 +23,14 @@ import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
-import com.fuyun.inpatient.mapper.InpatientVisitMapper;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
-import com.fuyun.inpatient.service.MedicalOrderService;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IMedicalOrderService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
 import com.fuyun.inpatient.vo.OrderItemVO;
@@ -59,14 +60,14 @@ import org.springframework.transaction.annotation.Transactional;
  * 驳回重提面（resubmit，Task 6）：作废重开路径的轻量变体——头值面与明细行直接更新 + 状态机
  * 回 CREATED + 重发 order.created（M06 重开审方任务）+ 审核链重入；仅限 AUDIT_REJECTED 态。
  * 停嘱面（stop/stopAllForTransfer 共用 stopInternal）：状态机迁移 STOPPED（唯一执行面
- * OrderStateMachineService，合法态 AUDITED/TRANSFERRED/EXECUTING）+ 停嘱时点/原因落值 +
+ * IOrderStateMachineService，合法态 AUDITED/TRANSFERRED/EXECUTING）+ 停嘱时点/原因落值 +
  * 未来计划批量作废（V906 order_execute_plan 落库——Task 7 回接：停嘱时点后的 PENDING 计划
  * 批量置 CANCELLED）+ stopped 事件（V800 id 44 载荷）。
  * 转科停嘱失败异常传播整体回滚编排事务（接口契约）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
-public class MedicalOrderServiceImpl implements MedicalOrderService {
+public class MedicalOrderServiceImpl implements IMedicalOrderService {
 
     /** 执业授权类型：开单类（pharmacy 开方链同口径——PracticeCheckPort grantType 词表首值） */
     private static final String GRANT_PRESCRIPTION = "PRESCRIPTION";
@@ -86,7 +87,7 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     private final OrderExecutePlanMapper planMapper;
 
-    private final InpatientVisitMapper visitMapper;
+    private final InpatientVisitAccessor visitAccessor;
 
     private final InpatientSeqGate seqGate;
 
@@ -94,11 +95,11 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
 
     private final AllergyChecker allergyChecker;
 
-    private final OrderStateMachineService stateMachine;
+    private final IOrderStateMachineService stateMachine;
 
     private final ApplicationEventPublisher events;
 
-    private final OrderAuditService orderAuditService;
+    private final IOrderAuditService orderAuditService;
 
     /**
      * 全参构造器（装配归 InpatientWebConfig @Import——Task 5 落地后闭合 Task 4 预注入的
@@ -109,7 +110,7 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
      * @param itemMapper        医嘱明细 mapper，非空
      * @param frequencyMapper   频次字典 mapper，非空；频次有效性校验（IP-1021）
      * @param planMapper        执行计划 mapper，非空；停嘱联动未来计划批量作废（Task 7 回接面）
-     * @param visitMapper       住院就诊 mapper，非空；在院校验与 visitId 号映射
+     * @param visitAccessor     住院就诊共享访问器（EX-44 下沉），非空；在院校验与 visitId 号映射
      * @param seqGate           住院业务号发号器（MO 医嘱号），非空
      * @param practiceCheckPort 执业授权校验端口（system api），非空；L1 承载
      * @param allergyChecker    过敏项校验端口（patient api），非空；L2 承载
@@ -122,18 +123,18 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             MedicalOrderItemMapper itemMapper,
             OrderFrequencyMapper frequencyMapper,
             OrderExecutePlanMapper planMapper,
-            InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
             PracticeCheckPort practiceCheckPort,
             AllergyChecker allergyChecker,
-            OrderStateMachineService stateMachine,
+            IOrderStateMachineService stateMachine,
             ApplicationEventPublisher events,
-            OrderAuditService orderAuditService) {
+            IOrderAuditService orderAuditService) {
         this.orderMapper = orderMapper;
         this.itemMapper = itemMapper;
         this.frequencyMapper = frequencyMapper;
         this.planMapper = planMapper;
-        this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.practiceCheckPort = practiceCheckPort;
         this.allergyChecker = allergyChecker;
@@ -154,8 +155,8 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     @Override
     @Transactional
     public MedicalOrderVO create(String visitId, OrderCreateRequest req) {
-        // 守卫链⓪：就诊定位与在院态校验（出院/作废就诊禁开立）
-        InpatientVisit visit = requireVisit(visitId);
+        // 守卫链⓪：就诊定位与在院态校验（出院/作废就诊禁开立；load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
             throw new BizException(
                     InpatientErrorCode.VISIT_STATE_NOT_ALLOWED,
@@ -199,7 +200,7 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
         } catch (DuplicateKeyException e) {
             throw new BizException(InpatientErrorCode.CONFLICT, HttpStatus.CONFLICT, "医嘱号唯一冲突（幂等拒绝）：" + orderNo);
         }
-        // 子表逐行落库：item_seq 按列表序 1 起递增（服务层单一写入口保证组内唯一），布尔缺省回填
+        // 子表一次批插落库：item_seq 按列表序 1 起递增（服务层单一写入口保证组内唯一），布尔缺省回填
         List<MedicalOrderItem> savedItems = saveItems(order, req.items(), operator);
         // 事务内发布开立事件（与驳回重提面共用发布链——publishOrderCreated 收口）
         publishOrderCreated(order, visitId, orderType, orderClass, req, savedItems);
@@ -234,7 +235,8 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     @Transactional(readOnly = true)
     public PageResult<MedicalOrderVO> list(String visitId, OrderClass clazz, int page, int size) {
         // 查询键校验（就诊号必填——住院医嘱视图以就诊为轴）兼出参 visitId 号映射取数
-        InpatientVisit visit = requireVisit(visitId);
+        // （load+check 经共享访问器——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         // 分类条件缺席即全分类（null.getCode() 惰性求值防护：先取值再进条件）
         String classCode = clazz == null ? null : clazz.getCode();
         // 数据库读操作：分页（0 基请求转 MP 1 基 current；Wrappers 直构范式同 AdmissionServiceImpl）
@@ -264,12 +266,9 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     @Transactional(readOnly = true)
     public OrderDetailVO detail(String orderNo) {
         MedicalOrder order = requireOrder(orderNo);
-        // 出参 visitId 号映射（表内存 inpatient_visit 主键，出参转 I 型 14 位号）
-        InpatientVisit visit = visitMapper.selectById(order.getVisitId());
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "医嘱关联住院就诊不存在（数据不一致）：" + orderNo);
-        }
+        // 出参 visitId 号映射（表内存 inpatient_visit 主键，出参转 I 型 14 位号；未命中 IP-1007
+        // 数据不一致——load+check 经共享访问器，文案参数化保持对外契约零变化——EX-44）
+        InpatientVisit visit = visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：" + orderNo);
         // 数据库读操作：明细行全集（item_seq 升序）
         List<OrderItemVO> items = itemMapper
                 .selectList(Wrappers.<MedicalOrderItem>lambdaQuery()
@@ -308,12 +307,9 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     @Override
     @Transactional
     public void stopAllForTransfer(Long visitId, String reason) {
-        // 就诊定位（出参/事件 visitId 号映射面；不存在定性 IP-1007——编排调用前已校验，此处防御）
-        InpatientVisit visit = visitMapper.selectById(visitId);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：visitId(pk)=" + visitId);
-        }
+        // 就诊定位（出参/事件 visitId 号映射面；不存在定性 IP-1007——编排调用前已校验，此处防御；
+        // load+check 经共享访问器，文案参数化保持对外契约零变化——EX-44）
+        InpatientVisit visit = visitAccessor.requireByPk(visitId, "住院就诊不存在：visitId(pk)=" + visitId);
         // 转科停嘱面：长期（order_class=long）且处可停态（AUDITED/TRANSFERRED/EXECUTING）全集；
         // CREATED/AUDIT_REJECTED 停留中的医嘱不在停嘱面（状态机合法迁移表无 CREATED→STOPPED 边，
         // 04 Spec §3.3 冻结），转科后由审核链自然收敛
@@ -595,7 +591,10 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
     }
 
     /**
-     * 子表逐行落库：item_seq 按列表序 1 起递增（服务层生成，禁前端错序），布尔缺省回填 false。
+     * 子表一次批插落库：item_seq 按列表序 1 起递增（服务层生成，禁前端错序），布尔缺省回填
+     * false。明细行集一次 saveBatch 批插（EX-37：JDBC 批处理替代逐行 insert，行集与行序
+     * 不变、ASSIGN_ID 自动填充 ID；本写面无状态 CAS/逐行 catch 语义——纯 INSERT 收拢零
+     * 对外行为变化；A.4.3-16 须在事务内调用，create/resubmit 均 @Transactional 承载）。
      *
      * @param order    医嘱主表行（已落库，id 已回填），非空
      * @param items    明细入参，非空
@@ -627,10 +626,11 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
             row.setFeeStopped(false);
             row.setCreatedBy(operator);
             row.setUpdatedBy(operator);
-            // 数据库写操作：明细行落库（与主表同事务成败与共）
-            itemMapper.insert(row);
             saved.add(row);
         }
+        // 数据库写操作：明细行一次批插（与主表同事务成败与共；先例 DispenseServiceImpl/
+        // PrescriptionServiceImpl——空集直过零 SQL，行集与行序与逐行 insert 完全一致）
+        Db.saveBatch(saved);
         return saved;
     }
 
@@ -689,16 +689,6 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
         return isBlank(item.getDosageUnit()) ? item.getDosage() : item.getDosage() + item.getDosageUnit();
     }
 
-    /** 按就诊号定位行（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisit(String visitId) {
-        InpatientVisit visit =
-                visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
-        return visit;
-    }
-
     /** 按医嘱号定位行（未命中定性 IP-1009；逻辑删由 @TableLogic 自动过滤）。 */
     private MedicalOrder requireOrder(String orderNo) {
         MedicalOrder order =
@@ -709,16 +699,14 @@ public class MedicalOrderServiceImpl implements MedicalOrderService {
         return order;
     }
 
-    /** 就诊主键→I 型号映射（事件载荷/出参 visitId 号口径；未命中定性 IP-1007 数据不一致）。 */
+    /**
+     * 就诊主键→I 型号映射（事件载荷/出参 visitId 号口径；未命中定性 IP-1007 数据不一致——
+     * load+check 经共享访问器承载，EX-44 下沉后本方法仅保留号映射语义）。
+     */
     private String visitNoOf(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit.getVisitId();
+        return visitAccessor
+                .requireByPk(visitPk, "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk)
+                .getVisitId();
     }
 
     /**

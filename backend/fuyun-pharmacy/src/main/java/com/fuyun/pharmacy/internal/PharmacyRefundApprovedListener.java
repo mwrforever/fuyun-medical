@@ -1,5 +1,6 @@
 package com.fuyun.pharmacy.internal;
 
+import com.fuyun.billing.api.SettlementQueryPort;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
@@ -30,7 +31,7 @@ public class PharmacyRefundApprovedListener {
     private final IDispenseService dispenseService;
 
     /** 结算单反查端口（处方号精确清单唯一载体，billing api 只读面），非空 */
-    private final com.fuyun.billing.api.SettlementQueryPort settlementQueryPort;
+    private final SettlementQueryPort settlementQueryPort;
 
     /**
      * 全参构造器（装配归 PharmacyMessagingConfig @Import；消费模板多候选 @Qualifier 定绑；
@@ -43,7 +44,7 @@ public class PharmacyRefundApprovedListener {
     public PharmacyRefundApprovedListener(
             @Qualifier("pharmacyConsumerSupport") IdempotentConsumerSupport consumerSupport,
             IDispenseService dispenseService,
-            com.fuyun.billing.api.SettlementQueryPort settlementQueryPort) {
+            SettlementQueryPort settlementQueryPort) {
         this.consumerSupport = consumerSupport;
         this.dispenseService = dispenseService;
         this.settlementQueryPort = settlementQueryPort;
@@ -73,6 +74,7 @@ public class PharmacyRefundApprovedListener {
         // settlementId 以数值承载，0 兜底值即不合规帧显式抛出进死信留痕
         long settlementId = envelope.payload().path("settlementId").asLong(0L);
         if (settlementId == 0L) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "退费审批回执载荷不合规（缺 settlementId）：eventType=" + envelope.eventType() + "，payload=" + envelope.payload());
         }

@@ -1,6 +1,8 @@
 package com.fuyun.patient.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.utils.SensitiveMasker;
 import com.fuyun.patient.api.PatientErrorCode;
@@ -8,21 +10,27 @@ import com.fuyun.patient.constants.PrivacyConstants;
 import com.fuyun.patient.dto.PrivacyMaskRuleUpdateRequest;
 import com.fuyun.patient.entity.PrivacyMaskRule;
 import com.fuyun.patient.mapper.PrivacyMaskRuleMapper;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.vo.PatientVO;
 import com.fuyun.patient.vo.PrivacyMaskRuleVO;
 import java.time.LocalDate;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 隐私脱敏引擎实现：规则行（enabled=TRUE）按 target_field 分派 SensitiveMasker/本地掩码；
- * 豁免判定 = 当前角色清单与规则 exempt_roles（逗号分隔）有交集。规则每次请求加载
- * （5 行量级、管理面变更即时生效；热点优化随压测演进，禁提前缓存）。
- * 规则维护（listRules/updateRule）同本类承载，落库后下轮请求加载即生效。
+ * 豁免判定 = 当前角色清单与规则 exempt_roles（逗号分隔）有交集。规则装载口径（OPT-11 消化
+ * 原设计豁免注释）：每请求从库装载、同请求内复用、禁跨请求缓存——管理面变更下轮请求即生效
+ * （5 行量级；全量 @Cacheable 属跨请求缓存，须另行评审，禁擅自引入）。
+ * 规则维护（listRules/updateRule）同本类承载，落库后下轮请求加载即生效；updateRule 入口
+ * 承载 SEC-01 ADMIN 门禁（非 ADMIN 一律 PAT-1024 403 前置拒绝，规则行零触达）。
  * 聚合型服务直用 mapper（A.4.3-20 末句），不设 IService。
  *
  * <p>展示侧口径（审查 I7，待计划审批确认）：applyAll 不做角色豁免——任何角色（含 ADMIN）经列表/详情
@@ -30,7 +38,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 的保守收窄，已在计划范围声明显式登记。
  */
 @Slf4j
-public class PrivacyMaskServiceImpl implements PrivacyMaskService {
+public class PrivacyMaskServiceImpl implements IPrivacyMaskService {
+
+    /** 脱敏规则维护的管理员角色编码（与 V303 sys_role 种子 ADMIN 对齐，SEC-01 门禁判定依据） */
+    private static final String MASK_RULE_ADMIN_ROLE = "ADMIN";
 
     private final PrivacyMaskRuleMapper ruleMapper;
 
@@ -69,10 +80,25 @@ public class PrivacyMaskServiceImpl implements PrivacyMaskService {
     @Override
     @Transactional(readOnly = true)
     public boolean isExempt(List<String> roles, String targetField) {
-        return ruleMapper.selectList(null).stream()
-                .filter(rule -> targetField.equals(rule.getTargetField()))
-                .filter(rule -> Boolean.TRUE.equals(rule.getEnabled()))
-                .anyMatch(rule -> intersects(roles, rule.getExemptRoles()));
+        return isExemptAgainst(loadExemptProjection(), roles, targetField);
+    }
+
+    /**
+     * 批量豁免判定（只读，明文查阅多字段场景）：规则单次装载内存复用，判定面规则
+     * 查询数与请求字段数解耦（OPT-11）；逐字段判定口径与 {@link #isExempt} 一致。
+     *
+     * @param roles        角色清单，非空
+     * @param targetFields 目标字段词清单，非空
+     * @return 豁免字段词集合（判定为豁免的词去重；空集=无任何字段豁免）
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Set<String> exemptFields(List<String> roles, Collection<String> targetFields) {
+        // 规则单次装载内存复用（OPT-11）：判定面查询数与请求字段数解耦，逐字段判定纯内存
+        List<PrivacyMaskRule> rules = loadExemptProjection();
+        return targetFields.stream()
+                .filter(field -> isExemptAgainst(rules, roles, field))
+                .collect(Collectors.toCollection(HashSet::new));
     }
 
     /**
@@ -87,16 +113,26 @@ public class PrivacyMaskServiceImpl implements PrivacyMaskService {
     }
 
     /**
-     * 规则维护（部分更新：非空字段覆盖库值；管理面变更经引擎每请求加载即时生效）。
+     * 规则维护（部分更新：非空字段覆盖库值；管理面变更经引擎每请求加载即时生效）。SEC-01 安全收口：
+     * 仅 ADMIN 角色可维护——规则维护属管理面配置写操作，若任意登录用户可改写 exemptRoles，即可
+     * 自授豁免再经 unmask 提权解密，故非 ADMIN 一律 PAT-1024 403 前置拒绝（规则行零触达；
+     * 拒绝由审计切面 FAIL 行留痕，与 unmask 403 同模式）。
      *
      * @param ruleCode 规则编码（业务唯一），非空
      * @param request  维护请求（部分更新语义），非空
      * @return 维护后规则出参，非空
-     * @throws BizException PAT-1021（404 规则编码无命中）
+     * @throws BizException PAT-1024（403 非 ADMIN 角色，SEC-01 门禁）/ PAT-1021（404 规则编码无命中）
      */
     @Override
     @Transactional
     public PrivacyMaskRuleVO updateRule(String ruleCode, PrivacyMaskRuleUpdateRequest request) {
+        // 权限校验：规则维护仅限 ADMIN（角色经认证拦截器注入 RoleContextHolder，V303 种入）；
+        // 非 ADMIN 一律 403 前置拒绝，规则行读/写零触达（exemptRoles 不可被非管理员污染）
+        if (!RoleContextHolder.get().contains(MASK_RULE_ADMIN_ROLE)) {
+            log.warn("脱敏规则维护拒绝（非 ADMIN 角色）：operator={}，ruleCode={}", OperatorContextHolder.get(), ruleCode);
+            throw new BizException(
+                    PatientErrorCode.PRIVACY_RULE_MAINTENANCE_FORBIDDEN, HttpStatus.FORBIDDEN, "脱敏规则维护仅限系统管理员");
+        }
         // 数据库读操作：业务键 rule_code 等值查行（uk 唯一，selectOne 无多行歧义）
         PrivacyMaskRule rule = ruleMapper.selectOne(
                 new LambdaQueryWrapper<PrivacyMaskRule>().eq(PrivacyMaskRule::getRuleCode, ruleCode));
@@ -175,6 +211,23 @@ public class PrivacyMaskServiceImpl implements PrivacyMaskService {
     /** 出生日期掩码：保留年份（退化为当年 1 月 1 日），null 透传 */
     private LocalDate maskBirthDate(LocalDate birthDate) {
         return birthDate == null ? null : LocalDate.of(birthDate.getYear(), 1, 1);
+    }
+
+    /**
+     * 豁免判定规则投影装载：仅取判定实际消费 3 列（target_field/enabled/exempt_roles，
+     * A.4.3-14 按需取列），每次调用一次查库、不跨请求缓存（类注释装载口径）。
+     */
+    private List<PrivacyMaskRule> loadExemptProjection() {
+        return ruleMapper.selectList(new LambdaQueryWrapper<PrivacyMaskRule>()
+                .select(PrivacyMaskRule::getTargetField, PrivacyMaskRule::getEnabled, PrivacyMaskRule::getExemptRoles));
+    }
+
+    /** 规则快照上逐字段豁免判定（词匹配 + 启用过滤 + 角色交集，与原 isExempt 判定体逐字一致） */
+    private boolean isExemptAgainst(List<PrivacyMaskRule> rules, List<String> roles, String targetField) {
+        return rules.stream()
+                .filter(rule -> targetField.equals(rule.getTargetField()))
+                .filter(rule -> Boolean.TRUE.equals(rule.getEnabled()))
+                .anyMatch(rule -> intersects(roles, rule.getExemptRoles()));
     }
 
     /** 角色清单与规则豁免集合是否有交集（exempt_roles 逗号分隔，空白安全） */

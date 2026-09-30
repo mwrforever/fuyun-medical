@@ -65,7 +65,9 @@ public enum IotErrorCode implements ErrorCode {
     /** 网关已存在（409；gateway_id 重复登记） */
     GATEWAY_ALREADY_EXISTS("IOT-1024"),
     /** 网关热备对端校验不通过（409；对端不存在/自引用/成环/被删除守卫拦截，P2 PR-2 Task 11） */
-    GATEWAY_STANDBY_INVALID("IOT-1025");
+    GATEWAY_STANDBY_INVALID("IOT-1025"),
+    /** 枚举 code 词表外（400；fromCode 无命中——外部输入/报文 code 不在词表值域，BE-C3-05 模式级收口） */
+    ENUM_CODE_INVALID("IOT-1026");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

@@ -1,12 +1,12 @@
 package com.fuyun.nursing.service.impl;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.api.VitalSignRecordedPayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
+import com.fuyun.nursing.constants.NursingTimeConstants;
 import com.fuyun.nursing.constants.NursingVitalThresholds;
 import com.fuyun.nursing.constants.VitalSignValues;
 import com.fuyun.nursing.dto.VitalSignRecordRequest;
@@ -26,7 +26,6 @@ import com.fuyun.nursing.vo.VitalSignVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -197,8 +196,9 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
                 // D-22 PDA 弱网重试重放：唯一冲突（client_msg 键或同刻同部位）后按客户端幂等键
                 // 回查首值——REQUIRES_NEW 独立事务承载（唯一冲突已中止当前事务，同事务 SELECT 必
                 // 25P02 失败，见 replayLookupTx 注记）
-                VitalSignRecord replayed = replayLookupTx.execute(status -> baseMapper.selectOne(
-                        Wrappers.<VitalSignRecord>lambdaQuery().eq(VitalSignRecord::getClientMsgId, clientMsgId)));
+                VitalSignRecord replayed = replayLookupTx.execute(status -> this.lambdaQuery()
+                        .eq(VitalSignRecord::getClientMsgId, clientMsgId)
+                        .one());
                 if (replayed != null) {
                     // 重放返回原 VO（HTTP 200，非 409）：归集/条目/事件不再执行，重试零二次副作用
                     log.info(
@@ -260,17 +260,22 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
     @Override
     @Transactional(readOnly = true)
     public List<VitalSignVO> listByPatient(long patientId, Instant from, Instant to) {
-        var wrapper = Wrappers.<VitalSignRecord>lambdaQuery().eq(VitalSignRecord::getPatientId, patientId);
+        // 主表链式查询（宪法 A.4.3-13）；条件分支保留 if：窗口边界须空判后换算，内联 boolean
+        // 重载会无条件求值实参（from/to 解引用）致 NPE
+        var query = this.lambdaQuery().eq(VitalSignRecord::getPatientId, patientId);
+        // 窗口边界按北京时区偏移承载（BUG-03 医疗日界口径）：时刻不变（TIMESTAMPTZ 按时刻比较），禁 systemDefault
         if (from != null) {
-            wrapper.ge(VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(from, ZoneId.systemDefault()));
+            query.ge(
+                    VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(from, NursingTimeConstants.HEALTHCARE_TZ));
         }
         if (to != null) {
             // 窗口含头不含尾：to 为开区间上界（与护理记录单当日窗口同口径）
-            wrapper.lt(VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(to, ZoneId.systemDefault()));
+            query.lt(VitalSignRecord::getMeasuredAt, OffsetDateTime.ofInstant(to, NursingTimeConstants.HEALTHCARE_TZ));
         }
-        wrapper.orderByAsc(VitalSignRecord::getMeasuredAt);
         // 数据库读操作：患者体征清单（测量时点升序；逻辑删由 @TableLogic 自动过滤）
-        return baseMapper.selectList(wrapper).stream().map(VitalSignVO::from).toList();
+        return query.orderByAsc(VitalSignRecord::getMeasuredAt).list().stream()
+                .map(VitalSignVO::from)
+                .toList();
     }
 
     /**
@@ -287,11 +292,12 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
     @Transactional(readOnly = true)
     public VitalSignVO latestByPatient(long patientId) {
         // 数据库读操作：患者最近一次体征单行点查（排序与截断下推 DB；逻辑删由 @TableLogic 自动过滤）
-        VitalSignRecord row = baseMapper.selectOne(Wrappers.<VitalSignRecord>lambdaQuery()
+        VitalSignRecord row = this.lambdaQuery()
                 .eq(VitalSignRecord::getPatientId, patientId)
                 .orderByDesc(VitalSignRecord::getMeasuredAt)
                 .orderByDesc(VitalSignRecord::getId)
-                .last("LIMIT 1"));
+                .last("LIMIT 1")
+                .one();
         return row == null ? null : VitalSignVO.from(row);
     }
 
@@ -306,11 +312,11 @@ public class VitalSignServiceImpl extends ServiceImpl<VitalSignRecordMapper, Vit
     @Transactional(readOnly = true)
     public List<VitalSignVO> pendingReview(String wardId) {
         // 数据库读操作：病区待复核行（review_status 谓词滤除已转正/已驳回行；逻辑删自动过滤）
-        return baseMapper
-                .selectList(Wrappers.<VitalSignRecord>lambdaQuery()
-                        .eq(VitalSignRecord::getWardId, wardId)
-                        .eq(VitalSignRecord::getReviewStatus, VitalReviewStatus.PENDING_REVIEW.getCode())
-                        .orderByAsc(VitalSignRecord::getMeasuredAt))
+        return this.lambdaQuery()
+                .eq(VitalSignRecord::getWardId, wardId)
+                .eq(VitalSignRecord::getReviewStatus, VitalReviewStatus.PENDING_REVIEW.getCode())
+                .orderByAsc(VitalSignRecord::getMeasuredAt)
+                .list()
                 .stream()
                 .map(VitalSignVO::from)
                 .toList();

@@ -16,6 +16,7 @@ import {
   verifyDispense,
 } from '@/api/pharmacy';
 import type { DispenseVO, PrescriptionVO } from '@/api/pharmacy';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { dispenseStatusText } from '@/utils/dispenseDisplay';
 import { useAuthStore } from '@/stores/auth';
 
@@ -25,7 +26,6 @@ const queue = ref<PrescriptionVO[]>([]);
 const dispense = ref<DispenseVO | null>(null);
 /** 逐行追溯码录入模型（键=发药明细 id，与 PickLine.traceCodes 同构） */
 const traceInputs = reactive<Record<string, string>>({});
-const loading = ref(false);
 const auth = useAuthStore();
 /**
  * 发药动作在途标志：配药/核对/发药签名三按钮按单据状态互斥启用（CREATED/PICKING/PICKED
@@ -47,22 +47,17 @@ const dispenseStatusTagType: Record<string, 'primary' | 'success' | 'warning' | 
 /**
  * 加载工作台队列（发药签名成功后重刷）：待发（PENDING_DISPENSE）与调剂中（DISPENSING）
  * 两段合并——后端 pick 即 CAS 处方至 DISPENSING（PH 状态机），单查待发段会使第二药师
- * 无法从队列拉起在途单完成核对/发药签名（双签闭环必需）。
+ * 无法从队列拉起在途单完成核对/发药签名（双签闭环必需）。Promise.all 双态合并在任务
+ * 体内承载；loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——
+ * 失败弹错归响应拦截器、驻留旧队列）。
  */
-async function loadQueue(): Promise<void> {
-  loading.value = true;
-  try {
-    const [pending, dispensing] = await Promise.all([
-      listPrescriptions({ status: 'PENDING_DISPENSE' }),
-      listPrescriptions({ status: 'DISPENSING' }),
-    ]);
-    queue.value = [...pending.content, ...dispensing.content];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧队列
-  } finally {
-    loading.value = false;
-  }
-}
+const { loading, run: loadQueue } = useAsyncTask(async () => {
+  const [pending, dispensing] = await Promise.all([
+    listPrescriptions({ status: 'PENDING_DISPENSE' }),
+    listPrescriptions({ status: 'DISPENSING' }),
+  ]);
+  queue.value = [...pending.content, ...dispensing.content];
+});
 
 /**
  * 选处方回显发药单（无单提示未放行）。

@@ -57,6 +57,8 @@ public class EventEnvelopeCodec {
      *                                  建议处理策略：调用方修正入参，属编程错误不应重试
      */
     public EventEnvelope create(Clock clock, String producer, String eventType, String traceId, Object payload) {
+        // EX-19 收口 C 类：发布方编程错误 fail-fast 断言（调用方为模块发布代码，非用户可达输入），
+        // common 无业务错误码体系，保留 IAE 在装配/开发期暴露契约违规，不转业务错误码
         if (producer == null || producer.isBlank()) {
             throw new IllegalArgumentException("事件信封创建失败：producer 不能为空");
         }
@@ -90,7 +92,8 @@ public class EventEnvelopeCodec {
         try {
             return objectMapper.writeValueAsString(envelope);
         } catch (JsonProcessingException e) {
-            // 只携带 eventType 便于定位，不携带载荷内容防敏感信息入日志
+            // 只携带 eventType 便于定位，不携带载荷内容防敏感信息入日志；
+            // EX-19 收口 C 类：系统级序列化防御断言（载荷类型缺陷非用户可达），保留 ISE 走全局兜底
             throw new IllegalStateException("事件信封序列化失败：eventType=" + envelope.eventType(), e);
         }
     }
@@ -111,7 +114,8 @@ public class EventEnvelopeCodec {
         try {
             envelope = objectMapper.readValue(json, EventEnvelope.class);
         } catch (JsonProcessingException e) {
-            // 非 JSON 报文等同信封不合规（毒丸帧），统一按拒绝消费处理；只带解析摘要不带原文
+            // 非 JSON 报文等同信封不合规（毒丸帧），统一按拒绝消费处理；只带解析摘要不带原文；
+            // EX-19 收口 C 类：毒丸帧防御断言，保留 IAE 供消费方拒收转死信留痕（链路语义冻结，零行为变化）
             throw new IllegalArgumentException("事件信封不合规：JSON 解析失败（" + e.getOriginalMessage() + "）", e);
         }
         validateCompliance(envelope);
@@ -125,6 +129,8 @@ public class EventEnvelopeCodec {
      * @throws IllegalArgumentException 首个不合规字段触发；消息含字段名便于消费侧留痕
      */
     private void validateCompliance(EventEnvelope envelope) {
+        // EX-19 收口 C 类：CF-1 消费契约断言（下方六项必填校验共用——不合规信封属毒丸帧脏数据，
+        // 非用户可达输入），保留 IAE 供消费方拒收转死信留痕（链路语义冻结，零行为变化）
         if (envelope.eventId() == null || !isParseableUuid(envelope.eventId())) {
             throw new IllegalArgumentException("事件信封不合规：eventId 缺失或不是合法 UUID");
         }

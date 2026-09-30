@@ -123,6 +123,7 @@ public class PharmacyMasterDataListener {
         try {
             return objectMapper.treeToValue(envelope.payload(), type);
         } catch (JsonProcessingException e) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 走有界重试→死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "主数据订阅载荷与契约不符：eventType=" + envelope.eventType() + "，payload=" + envelope.payload(), e);
         }

@@ -9,6 +9,7 @@ import com.fuyun.inpatient.controller.OrderController;
 import com.fuyun.inpatient.controller.OrderPlanController;
 import com.fuyun.inpatient.controller.TransferController;
 import com.fuyun.inpatient.controller.VisitTransferController;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.properties.InpatientProperties;
 import com.fuyun.inpatient.service.impl.AdmissionServiceImpl;
 import com.fuyun.inpatient.service.impl.BedServiceImpl;
@@ -31,7 +32,7 @@ import org.springframework.context.annotation.Import;
  * @MapperScan 按注解自动覆盖，不入本清单）。Task 3 交付：住院号段发号器、入院登记域服务、
  * OngoingVisitQuery SPI 实现（patient 合并前置检查按接口类型收集，与 nursing 实现并存——
  * 任一命中即阻断）与入院登记六端点控制器。Task 4 追加：床位管理服务（五态状态机与占用
- * 流水权威）、转科/转床编排服务（构造注入 MedicalOrderService——实现归 Task 5，其
+ * 流水权威）、转科/转床编排服务（构造注入 IMedicalOrderService——实现归 Task 5，其
  * MedicalOrderServiceImpl 落地前装配链待闭合）、床位七端点与转科转床两端点控制器，及
  * AdmissionServiceImpl 的床位联动注入。Task 5 追加：医嘱开立域（V904 三表业务面）——医嘱
  * 状态机服务（八态合法迁移表唯一裁决面）与医嘱开立服务（四层校验/开立/查询/停嘱，
@@ -54,11 +55,14 @@ import org.springframework.context.annotation.Import;
  * Task 11 追加：会诊管理域（V908 单表业务面）——会诊服务（五端点：申请/接单/意见/取消/
  * 分页列表；CAS 小状态机 + 读时惰性逾期升级承载面）与会诊五端点控制器；OrderAuditServiceImpl
  * 构造追加 CONSULT 钩子两依赖（ConsultationMapper/InpatientSeqGate——审核自动建会诊草稿）。
+ * EX-44 追加：住院就诊共享访问器 InpatientVisitAccessor（internal/——11 处「load+check」
+ * 手写副本下沉唯一收口点，A.4.3-21 共享访问器条款），九业务服务构造注入统一取数。
  */
 @Configuration
 @EnableConfigurationProperties(InpatientProperties.class)
 @Import({
     InpatientSeqGate.class,
+    InpatientVisitAccessor.class,
     AdmissionServiceImpl.class,
     InpatientOngoingVisitQuery.class,
     AdmissionController.class,

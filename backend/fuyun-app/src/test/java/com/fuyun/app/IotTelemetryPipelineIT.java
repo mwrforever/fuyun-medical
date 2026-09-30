@@ -39,10 +39,12 @@ import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import org.apache.qpid.jms.JmsConnectionFactory;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -295,6 +297,15 @@ class IotTelemetryPipelineIT {
     /** 嵌入式 Servlet 容器随机端口：STOMP WebSocket 握手与 HTTP 兜底请求目标 */
     @LocalServerPort
     private int localServerPort;
+
+    /**
+     * 用例级 STOMP 客户端调度器登记表：{@link #connectStompFuture} 每次创建即登记，
+     * {@link #destroyStompClientSchedulers()} 统一 destroy 回收（EX-36：连接成功路径的
+     * session.disconnect 只关会话不关调度器、连接被拒路径无会话可关，此前两类路径的调度线程
+     * 均驻留至 JVM 退出；对齐 OutpatientPoolConcurrencyIT 线程池 finally 回收范式——资源
+     * 生命周期收敛到用例边界）。JUnit 每用例新实例，登记表随实例重建。
+     */
+    private final List<ThreadPoolTaskScheduler> stompClientSchedulers = new CopyOnWriteArrayList<>();
 
     /**
      * 构造器注入（@Autowired 显式声明可注入构造器，backend 宪法 A.1-7）：SpringExtension 从上下文
@@ -682,6 +693,8 @@ class IotTelemetryPipelineIT {
         taskScheduler.setThreadNamePrefix("it-stomp-sched-");
         taskScheduler.setDaemon(true);
         taskScheduler.initialize();
+        // 登记 + 用例末统一 destroy（EX-36）：正路径断连与负路径连接被拒均不驻留调度线程
+        stompClientSchedulers.add(taskScheduler);
         stompClient.setTaskScheduler(taskScheduler);
         stompClient.setDefaultHeartbeat(new long[] {0, 0});
         // 令牌承载于 CONNECT 帧原生头（帧级鉴权唯一输入）；HTTP 升级头保持为空（生产浏览器客户端不可达）
@@ -694,6 +707,20 @@ class IotTelemetryPipelineIT {
                 new WebSocketHttpHeaders(),
                 connectHeaders,
                 new StompSessionHandlerAdapter() {});
+    }
+
+    /**
+     * 用例级资源回收（EX-36）：销毁本用例内创建的全部 STOMP 客户端调度器——连接成功路径的
+     * session.disconnect 只关会话不关调度器，连接被拒路径（步骤⑧）无会话可关，两类路径统一
+     * 经本收口 destroy 释放调度线程（此前断连/被拒后驻留至 JVM 退出）。
+     */
+    @AfterEach
+    void destroyStompClientSchedulers() {
+        for (ThreadPoolTaskScheduler scheduler : stompClientSchedulers) {
+            // destroy 幂等（内部 shutdown 承载），断言失败路径同样经本收口回收
+            scheduler.destroy();
+        }
+        stompClientSchedulers.clear();
     }
 
     /**

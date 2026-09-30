@@ -19,6 +19,7 @@ import {
   rejectRefund,
 } from '@/api/billing';
 import type { FeeRecordVO, RefundVO, SettlementVO } from '@/api/billing';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { fenToYuanDisplay } from '@/utils/money';
 
 /** 退费申请行模型：费用行 + 本行申请退数量（可编辑，上限=原数量） */
@@ -37,7 +38,6 @@ const refundRows = ref<RefundRow[]>([]);
 const selectedRows = ref<RefundRow[]>([]);
 /** 退费理由（必填留痕） */
 const reason = ref('');
-const summaryLoading = ref(false);
 const applying = ref(false);
 /** 驳回在途（弹窗/请求期间抑制二次点击，防双击弹双窗双 POST） */
 const rejecting = ref(false);
@@ -45,17 +45,15 @@ const rejecting = ref(false);
 const executing = ref(false);
 
 /**
- * 按结算号查摘要并带出可退明细。
- * 空结算号前置拦截不出网；行过滤以 settlementId 归属 + 已结算/部分退状态双条件。
+ * 按结算号查摘要并带出可退明细（双链 await+条件早退整体入任务体，loading 骨架经
+ * useAsyncTask 收拢（EX-42 范式迁移），行为与迁移前一致——失败弹错归响应拦截器、
+ * 驻留旧摘要）；行过滤以 settlementId 归属 + 已结算/部分退状态双条件。
+ *
+ * @param settleNoParam 结算号（前置校验通过后的 trim 值）
  */
-async function handleQuerySettlement(): Promise<void> {
-  if (settleNo.value.trim() === '') {
-    void ElMessage.warning('请输入结算号');
-    return;
-  }
-  summaryLoading.value = true;
-  try {
-    const detail = await getSettlement(settleNo.value.trim());
+const { loading: summaryLoading, run: querySettlement } = useAsyncTask(
+  async (settleNoParam: string) => {
+    const detail = await getSettlement(settleNoParam);
     settlement.value = detail;
     if (detail.visitId === undefined) {
       refundRows.value = [];
@@ -71,11 +69,16 @@ async function handleQuerySettlement(): Promise<void> {
       )
       .map((fee) => ({ fee, qty: 1 }));
     selectedRows.value = [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧摘要
-  } finally {
-    summaryLoading.value = false;
+  },
+);
+
+/** 查询结算入口：空结算号前置拦截不出网。 */
+async function handleQuerySettlement(): Promise<void> {
+  if (settleNo.value.trim() === '') {
+    void ElMessage.warning('请输入结算号');
+    return;
   }
+  await querySettlement(settleNo.value.trim());
 }
 
 /**
@@ -125,7 +128,6 @@ async function handleApply(): Promise<void> {
 const statusFilter = ref('');
 /** 审批队列数据（服务端分页，本页缺省单页） */
 const queue = ref<RefundVO[]>([]);
-const queueLoading = ref(false);
 
 /** 队列状态展示词表（未知态原样透出，防后端扩态即白屏；PENDING_SECOND_APPROVAL=待二级（一级已批）） */
 const refundStatusText: Record<string, string> = {
@@ -164,20 +166,14 @@ function canExecute(row: RefundVO): boolean {
   return row.status === 'APPROVED';
 }
 
-/** 加载审批队列（status 空=全部） */
-async function loadQueue(): Promise<void> {
-  queueLoading.value = true;
-  try {
-    const page = await listRefunds({
-      status: statusFilter.value === '' ? undefined : statusFilter.value,
-    });
-    queue.value = page.content;
-  } catch {
-    // 失败弹错归响应拦截器
-  } finally {
-    queueLoading.value = false;
-  }
-}
+/** 加载审批队列（status 空=全部）：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，
+ * 行为与迁移前一致——失败弹错归响应拦截器、驻留旧队列）。 */
+const { loading: queueLoading, run: loadQueue } = useAsyncTask(async () => {
+  const page = await listRefunds({
+    status: statusFilter.value === '' ? undefined : statusFilter.value,
+  });
+  queue.value = page.content;
+});
 
 /** 批准退费（自审场景后端 403 拒绝，拦截器弹错后驻留队列） */
 async function handleApprove(row: RefundVO): Promise<void> {

@@ -8,6 +8,7 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { dailyList } from '@/api/billing';
 import type { DailyListVO } from '@/api/billing';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { fenToYuanDisplay } from '@/utils/money';
 
 /** 就诊号输入 */
@@ -17,7 +18,6 @@ const visitId = ref('');
 const date = ref<string | null>(null);
 /** 清单结果（明细+大类+合计三层） */
 const result = ref<DailyListVO | null>(null);
-const loading = ref(false);
 
 /**
  * 分值守列求和（仅用于勾稽佐证展示：后端已强校验三层一致，此处复算比对，
@@ -46,6 +46,12 @@ const reconciled = computed(
     categoriesSumFen.value === (result.value.totalAmount ?? ''),
 );
 
+/** 查询清单任务体：出网与结果赋值承载。loading 骨架经 useAsyncTask 收拢（EX-42 范式
+ * 迁移，行为与迁移前一致——失败弹错归响应拦截器、驻留旧清单）。 */
+const { loading, run: loadDailyList } = useAsyncTask(async (visitNo: string, day: string) => {
+  result.value = await dailyList(visitNo, day);
+});
+
 /** 查询清单：就诊号与日期任一为空前置拦截不出网 */
 async function handleQuery(): Promise<void> {
   if (visitId.value.trim() === '') {
@@ -57,14 +63,7 @@ async function handleQuery(): Promise<void> {
     void ElMessage.warning('请选择清单日期');
     return;
   }
-  loading.value = true;
-  try {
-    result.value = await dailyList(visitId.value.trim(), day);
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    loading.value = false;
-  }
+  await loadDailyList(visitId.value.trim(), day);
 }
 </script>
 

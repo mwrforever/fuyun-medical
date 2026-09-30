@@ -1,5 +1,6 @@
 package com.fuyun.billing.controller;
 
+import com.fuyun.billing.convert.InsuranceMappingConverter;
 import com.fuyun.billing.dto.InsuranceMappingUpsertRequest;
 import com.fuyun.billing.entity.InsuranceMapping;
 import com.fuyun.billing.service.IInsuranceMappingService;
@@ -65,6 +66,6 @@ public class InsuranceMappingController {
         // 未贯标/对照已失效返回 204：贯标硬校验（BILL-1006）归结算 preview 分支，查询态不报错
         return mapping == null
                 ? ResponseEntity.noContent().build()
-                : ResponseEntity.ok(InsuranceMappingVO.from(mapping));
+                : ResponseEntity.ok(InsuranceMappingConverter.INSTANCE.toVO(mapping));
     }
 }

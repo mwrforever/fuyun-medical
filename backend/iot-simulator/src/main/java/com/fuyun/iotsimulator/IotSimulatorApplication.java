@@ -25,7 +25,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>线程纪律（宪法 B.3-4 同等适用）</b>：单线程命名调度器（iot-simulator-reporter），
  * 固定延迟调度；命令处理在 CommandSubscriber 内部 daemon 单线程执行器；JVM shutdownHook
- * 优雅停机——先取消周期任务、停调度器，再断开 MQTT 连接（daemon 线程不阻塞进程退出）。
+ * 优雅停机——先取消周期任务、停调度器，再关命令订阅器（在途命令回执尽量发出，EX-33），
+ * 最后断开 MQTT 连接（daemon 线程不阻塞进程退出）。
  * <b>deviceSecret 禁入任何日志</b>（日志业务标识仅 deviceId）。
  */
 public final class IotSimulatorApplication {
@@ -75,15 +76,17 @@ public final class IotSimulatorApplication {
         }
         Scenario scenario = ScenarioFactory.create(config);
         DeviceStatusReporter statusReporter = new DeviceStatusReporter(client);
+        CommandSubscriber commandSubscriber;
         try {
             // 命令回调挂接剧本（暂停/恢复滴注等）：回执 result_code 语义与 Task 8 消费端终态词表对齐
-            new CommandSubscriber(client, config.deviceId(), scenario::handleCommand).subscribe();
+            commandSubscriber = new CommandSubscriber(client, config.deviceId(), scenario::handleCommand);
+            commandSubscriber.subscribe();
         } catch (Exception e) {
             client.close();
             log.error("命令下行订阅失败，进程终止：deviceId={}，原因={}", config.deviceId(), e.getMessage());
             throw new IllegalStateException("命令下行订阅失败（deviceId=" + config.deviceId() + "）", e);
         }
-        launchReporting(config, client, scenario, statusReporter);
+        launchReporting(config, client, scenario, statusReporter, commandSubscriber);
         log.info(
                 "模拟设备已启动：deviceId={}，host={}，上行周期={}s，剧本={}（倍速 {}），上行主题={}（deviceSecret 不打印）",
                 config.deviceId(),
@@ -96,30 +99,37 @@ public final class IotSimulatorApplication {
 
     /**
      * 装配周期上行循环（P0 兼容入口，既有单测锚定）：按配置档装配剧本（未感知剧本能力的
-     * 调用方维持 vitals 既有行为）与状态帧上报器后走全量装配。
+     * 调用方维持 vitals 既有行为）与状态帧上报器后走全量装配；本入口不挂命令订阅
+     * （subscriber 传 null，停机跳过订阅器关闭）。
      *
      * @param config 模拟设备配置，非空；reportIntervalSeconds 为上行档（秒）
      * @param client MQTT 客户端，非空；生产为真实实例，单测为 Mockito 桩
      * @return 运行中的调度器，非空；调用方（测试）可 shutdownNow 收尾
      */
     static ScheduledExecutorService launchReporting(SimulatorConfig config, IotdaMqttClient client) {
-        return launchReporting(config, client, ScenarioFactory.create(config), new DeviceStatusReporter(client));
+        return launchReporting(config, client, ScenarioFactory.create(config), new DeviceStatusReporter(client), null);
     }
 
     /**
      * 装配周期上行循环（全量装配）：单线程命名调度器按配置档固定延迟触发上行周期体
      * （遥测帧 + 剧本档位状态帧），并注册 shutdownHook 优雅停机（取消任务 → 停调度器 →
-     * 断连接）。调度线程为非 daemon——main 装配完成即返回，由该线程承载 JVM 存活（docker
-     * stop 的 SIGTERM 触发停机钩子后调度器终止、进程随之退出）。
+     * 关命令订阅器 → 断连接）。调度线程为非 daemon——main 装配完成即返回，由该线程承载 JVM
+     * 存活（docker stop 的 SIGTERM 触发停机钩子后调度器终止、进程随之退出）。
      *
-     * @param config         模拟设备配置，非空；reportIntervalSeconds 为上行档（秒）
-     * @param client         MQTT 客户端，非空；生产为真实实例，单测为 Mockito 桩
-     * @param scenario       剧本实例，非空；来源：ScenarioFactory.create
-     * @param statusReporter 状态帧上报器，非空；剧本档位公告的 MQTT 承载
+     * @param config           模拟设备配置，非空；reportIntervalSeconds 为上行档（秒）
+     * @param client           MQTT 客户端，非空；生产为真实实例，单测为 Mockito 桩
+     * @param scenario         剧本实例，非空；来源：ScenarioFactory.create
+     * @param statusReporter   状态帧上报器，非空；剧本档位公告的 MQTT 承载
+     * @param commandSubscriber 命令下行订阅器，可空（P0 兼容入口无订阅——null 时停机跳过其关闭；
+     *                         生产入口经 launch 挂接，停机先于断链关闭以尽量发出在途回执）
      * @return 运行中的调度器，非空；调用方（测试）可 shutdownNow 收尾
      */
     static ScheduledExecutorService launchReporting(
-            SimulatorConfig config, IotdaMqttClient client, Scenario scenario, DeviceStatusReporter statusReporter) {
+            SimulatorConfig config,
+            IotdaMqttClient client,
+            Scenario scenario,
+            DeviceStatusReporter statusReporter,
+            CommandSubscriber commandSubscriber) {
         ScheduledExecutorService scheduler =
                 Executors.newSingleThreadScheduledExecutor(runnable -> new Thread(runnable, REPORT_THREAD_NAME));
         ScheduledFuture<?> reportTask = scheduler.scheduleWithFixedDelay(
@@ -129,26 +139,33 @@ public final class IotSimulatorApplication {
                 TimeUnit.SECONDS);
         Runtime.getRuntime()
                 .addShutdownHook(new Thread(
-                        () -> stopReporting(reportTask, scheduler, client, config.deviceId()), SHUTDOWN_THREAD_NAME));
+                        () -> stopReporting(reportTask, scheduler, commandSubscriber, client, config.deviceId()),
+                        SHUTDOWN_THREAD_NAME));
         return scheduler;
     }
 
     /**
      * 优雅停机（shutdownHook 与单测共用的收口动作）：先停触发源（取消周期任务、停调度器），
-     * 再断连接（残留帧由 qos=1 重试语义兜底）。
+     * 再关命令订阅器（EX-33：先于断链关闭，在途命令处理与回执尽量发出；null 跳过），
+     * 最后断连接（残留帧由 qos=1 重试语义兜底）。
      *
-     * @param reportTask 周期上行任务，非空
-     * @param scheduler 上行调度器，非空
-     * @param client MQTT 客户端，非空
-     * @param deviceId 设备标识（停机日志业务标识），非空
+     * @param reportTask        周期上行任务，非空
+     * @param scheduler         上行调度器，非空
+     * @param commandSubscriber 命令下行订阅器，可空（null=无订阅挂接，跳过关闭）
+     * @param client            MQTT 客户端，非空
+     * @param deviceId          设备标识（停机日志业务标识），非空
      */
     static void stopReporting(
             ScheduledFuture<?> reportTask,
             ScheduledExecutorService scheduler,
+            CommandSubscriber commandSubscriber,
             IotdaMqttClient client,
             String deviceId) {
         reportTask.cancel(false);
         scheduler.shutdownNow();
+        if (commandSubscriber != null) {
+            commandSubscriber.close();
+        }
         client.close();
         log.info("模拟设备已优雅停机：deviceId={}", deviceId);
     }

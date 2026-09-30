@@ -1,9 +1,11 @@
 package com.fuyun.iot.internal.alarm;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -59,6 +61,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.transaction.PlatformTransactionManager;
 
 /**
@@ -68,7 +71,9 @@ import org.springframework.transaction.PlatformTransactionManager;
  * 透传源 device.alarm 帧命中规则；最新值快照补写（实测 fy:iot:snapshot:latest 缺失面）。
  *
  * <p>StormGuard 以真实实例接入共享 mock（alarmMapper/ruleMapper/redisTemplate），抑制链路按
- * 组件间真实协作驱动；mapper 真实 SQL 行为归 IT 回归。
+ * 组件间真实协作驱动；mapper 真实 SQL 行为归 IT 回归。越限回合标记迁移（EX-27/BE-B5-06）以
+ * mock execute 桩锚定 Lua 原子路径（脚本身份/键清单/TTL 入参/三态回包/Redis 降级）——脚本真实
+ * 执行归 IT 与运行时 Redis 承载。
  */
 @ExtendWith(MockitoExtension.class)
 class AlarmEngineTest {
@@ -137,6 +142,10 @@ class AlarmEngineTest {
     @Captor
     private ArgumentCaptor<IotDomainEvent> eventCaptor;
 
+    /** 回合标记迁移脚本捕获器（EX-27 护航：锚定 Lua 脚本身份与回包类型） */
+    @Captor
+    private ArgumentCaptor<RedisScript<Long>> scriptCaptor;
+
     private AlarmEngine engine;
 
     @BeforeAll
@@ -173,13 +182,14 @@ class AlarmEngineTest {
     void firstBreachArmsEpisodeWithoutTrigger() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        // 回合标记缺席 = 首次观测越限：仅置标记起算，不触发
-        when(valueOperations.get(BREACH_KEY)).thenReturn(null);
+        // 回合标记缺席 = 首次观测越限：Lua 原子迁移返回 0（脚本内置标记起算），仅起算不触发
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(0L);
 
         engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(telemetryRow("170", NOW))));
 
-        // 首越限起算标记：TTL = 持续时长 30s + 60s 兜底余量
-        verify(valueOperations).set(eq(BREACH_KEY), anyString(), eq(Duration.ofSeconds(90)));
+        // 首越限起算标记入参锚定（EX-27 键语义/TTL 逐字保持）：TTL=90（持续时长 30s+60s 兜底余量）
+        verify(redisTemplate).execute(any(), eq(List.of(BREACH_KEY)), anyString(), eq("90"), eq("30"));
         verify(alarmMapper, never()).insert(any(IotAlarmEntity.class));
         verify(events, never()).publishEvent(any(IotDomainEvent.class));
     }
@@ -189,8 +199,9 @@ class AlarmEngineTest {
     void sustainedBreachCreatesAlarmPublishesAndPushes() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        // 回合标记已起算 60s（≥ 持续时长 30s）：触发
-        when(valueOperations.get(BREACH_KEY)).thenReturn(NOW.minusSeconds(60).toString());
+        // 回合标记已起算 60s（≥ 持续时长 30s）：Lua 原子迁移返回 2（达标清标记），触发
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(2L);
         when(bindingService.listActiveByDevices(anyCollection()))
                 .thenReturn(List.of(binding(5L, "20260901000001", 1001L)));
         when(deviceMapper.selectList(any())).thenReturn(List.of(device(1001L)));
@@ -222,6 +233,8 @@ class AlarmEngineTest {
         assertThat(payload.ruleId()).isEqualTo(RULE_ID);
         // 无事务同步上下文（单测直调）：推送直推（生产经本事务 afterCommit 承接）
         verify(pushService).pushAlarm(inserted);
+        // 清标记收进 Lua 脚本原子边界（EX-27）：应用层不再单发 DEL
+        verify(redisTemplate, never()).delete(anyString());
     }
 
     @Test
@@ -242,9 +255,9 @@ class AlarmEngineTest {
     void durationNotReachedKeepsSilent() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        // 回合起算仅 10s（< 持续时长 30s）：静默等待（标记时点相对真实时钟，规避墙钟偏差）
-        when(valueOperations.get(BREACH_KEY))
-                .thenReturn(Instant.now().minusSeconds(10).toString());
+        // 回合起算仅 10s（< 持续时长 30s）：Lua 原子迁移返回 1（未达标保留标记），静默等待
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(1L);
 
         engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(telemetryRow("170", NOW))));
 
@@ -253,11 +266,51 @@ class AlarmEngineTest {
     }
 
     @Test
+    @DisplayName("护航（EX-27）：越限回合迁移走 Lua 原子脚本——脚本身份/键清单/TTL 入参锚定，无应用层读改写")
+    void breachMarkerTransitionRunsLuaScriptWithVerbatimKeyAndTtlArgs() {
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(0L);
+
+        engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(telemetryRow("170", NOW))));
+
+        // 脚本身份锚定：迁移脚本为 Long 回包的 RedisScript（判定与写删同脚本原子边界）
+        verify(redisTemplate)
+                .execute(scriptCaptor.capture(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString());
+        assertThat(scriptCaptor.getValue()).isNotNull();
+        assertThat(scriptCaptor.getValue().getResultType()).isEqualTo(Long.class);
+        // 键语义逐字保持：fy:iot:alarm:breach:{ruleId}:{deviceId}:{metricCode} 单键迁移
+        verify(redisTemplate).execute(any(), eq(List.of(BREACH_KEY)), anyString(), eq("90"), eq("30"));
+        // 应用层读改写通道已消：GET 不再于 Java 侧发生（检查与生效不再两步）
+        verify(valueOperations, never()).get(anyString());
+        verify(alarmMapper, never()).insert(any(IotAlarmEntity.class));
+    }
+
+    @Test
+    @DisplayName("降级（EX-27）：回合标记迁移 Redis 异常——按首越限降级不触发不阻断，评估链照常走完")
+    void breachMarkerTransitionRedisFailureDegradesToSkipWithoutTrigger() {
+        when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        // Lua 执行通道抛连接异常：与原读失败降级同口径（跳过该规则设备评估，warn 留痕）
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("redis connection refused"));
+
+        // 降级不阻断评估链：本批评估整体完成（无异常上抛），且不误触发告警
+        assertThatCode(() -> engine.evaluate(new AlarmEngine.TelemetryBatch(List.of(telemetryRow("170", NOW)))))
+                .doesNotThrowAnyException();
+        verify(alarmMapper, never()).insert(any(IotAlarmEntity.class));
+        verify(events, never()).publishEvent(any(IotDomainEvent.class));
+    }
+
+    @Test
     @DisplayName("抑制①：命中同源活跃告警行仅 CAS 聚合计数——不新发行不发布事件不推送")
     void aggregationCountsOnActiveAlarmWithoutNewRow() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(BREACH_KEY)).thenReturn(NOW.minusSeconds(60).toString());
+        // 回合标记已起算 60s（≥ 持续时长 30s）：Lua 原子迁移返回 2（达标），进入抑制①裁决
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(2L);
         // 抑制① CAS 命中活跃行（返回 1 = 已聚合计数）
         when(alarmMapper.incrementTriggerIfActive(eq(RULE_ID), eq(DEVICE_ID), anyString()))
                 .thenReturn(1);
@@ -275,7 +328,9 @@ class AlarmEngineTest {
     void offlineActiveAlarmSuppressesDerivedTelemetryAlarm() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule()));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(BREACH_KEY)).thenReturn(NOW.minusSeconds(60).toString());
+        // 回合标记已起算 60s（≥ 持续时长 30s）：Lua 原子迁移返回 2（达标），进入抑制③裁决
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(2L);
         // 设备已有活跃告警行，且其规则为 OFFLINE 型（衍生抑制判定双查）
         IotAlarmEntity activeOffline = new IotAlarmEntity();
         activeOffline.setRuleId(555L);
@@ -301,7 +356,9 @@ class AlarmEngineTest {
         warningRule.setRecoveryBand(new BigDecimal("10"));
         when(ruleMapper.selectList(any())).thenReturn(List.of(warningRule));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        when(valueOperations.get(BREACH_KEY)).thenReturn(NOW.minusSeconds(60).toString());
+        // 回合标记已起算 60s（≥ 持续时长 30s）：Lua 原子迁移返回 2（达标），进入抑制④链路
+        when(redisTemplate.execute(any(), eq(List.of(BREACH_KEY)), anyString(), anyString(), anyString()))
+                .thenReturn(2L);
         when(bindingService.listActiveByDevices(anyCollection()))
                 .thenReturn(List.of(binding(5L, "20260901000001", 1001L)));
         when(deviceMapper.selectList(any())).thenReturn(List.of(device(1001L)));
@@ -523,8 +580,9 @@ class AlarmEngineTest {
         ruleB.setRecoveryBand(new BigDecimal("5"));
         when(ruleMapper.selectList(any())).thenReturn(List.of(rule(), ruleB));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-        // 两设备越限回合均已起算 60s（≥ 持续时长 30s）：双双触发
-        when(valueOperations.get(anyString())).thenReturn(NOW.minusSeconds(60).toString());
+        // 两设备越限回合均已起算 60s（≥ 持续时长 30s）：Lua 原子迁移双双返回 2（达标），双双触发
+        when(redisTemplate.execute(any(), anyList(), anyString(), anyString(), anyString()))
+                .thenReturn(2L);
         when(deviceMapper.selectList(any())).thenReturn(List.of(device(1001L), device("dev-002", 1001L)));
         when(seqGate.nextAlarmNo()).thenReturn("AL2026092600001", "AL2026092600002", "AL2026092600003");
         // 首条落行并发唯一冲突（DB 兜底面），后续落行正常——模拟 PG 25P02 只应中止单条事务

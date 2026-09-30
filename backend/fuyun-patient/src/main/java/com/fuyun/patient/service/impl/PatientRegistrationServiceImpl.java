@@ -9,11 +9,11 @@ import com.fuyun.patient.gateway.IdentityMediaGateway;
 import com.fuyun.patient.internal.PatientDomainEvent;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.IPatientIdentifierService;
+import com.fuyun.patient.service.IPatientMatchingService;
+import com.fuyun.patient.service.IPatientRegistrationService;
 import com.fuyun.patient.service.IPatientService;
 import com.fuyun.patient.service.IPossibleDuplicateService;
 import com.fuyun.patient.service.IPrivacyAuthService;
-import com.fuyun.patient.service.PatientMatchingService;
-import com.fuyun.patient.service.PatientRegistrationService;
 import com.fuyun.patient.vo.PatientMatchCheckVO;
 import java.time.LocalDate;
 import lombok.extern.slf4j.Slf4j;
@@ -29,9 +29,9 @@ import org.springframework.transaction.annotation.Transactional;
  * <p>敏感红线：日志只落 patientId 与结论词，证件号/手机号/住址明文禁入日志与事件载荷。
  */
 @Slf4j
-public class PatientRegistrationServiceImpl implements PatientRegistrationService {
+public class PatientRegistrationServiceImpl implements IPatientRegistrationService {
 
-    private final PatientMatchingService matchingService;
+    private final IPatientMatchingService matchingService;
 
     private final IPatientService patientService;
 
@@ -60,7 +60,7 @@ public class PatientRegistrationServiceImpl implements PatientRegistrationServic
      * @param eventPublisher      Spring 应用事件发布器（事务内发布），非空
      */
     public PatientRegistrationServiceImpl(
-            PatientMatchingService matchingService,
+            IPatientMatchingService matchingService,
             IPatientService patientService,
             IPatientIdentifierService identifierService,
             IPrivacyAuthService privacyAuthService,

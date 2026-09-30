@@ -20,7 +20,7 @@ import com.fuyun.patient.internal.PatientDomainEvent;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.mapper.PatientMapper;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import com.fuyun.patient.vo.PatientVO;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -37,7 +37,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 解析契约（读侧归一解析 + 两级缓存消费，全院唯一解析入口的服务端落点）。
  *
  * <p>敏感红线：证件号/手机号/住址明文仅在本类更新比对与解密回填生命周期内存活，禁入日志；
- * 出参一律经 PrivacyMaskService 脱敏（M02 红线 3）。
+ * 出参一律经 IPrivacyMaskService 脱敏（M02 红线 3）。
  */
 @Slf4j
 public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient>
@@ -47,7 +47,7 @@ public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient>
     private final PatientFieldCrypto crypto;
 
     /** 脱敏引擎（详情/检索出参统一出口），构造器注入 */
-    private final PrivacyMaskService privacyMaskService;
+    private final IPrivacyMaskService privacyMaskService;
 
     /** 两级缓存（冻结/解冻/更新即时失效本实例），构造器注入 */
     private final PatientCacheService cacheService;
@@ -65,7 +65,7 @@ public class PatientServiceImpl extends ServiceImpl<PatientMapper, Patient>
      */
     public PatientServiceImpl(
             PatientFieldCrypto crypto,
-            PrivacyMaskService privacyMaskService,
+            IPrivacyMaskService privacyMaskService,
             PatientCacheService cacheService,
             ApplicationEventPublisher eventPublisher) {
         this.crypto = crypto;

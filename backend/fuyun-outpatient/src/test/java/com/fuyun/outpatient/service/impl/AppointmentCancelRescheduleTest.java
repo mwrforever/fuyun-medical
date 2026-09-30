@@ -328,6 +328,55 @@ class AppointmentCancelRescheduleTest {
     // ---------------------------------------------------------------- 退号四分支
 
     @Test
+    @DisplayName("cancel 归属校验：介质解析患者与单据归属不一致——403 OP-1021 且零写操作（BUG-01 匿名越权退号收口）")
+    void cancelRejectsWhenOwnerPatientMismatch() {
+        Appointment unpaid = appointment(
+                ApptStatus.RESERVED,
+                FeeStatusType.UNPAID,
+                null,
+                ApptChannel.PORTAL,
+                LocalDate.now().plusDays(3),
+                null);
+        when(appointmentMapper.selectOne(any())).thenReturn(unpaid);
+
+        // 介质解析患者 777 ≠ 单据归属患者 9：匿名遍历单号退他人号源，403 先于一切状态变更
+        assertThatThrownBy(() -> service.cancel("AP20260920000001", "行程变动取消", 777L))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("OP-1021");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+
+        // 零写操作：状态 CAS/回池/事件/退费端口全不触达（拒绝不留任何业务足迹）
+        verify(appointmentMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        verify(apptNumberPoolMapper, never()).casRelease(anyLong(), anyInt());
+        verify(events, never()).publishEvent(any(OutpatientDomainEvent.class));
+        verifyNoInteractions(billingPort);
+    }
+
+    @Test
+    @DisplayName("cancel 归属校验：介质解析患者与单据归属一致——放行进入四分支（分支 1 正常取消）")
+    void cancelProceedsWhenOwnerPatientMatches() {
+        Appointment unpaid = appointment(
+                ApptStatus.RESERVED,
+                FeeStatusType.UNPAID,
+                null,
+                ApptChannel.PORTAL,
+                LocalDate.now().plusDays(3),
+                null);
+        when(appointmentMapper.selectOne(any())).thenReturn(unpaid);
+        when(appointmentMapper.casStatus(101L, "RESERVED", "CANCELLED")).thenReturn(1);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(oldPool(7));
+        when(apptNumberPoolMapper.casRelease(31L, 7)).thenReturn(1);
+        when(scheduleMapper.selectById(11L)).thenReturn(oldSchedule());
+
+        // 单据归属患者 patientId=9，介质解析同为 9：本人退号正常通道保持
+        AppointmentVO vo = service.cancel("AP20260920000001", "行程变动取消", 9L);
+
+        assertThat(vo.status()).isEqualTo(ApptStatus.CANCELLED);
+        verify(apptNumberPoolMapper).casRelease(31L, 7);
+    }
+
+    @Test
     @DisplayName(
             "cancel 分支 1：支付时限内未支付——CANCELLED+casRelease 回池+占位键删+cancelled 事件 feeRefundTriggered=false，零 billing 触达")
     void unpaidCancelReleasesPoolWithoutBillingCall() {

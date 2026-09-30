@@ -4,12 +4,14 @@
 // 未对照药品渲染「不可医保结算」标记，对照成功后 insuredSettleable 翻转标记消失。
 // 弹错归响应拦截器（web A.3-2）；失败驻留旧结果。
 import { onMounted, reactive, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
-// ElMessage 在模板外使用，按需样式需手动引入（与 billing 三页同款口径）
+// ElMessage/ElMessageBox 在模板外使用，按需样式手动引入（与 billing 三页同款口径）
 import 'element-plus/es/components/message/style/css';
+import 'element-plus/es/components/message-box/style/css';
 import { createDrug, mapInsurance, searchDrugs, updateDrug } from '@/api/pharmacy';
 import type { DrugVO } from '@/api/pharmacy';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 
 /** 检索关键词（名称/拼音/医保码模糊） */
 const keyword = ref('');
@@ -20,24 +22,18 @@ const insuranceMapped = ref<boolean | undefined>(undefined);
 
 /** 药品行集（检索结果，仅启用面） */
 const rows = ref<DrugVO[]>([]);
-const loading = ref(false);
 
-/** 加载药品检索（默认启用面，建档/变更/对照成功后重刷）。 */
-async function loadDrugs(): Promise<void> {
-  loading.value = true;
-  try {
-    const page = await searchDrugs({
-      keyword: keyword.value.trim() === '' ? undefined : keyword.value.trim(),
-      essential: essential.value,
-      insuranceMapped: insuranceMapped.value,
-    });
-    rows.value = page.content;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧结果
-  } finally {
-    loading.value = false;
-  }
-}
+/** 加载药品检索（默认启用面，建档/变更/对照成功后重刷；后端 0 基缺省分页兜底，本页
+ * 不传 page/size）：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前
+ * 一致——失败弹错归响应拦截器、驻留旧结果）。 */
+const { loading, run: loadDrugs } = useAsyncTask(async () => {
+  const page = await searchDrugs({
+    keyword: keyword.value.trim() === '' ? undefined : keyword.value.trim(),
+    essential: essential.value,
+    insuranceMapped: insuranceMapped.value,
+  });
+  rows.value = page.content;
+});
 
 /** 检索按钮：同 loadDrugs（空关键词=全启用面检索，后端分页兜底）。 */
 async function handleSearch(): Promise<void> {
@@ -133,6 +129,10 @@ function openEdit(row: DrugVO): void {
  * 提交建档/变更：:rules 声明式校验（错误就近字段显示）→ trim 最终防线兜纯空格 →
  * 成功后关窗重刷。入口在途早退守卫：saveSubmitting 置位到 Vue 重渲染存在间隙，
  * 重渲染前到达的第二击在入口即被拦截。
+ * 变更路径整单覆盖确认（EX-46/FE-A2-09）：变更=PUT 整单档案面回写，管控属性（抗菌药
+ * 分级/危险级/麻精分级/皮试）随表单快照整单覆盖——契约无版本字段（DrugVO 无 updatedAt、
+ * PUT 无 If-Match）做不了乐观锁，「仅提交变更面」也被必填校验（管控属性三分级 @NotBlank）
+ * 封死；最小防护=出网前二次确认，操作者显式核对后放行（取消零出网弹窗驻留）。
  */
 async function submitSave(): Promise<void> {
   if (saveSubmitting.value) {
@@ -161,6 +161,17 @@ async function submitSave(): Promise<void> {
       await createDrug({ ...saveForm });
       void ElMessage.success('药品建档完成');
     } else {
+      // 变更整单覆盖二次确认（EX-46/FE-A2-09）：确认文案点名管控属性，防读改写窗口内
+      // 无感覆盖他人变更；取消则弹窗与录入驻留零出网
+      try {
+        await ElMessageBox.confirm(
+          `即将整单覆盖药品档案「${saveForm.genericName.trim()}」（含抗菌药分级/危险级/麻精分级等管控属性），请确认基于最新档案操作`,
+          '变更覆盖确认',
+          { type: 'warning', confirmButtonText: '确认覆盖', cancelButtonText: '取消' },
+        );
+      } catch {
+        return;
+      }
       await updateDrug(editId.value, { ...saveForm });
       void ElMessage.success('药品档案已变更');
     }

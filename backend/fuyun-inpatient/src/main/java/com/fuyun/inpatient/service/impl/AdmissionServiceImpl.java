@@ -24,12 +24,13 @@ import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.SourceType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.AdmissionService;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IAdmissionService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
@@ -59,7 +60,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 状态迁移一律 @Update CAS + 影响行数判定（GC26，显式 deleted=0）；床位联动三处（Task 4
  * 补齐）：schedule 预约目标床位置 RESERVED、cancel 宽容联动释放（作废 CAS 命中后回读
  * 权威 target_bed_id 与床行实态，仅 RESERVED 才释放，非预占 warn 留痕放行作废）、admitWard
- * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（BedService 同源
+ * 入科床位 RESERVED→OCCUPIED + bed_assign 开流水——联动失败整体事务回滚（IBedService 同源
  * CAS 权威）。
  * Task 10 追加住院计费入口欠费面（FU-M04-08）：押金变动回执驱动的欠费标识本地裁决与 CAS
  * 刷新（InpatientProperties.depositFloorFen 阈值全局一份）+ 病区欠费清单聚合（患者摘要经
@@ -67,7 +68,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
-public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission> implements AdmissionService {
+public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission> implements IAdmissionService {
 
     /** 无登录上下文场景的操作者回退值（与 V902 审计列默认同源） */
     private static final String SYSTEM_OPERATOR = "system";
@@ -87,6 +88,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final BedMapper bedMapper;
 
     private final InpatientSeqGate seqGate;
@@ -97,7 +100,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     private final InpatientProperties properties;
 
-    private final BedService bedService;
+    private final IBedService bedService;
 
     private final ApplicationEventPublisher events;
 
@@ -106,6 +109,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
      *
      * @param admissionMapper        住院证 mapper，非空；ServiceImpl 基座 mapper
      * @param visitMapper            住院就诊 mapper，非空；登记确认落库、入科确认与欠费标识 CAS
+     * @param visitAccessor          住院就诊共享访问器（EX-44 下沉），非空；入科就诊定位 load+check
      * @param bedMapper              床位 mapper，非空；欠费清单床位号批量映射
      * @param seqGate                住院业务号发号器（AD 号 / I 型 visit_id），非空
      * @param patientContextResolver 患者上下文解析（patient api），非空；归一/拦截
@@ -118,14 +122,16 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     public AdmissionServiceImpl(
             AdmissionMapper admissionMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             BedMapper bedMapper,
             InpatientSeqGate seqGate,
             PatientContextResolver patientContextResolver,
             PatientNameQuery patientNameQuery,
             InpatientProperties properties,
-            BedService bedService,
+            IBedService bedService,
             ApplicationEventPublisher events) {
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.bedMapper = bedMapper;
         this.seqGate = seqGate;
         this.patientContextResolver = patientContextResolver;
@@ -218,20 +224,19 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     public PageResult<AdmissionVO> queue(AdmissionStatus status, int page, int size) {
         // 状态条件缺席即全状态（null.getCode() 惰性求值防护：先取值再进条件）
         String statusCode = status == null ? null : status.getCode();
-        // 数据库读操作：队列分页（0 基请求转 MP 1 基 current；Wrappers 直构避免链式查询对
-        // mapper 代理的反射依赖，WardMetaServiceImpl 同款形态）
-        Page<Admission> result = baseMapper.selectPage(
-                new Page<>(page + 1, size),
-                Wrappers.<Admission>lambdaQuery()
-                        .eq(statusCode != null, Admission::getStatus, statusCode)
-                        .last(QUEUE_ORDER_BY));
+        // 数据库读操作：队列分页（0 基请求转 MP 1 基 current；主表查询走 ServiceImpl 内置
+        // lambdaQuery 链式（宪法 A.4.3-13），条件/排序谓词与链式化前逐字等价）
+        Page<Admission> result = lambdaQuery()
+                .eq(statusCode != null, Admission::getStatus, statusCode)
+                .last(QUEUE_ORDER_BY)
+                .page(new Page<>(page + 1, size));
         return PageResult.of(
                 result.getRecords().stream().map(AdmissionVO::from).toList(), page, size, result.getTotal());
     }
 
     /**
      * 预约入院/预住院（WAITING→SCHEDULED）：目标床位/预约日期 CAS 同语句落值；携目标床位时
-     * 同事务联动床位预占（Task 4 联动①——BedService.reserveForAdmission 置 RESERVED，预占
+     * 同事务联动床位预占（Task 4 联动①——IBedService.reserveForAdmission 置 RESERVED，预占
      * 失败整体预约事务回滚：预约到不可用床必须整体失败；预住院模式无床不联动）。
      *
      * @param admissionNo 住院证号，非空；来源：路径参数
@@ -272,7 +277,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     /**
      * 住院证作废（WAITING/SCHEDULED→CANCELLED，终态）；床位联动②取<b>宽容语义</b>——作废
      * CAS 命中后回读住院证行权威 target_bed_id（并发预约窗口下 CAS 前快照可滞后），再回读
-     * 床行实态：仅 RESERVED 才同事务联动释放（Task 4 联动②——BedService.releaseForAdmission
+     * 床行实态：仅 RESERVED 才同事务联动释放（Task 4 联动②——IBedService.releaseForAdmission
      * 置 FREE）；非预占态（预占床已被登记台手工释放为 FREE/流转其他态/床位缺失）warn 留痕
      * 后放行作废——预占缺失不得阻断住院证终态落定。
      *
@@ -347,6 +352,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         String visitId = seqGate.nextVisitId();
         // 事务链③：结构自检（发号器异常防线——失败抛 IllegalStateException 回滚全事务，红线护栏）
         if (!VisitIdValidator.isValid(visitId)) {
+            // EX-19 C 类收口留痕：内部断言（自签发 visit_id 结构自检属发号器异常红线护栏，非用户输入路径），保留 ISE
             throw new IllegalStateException("visit_id 结构自检失败（发号器异常），本次登记回滚：" + visitId);
         }
         InpatientVisit row = new InpatientVisit();
@@ -393,7 +399,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
 
     /**
      * 入科确认（visit REGISTERED→ADMITTED）：科室/病区/床位/护理级别 CAS 同语句落值（入科时点
-     * 库端 now()）→ 回读行取入科时点 → 床位联动③（Task 4 补齐——BedService.occupyForAdmission
+     * 库端 now()）→ 回读行取入科时点 → 床位联动③（Task 4 补齐——IBedService.occupyForAdmission
      * 床位 RESERVED→OCCUPIED CAS + bed_assign 开 ADMISSION 流水，占床失败整体入科事务回滚）→
      * 事务内发布入科事件。
      *
@@ -409,11 +415,9 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         if (!NURSING_LEVELS.contains(req.nursingLevel())) {
             throw paramInvalid("nursingLevel", req.nursingLevel());
         }
-        // 就诊行定位（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤）
-        InpatientVisit visit = requireByVisitId(visitId);
-        if (visit == null) {
-            throw new BizException(InpatientErrorCode.VISIT_NOT_FOUND, HttpStatus.NOT_FOUND, "住院就诊不存在：" + visitId);
-        }
+        // 就诊行定位（未命中定性 IP-1007；逻辑删由 @TableLogic 自动过滤；load+check 经共享
+        // 访问器统一承载——EX-44）
+        InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         String operator = operator();
         // 数据库写操作：入科 CAS（REGISTERED→ADMITTED，入科时点库端 now()；0 行定性状态机违例）
         int rows = visitMapper.casAdmitWard(
@@ -507,7 +511,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
     @Transactional(readOnly = true)
     public List<ArrearsAlarmVO> arrearsList(String wardId) {
         // 数据库读操作：病区欠费在院行聚合（current_ward_id 定位 + 本地欠费标识 + 在院三态限定；
-        // REGISTERED 未入科无病区归属，天然不进清单——语义兜底而非过滤依赖）
+        // REGISTERED 未入科无病区归属，天然不进清单——语义兜底而非过滤依赖；visit 非本服务主表，
+        // Wrappers 手构保留——A.4.3-13 副表面）
         List<InpatientVisit> visits = visitMapper.selectList(Wrappers.<InpatientVisit>lambdaQuery()
                 .eq(InpatientVisit::getCurrentWardId, wardId)
                 .eq(InpatientVisit::getArrearsFlag, true)
@@ -517,7 +522,8 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
             // 空集直过（病区无欠费在院患者）——零二次取数
             return List.of();
         }
-        // 床位号批量映射（current_bed_id 一次取数；床位行缺失兜底 null——转科窗口等数据滞后容错）
+        // 床位号批量映射（current_bed_id 一次取数；床位行缺失兜底 null——转科窗口等数据滞后容错；
+        // bed 非本服务主表，Wrappers 手构保留——A.4.3-13 副表面）
         Set<Long> bedIds = visits.stream()
                 .map(InpatientVisit::getCurrentBedId)
                 .filter(Objects::nonNull)
@@ -543,10 +549,10 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
                 .toList();
     }
 
-    /** 按住院证号定位行（未命中定性 IP-1001；逻辑删由 @TableLogic 自动过滤）。 */
+    /** 按住院证号定位行（未命中定性 IP-1001；逻辑删由 @TableLogic 自动过滤；主表链式——A.4.3-13）。 */
     private Admission requireByNo(String admissionNo) {
         Admission admission =
-                baseMapper.selectOne(Wrappers.<Admission>lambdaQuery().eq(Admission::getAdmissionNo, admissionNo));
+                lambdaQuery().eq(Admission::getAdmissionNo, admissionNo).one();
         if (admission == null) {
             throw new BizException(
                     InpatientErrorCode.ADMISSION_NOT_FOUND, HttpStatus.NOT_FOUND, "住院证不存在：" + admissionNo);
@@ -554,7 +560,7 @@ public class AdmissionServiceImpl extends ServiceImpl<AdmissionMapper, Admission
         return admission;
     }
 
-    /** 按就诊号定位行（未命中返回 null 交调用方定性 IP-1007/IP-1023）。 */
+    /** 按就诊号定位行（未命中返回 null 交调用方定性 IP-1007/IP-1023；visit 非本服务主表，Wrappers 手构——A.4.3-13 副表面）。 */
     private InpatientVisit requireByVisitId(String visitId) {
         return visitMapper.selectOne(Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getVisitId, visitId));
     }

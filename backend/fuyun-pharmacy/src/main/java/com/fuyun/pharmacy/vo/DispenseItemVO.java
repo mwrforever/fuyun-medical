@@ -61,6 +61,7 @@ public record DispenseItemVO(
         try {
             return TRACE_MAPPER.readValue(json, new TypeReference<List<String>>() {});
         } catch (JsonProcessingException e) {
+            // EX-19 C 类留痕：DB 脏数据防御（非用户输入路径），保留 ISE 显式暴露禁静默吞码，不在 A/B 收口范围
             throw new IllegalStateException("调剂明细追溯码数据损坏（非 JSON 数组）：traceCodes=" + json, e);
         }
     }

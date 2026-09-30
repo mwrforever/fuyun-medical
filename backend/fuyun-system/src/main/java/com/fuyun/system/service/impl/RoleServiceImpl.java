@@ -36,6 +36,16 @@ public class RoleServiceImpl extends ServiceImpl<RoleMapper, RoleEntity> impleme
         this.userRoleMapper = userRoleMapper;
     }
 
+    /**
+     * 查询用户被授予且处于启用状态的角色编码清单（登录会话角色摘要的数据源）。
+     *
+     * <p>执行流程（两步单表查询，P0 无连表 XML）：sys_user_role 绑定表精确投影取 role_id →
+     * 按绑定批量查 sys_role，仅取启用（ACTIVE）角色的编码投影——停用角色的权限语义即失效，
+     * 不入会话。第一步结果为空时短路返回，不再触达主表。
+     *
+     * @param userId 用户 ID，非空；来源：登录认证通过后的 sys_user.id
+     * @return 启用角色编码清单（如 ["ADMIN"]）；无绑定或绑定角色全部停用时为空清单，非 null
+     */
     @Override
     @Transactional(readOnly = true)
     public List<String> findRoleCodesByUserId(Long userId) {

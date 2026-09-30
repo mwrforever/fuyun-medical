@@ -2,19 +2,15 @@
 // 候诊叫号大屏页（FU-M03-05 大屏端前端面，设计文档 §3.4/§8.5）：诊区叫号暗色三段 grid——
 // 头部（诊区名/时钟/连接呼吸点）+ 当前叫号卡（bg-elevated+glow，WS CALLED 帧 :key 票号重挂
 // 触发 motion.css 三段编排）+ 候诊榜（REST 快照首屏 + 前 8 条两列 grid，斑马纹）。
-// 受控演示面红线：VITE_BIGSCREEN_TOKEN 未配置时整页横幅 + 零出网（零 REST 零订阅）；
-// 长时值守零泄漏：定时器仅时钟 1 个（onUnmounted 清理），WS 重连全交库内建。
+// 受控演示面红线（BUG-19 后口径）：WS 凭证运行期自动签发（不再有构建期「未配置」静态态），
+// 初始建连令牌获取失败时整页横幅 + 零 WS 建连（快照为匿名只读面照常首屏）；长时值守零泄漏：
+// 定时器仅时钟 1 个（onUnmounted 清理），WS 重连全交库内建。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { QueueTicketVO } from '@/api/outpatientQueue';
 import { getQueueSnapshot } from '@/api/outpatientQueue';
-import {
-  connect,
-  disconnect,
-  isQueueTokenConfigured,
-  subscribeQueue,
-} from '@/composables/useQueueStomp';
+import { connect, disconnect, subscribeQueue } from '@/composables/useQueueStomp';
 import type { QueueCalledNotice } from '@/composables/useQueueStomp';
-import { connectionState } from '@/composables/useQueueStomp';
+import { connectionState, tokenFailed } from '@/composables/useQueueStomp';
 import { useRoute, useRouter } from 'vue-router';
 
 /** 候诊榜容量（§7.2：固定前 8 条，WS 快照数组 slice，不入 VirtualList） */
@@ -51,9 +47,6 @@ function triageBadgeClass(level: number | undefined): string | null {
 const route = useRoute();
 const router = useRouter();
 
-/** 受控演示面开关：令牌未配置 → 整页横幅 + 零出网（计算一次，构建期常量） */
-const tokenConfigured = isQueueTokenConfigured();
-
 /** 诊区编码（路由 query 可书签化；缺省内科演示诊区） */
 const deptCode = ref(readDeptFromRoute());
 
@@ -73,10 +66,9 @@ function onDeptInput(event: Event): void {
 
 watch(deptCode, (next) => {
   void router.replace({ query: { dept: next } });
-  if (tokenConfigured) {
-    void loadSnapshot();
-    queueStompSubscribe(next);
-  }
+  // 无条件重订阅：快照为匿名只读面，WS 建连由 composable 按令牌签发结果自行把关
+  void loadSnapshot();
+  queueStompSubscribe(next);
 });
 
 /* ---------- 当前叫号卡（WS CALLED 帧 :key=ticketNo 重挂触发三段编排 §6.3） ---------- */
@@ -157,9 +149,10 @@ function tickClock(): void {
   clockText.value = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 }
 
-/** 连接状态文案（§8.5 断线横幅：呼吸点转灰 + 1.25rem 提示；恢复后自动重订阅续播） */
+/** 连接状态文案（§8.5 断线横幅：呼吸点转灰 + 1.25rem 提示；恢复后自动重订阅续播）。
+ * 令牌失败态下不并陈断线横幅（该态由整页禁用横幅独占承载） */
 const connectionBannerVisible = computed(
-  () => tokenConfigured && connectionState.value === 'disconnected',
+  () => !tokenFailed.value && connectionState.value === 'disconnected',
 );
 
 /** 呼吸点三态色：连接中=品牌、已连接=ok、断开=灰（§8.5 常驻呼吸动画仅连接态点） */
@@ -174,10 +167,8 @@ const breathingDotClass = computed(() => {
 });
 
 onMounted(() => {
-  // 未配置令牌：整页横幅 + 零出网（零 REST 零订阅，§8.5 链路禁用口径）
-  if (!tokenConfigured) {
-    return;
-  }
+  // 令牌经运行期签发（composable 内获取，失败置 tokenFailed 整页横幅）：时钟/快照/订阅
+  // 无条件启动——快照为匿名只读面不承载凭证，WS 建连由 connect 内部按令牌结果把关
   tickClock();
   clockTimer = setInterval(tickClock, 1000);
   void loadSnapshot();
@@ -195,11 +186,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- 未配置大屏令牌：整页横幅（bg-panel + 琥珀描边）+ 零出网（§8.5） -->
-  <div v-if="!tokenConfigured" class="queue-board queue-board--disabled">
+  <!-- 令牌运行期获取失败：整页横幅（bg-panel + 琥珀描边）+ 零 WS 建连（§8.5 链路禁用口径） -->
+  <div v-if="tokenFailed" class="queue-board queue-board--disabled">
     <div class="queue-board-banner" role="alert">
-      <p class="queue-board-banner-title">未配置大屏令牌，已禁用数据链路</p>
-      <p class="queue-board-banner-note">部署时经构建期变量 VITE_BIGSCREEN_TOKEN 注入后重启生效</p>
+      <p class="queue-board-banner-title">大屏令牌获取失败，数据链路已禁用</p>
+      <p class="queue-board-banner-note">令牌经运行期自动获取，请检查后端服务与网络后刷新重试</p>
     </div>
   </div>
 
@@ -289,7 +280,7 @@ onBeforeUnmount(() => {
   color: var(--fuy-screen-text-primary);
 }
 
-/* 未配置令牌的整页横幅态（bg-panel + 琥珀描边 §8.5） */
+/* 令牌运行期获取失败的整页横幅态（bg-panel + 琥珀描边 §8.5） */
 .queue-board--disabled {
   display: flex;
   align-items: center;

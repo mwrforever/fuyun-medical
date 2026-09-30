@@ -1,6 +1,7 @@
-// 候诊叫号大屏页单测（FU-M03-05 大屏端前端面）：核心断言——未配置大屏令牌时整页横幅 +
-// 【零出网】（零 REST 零订阅零建连）；已配置链路：快照首屏榜单前 8 条渲染 + 订阅挂接；
-// CALLED 帧驱动当前叫号卡与该票离队；断线横幅呈现。api/STOMP 模块 mock 承载，禁真实网络。
+// 候诊叫号大屏页单测（FU-M03-05 大屏端前端面）：核心断言——令牌运行期获取失败（tokenFailed）
+// 时整页横幅【链路禁用】；正常链路：快照首屏榜单前 8 条渲染 + 订阅挂接；CALLED 帧驱动当前
+// 叫号卡与该票离队；断线横幅呈现。api/STOMP 模块 mock 承载，禁真实网络（拒建连零出网语义
+// 归 useQueueStomp.spec 承载，本文件只断言页面横幅与渲染）。
 import { flushPromises, mount } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,9 +10,8 @@ import { getQueueSnapshot } from '@/api/outpatientQueue';
 import type { QueueTicketVO } from '@/api/outpatientQueue';
 import QueueBoardView from './QueueBoardView.vue';
 
-/** mock 捕获状态（hoisted：令牌配置开关 + 捕获的订阅帧回调，逐用例手动复位） */
+/** mock 捕获状态（hoisted：捕获的订阅帧回调，逐用例手动复位；令牌态经导出 ref 翻转） */
 const h = vi.hoisted(() => ({
-  tokenConfigured: false,
   onFrame: null as null | ((notice: unknown) => void),
   unsubscribeCalls: 0,
 }));
@@ -21,11 +21,12 @@ vi.mock('@/api/outpatientQueue', () => ({
 }));
 
 vi.mock('@/composables/useQueueStomp', () => {
-  // connectionState 以真实 ref 承载（组件 computed 消费其 .value 响应性）
+  // connectionState/tokenFailed 以真实 ref 承载（组件 computed 消费其 .value 响应性）
   const connectionState = ref<string>('connecting');
+  const tokenFailed = ref<boolean>(false);
   return {
     connectionState,
-    isQueueTokenConfigured: () => h.tokenConfigured,
+    tokenFailed,
     connect: vi.fn(),
     subscribeQueue: vi.fn(
       (_deptCode: string, onFrame: (notice: unknown) => void): { unsubscribe: () => void } => {
@@ -38,9 +39,9 @@ vi.mock('@/composables/useQueueStomp', () => {
   };
 });
 
-// 连接状态 ref 引用（用例内直接翻转驱动断线横幅断言）
+// 连接/令牌状态 ref 引用（用例内直接翻转驱动断线与失败横幅断言）
 // eslint 提示：与 mock 工厂共享模块作用域，非未使用导入
-import { connectionState } from '@/composables/useQueueStomp';
+import { connectionState, tokenFailed } from '@/composables/useQueueStomp';
 
 function ticketMock(
   no: string,
@@ -80,29 +81,29 @@ async function mountBoard(
 describe('候诊叫号大屏', () => {
   beforeEach(() => {
     vi.mocked(getQueueSnapshot).mockReset();
-    h.tokenConfigured = false;
     h.onFrame = null;
     h.unsubscribeCalls = 0;
     (connectionState as { value: string }).value = 'connecting';
+    (tokenFailed as { value: boolean }).value = false;
   });
 
-  it('未配置大屏令牌：整页横幅 + 零出网（零 REST 快照零订阅零建连）', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('令牌运行期获取失败（tokenFailed）：整页横幅随状态响应式翻转，看板主体整段替换', async () => {
+    vi.mocked(getQueueSnapshot).mockResolvedValue([ticketMock('A001')]);
     const { wrapper } = await mountBoard();
-    // 渲染断言：横幅文案与部署指引
-    expect(wrapper.text()).toContain('未配置大屏令牌，已禁用数据链路');
-    expect(wrapper.text()).toContain('VITE_BIGSCREEN_TOKEN');
-    // 零出网断言（§8.5 链路禁用）：无 REST、无 WS 建连、无订阅
-    expect(vi.mocked(getQueueSnapshot)).not.toHaveBeenCalled();
-    const { connect } = await import('@/composables/useQueueStomp');
-    expect(vi.mocked(connect)).not.toHaveBeenCalled();
-    expect(h.onFrame).toBeNull();
-    warnSpy.mockRestore();
+    await flushPromises();
+    // 正常态渲染看板主体（横幅不出现——失败态由 composable 异步置位，页面只读消费）
+    expect(wrapper.text()).not.toContain('数据链路已禁用');
+
+    // 模拟初始建连取令牌失败（useQueueStomp 置 tokenFailed=true）：横幅出现且替换看板主体
+    (tokenFailed as { value: boolean }).value = true;
+    await flushPromises();
+    expect(wrapper.text()).toContain('大屏令牌获取失败，数据链路已禁用');
+    expect(wrapper.text()).toContain('运行期自动获取');
+    expect(wrapper.find('.queue-board-waiting').exists()).toBe(false);
     wrapper.unmount();
   });
 
-  it('已配置链路：REST 快照首屏 + WS 订阅挂接，候诊榜渲染前 8 条与状态角标', async () => {
-    h.tokenConfigured = true;
+  it('正常链路：REST 快照首屏 + WS 订阅挂接，候诊榜渲染前 8 条与状态角标', async () => {
     // 11 行快照：榜单只渲染前 8 条（§7.2 slice 承载）
     vi.mocked(getQueueSnapshot).mockResolvedValue(
       Array.from({ length: 11 }, (_, i) => ticketMock(`A${String(i + 1).padStart(3, '0')}`)),
@@ -122,7 +123,6 @@ describe('候诊叫号大屏', () => {
   });
 
   it('分诊级别角标：快照行有分级渲染对应级别角标，可空行不渲染占位（W-29 契约消费）', async () => {
-    h.tokenConfigured = true;
     vi.mocked(getQueueSnapshot).mockResolvedValue([
       ticketMock('A001', 'WAITING', 1),
       ticketMock('A002', 'WAITING'),
@@ -139,7 +139,6 @@ describe('候诊叫号大屏', () => {
   });
 
   it('CALLED 帧：当前叫号卡 :key 票号重挂（引导语/票号/脱敏姓名）且该票从榜单离队', async () => {
-    h.tokenConfigured = true;
     vi.mocked(getQueueSnapshot).mockResolvedValue([
       ticketMock('A008'),
       ticketMock('A009', 'CALLED'),
@@ -168,7 +167,6 @@ describe('候诊叫号大屏', () => {
   });
 
   it('断线横幅：connectionState 回归断开态呈现「连接中断，自动重连中」', async () => {
-    h.tokenConfigured = true;
     vi.mocked(getQueueSnapshot).mockResolvedValue([]);
     const { wrapper } = await mountBoard();
     await flushPromises();

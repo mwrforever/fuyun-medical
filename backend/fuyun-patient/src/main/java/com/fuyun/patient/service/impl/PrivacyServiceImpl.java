@@ -9,6 +9,7 @@ import com.fuyun.common.web.PageResult;
 import com.fuyun.patient.api.CareRelationQuery;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.convert.PatientConverter;
+import com.fuyun.patient.dto.PrivacyAccessLogQuery;
 import com.fuyun.patient.dto.UnmaskRequest;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.entity.PrivacyAccessLog;
@@ -16,13 +17,14 @@ import com.fuyun.patient.enums.MaskTargetField;
 import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.mapper.PrivacyAccessLogMapper;
 import com.fuyun.patient.service.IPatientService;
-import com.fuyun.patient.service.PrivacyMaskService;
-import com.fuyun.patient.service.PrivacyService;
+import com.fuyun.patient.service.IPrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyService;
 import com.fuyun.patient.vo.PrivacyAccessLogVO;
 import com.fuyun.patient.vo.UnmaskVO;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.mapstruct.factory.Mappers;
 import org.slf4j.MDC;
@@ -34,7 +36,8 @@ import org.springframework.transaction.annotation.Transactional;
  * 隐私明文查阅与留痕实现（FU-M02-06）：unmask 为全仓唯一明文出口——角色豁免 + 诊疗关系
  * D-16 三态双道校验 403 前置（不落台账、不返明文），解密取值仅在本方法生命周期与响应体内
  * 存活；成功由 @AuditLog SENSITIVE_QUERY 审计行 + privacy_access_log 台账行双留痕，失败由
- * 审计 FAIL 行留痕。豁免判定复用 PrivacyMaskService isExempt（禁复制判定逻辑，A.4.3-21）。
+ * 审计 FAIL 行留痕。豁免判定复用 IPrivacyMaskService 批量面 exemptFields（禁复制判定逻辑，
+ * A.4.3-21；单字段面 isExempt 保留供单查场景）。
  *
  * <p>诊疗关系第二道（{@link CareRelationQuery} SPI，D-16 冻结语义）：容器无实现时跳过维持
  * 角色豁免单门禁现状（ObjectProvider 空安全，不 NPE）；任一实现（M03 门诊在途诊疗关系）
@@ -42,7 +45,7 @@ import org.springframework.transaction.annotation.Transactional;
  * 不实现（无调用方）。
  */
 @Slf4j
-public class PrivacyServiceImpl implements PrivacyService {
+public class PrivacyServiceImpl implements IPrivacyService {
 
     /** 查阅类型词表：明文查阅（ARCHIVE_EXPORT/PANORAMA_VIEW 预留不实现，V103 列注释口径） */
     private static final String ACCESS_TYPE_UNMASK_QUERY = "UNMASK_QUERY";
@@ -50,7 +53,7 @@ public class PrivacyServiceImpl implements PrivacyService {
     /** traceId 的 MDC 键：与 TraceIdFilter/GlobalExceptionHandler 默认键一致 */
     private static final String TRACE_ID_MDC_KEY = "traceId";
 
-    private final PrivacyMaskService privacyMaskService;
+    private final IPrivacyMaskService privacyMaskService;
 
     private final IPatientService patientService;
 
@@ -72,7 +75,7 @@ public class PrivacyServiceImpl implements PrivacyService {
      *                                容器无实现时解析值为 null（维持单门禁，M03 注册后自动收紧）
      */
     public PrivacyServiceImpl(
-            PrivacyMaskService privacyMaskService,
+            IPrivacyMaskService privacyMaskService,
             IPatientService patientService,
             PrivacyAccessLogMapper privacyAccessLogMapper,
             PatientFieldCrypto crypto,
@@ -95,11 +98,13 @@ public class PrivacyServiceImpl implements PrivacyService {
     @Transactional
     public UnmaskVO unmask(UnmaskRequest request) {
         // ①角色豁免判定：全字段豁免=角色单门禁直接放行；存在非豁免字段时进入 ② 诊疗关系第二道
+        //   批量判定面（OPT-11）：规则单次装载内存复用，豁免判定查询数与请求字段数解耦
         List<String> roles = RoleContextHolder.get();
+        Set<String> exemptFields = privacyMaskService.exemptFields(roles, request.fields());
         boolean exemptAll = true;
         String firstUnexemptField = null;
         for (String field : request.fields()) {
-            if (!privacyMaskService.isExempt(roles, field)) {
+            if (!exemptFields.contains(field)) {
                 exemptAll = false;
                 firstUnexemptField = field;
                 break;
@@ -163,26 +168,27 @@ public class PrivacyServiceImpl implements PrivacyService {
     }
 
     /**
-     * 查阅台账分页。
+     * 查阅台账分页（等保审计主检索）：单页条数越界收敛 1-200 归本层承载（检索条件编排属业务
+     * 逻辑，controller 仅组装原始请求参数）。
      *
-     * @param patientId 患者过滤，可空
-     * @param page      0 基页码
-     * @param size      1-200
-     * @return 台账分页，非空
+     * @param query 台账检索条件（patientId 可空=全量；page 0 基；size 原始请求值），非空
+     * @return 台账分页（page 原样回显；size 按收敛后值回显），非空
      */
     @Override
     @Transactional(readOnly = true)
-    public PageResult<PrivacyAccessLogVO> listAccessLogs(Long patientId, int page, int size) {
+    public PageResult<PrivacyAccessLogVO> listAccessLogs(PrivacyAccessLogQuery query) {
+        // 单页条数防御性收敛 1-200：0/负数=1、超 200=200（防超大单页拖库，与既有端点收敛口径一致）
+        int size = Math.min(Math.max(query.size(), 1), 200);
         // MP Page 为 1 基：0 基契约 +1 换算（PageResult 出参仍以 0 基回显）
-        Page<PrivacyAccessLog> result = new Page<>(page + 1, size);
+        Page<PrivacyAccessLog> result = new Page<>(query.page() + 1, size);
         privacyAccessLogMapper.selectPage(
                 result,
                 new LambdaQueryWrapper<PrivacyAccessLog>()
-                        .eq(patientId != null, PrivacyAccessLog::getPatientId, patientId)
+                        .eq(query.patientId() != null, PrivacyAccessLog::getPatientId, query.patientId())
                         .orderByDesc(PrivacyAccessLog::getOccurredAt));
         List<PrivacyAccessLogVO> rows = result.getRecords().stream()
                 .map(row -> Mappers.getMapper(PatientConverter.class).toVO(row))
                 .toList();
-        return PageResult.of(rows, page, size, result.getTotal());
+        return PageResult.of(rows, query.page(), size, result.getTotal());
     }
 }

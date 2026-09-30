@@ -56,6 +56,7 @@ public class VisitIdIssuerImpl implements IVisitIdIssuer {
         // 数据库写操作前置：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
         if (seq == null) {
+            // EX-19 C 类收口留痕：基础设施异常断言（Redis 流水缺失，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("visit_id 签发失败：Redis 流水返回空，seqKey=" + seqKey);
         }
         if (seq == 1L) {
@@ -63,11 +64,13 @@ public class VisitIdIssuerImpl implements IVisitIdIssuer {
             redisTemplate.expire(seqKey, SEQ_KEY_TTL);
         }
         if (seq > DAILY_SEQ_CAP) {
+            // EX-19 C 类收口留痕：签发上限防御断言（违例值禁落库，非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("visit_id 签发失败：当日流水超 5 位上限（seq=" + seq + "），seqKey=" + seqKey);
         }
         String visitId = "O" + today + String.format("%05d", seq);
         if (!VisitIdValidator.isValid(visitId)) {
             // 结构红线 fail-fast：违例值禁落库（理论不可达，防御 CF-3 契约漂移）
+            // EX-19 C 类收口留痕：理论不可达防御断言（非用户输入路径），保留 ISE 零行为变化
             throw new IllegalStateException("visit_id 签发结构自检失败：visitId=" + visitId);
         }
         log.info("visit_id 已签发：visitId={}", visitId);

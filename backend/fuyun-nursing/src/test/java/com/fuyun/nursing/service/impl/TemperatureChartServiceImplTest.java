@@ -22,10 +22,13 @@ import com.fuyun.nursing.mapper.TemperatureChartEntryMapper;
 import com.fuyun.nursing.mapper.TemperatureChartPageMapper;
 import com.fuyun.nursing.vo.ChartEntryVO;
 import com.fuyun.nursing.vo.TemperatureChartVO;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.TimeZone;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
@@ -69,6 +72,9 @@ class TemperatureChartServiceImplTest {
     private TemperatureChartEntryMapper entryMapper;
 
     @Captor
+    private ArgumentCaptor<TemperatureChartPage> pageCaptor;
+
+    @Captor
     private ArgumentCaptor<TemperatureChartEntry> entryCaptor;
 
     private TemperatureChartServiceImpl service;
@@ -86,6 +92,8 @@ class TemperatureChartServiceImplTest {
     void setUp() {
         service = new TemperatureChartServiceImpl(pageMapper, entryMapper);
         ReflectionTestUtils.setField(service, "baseMapper", pageMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", TemperatureChartPage.class);
     }
 
     @Test
@@ -144,6 +152,40 @@ class TemperatureChartServiceImplTest {
         assertThat(entries).extracting(TemperatureChartEntry::getPageId).containsOnly(77L);
         // 同刻并存：时点为同一时刻（TIMESTAMPTZ 按时刻比较，不绑定存储偏移）
         assertThat(entries).extracting(row -> row.getEntryTime().toInstant()).containsOnly(T0700.toInstant());
+    }
+
+    @Test
+    @DisplayName("月页归属时区锚（BUG-03）：JVM 默认时区为 UTC 时，北京 10-01 01:00（UTC 09-30 17:00）体征仍归 2026-10 月页、条目时点承载 +08:00 偏移")
+    void appendVitalEntryFilesBeijingMonthPageUnderUtcDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 复现缺陷环境：镜像基底 eclipse-temurin:17-jre 默认 UTC，月页归属随 systemDefault 错归前月页
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            when(pageMapper.selectOne(any())).thenReturn(null);
+            when(pageMapper.insert(any(TemperatureChartPage.class))).thenAnswer(inv -> {
+                inv.getArgument(0, TemperatureChartPage.class).setId(78L);
+                return 1;
+            });
+            when(entryMapper.insert(any(TemperatureChartEntry.class))).thenAnswer(inv -> {
+                inv.getArgument(0, TemperatureChartEntry.class).setId(601L);
+                return 1;
+            });
+
+            service.appendVitalEntry(VISIT, Instant.parse("2026-09-30T17:00:00Z"), 101L, "AXILLARY");
+
+            // 月页归属=体征时点按北京时区取所在月：跨月零点后 1 小时归次月页（缺陷形态=错归 2026-09 前月页）
+            verify(pageMapper).insert(pageCaptor.capture());
+            assertThat(pageCaptor.getValue().getChartMonth()).isEqualTo("2026-10");
+            // 条目时点显式承载北京偏移（同一时刻，TIMESTAMPTZ 按时刻存储的口径不变）
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            verify(entryMapper).insert(entryCaptor.capture());
+            assertThat(entryCaptor.getValue().getEntryTime())
+                    .isEqualTo(Instant.parse("2026-09-30T17:00:00Z")
+                            .atZone(beijing)
+                            .toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

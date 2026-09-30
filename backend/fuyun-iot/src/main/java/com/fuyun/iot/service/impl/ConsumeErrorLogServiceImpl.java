@@ -308,7 +308,8 @@ public class ConsumeErrorLogServiceImpl implements IConsumeErrorLogService {
             }
             return hex.toString();
         } catch (NoSuchAlgorithmException e) {
-            // SHA-256 为 JDK 内置算法，理论不可达；防御性包装为 IllegalState 使环境缺陷显性暴露
+            // 内部断言：SHA-256 为 JDK 内置算法，理论不可达（JDK 环境缺陷，非用户输入路径）；
+            // 防御性包装为 ISE 使环境缺陷显性暴露
             throw new IllegalStateException("SHA-256 摘要算法不可用（JDK 环境异常）", e);
         }
     }

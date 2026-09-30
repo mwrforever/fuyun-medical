@@ -2,6 +2,7 @@ package com.fuyun.billing.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -12,6 +13,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.dto.ChargeItemCreateRequest;
 import com.fuyun.billing.dto.ComboComponentRequest;
@@ -25,6 +27,7 @@ import com.fuyun.billing.mapper.ChargeItemMapper;
 import com.fuyun.common.exception.BizException;
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,10 +36,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
-/** 收费项目管理单测：编码唯一（uk 前置拒重）+ 按码取生效项守卫（不存在/停用）+ 组合构成落库。 */
+/** 收费项目管理单测：编码唯一（uk 前置拒重）+ 按码取生效项守卫（不存在/停用）+ 组合构成落库 + 划价批查面（编码集/构成集 IN 批查，A.4.3-14）。 */
 @ExtendWith(MockitoExtension.class)
 class ChargeItemServiceImplTest {
 
@@ -188,9 +193,21 @@ class ChargeItemServiceImplTest {
                         .isEqualTo(BillingErrorCode.CHARGE_ITEM_STATE_NOT_ALLOWED));
         verify(componentMapper, never()).delete(any());
 
-        service.saveComboComponents(9L, members);
+        // EX-37 桩面随通道迁移：成员落库通道=Db.saveBatch 批插（原 componentMapper.insert captor
+        //   等价改批量行集 captor，行内容断言语义不变；静态桩须先于 service 调用开启）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.saveComboComponents(9L, members);
 
-        // 全量覆盖式落成员：先逻辑删旧成员，再逐成员插入
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ChargeItemComponent>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue()).hasSize(1);
+            assertThat(rowsCaptor.getValue().get(0).getComboItemId()).isEqualTo(9L);
+            assertThat(rowsCaptor.getValue().get(0).getComponentItemId()).isEqualTo(12L);
+            assertThat(rowsCaptor.getValue().get(0).getDefaultQuantity()).isEqualByComparingTo(new BigDecimal("2.000"));
+        }
+
+        // 全量覆盖式落成员：先逻辑删旧成员，再批量插新成员
         // 删旧 SQL 守卫钉死：delete 必须限定 combo_item_id=本次组合（防删旧条件被静默删除放大为全表逻辑删）
         ArgumentCaptor<Wrapper<ChargeItemComponent>> deleteCaptor = ArgumentCaptor.forClass(Wrapper.class);
         verify(componentMapper).delete(deleteCaptor.capture());
@@ -199,11 +216,52 @@ class ChargeItemServiceImplTest {
         // 先渲染 SQL 片段：MP 条件参数在 getSqlSegment 惰性求值时才写入 paramNameValuePairs（模块内既有同款）
         assertThat(deleteWrapper.getSqlSegment()).contains("combo_item_id");
         assertThat(deleteWrapper.getParamNameValuePairs().values()).contains(9L);
-        ArgumentCaptor<ChargeItemComponent> captor = ArgumentCaptor.forClass(ChargeItemComponent.class);
-        verify(componentMapper).insert(captor.capture());
-        assertThat(captor.getValue().getComboItemId()).isEqualTo(9L);
-        assertThat(captor.getValue().getComponentItemId()).isEqualTo(12L);
-        assertThat(captor.getValue().getDefaultQuantity()).isEqualByComparingTo(new BigDecimal("2.000"));
+    }
+
+    @Test
+    @DisplayName("成员批插契约：多成员一次批插恰 1 次（Db.saveBatch），逐行 insert 通道零调用、行序=清单序")
+    void saveComboComponentsInsertsMembersInSingleBatch() {
+        ChargeItem combo = new ChargeItem();
+        combo.setComboFlag(true);
+        when(chargeItemMapper.selectById(9L)).thenReturn(combo);
+        List<ComboComponentRequest> members = List.of(
+                new ComboComponentRequest(12L, new BigDecimal("2.000")),
+                new ComboComponentRequest(13L, new BigDecimal("1.500")));
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.saveComboComponents(9L, members);
+
+            // 批量写契约（EX-37）：N 成员恰一次批插——Db.saveBatch 恰 1 次且行集=清单序，
+            //   每行三键（组合 id/成员 id/默认数量）与逐行 insert 时代完全一致
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<ChargeItemComponent>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue())
+                    .extracting(
+                            ChargeItemComponent::getComboItemId,
+                            ChargeItemComponent::getComponentItemId,
+                            ChargeItemComponent::getDefaultQuantity)
+                    .containsExactly(tuple(9L, 12L, new BigDecimal("2.000")), tuple(9L, 13L, new BigDecimal("1.500")));
+        }
+        // 逐行写通道已下线：EX-37 前 N 次 componentMapper.insert 通道零调用锚
+        verify(componentMapper, never()).insert(any(ChargeItemComponent.class));
+    }
+
+    @Test
+    @DisplayName("空成员清单：全量覆盖语义只删旧零批插（Db.saveBatch 零调用，与旧零 insert 语义对齐）")
+    void saveComboComponentsSkipsBatchInsertWhenMembersEmpty() {
+        ChargeItem combo = new ChargeItem();
+        combo.setComboFlag(true);
+        when(chargeItemMapper.selectById(9L)).thenReturn(combo);
+
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.saveComboComponents(9L, List.of());
+            // 空清单零批插（MP Db 空集合无法解析实体类，须短路守卫承载——零语句语义与旧零 insert 对齐）
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+        }
+        // 全量覆盖删旧照常（空清单=清空全部成员的合法语义，delete 不受批插收口影响）
+        verify(componentMapper).delete(any());
+        verify(componentMapper, never()).insert(any(ChargeItemComponent.class));
     }
 
     @Test
@@ -226,5 +284,71 @@ class ChargeItemServiceImplTest {
                 (LambdaQueryWrapper<ChargeItemComponent>) wrapperCaptor.getValue();
         assertThat(wrapper.getSqlSegment()).contains("combo_item_id");
         assertThat(wrapper.getParamNameValuePairs().values()).contains(9L);
+    }
+
+    @Test
+    @DisplayName("编码集批查：一次 IN 批查按 itemCode 键返回（含停用行供补偿校验区分），缺码不出键，空键集零 SQL")
+    void listByCodesBatchesAndKeepsInactiveRows() {
+        ChargeItem active = new ChargeItem();
+        active.setId(7L);
+        active.setItemCode("C001");
+        active.setStatus(ItemStatus.ACTIVE);
+        ChargeItem inactive = new ChargeItem();
+        inactive.setId(8L);
+        inactive.setItemCode("C002");
+        inactive.setStatus(ItemStatus.INACTIVE);
+        when(chargeItemMapper.selectList(any())).thenReturn(List.of(active, inactive));
+
+        Map<String, ChargeItem> result = service.listByCodes(List.of("C001", "C002", "C003"));
+
+        // 键集语义锚：命中行按键返回（停用行保留——BILL-1001/1003 区分归调用方补偿校验），词表外缺码不出键
+        assertThat(result).containsOnlyKeys("C001", "C002");
+        assertThat(result.get("C001")).isSameAs(active);
+        assertThat(result.get("C002").getStatus()).isEqualTo(ItemStatus.INACTIVE);
+        // 批查 SQL 守卫钉死：IN 条件必须落在 item_code 列且携带全部键集（A.4.3-14 批量取数锚）
+        ArgumentCaptor<Wrapper<ChargeItem>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(chargeItemMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItem> wrapper = rendered(wrapperCaptor.getValue());
+        assertThat(wrapper.getSqlSegment()).contains("item_code");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("C001", "C002", "C003");
+        // 空键集零 SQL 触达（MP in 谓词空集非法 SQL 前置短路）
+        assertThat(service.listByCodes(List.of())).isEmpty();
+        verify(chargeItemMapper, times(1)).selectList(any());
+    }
+
+    @Test
+    @DisplayName("组合构成批查：一次 IN 批查按 comboItemId 分组（组内 id 升序），空键集零 SQL")
+    void listComponentsByComboItemIdsBatchesAndGroupsByCombo() {
+        // DB 按全局 id 升序回放（跨组合交错：组9成员 → 组10成员 → 组9成员），分组须保持组内相对序
+        ChargeItemComponent combo9First = componentRow(1L, 9L, 12L);
+        ChargeItemComponent combo10 = componentRow(2L, 10L, 14L);
+        ChargeItemComponent combo9Second = componentRow(3L, 9L, 13L);
+        when(componentMapper.selectList(any())).thenReturn(List.of(combo9First, combo10, combo9Second));
+
+        Map<Long, List<ChargeItemComponent>> result = service.listComponentsByComboItemIds(List.of(9L, 10L));
+
+        // 分组语义锚：两组合各得自成员清单，组内按 id 升序（=维护插入序，划价展开行序稳定锚）
+        assertThat(result).containsOnlyKeys(9L, 10L);
+        assertThat(result.get(9L)).containsExactly(combo9First, combo9Second);
+        assertThat(result.get(10L)).containsExactly(combo10);
+        // 批查 SQL 守卫钉死：IN 条件落在 combo_item_id 列 + id 升序定序（防全量拉取与未定义组内序）
+        ArgumentCaptor<Wrapper<ChargeItemComponent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(componentMapper, times(1)).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<ChargeItemComponent> wrapper =
+                (LambdaQueryWrapper<ChargeItemComponent>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("combo_item_id").contains("ORDER BY id ASC");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(9L, 10L);
+        // 空键集零 SQL 触达
+        assertThat(service.listComponentsByComboItemIds(List.of())).isEmpty();
+        verify(componentMapper, times(1)).selectList(any());
+    }
+
+    /** 构成行夹具：显式给定三键（id 升序定序用例的确定性基础）。 */
+    private ChargeItemComponent componentRow(long id, long comboItemId, long componentItemId) {
+        ChargeItemComponent row = new ChargeItemComponent();
+        row.setId(id);
+        row.setComboItemId(comboItemId);
+        row.setComponentItemId(componentItemId);
+        return row;
     }
 }

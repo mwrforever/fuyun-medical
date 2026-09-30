@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.constants.NursingTimeConstants;
 import com.fuyun.nursing.dto.IoRecordCreateRequest;
 import com.fuyun.nursing.dto.IoSummaryCreateRequest;
 import com.fuyun.nursing.entity.IoRecord;
@@ -32,7 +33,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
-import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -181,7 +181,7 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     }
 
     /**
-     * 按住院就诊号列出入量明细（发生时间升序）；date 非空时收敛为服务器时区当日窗口
+     * 按住院就诊号列出入量明细（发生时间升序）；date 非空时收敛为北京时区当日窗口
      * [当日 00:00, 次日 00:00)。
      *
      * @param visitId 住院就诊号，非空；来源：查询参数
@@ -191,14 +191,17 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     @Override
     @Transactional(readOnly = true)
     public List<IoRecordVO> listByVisit(String visitId, LocalDate date) {
-        var wrapper = Wrappers.<IoRecord>lambdaQuery().eq(IoRecord::getVisitId, visitId);
+        // 主表链式查询（宪法 A.4.3-13）；条件分支保留 if：dayStart(date) 须空判后求值，
+        // 内联 boolean 重载会无条件求值实参致 NPE
+        var query = this.lambdaQuery().eq(IoRecord::getVisitId, visitId);
         if (date != null) {
-            // 当日窗口（服务器时区）：含头不含尾，occur_at 为 TIMESTAMPTZ 边界安全
-            wrapper.ge(IoRecord::getOccurAt, dayStart(date)).lt(IoRecord::getOccurAt, dayStart(date.plusDays(1)));
+            // 当日窗口（北京时区医疗日界口径，BUG-03）：含头不含尾，occur_at 为 TIMESTAMPTZ 边界安全
+            query.ge(IoRecord::getOccurAt, dayStart(date)).lt(IoRecord::getOccurAt, dayStart(date.plusDays(1)));
         }
-        wrapper.orderByAsc(IoRecord::getOccurAt);
         // 数据库读操作：出入量明细清单（发生时间升序；逻辑删由 @TableLogic 自动过滤）
-        return baseMapper.selectList(wrapper).stream().map(IoRecordVO::from).toList();
+        return query.orderByAsc(IoRecord::getOccurAt).list().stream()
+                .map(IoRecordVO::from)
+                .toList();
     }
 
     /**
@@ -238,7 +241,7 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
         }
         // 守卫链③：在区校验（patient_id/ward_id 由在区行服务端装配）
         WardPatientDetailVO inWard = requireInWard(req.visitId());
-        // 周期推导（服务器时区）：SHIFT=病区班次定义当日窗；24H=当日 00:00–次日 00:00 全天
+        // 周期推导（北京时区医疗日界口径，BUG-03）：SHIFT=病区班次定义当日窗；24H=当日 00:00–次日 00:00 全天
         OffsetDateTime from;
         OffsetDateTime to;
         if (type == IoSummaryType.SHIFT) {
@@ -272,7 +275,9 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
         // 步骤②：聚合——窗口 [from, to) 按类型求和（缺型补零，两位小数规整）
         BigDecimal intake = BigDecimal.ZERO;
         BigDecimal output = BigDecimal.ZERO;
-        for (IoRecord sum : baseMapper.sumByTypeAndPeriod(req.visitId(), from, to)) {
+        // 循环前批量取数（BE-C4 判据①形态收拢）：窗口分型合计行单次装载，循环内纯迭代归位
+        List<IoRecord> sums = baseMapper.sumByTypeAndPeriod(req.visitId(), from, to);
+        for (IoRecord sum : sums) {
             if (IoType.INTAKE.getCode().equals(sum.getIoType()) && sum.getQuantity() != null) {
                 intake = sum.getQuantity();
             } else if (IoType.OUTPUT.getCode().equals(sum.getIoType()) && sum.getQuantity() != null) {
@@ -336,7 +341,7 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     }
 
     /**
-     * 按住院就诊号列出入量小结（周期起升序）；date 非空时仅取 period_start 落在服务器时区
+     * 按住院就诊号列出入量小结（周期起升序）；date 非空时仅取 period_start 落在北京时区
      * 当日窗口 [当日 00:00, 次日 00:00) 的小结。
      *
      * @param visitId 住院就诊号，非空；来源：查询参数
@@ -348,7 +353,7 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     public List<IoSummaryVO> summaries(String visitId, LocalDate date) {
         var wrapper = Wrappers.<IoSummary>lambdaQuery().eq(IoSummary::getVisitId, visitId);
         if (date != null) {
-            // 当日窗口（服务器时区）：period_start 含头不含尾
+            // 当日窗口（北京时区医疗日界口径，BUG-03）：period_start 含头不含尾
             wrapper.ge(IoSummary::getPeriodStart, dayStart(date))
                     .lt(IoSummary::getPeriodStart, dayStart(date.plusDays(1)));
         }
@@ -358,7 +363,7 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     }
 
     /**
-     * 班次统计周期推导（服务器时区当日窗）：start &lt; end 同日窗 [今日 start, 今日 end)；
+     * 班次统计周期推导（北京时区当日窗，BUG-03 医疗日界口径）：start &lt; end 同日窗 [今日 start, 今日 end)；
      * 「24:00」种子约定窗止=次日 00:00（如 EVENING 16:00–24:00 → [今日 16:00, 次日 00:00)）；
      * start &gt;= end 跨零点环绕窗（如 22:00–06:00 → [昨日 22:00, 今日 06:00)）。
      *
@@ -398,10 +403,16 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
                     fromDate = today.minusDays(1);
                 }
             }
+            // 班次统计周期（医疗日界口径=北京时区，BUG-03 收敛显式常量，禁 systemDefault 随容器漂移）
             return new ShiftPeriod(
-                    fromDate.atTime(start).atZone(ZoneId.systemDefault()).toOffsetDateTime(),
-                    toDate.atTime(end).atZone(ZoneId.systemDefault()).toOffsetDateTime());
+                    fromDate.atTime(start)
+                            .atZone(NursingTimeConstants.HEALTHCARE_TZ)
+                            .toOffsetDateTime(),
+                    toDate.atTime(end)
+                            .atZone(NursingTimeConstants.HEALTHCARE_TZ)
+                            .toOffsetDateTime());
         } catch (DateTimeParseException e) {
+            // EX-19 C 类收口留痕：内部断言（班次时刻为 V801 迁移种子配置，损坏属服务端数据异常，非用户输入路径），保留 ISE
             throw new IllegalStateException("病区配置班次时刻解析失败：shift=" + definition.code(), e);
         }
     }
@@ -476,9 +487,9 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
         }
     }
 
-    /** 服务器时区当日零点（当日窗口含头边界）。 */
+    /** 北京时区当日零点（医疗日界口径，BUG-03：禁 systemDefault——容器默认 UTC 会错位 8 小时）。 */
     private OffsetDateTime dayStart(LocalDate date) {
-        return date.atStartOfDay(ZoneId.systemDefault()).toOffsetDateTime();
+        return date.atStartOfDay(NursingTimeConstants.HEALTHCARE_TZ).toOffsetDateTime();
     }
 
     /** 操作者取值（免登录上下文回退 system，与审计列默认同源）。 */

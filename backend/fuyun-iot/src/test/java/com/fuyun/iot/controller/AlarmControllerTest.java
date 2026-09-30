@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fuyun.common.web.GlobalExceptionHandler;
 import com.fuyun.common.web.PageResult;
+import com.fuyun.iot.dto.AlarmQueryRequest;
 import com.fuyun.iot.dto.CloseAlarmRequest;
 import com.fuyun.iot.enums.AlarmLevel;
 import com.fuyun.iot.enums.AlarmStatus;
@@ -56,7 +57,9 @@ class AlarmControllerTest {
     @Test
     @DisplayName("分页：过滤参数透传，分页出参四字段回显")
     void pageReturnsPagedAlarms() throws Exception {
-        when(alarmService.page(any())).thenReturn(PageResult.of(List.of(alarmVo()), 0, 20, 1));
+        // any() 携带具体类型：接口配对 IService 后 page 存在泛型继承面重载，无类型 matcher 会引发
+        // 重载解析歧义（编译错），显式 AlarmQueryRequest 锁定业务面 page(AlarmQueryRequest)
+        when(alarmService.page(any(AlarmQueryRequest.class))).thenReturn(PageResult.of(List.of(alarmVo()), 0, 20, 1));
 
         mockMvc.perform(get("/api/v1/iot/alarms")
                         .param("wardId", "1001")

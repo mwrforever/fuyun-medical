@@ -1,7 +1,5 @@
 package com.fuyun.integration.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.web.PageResult;
@@ -54,6 +52,19 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
         this.converter = converter;
     }
 
+    /**
+     * 登记事件契约（幂等，方法级写事务）：查无既有行则插入 status=ACTIVE 契约行；同
+     * event_type 已存在（任意状态，含 DEPRECATED）warn 跳过不覆盖——契约一经冻结禁止
+     * 静默改写，重复登记只提示。
+     *
+     * <p>边界条件：①并发首登记 check-then-insert 竞态由 uk_event_registry_event_type 兜底，
+     * 后到者命中 DuplicateKeyException 与前置查询同语义幂等跳过（唯一索引为最终保证）；
+     * ②broadcast 标记行以 subscriber_modules=broadcast 落库（零订阅广播，W-6②），非广播
+     * 事件空清单记空串（待订阅）；③时间戳与操作人列由数据库默认值维护，应用层不写。
+     *
+     * @param spec 登记参数对象（eventType/producerModule/payloadDesc/broadcast/subscriberModules），
+     *             非空；来源：发布方模块装配代码或种子迁移
+     */
     @Override
     @Transactional
     public void register(EventRegistrationSpec spec) {
@@ -92,6 +103,22 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                 entity.getSubscriberModules());
     }
 
+    /**
+     * 登记订阅模块（追加式幂等，方法级写事务；declareConsumerQueue 的声明副作用，启动期
+     * 调用）：读契约行（精确投影）→ 校验已登记且未废止 → 逗号清单追加订阅模块 → 以「读取的
+     * 旧清单」为 CAS 条件单语句条件更新。
+     *
+     * <p>边界条件与并发：事件未登记/已废止抛 IllegalStateException 阻断订阅方启动（先登记
+     * 后订阅）；broadcast 标记行拒订（零订阅广播不承载订阅清单，W-6②）；模块已在清单时
+     * 幂等跳过（防声明重放产生冗余写）；并发追加后到者 CAS 影响 0 行（丢更新防线）自旋
+     * 重读重算，超过 3 次上界 fail-fast 拒绝静默丢订阅——多实例安全且零新增锁。
+     *
+     * @param eventType      事件类型，非空；须已登记且 status=ACTIVE；来源：声明构件装配链路
+     * @param consumerModule 消费者模块域标识，非空；来源：订阅方模块装配代码
+     * @throws IllegalStateException 事件未登记或已废止、broadcast 行拒订、并发竞争超自旋上界时
+     *                               触发；建议处理策略：发布方先登记契约 / 修正契约行 /
+     *                               重启装配进程重试
+     */
     @Override
     @Transactional
     public void registerSubscriber(String eventType, String consumerModule) {
@@ -100,15 +127,19 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                     .eq(EventRegistry::getEventType, eventType)
                     .select(EventRegistry::getId, EventRegistry::getStatus, EventRegistry::getSubscriberModules)
                     .one();
-            // 事件先登记后订阅：未登记事件拒绝订阅，阻断消费队列声明（M20 治理约定）
+            // 事件先登记后订阅：未登记事件拒绝订阅，阻断消费队列声明（M20 治理约定）；
+            // EX-19 收口 C 类：装配期治理断言（declareConsumerQueue 仅模块 @Configuration 调用，
+            // 非用户可达），保留 ISE 阻断订阅方启动，不转业务错误码
             if (registry == null) {
                 throw new IllegalStateException("事件类型 " + eventType + " 未在 event_registry 登记，禁止订阅（事件先登记后订阅）");
             }
             if (MessagingConstants.REGISTRY_STATUS_DEPRECATED.equals(registry.getStatus())) {
+                // EX-19 收口 C 类：同上装配期治理断言（契约废止属发布方治理事件），保留 ISE 阻断启动
                 throw new IllegalStateException("事件类型 " + eventType + " 已废止（DEPRECATED），禁止订阅");
             }
             String currentModules = registry.getSubscriberModules() == null ? "" : registry.getSubscriberModules();
-            // broadcast 拒订守卫（W-6②）：零订阅广播标记行不承载订阅清单，追加会破坏 R6-13 语义
+            // broadcast 拒订守卫（W-6②）：零订阅广播标记行不承载订阅清单，追加会破坏 R6-13 语义；
+            // EX-19 收口 C 类：装配期治理断言（契约行修正归发布方，非用户可达），保留 ISE 阻断启动
             if (MessagingConstants.SUBSCRIBER_BROADCAST.equals(currentModules.trim())) {
                 throw new IllegalStateException("事件类型 " + eventType
                         + " 为零订阅广播标记行（subscriber_modules=broadcast），不承载订阅清单——"
@@ -138,10 +169,19 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
             }
             log.warn("订阅清单并发变更，重读重算重试：event_type={}，consumer_module={}，attempt={}", eventType, consumerModule, attempt);
         }
+        // EX-19 收口 C 类：并发自旋上界耗尽的 fail-fast 断言（禁静默丢订阅，重启装配进程重试），
+        // 属启动期多实例竞争防御而非用户输入错误，保留 ISE 不转业务错误码
         throw new IllegalStateException(
                 "事件类型 " + eventType + " 订阅登记并发竞争超过 " + SUBSCRIBER_CAS_MAX_ATTEMPTS + " 次重试，拒绝静默丢订阅（请重启装配进程重试）");
     }
 
+    /**
+     * 判定事件类型是否已在台账登记（治理校验查询，只读事务，精确投影 id 列）。
+     *
+     * @param eventType 事件类型，非空；来源：发布/订阅装配代码的治理校验
+     * @return true=已登记；false=未登记。注意：已登记含 DEPRECATED 已废止状态——判可订阅
+     *         须另行校验状态（registerSubscriber 才是订阅放行的完整校验入口）
+     */
     @Override
     @Transactional(readOnly = true)
     public boolean isRegistered(String eventType) {
@@ -151,17 +191,25 @@ public class EventRegistryServiceImpl extends ServiceImpl<EventRegistryMapper, E
                 .exists();
     }
 
+    /**
+     * 分页查询事件契约台账（管理面只读，只读事务）：按事件类型/生产方/状态等值过滤，
+     * 事件类型名升序 + 主键兜底排序（深翻页防漏行）；契约 0 基页码与 MP 分页器 1 基在
+     * 服务层唯一转换点互转。
+     *
+     * @param query 查询条件，非空；page 0 基、size 1-200；来源：契约台账端点参数对象
+     * @return 分页出参（0 基页码），非空；无匹配时 content 为空清单
+     */
     @Override
     @Transactional(readOnly = true)
     public PageResult<EventRegistryVO> query(EventRegistryQuery query) {
-        LambdaQueryWrapper<EventRegistry> wrapper = Wrappers.lambdaQuery(EventRegistry.class)
+        Page<EventRegistry> page = this.lambdaQuery()
                 .eq(query.eventType() != null, EventRegistry::getEventType, query.eventType())
                 .eq(query.producerModule() != null, EventRegistry::getProducerModule, query.producerModule())
                 .eq(query.status() != null, EventRegistry::getStatus, query.status())
                 // 排序唯一性约束（A.4.3-17）：类型名 + 主键
                 .orderByAsc(EventRegistry::getEventType)
-                .orderByAsc(EventRegistry::getId);
-        Page<EventRegistry> page = this.page(new Page<>(query.page() + 1L, query.size()), wrapper);
+                .orderByAsc(EventRegistry::getId)
+                .page(new Page<>(query.page() + 1L, query.size()));
         return PageResult.of(
                 converter.toEventRegistryVOs(page.getRecords()),
                 page.getCurrent() - 1,

@@ -11,8 +11,11 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -27,17 +30,19 @@ import com.fuyun.inpatient.entity.MedicalOrderItem;
 import com.fuyun.inpatient.entity.OrderExecutePlan;
 import com.fuyun.inpatient.entity.OrderTransferLog;
 import com.fuyun.inpatient.enums.CheckConclusion;
+import com.fuyun.inpatient.enums.OrderClass;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.OrderPlanService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderPlanService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
 import java.lang.reflect.Method;
@@ -55,6 +60,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -109,10 +115,10 @@ class OrderTransferServiceImplTest {
     private InpatientSeqGate seqGate;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
-    private OrderPlanService orderPlanService;
+    private IOrderPlanService orderPlanService;
 
     /** 住院域参数（默认值实例——准备窗口 60 分钟/欠费阈值 0/随访 14 日，与应用缺省同源） */
     private final InpatientProperties properties = new InpatientProperties(0L, 14, 60);
@@ -125,9 +131,6 @@ class OrderTransferServiceImplTest {
 
     @Captor
     private ArgumentCaptor<OrderTransferLog> logCaptor;
-
-    @Captor
-    private ArgumentCaptor<OrderExecutePlan> planCaptor;
 
     private OrderTransferServiceImpl service;
 
@@ -150,6 +153,8 @@ class OrderTransferServiceImplTest {
                 transferLogMapper,
                 planMapper,
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 seqGate,
                 stateMachine,
                 orderPlanService,
@@ -174,8 +179,31 @@ class OrderTransferServiceImplTest {
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)), List.of(itemRow(102L)));
         when(seqGate.nextNo("PL")).thenReturn("PL2026092500001", "PL2026092500002");
 
-        service.transferCheck(new TransferCheckRequest(
-                List.of("MO2026092500001", "MO2026092500002"), "3001", CheckConclusion.PASSED, null));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.transferCheck(new TransferCheckRequest(
+                    List.of("MO2026092500001", "MO2026092500002"), "3001", CheckConclusion.PASSED, null));
+            // 两单次计划（EX-37 批插通道锚面迁移：原 verify(planMapper, times(2)).insert 换
+            // Db.saveBatch 捕获——每医嘱明细行集一次批插，本用例各 1 行恰 2 次；业务断言零变化：
+            // plan_no 各异/PENDING/明细行粒度/病区/计划时点=转抄+准备窗口）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<OrderExecutePlan>> plansCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(plansCaptor.capture()), times(2));
+            List<OrderExecutePlan> plans =
+                    plansCaptor.getAllValues().stream().flatMap(List::stream).toList();
+            assertThat(plans)
+                    .extracting(OrderExecutePlan::getPlanNo)
+                    .containsExactly("PL2026092500001", "PL2026092500002");
+            assertThat(plans).allSatisfy(plan -> {
+                assertThat(plan.getVisitId()).isEqualTo(VISIT_PK);
+                assertThat(plan.getWardId()).isEqualTo(WARD);
+                assertThat(plan.getStatus()).isEqualTo("PENDING");
+                assertThat(plan.getShift()).isIn("DAY", "EVENING", "NIGHT");
+                // 默认准备窗口：计划时点在转抄时点之后（60 分钟缓冲——Task 10 回接 InpatientProperties
+                // .defaultExecuteWindowMinutes 缺省，原 Task 7 常量 15 分钟，行为变更随 2026-09-25 报告留痕；
+                // 留 1 分钟容差断言）
+                assertThat(plan.getPlanTime()).isAfter(before.plusMinutes(59));
+            });
+        }
 
         // 两条状态机迁移（AUDITED→TRANSFERRED 唯一经状态机——留痕随状态机自动落库）
         verify(stateMachine).transition(first, OrderStatus.TRANSFERRED, "护士转抄核对", OPERATOR);
@@ -211,22 +239,6 @@ class OrderTransferServiceImplTest {
             assertThat(row.getSecondCheckerId()).isNull();
             assertThat(row.getTransferredAt()).isAfter(before);
         });
-
-        // 两单次计划（临时医嘱转抄同步生成：plan_no 各异/PENDING/明细行粒度/病区/计划时点=转抄+准备窗口）
-        verify(planMapper, times(2)).insert(planCaptor.capture());
-        assertThat(planCaptor.getAllValues())
-                .extracting(OrderExecutePlan::getPlanNo)
-                .containsExactly("PL2026092500001", "PL2026092500002");
-        assertThat(planCaptor.getAllValues()).allSatisfy(plan -> {
-            assertThat(plan.getVisitId()).isEqualTo(VISIT_PK);
-            assertThat(plan.getWardId()).isEqualTo(WARD);
-            assertThat(plan.getStatus()).isEqualTo("PENDING");
-            assertThat(plan.getShift()).isIn("DAY", "EVENING", "NIGHT");
-            // 默认准备窗口：计划时点在转抄时点之后（60 分钟缓冲——Task 10 回接 InpatientProperties
-            // .defaultExecuteWindowMinutes 缺省，原 Task 7 常量 15 分钟，行为变更随 2026-09-25 报告留痕；
-            // 留 1 分钟容差断言）
-            assertThat(plan.getPlanTime()).isAfter(before.plusMinutes(59));
-        });
     }
 
     @Test
@@ -249,8 +261,11 @@ class OrderTransferServiceImplTest {
         when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(103L)));
         when(seqGate.nextNo("PL")).thenReturn("PL2026092500003");
-        service.transferCheck(
-                new TransferCheckRequest(List.of("MO2026092500003"), "3001", CheckConclusion.PASSED, "3002"));
+        // EX-37 批插通道：达计划落库面（静态工具桩面机械包裹——业务断言零变化）
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            service.transferCheck(
+                    new TransferCheckRequest(List.of("MO2026092500003"), "3001", CheckConclusion.PASSED, "3002"));
+        }
         verify(stateMachine).transition(blood, OrderStatus.TRANSFERRED, "护士转抄核对", OPERATOR);
         verify(transferLogMapper).insert(logCaptor.capture());
         assertThat(logCaptor.getValue().getSecondCheckerId()).isEqualTo("3002");
@@ -270,10 +285,23 @@ class OrderTransferServiceImplTest {
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(104L)));
         when(seqGate.nextNo("PL")).thenReturn("PL2026092500004", "PL2026092500005");
 
-        List<OrderPlanVO> firstCall = service.standbyTrigger("MO2026092500004");
-        List<OrderPlanVO> secondCall = service.standbyTrigger("MO2026092500004");
+        List<OrderPlanVO> firstCall;
+        List<OrderPlanVO> secondCall;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            firstCall = service.standbyTrigger("MO2026092500004");
+            secondCall = service.standbyTrigger("MO2026092500004");
+            // 两次触发两次台账（EX-37 批插通道锚面迁移：原 verify(planMapper, times(2)).insert 换
+            // Db.saveBatch 捕获——每次触发独立计划实例一次批插恰 2 次；业务断言零变化：plan_no 各异
+            // ——M13 唯一键兜底不重复计价的计划侧对偶面）
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<OrderExecutePlan>> plansCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(plansCaptor.capture()), times(2));
+            assertThat(plansCaptor.getAllValues().stream().flatMap(List::stream).toList())
+                    .extracting(OrderExecutePlan::getPlanNo)
+                    .containsExactly("PL2026092500004", "PL2026092500005");
+        }
 
-        // 两次触发两次台账（每次触发独立计划实例——M13 唯一键兜底不重复计价的计划侧对偶面）
+        // 出参业务断言（零变化）：两次触发两计划且 plan_no 各异、状态 PENDING
         assertThat(firstCall).hasSize(1);
         assertThat(secondCall).hasSize(1);
         assertThat(firstCall.get(0).planNo()).isEqualTo("PL2026092500004");
@@ -281,10 +309,6 @@ class OrderTransferServiceImplTest {
         assertThat(firstCall.get(0).status()).isEqualTo("PENDING");
         assertThat(firstCall.get(0).orderNo()).isEqualTo("MO2026092500004");
         assertThat(firstCall.get(0).visitId()).isEqualTo(VISIT_ID);
-        verify(planMapper, times(2)).insert(planCaptor.capture());
-        assertThat(planCaptor.getAllValues())
-                .extracting(OrderExecutePlan::getPlanNo)
-                .containsExactly("PL2026092500004", "PL2026092500005");
         // 医嘱头状态不迁移（回签面推进——W-33 契约归 Task 8）
         verifyNoInteractions(stateMachine, events);
     }
@@ -299,15 +323,19 @@ class OrderTransferServiceImplTest {
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(106L)));
         when(seqGate.nextNo("PL")).thenReturn("PL2026092500006");
 
-        service.transferCheck(new TransferCheckRequest(
-                List.of("MO2026092500005", "MO2026092500006"), "3001", CheckConclusion.PASSED, null));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.transferCheck(new TransferCheckRequest(
+                    List.of("MO2026092500005", "MO2026092500006"), "3001", CheckConclusion.PASSED, null));
+            // EX-37 批插通道锚面迁移：原 verify(planMapper, times(1)).insert 换 Db.saveBatch
+            // 计数（业务断言零变化：仅批内 AUDITED 医嘱生成 1 次计划）
+            mockedDb.verify(() -> Db.saveBatch(any()), times(1));
+        }
 
         // 已 TRANSFERRED 医嘱零触达（无迁移/无台账/无事件/无计划）；批内 AUDITED 医嘱正常转抄
         verify(stateMachine, never()).transition(eq(done), any(), any(), any());
         verify(stateMachine).transition(pending, OrderStatus.TRANSFERRED, "护士转抄核对", OPERATOR);
         verify(transferLogMapper, times(1)).insert(any(OrderTransferLog.class));
         verify(events, times(1)).publishEvent(any(InpatientDomainEvent.class));
-        verify(planMapper, times(1)).insert(any(OrderExecutePlan.class));
     }
 
     @Test
@@ -440,13 +468,17 @@ class OrderTransferServiceImplTest {
         when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
         when(orderMapper.selectOne(any()))
                 .thenReturn(orderRow("MO2", 9002L, OrderStatus.AUDITED, "LONG", "DRUG", false));
-        service.transferCheck(new TransferCheckRequest(List.of("MO2"), "3001", CheckConclusion.PASSED, null));
+        // EX-37 批插通道锚面迁移：原 verify(planMapper, never()).insert 换 Db.saveBatch never
+        // （业务断言零变化：长期转抄零计划生成）
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.transferCheck(new TransferCheckRequest(List.of("MO2"), "3001", CheckConclusion.PASSED, null));
+            mockedDb.verify(() -> Db.saveBatch(any()), never());
+        }
         verify(stateMachine).transition(any(MedicalOrder.class), eq(OrderStatus.TRANSFERRED), any(), eq(OPERATOR));
         verify(transferLogMapper).insert(any(OrderTransferLog.class));
         verify(events).publishEvent(any(InpatientDomainEvent.class));
         verify(orderPlanService).compensateToday("MO2");
         verify(itemMapper, never()).selectList(any());
-        verify(planMapper, never()).insert(any(OrderExecutePlan.class));
     }
 
     @Test
@@ -532,11 +564,15 @@ class OrderTransferServiceImplTest {
         when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)));
         when(seqGate.nextNo("PL")).thenReturn("PL2026092500001");
-        when(planMapper.insert(any(OrderExecutePlan.class)))
-                .thenThrow(new DuplicateKeyException("uk_plan_order_item_time"));
-        assertThatThrownBy(() -> service.standbyTrigger("MO1"))
-                .isInstanceOf(BizException.class)
-                .satisfies(e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.CONFLICT));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            // EX-37 批插通道桩面迁移：唯一冲突异常源从逐行 planMapper.insert 迁至 Db.saveBatch
+            // 批语句（批插后仍抛 DuplicateKeyException 经 catch 定性 IP-1023——语义原样保留）
+            mockedDb.when(() -> Db.saveBatch(any())).thenThrow(new DuplicateKeyException("uk_plan_order_item_time"));
+            assertThatThrownBy(() -> service.standbyTrigger("MO1"))
+                    .isInstanceOf(BizException.class)
+                    .satisfies(
+                            e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.CONFLICT));
+        }
     }
 
     @Test
@@ -558,6 +594,76 @@ class OrderTransferServiceImplTest {
         when(orderMapper.selectList(any())).thenReturn(List.of(), List.of());
         service.redirectPlansOnWardTransfer(VISIT_PK, "W02", "doc-01");
         verifyNoInteractions(planMapper);
+    }
+
+    // ===== EX-39：转科分野医嘱查询精确投影（A.4.3-14 投影子款锚定）=====
+
+    @Test
+    @DisplayName("EX-39 投影契约：转科分野医嘱查询恰 1 列 id，谓词（visit_id/order_class）零变化")
+    void wardTransferScopingQueryProjectsOnlyIdColumn() {
+        // 两次分野查询均空集直过——本用例仅锚查询契约，不依赖计划条件更新面
+        when(orderMapper.selectList(any())).thenReturn(List.of(), List.of());
+
+        service.redirectPlansOnWardTransfer(VISIT_PK, "W02", "doc-01");
+
+        // 投影契约（EX-39）：两分野查询（LONG 作废面/STAT 重定向面）均仅取 id 恰 1 列——
+        //   医嘱宽行禁入投影（修复前全列取回仅 map(getId) 组装计划批量更新 IN 集）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<MedicalOrder>> scopingCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(orderMapper, times(2)).selectList(scopingCaptor.capture());
+        List<LambdaQueryWrapper<MedicalOrder>> scopingQueries = scopingCaptor.getAllValues().stream()
+                .map(wrapper -> (LambdaQueryWrapper<MedicalOrder>) wrapper)
+                .toList();
+        assertThat(scopingQueries).allSatisfy(scoping -> {
+            assertThat(scoping.getSqlSelect().trim()).isEqualTo("id");
+            // 先物化 WHERE 段再断言参数（MP 条件参数惰性求值）；谓词零变化锚定：visit_id/
+            //   order_class 双等值携带（防投影修复顺带改动分野口径）
+            assertThat(scoping.getSqlSegment()).contains("visit_id").contains("order_class");
+        });
+        // 分野序锚定：先 LONG（作废面）后 STAT（重定向面）——谓词参数与调用序一一对应
+        assertThat(scopingQueries.get(0).getParamNameValuePairs().values())
+                .contains(VISIT_PK, OrderClass.LONG.getCode());
+        assertThat(scopingQueries.get(1).getParamNameValuePairs().values())
+                .contains(VISIT_PK, OrderClass.STAT.getCode());
+    }
+
+    // ===== EX-37：单次计划生成面批量落库（A.4.3-16 批插锚定）=====
+
+    @Test
+    @DisplayName("EX-37 批插契约：单次计划生成明细行集一次批插（Db.saveBatch 恰 1 次携全部行），逐行 insert 通道下线")
+    void createSinglePlansPersistsPlansViaSingleBatchInsert() {
+        MedicalOrder standby = orderRow("MO2026092500004", 9004L, OrderStatus.TRANSFERRED, "LONG", "DRUG", true);
+        when(orderMapper.selectOne(any())).thenReturn(standby);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        // 两明细行——批量通道行集锚（一次批插携带全部计划行，丢行即失败）
+        when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L), itemRow(102L)));
+        when(seqGate.nextNo("PL")).thenReturn("PL2026092500004", "PL2026092500005");
+
+        List<OrderPlanVO> result;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            result = service.standbyTrigger("MO2026092500004");
+            // EX-37：计划行一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐行 insert 通道已下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<OrderExecutePlan>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()), times(1));
+            // 批插行集锚：两行 PENDING 计划、明细行归属各自 order_item_id、plan_no 逐行签发
+            assertThat(rowsCaptor.getValue()).hasSize(2);
+            assertThat(rowsCaptor.getValue())
+                    .extracting(OrderExecutePlan::getOrderItemId)
+                    .containsExactly(101L, 102L);
+            assertThat(rowsCaptor.getValue())
+                    .extracting(OrderExecutePlan::getPlanNo)
+                    .containsExactly("PL2026092500004", "PL2026092500005");
+            assertThat(rowsCaptor.getValue()).allSatisfy(plan -> {
+                assertThat(plan.getStatus()).isEqualTo("PENDING");
+                assertThat(plan.getVisitId()).isEqualTo(VISIT_PK);
+                assertThat(plan.getWardId()).isEqualTo(WARD);
+            });
+        }
+        // 业务等价锚：出参两行计划 plan_no 各异（批插不改变生成语义）
+        assertThat(result).extracting(OrderPlanVO::planNo).containsExactly("PL2026092500004", "PL2026092500005");
+        // 逐行 insert 通道下线（EX-37 收口后禁再逐行落库）
+        verify(planMapper, never()).insert(any(OrderExecutePlan.class));
     }
 
     @Test

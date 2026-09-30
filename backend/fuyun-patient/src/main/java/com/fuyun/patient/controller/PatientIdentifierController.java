@@ -4,6 +4,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
 import com.fuyun.patient.api.PatientErrorCode;
+import com.fuyun.patient.convert.PatientConverter;
 import com.fuyun.patient.dto.IdentifierCreateRequest;
 import com.fuyun.patient.dto.ResolveRequest;
 import com.fuyun.patient.entity.PatientIdentifier;
@@ -81,8 +82,7 @@ public class PatientIdentifierController {
                 false);
         identifierService.publishChanged(patientId, request.identifierType(), request.identifierValue(), "BOUND");
         PatientIdentifier row = identifierService.getById(id);
-        return Mappers.getMapper(com.fuyun.patient.convert.PatientConverter.class)
-                .toVO(row);
+        return Mappers.getMapper(PatientConverter.class).toVO(row);
     }
 
     /**
@@ -94,8 +94,7 @@ public class PatientIdentifierController {
     @GetMapping("/patients/{patientId}/identifiers")
     public List<IdentifierVO> list(@PathVariable long patientId) {
         return identifierService.listByPatient(patientId).stream()
-                .map(row -> Mappers.getMapper(com.fuyun.patient.convert.PatientConverter.class)
-                        .toVO(row))
+                .map(row -> Mappers.getMapper(PatientConverter.class).toVO(row))
                 .toList();
     }
 }

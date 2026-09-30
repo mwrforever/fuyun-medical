@@ -23,11 +23,16 @@ public interface AuthConverter {
 
     /**
      * 会话身份 → 用户出参：userId/loginName/displayName/orgId/roles 同名映射
-     * （employeeId 不出参，防内部身份标识外泄）。
+     * （employeeId 不出参，防内部身份标识外泄）。permissions 以空集合占位填充——权限点
+     * 体系未建（P1 authz），前端守卫骨架（BUG-14）按「空集 = 全放行」口径兼容。
+     *
+     * <p>TODO(P1-authz): 权限点体系接线后按角色导出权限点集合（经会话身份或角色服务
+     * 查询展开，替换空集合占位；login 与 refresh 双链路出参同源收口于本方法）。
      *
      * @param user 登录会话身份，非空
-     * @return 用户出参，非空
+     * @return 用户出参，非空；permissions 恒为空集合（P0 占位口径）
      */
+    @Mapping(target = "permissions", expression = "java(java.util.List.of())")
     UserVO toUserVO(SessionUser user);
 
     /**

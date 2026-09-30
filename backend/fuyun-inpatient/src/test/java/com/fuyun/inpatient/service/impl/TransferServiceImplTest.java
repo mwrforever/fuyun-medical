@@ -24,11 +24,12 @@ import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
-import com.fuyun.inpatient.service.BedService;
-import com.fuyun.inpatient.service.MedicalOrderService;
-import com.fuyun.inpatient.service.OrderTransferService;
+import com.fuyun.inpatient.service.IBedService;
+import com.fuyun.inpatient.service.IMedicalOrderService;
+import com.fuyun.inpatient.service.IOrderTransferService;
 import com.fuyun.inpatient.vo.TransferResultVO;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -50,8 +51,8 @@ import org.springframework.http.HttpStatus;
  * 转科四阶段编排与转床轻量路径单测（Task 4 冻结集 + Task 7 阶段②计划三分钩子回接面）：
  * 四阶段全链（mock 医嘱停嘱与计划三分、断言床位三段流转与 transferred 六字段载荷）、
  * 目标床位被占编排失败回滚（@Transactional 回滚语义下以 mock 验证调用序 + 异常传播）、
- * 同病区转床轻量路径（无停嘱与计划三分调用）与守卫错误面。MedicalOrderService/
- * OrderTransferService 为冻结接口（本套 mock 消费）。MP 3.5.17 单测范式：lambdaQuery
+ * 同病区转床轻量路径（无停嘱与计划三分调用）与守卫错误面。IMedicalOrderService/
+ * IOrderTransferService 为冻结接口（本套 mock 消费）。MP 3.5.17 单测范式：lambdaQuery
  * 触达实体 @BeforeAll 手工注册表信息；条件更新断言直读 @Update 注解 SQL（GC26 可执行锚）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -60,7 +61,7 @@ class TransferServiceImplTest {
     /** 编排主体 I 型 14 位就诊号 */
     private static final String VISIT_ID = "I2026092500001";
 
-    /** 编排主体就诊行主键（MedicalOrderService.stopAllForTransfer 消费面——非 I 型号） */
+    /** 编排主体就诊行主键（IMedicalOrderService.stopAllForTransfer 消费面——非 I 型号） */
     private static final long VISIT_PK = 7001L;
 
     /** 患者主索引 */
@@ -86,13 +87,13 @@ class TransferServiceImplTest {
     private BedMapper bedMapper;
 
     @Mock
-    private BedService bedService;
+    private IBedService bedService;
 
     @Mock
-    private MedicalOrderService medicalOrderService;
+    private IMedicalOrderService medicalOrderService;
 
     @Mock
-    private OrderTransferService orderTransferService;
+    private IOrderTransferService orderTransferService;
 
     @Mock
     private ApplicationEventPublisher events;
@@ -110,8 +111,15 @@ class TransferServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
         service = new TransferServiceImpl(
-                visitMapper, bedMapper, bedService, medicalOrderService, orderTransferService, events);
+                visitMapper,
+                new InpatientVisitAccessor(visitMapper),
+                bedMapper,
+                bedService,
+                medicalOrderService,
+                orderTransferService,
+                events);
         OperatorContextHolder.set("doc-01");
     }
 

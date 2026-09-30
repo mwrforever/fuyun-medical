@@ -44,6 +44,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import org.apache.ibatis.annotations.Update;
@@ -65,7 +66,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 交接班域服务单测（Task 9 十用例冻结集 + 补充覆盖锚）：自动汇总患者摘要（在区总数/护理级别分布/
- * 病情标记计数）、逐患者在途任务待续事项、在途输注与未闭环告警 P1 空数组锚、SBAR 初稿文本拼装、
+ * 病情标记计数）、批量在途任务待续事项（单次批查收敛锚）、在途输注与未闭环告警 P1 空数组锚、SBAR 初稿文本拼装、
  * 交班签名与 DRAFT 态、未知病区拒绝、完成 CAS 双签与 nursing.shift.completed 载荷逐字断言、
  * 空串 SBAR 保留初稿、重复完成拒绝、清单按日过滤与班次升序。MP 3.5.17 单测范式：lambdaQuery
  * 触达实体 @BeforeAll 手工注册表信息；条件更新断言直读 @Update 注解 SQL（GC26 可执行锚）。
@@ -130,6 +131,9 @@ class ShiftHandoverServiceImplTest {
     @Captor
     private ArgumentCaptor<Wrapper<ShiftHandover>> handoverQueryCaptor;
 
+    @Captor
+    private ArgumentCaptor<Collection<String>> visitIdsCaptor;
+
     private ShiftHandoverServiceImpl service;
 
     @BeforeAll
@@ -152,6 +156,8 @@ class ShiftHandoverServiceImplTest {
                 events,
                 new ObjectMapper().findAndRegisterModules().disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS));
         ReflectionTestUtils.setField(service, "baseMapper", handoverMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", ShiftHandover.class);
         OperatorContextHolder.set("nurse-01");
     }
 
@@ -190,11 +196,14 @@ class ShiftHandoverServiceImplTest {
         when(wardPatientMapper.selectList(any()))
                 .thenReturn(List.of(wardRow("01", "NORMAL", "NEW", VISIT_A), wardRow("02", "NORMAL", "", VISIT_B)));
         // 患者甲 2 条在途、患者乙 0 条：待续事项仅含甲的 2 条
-        when(taskService.inFlightByVisit(VISIT_A))
-                .thenReturn(List.of(
-                        taskVO("TK2026092200001", TaskType.MEDICATION.getCode(), planTime, true),
-                        taskVO("TK2026092200002", TaskType.TURN.getCode(), planTime.plusHours(2), false)));
-        when(taskService.inFlightByVisit(VISIT_B)).thenReturn(List.of());
+        when(taskService.inFlightByVisits(any()))
+                .thenReturn(Map.of(
+                        VISIT_A,
+                        List.of(
+                                taskVO("TK2026092200001", TaskType.MEDICATION.getCode(), planTime, true),
+                                taskVO("TK2026092200002", TaskType.TURN.getCode(), planTime.plusHours(2), false)),
+                        VISIT_B,
+                        List.of()));
         when(seqGate.nextNo("HO")).thenReturn(HANDOVER_NO);
         when(handoverMapper.insert(any(ShiftHandover.class))).thenAnswer(insertWithId(ROW_ID));
 
@@ -217,6 +226,22 @@ class ShiftHandoverServiceImplTest {
         assertThat(vo.pendingItems())
                 .extracting(ShiftHandoverVO.PendingItem::visitId)
                 .containsOnly(VISIT_A);
+    }
+
+    @Test
+    @DisplayName("多患者待续事项批查收敛：在区 4 人恰一次批量在途查询（键集=全部就诊号），不再逐患者单查")
+    void generateFetchesInFlightTasksWithSingleBatchQuery() {
+        stubGenerateBaseline(fourPatients());
+        stubInsertOk();
+
+        service.generate(new HandoverGenerateRequest(WARD, SHIFT));
+
+        // 批查收敛锚（A.4.3-14）：恰一次批量在途查询，键集覆盖在区全部就诊号（visitId IN 批查，
+        // 病区满员 50 人由 50 查收敛为 1 查）
+        verify(taskService, times(1)).inFlightByVisits(visitIdsCaptor.capture());
+        assertThat(visitIdsCaptor.getValue()).containsExactly(VISIT_A, VISIT_B, VISIT_C, VISIT_D);
+        // 逐患者单查路径不再触达（N+1 根因消除锚；Task 3 详情卡仍消费单查面，两路径并行保留）
+        verify(taskService, never()).inFlightByVisit(anyString());
     }
 
     @Test
@@ -461,7 +486,7 @@ class ShiftHandoverServiceImplTest {
         ReflectionTestUtils.setField(brokenService, "baseMapper", handoverMapper);
         when(wardMetaService.wardConfig(WARD)).thenReturn(wardConfig());
         when(wardPatientMapper.selectList(any())).thenReturn(List.of(wardRow("01", "NORMAL", "", VISIT_A)));
-        when(taskService.inFlightByVisit(VISIT_A)).thenReturn(List.of());
+        when(taskService.inFlightByVisits(any())).thenReturn(Map.of());
         when(seqGate.nextNo("HO")).thenReturn(HANDOVER_NO);
 
         assertThatThrownBy(() -> brokenService.generate(new HandoverGenerateRequest(WARD, SHIFT)))
@@ -486,11 +511,11 @@ class ShiftHandoverServiceImplTest {
 
     // ===================== 测试数据与断言辅助 =====================
 
-    /** 生成链通用桩：配置行通过 + 在区视图回放 + 在途任务全空 + 发号成功（落库桩由用例按需追加）。 */
+    /** 生成链通用桩：配置行通过 + 在区视图回放 + 批量在途任务全空 + 发号成功（落库桩由用例按需追加）。 */
     private void stubGenerateBaseline(List<NursingWardPatient> wardRows) {
         when(wardMetaService.wardConfig(WARD)).thenReturn(wardConfig());
         when(wardPatientMapper.selectList(any())).thenReturn(wardRows);
-        when(taskService.inFlightByVisit(anyString())).thenReturn(List.of());
+        when(taskService.inFlightByVisits(any())).thenReturn(Map.of());
         when(seqGate.nextNo("HO")).thenReturn(HANDOVER_NO);
     }
 

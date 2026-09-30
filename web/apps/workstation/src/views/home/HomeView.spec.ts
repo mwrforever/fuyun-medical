@@ -25,7 +25,7 @@ describe('workstation 首页骨架', () => {
       userId: '1932000000000000001',
       loginName: 'admin',
       displayName: '系统管理员',
-      orgId: null,
+      orgId: undefined,
       roles: ['ADMIN'],
     };
     const wrapper = mount(HomeView, { global: { plugins: [pinia] } });

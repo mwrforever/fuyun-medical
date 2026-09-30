@@ -60,6 +60,7 @@ public class InpatientSeqGate {
      */
     public String nextNo(String type) {
         if (!TYPES.contains(type)) {
+            // EX-19 C 类收口留痕：内部断言（生产调用点全部传 AD/MO/PL/CS/DC 字面量，编程错误 fail-fast，非用户输入路径），保留 IAE
             throw new IllegalArgumentException("未知业务号类型：" + type);
         }
         // 日期段单次采样：键与单号共用同一天，规避跨零点窗口键/号日期错位

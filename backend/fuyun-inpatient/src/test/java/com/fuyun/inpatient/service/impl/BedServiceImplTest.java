@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.inpatient.api.InpatientErrorCode;
@@ -28,9 +29,11 @@ import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.TransferType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.BedAssignMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.BedMapVO;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -102,8 +105,12 @@ class BedServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new BedServiceImpl(assignMapper, visitMapper, events);
+        // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+        service = new BedServiceImpl(assignMapper, visitMapper, new InpatientVisitAccessor(visitMapper), events);
+        // 链式与 IService 能力的载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设
+        // 免走 getMapperClass 反射解析（GatewayServiceImplTest/BindingServiceImplTest 同款形态）
         ReflectionTestUtils.setField(service, "baseMapper", bedMapper);
+        ReflectionTestUtils.setField(service, "entityClass", Bed.class);
         OperatorContextHolder.set("nur-01");
     }
 
@@ -516,6 +523,17 @@ class BedServiceImplTest {
         service.occupyForAdmission(BED_ID, VISIT_ID, PATIENT_ID);
         verify(assignMapper, times(2)).insert(assignCaptor.capture());
         assertThat(assignCaptor.getValue().getOperator()).isEqualTo("system");
+    }
+
+    @Test
+    @DisplayName("配对纪律（A.4.3-20）：IBedService 两侧继承 IService/ServiceImpl——契约面扩展不触碰既有 CAS 方法")
+    void serviceCarriesIServicePairingContract() {
+        // CRUD 单表服务强制配对：接口缺 extends IService / 实现缺 extends ServiceImpl 即本用例红；
+        // 床位占用 CAS 高并发域护栏：配对仅扩展默认方法集，五态迁移权威仍走 cas* 条件更新入口
+        assertThat(IService.class.isAssignableFrom(IBedService.class))
+                .as("接口侧配对：IBedService extends IService<Bed>")
+                .isTrue();
+        assertThat(service).as("实现侧配对：BedServiceImpl extends ServiceImpl").isInstanceOf(IService.class);
     }
 
     /** 构造床位行（状态可变，流转用例载体；默认 W01/B01/普通属性）。 */

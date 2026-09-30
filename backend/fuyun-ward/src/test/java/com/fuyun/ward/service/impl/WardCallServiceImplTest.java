@@ -429,6 +429,23 @@ class WardCallServiceImplTest {
                         .isEqualTo(com.fuyun.ward.api.WardErrorCode.CALL_ROUTING_NOT_CONFIGURED));
     }
 
+    @Test
+    @DisplayName("创建设备源守卫：source=IOT 拒绝手工入口（WD-1008 400）且不触发同床位合并取消")
+    void createRejectsIotSourceFromManualEntry() {
+        CreateWardCallRequest request =
+                new CreateWardCallRequest(1001L, 5L, 8L, "dev-bedside-1", CallType.EMERGENCY, CallSource.IOT, null);
+
+        assertThatThrownBy(() -> service.create(request))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(com.fuyun.ward.api.WardErrorCode.CALL_SOURCE_IOT_FORBIDDEN);
+                    assertThat(e.getHttpStatus()).isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+                })
+                .hasMessageContaining("禁止手工入口创建");
+        // 守卫先于合并取消：设备源非法请求不得取消同床位活跃旧呼叫（原 DTO 紧凑构造守卫迁移留痕，EX-19 B 类）
+        verify(callMapper, never()).cancelActiveByBed(any(), anyString());
+        verify(seqGate, never()).nextCallNo();
+    }
+
     /** 呼叫行夹具（普通呼叫，升级计数归零） */
     private static WardCallEntity callRow(CallStatus status) {
         WardCallEntity entity = new WardCallEntity();

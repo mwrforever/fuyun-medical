@@ -8,7 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fuyun.common.web.GlobalExceptionHandler;
 import com.fuyun.patient.dto.CardIssueRequest;
-import com.fuyun.patient.service.VisitCardService;
+import com.fuyun.patient.service.IVisitCardService;
 import com.fuyun.patient.vo.CardVO;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,7 +30,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 class CardControllerTest {
 
     @Mock
-    private VisitCardService visitCardService;
+    private IVisitCardService visitCardService;
 
     private MockMvc mockMvc;
 

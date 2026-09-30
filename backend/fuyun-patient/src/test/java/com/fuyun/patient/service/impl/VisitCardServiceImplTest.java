@@ -7,11 +7,16 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.dto.CardBindRequest;
@@ -22,18 +27,26 @@ import com.fuyun.patient.internal.PatientFieldCrypto;
 import com.fuyun.patient.service.ICardAccountService;
 import com.fuyun.patient.service.IPatientIdentifierService;
 import com.fuyun.patient.vo.CardVO;
+import java.time.OffsetDateTime;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 
 /**
  * 就诊卡全生命周期实现单测（FU-M02-04 状态机）：发卡开户联动、绑定无主卡改挂、挂失账户联动
  * （账户未启用 PAT-1013 静默跳过）、补卡换号转移（余额零迁移）、解绑终态，以及各非法状态
- * 转移守卫与 identifier.changed 的 changeType 断言。
+ * 转移守卫与 identifier.changed 的 changeType 断言；绑定/补卡写库 info 留痕与卡号摘要
+ * 脱敏口径经 Logback ListAppender 断言（BUG-21，iot 模块同款先例）；并发防覆写护航
+ * （EX-25：CAS 0 行重读定性 409/404、输家不覆写不重复发号不联动账户）；挂失/解绑镜像写
+ * 补丁面（N7 B-2：仅携状态列，unbound_at 以 CAS 落的 DB 时钟为准不携应用时钟）。
  */
 @ExtendWith(MockitoExtension.class)
 class VisitCardServiceImplTest {
@@ -52,10 +65,31 @@ class VisitCardServiceImplTest {
     /** 可变卡行夹具（ACTIVE 主卡）：findByCardNo 桩返回同一引用，供状态变更后断言 */
     private PatientIdentifier cardRow;
 
+    /** Logback 挂钩：捕获就诊卡服务日志，断言绑定/补卡写操作 info 留痕与卡号明文脱敏 */
+    private ListAppender<ILoggingEvent> logAppender;
+
+    private Logger cardLogger;
+
     @BeforeEach
     void setUp() {
         visitCardService = new VisitCardServiceImpl(identifierService, cardAccountService, crypto);
         cardRow = cardRow(11L, 5L, "C-0001", "ACTIVE");
+        // EX-25 卡状态 CAS 抢锚默认放行（返回 1=抢得迁移权）：并发冲突用例在单测内重桩为 0；
+        // lenient 同模块惯例——守卫类用例在触达 CAS 前即抛出，默认桩不消费不报错
+        lenient().when(identifierService.casBindUnowned(anyLong(), anyLong())).thenReturn(1);
+        lenient().when(identifierService.casMarkLost(anyLong())).thenReturn(1);
+        lenient().when(identifierService.casRetireReplaced(anyLong())).thenReturn(1);
+        lenient().when(identifierService.casDisable(anyLong())).thenReturn(1);
+        // 挂 ListAppender 捕获服务日志（BUG-21 写操作留痕断言；tearDown 统一卸载防用例间串扰）
+        cardLogger = (Logger) LoggerFactory.getLogger(VisitCardServiceImpl.class);
+        logAppender = new ListAppender<>();
+        logAppender.start();
+        cardLogger.addAppender(logAppender);
+    }
+
+    @AfterEach
+    void tearDown() {
+        cardLogger.detachAppender(logAppender);
     }
 
     /** 卡行夹具构造（可变对象，供 stub 与状态断言共用同一引用） */
@@ -172,17 +206,71 @@ class VisitCardServiceImplTest {
     }
 
     @Test
-    @DisplayName("挂失成功：置 LOST 并落解绑时刻，联动冻结账户，发布 LOST 事件")
+    @DisplayName("绑定成功留痕：恰一条 info 含患者 id 与卡号 HMAC 摘要，卡号明文禁入日志（BUG-21）")
+    void bindWritesSingleInfoLogWithCardDigest() {
+        PatientIdentifier orphan = cardRow(11L, null, "C-0001", "DISABLED");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(orphan);
+        // 摘要桩值不含卡号明文子串，保证下方"明文不入日志"断言可分辨摘要与原文
+        when(crypto.hash("C-0001")).thenReturn("hmac-d1");
+
+        visitCardService.bind(new CardBindRequest("C-0001", 5L));
+
+        // 写库留痕口径对齐同文件 loss/unbind：恰一条 info，业务标识为患者 id + 卡号摘要
+        List<ILoggingEvent> infoEvents = logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.INFO)
+                .toList();
+        assertThat(infoEvents).as("绑定写库恰一条 info 留痕").hasSize(1);
+        String message = infoEvents.get(0).getFormattedMessage();
+        assertThat(message).contains("patientId=5");
+        assertThat(message).contains("hmac-d1");
+        // 敏感红线（类 javadoc）：卡号明文禁入日志，仅 HMAC 摘要定位卡片
+        assertThat(message).doesNotContain("C-0001");
+    }
+
+    @Test
+    @DisplayName("挂失成功：镜像写仅携状态列（unbound_at 以挂失 CAS 落的 DB 时钟为准），联动冻结账户并发布 LOST 事件")
     void lossSetsLostAndFreezesAccount() {
+        // 快照残留旧解绑时刻（模拟复绑卡再挂失）：镜像写补丁化后不得携入回写覆写 CAS 的 DB now()
+        cardRow.setUnboundAt(OffsetDateTime.now().minusDays(1));
         when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
 
         visitCardService.loss("C-0001");
 
         assertThat(cardRow.getStatus()).isEqualTo("LOST");
-        assertThat(cardRow.getUnboundAt()).isNotNull();
-        verify(identifierService).updateById(cardRow);
+        // 镜像写补丁面（N7 B-2）：仅携主键定位 + 状态列回写；unbound_at 不携（应用时钟覆写
+        // casMarkLost 同语句落的 DB now() 会致挂失时刻契约失真），快照残留旧值亦不得泄漏进补丁
+        ArgumentCaptor<PatientIdentifier> patchCaptor = ArgumentCaptor.forClass(PatientIdentifier.class);
+        verify(identifierService).updateById(patchCaptor.capture());
+        PatientIdentifier patch = patchCaptor.getValue();
+        assertThat(patch.getId()).isEqualTo(11L);
+        assertThat(patch.getStatus()).isEqualTo("LOST");
+        assertThat(patch.getUnboundAt()).isNull();
         verify(identifierService).publishChanged(5L, "VISIT_CARD", "C-0001", "LOST");
         verify(cardAccountService).freezeByPatient(5L);
+    }
+
+    @Test
+    @DisplayName("挂失镜像写最小补丁面（N7 B-2）：仅携主键与状态列回写，禁以读回快照整行覆写其余列")
+    void lossMirrorWritePatchCarriesOnlyStatusColumn() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
+
+        visitCardService.loss("C-0001");
+
+        // EX-24 指定列补丁纪律的补丁面最小性锚：除 id（定位）与 status（迁移列）外全列不携——
+        // unbound_at 时序列归 CAS DB 时钟（成功用例已锚），此处禁整行覆写扩展到全部非时序列
+        ArgumentCaptor<PatientIdentifier> patchCaptor = ArgumentCaptor.forClass(PatientIdentifier.class);
+        verify(identifierService).updateById(patchCaptor.capture());
+        PatientIdentifier patch = patchCaptor.getValue();
+        assertThat(patch.getId()).isEqualTo(11L);
+        assertThat(patch.getStatus()).isEqualTo("LOST");
+        assertThat(patch.getPatientId()).isNull();
+        assertThat(patch.getIdentifierType()).isNull();
+        assertThat(patch.getCardNo()).isNull();
+        assertThat(patch.getIdentifierValueCipher()).isNull();
+        assertThat(patch.getValueHash()).isNull();
+        assertThat(patch.getIsPrimary()).isNull();
+        assertThat(patch.getBoundAt()).isNull();
+        assertThat(patch.getUnboundAt()).isNull();
     }
 
     @Test
@@ -269,15 +357,50 @@ class VisitCardServiceImplTest {
     }
 
     @Test
-    @DisplayName("解绑成功：置 DISABLED 终态并落解绑时刻，发布 UNBOUND 事件，账户不销户")
+    @DisplayName("补卡成功留痕：恰一条 info 含患者 id 与新旧卡号双摘要，卡号明文禁入日志（BUG-21）")
+    void replaceWritesSingleInfoLogWithBothCardDigests() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow(11L, 5L, "C-0001", "LOST"));
+        when(identifierService.attach(5L, "VISIT_CARD", "C-0002", "C-0002", false))
+                .thenReturn(56L);
+        when(identifierService.getById(56L)).thenReturn(cardRow(56L, 5L, "C-0002", "ACTIVE"));
+        // 双摘要桩值不含任一卡号明文子串，保证"明文不入日志"断言可分辨
+        when(crypto.hash("C-0001")).thenReturn("hmac-d-old");
+        when(crypto.hash("C-0002")).thenReturn("hmac-d-new");
+
+        visitCardService.replace(new CardReplaceRequest("C-0001", "C-0002"));
+
+        // 旧卡终态 + 新卡发号同属一次补卡写事务：留痕一条 info 概括新旧双卡
+        List<ILoggingEvent> infoEvents = logAppender.list.stream()
+                .filter(event -> event.getLevel() == Level.INFO)
+                .toList();
+        assertThat(infoEvents).as("补卡写库恰一条 info 留痕").hasSize(1);
+        String message = infoEvents.get(0).getFormattedMessage();
+        assertThat(message).contains("patientId=5");
+        assertThat(message).contains("hmac-d-old");
+        assertThat(message).contains("hmac-d-new");
+        // 敏感红线（类 javadoc）：新旧卡号明文均禁入日志，仅 HMAC 摘要定位
+        assertThat(message).doesNotContain("C-0001");
+        assertThat(message).doesNotContain("C-0002");
+    }
+
+    @Test
+    @DisplayName("解绑成功：镜像写仅携状态列（unbound_at 以解绑 CAS 落的 DB 时钟为准），发布 UNBOUND 事件，账户不销户")
     void unbindDisablesActiveCardWithoutClosingAccount() {
+        // 快照残留旧解绑时刻（模拟复绑卡再解绑）：镜像写补丁化后不得携入回写覆写 CAS 的 DB now()
+        cardRow.setUnboundAt(OffsetDateTime.now().minusDays(1));
         when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
 
         visitCardService.unbind("C-0001");
 
         assertThat(cardRow.getStatus()).isEqualTo("DISABLED");
-        assertThat(cardRow.getUnboundAt()).isNotNull();
-        verify(identifierService).updateById(cardRow);
+        // 镜像写补丁面（N7 B-2）：仅携主键定位 + 状态列回写；unbound_at 不携（应用时钟覆写
+        // casDisable 同语句落的 DB now() 会致解绑时刻契约失真），快照残留旧值亦不得泄漏进补丁
+        ArgumentCaptor<PatientIdentifier> patchCaptor = ArgumentCaptor.forClass(PatientIdentifier.class);
+        verify(identifierService).updateById(patchCaptor.capture());
+        PatientIdentifier patch = patchCaptor.getValue();
+        assertThat(patch.getId()).isEqualTo(11L);
+        assertThat(patch.getStatus()).isEqualTo("DISABLED");
+        assertThat(patch.getUnboundAt()).isNull();
         verify(identifierService).publishChanged(5L, "VISIT_CARD", "C-0001", "UNBOUND");
         verifyNoInteractions(cardAccountService);
     }
@@ -292,6 +415,105 @@ class VisitCardServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED));
         verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+    }
+
+    @Test
+    @DisplayName("并发双 bind 防覆写护航：CAS 0 行重读定性 PAT-1012 拒绝，不覆写赢家挂接不发事件（EX-25）")
+    void bindLosesCasRaceRejectedWithoutOverwrite() {
+        PatientIdentifier orphan = cardRow(11L, null, "C-0001", "DISABLED");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(orphan);
+        // 模拟并发赢家交错：bind 读快照（无主过守卫）后、CAS 前另一事务已抢先绑定患者 9
+        when(identifierService.casBindUnowned(11L, 5L)).thenAnswer(inv -> {
+            orphan.setPatientId(9L);
+            orphan.setStatus("ACTIVE");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.bind(new CardBindRequest("C-0001", 5L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(e.getMessage()).contains("并发");
+                });
+        // 输家不得覆写赢家挂接：卡行不回写、BOUND 事件不发布（丢单链防线）
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("并发双 bind 防覆写护航（输家重读行已消失）：PAT-1011 404 定性（与入口缺卡语义一致）")
+    void bindCasZeroWithVanishedRowClassifiedAsPat1011() {
+        PatientIdentifier orphan = cardRow(11L, null, "C-0001", "DISABLED");
+        // 首查命中守卫入口、CAS 败北后重读已无行（并发删除/不可达）
+        when(identifierService.findByCardNo("C-0001")).thenReturn(orphan, (PatientIdentifier) null);
+        when(identifierService.casBindUnowned(11L, 5L)).thenReturn(0);
+
+        assertThatThrownBy(() -> visitCardService.bind(new CardBindRequest("C-0001", 5L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                });
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+    }
+
+    @Test
+    @DisplayName("并发挂失防覆写护航：CAS 0 行重读定性 PAT-1012 拒绝，不回写不联动冻结不发事件（EX-25）")
+    void lossLosesCasRaceRejectedWithoutAccountFreeze() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
+        // 模拟并发赢家交错：loss 读快照（ACTIVE 过守卫）后、CAS 前另一事务已抢先置 LOST
+        when(identifierService.casMarkLost(11L)).thenAnswer(inv -> {
+            cardRow.setStatus("LOST");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.loss("C-0001")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        // 输家不得重复执行：卡行不回写、账户不联动冻结、LOST 事件不发布
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+        verifyNoInteractions(cardAccountService);
+    }
+
+    @Test
+    @DisplayName("并发双补卡防重复发号护航：CAS 0 行重读定性 PAT-1012 拒绝，旧卡不回写不发新卡（EX-25）")
+    void replaceLosesCasRaceRejectedWithoutIssuingNewCard() {
+        PatientIdentifier lostCard = cardRow(11L, 5L, "C-0001", "LOST");
+        when(identifierService.findByCardNo("C-0001")).thenReturn(lostCard);
+        // 模拟并发赢家交错：replace 读快照（LOST 过守卫）后、CAS 前另一事务已抢先置 REPLACED
+        when(identifierService.casRetireReplaced(11L)).thenAnswer(inv -> {
+            lostCard.setStatus("REPLACED");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.replace(new CardReplaceRequest("C-0001", "C-0002")))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        // 输家不得重复发号：旧卡不回写、新卡不 attach、REPLACED 事件不发布
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).attach(anyLong(), any(), any(), any(), anyBoolean());
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("并发解绑防覆写护航：CAS 0 行重读定性 PAT-1012 拒绝，不回写不发事件（EX-25）")
+    void unbindLosesCasRaceRejectedWithoutOverwrite() {
+        when(identifierService.findByCardNo("C-0001")).thenReturn(cardRow);
+        // 模拟并发赢家交错：unbind 读快照（ACTIVE 过守卫）后、CAS 前另一事务已抢先置 DISABLED
+        when(identifierService.casDisable(11L)).thenAnswer(inv -> {
+            cardRow.setStatus("DISABLED");
+            return 0;
+        });
+
+        assertThatThrownBy(() -> visitCardService.unbind("C-0001")).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.CARD_STATE_NOT_ALLOWED);
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+        });
+        verify(identifierService, never()).updateById(any(PatientIdentifier.class));
+        verify(identifierService, never()).publishChanged(anyLong(), any(), any(), any());
     }
 
     @Test

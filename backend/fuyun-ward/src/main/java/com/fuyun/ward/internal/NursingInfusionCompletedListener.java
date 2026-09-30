@@ -66,6 +66,8 @@ public class NursingInfusionCompletedListener {
     void handleInfusionCompleted(EventEnvelope envelope) {
         JsonNode payload = envelope.payload();
         if (!payload.isObject()) {
+            // EX-19 收口 C 类：内部事件契约断言（载荷须为 JSON 对象），保留 ISE——上抛由三段式③
+            // 失败收尾（FAILED 留痕后重抛走死信），消费失败→重试→死信链路语义不变，零行为变化
             throw new IllegalStateException("输注结束事件载荷与契约不符：event_id=" + envelope.eventId());
         }
         String executionNo = payload.path("executionNo").asText(null);

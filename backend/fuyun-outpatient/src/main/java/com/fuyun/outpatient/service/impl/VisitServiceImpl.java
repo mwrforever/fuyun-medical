@@ -8,6 +8,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
 import com.fuyun.outpatient.api.VisitFinishedPayload;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
+import com.fuyun.outpatient.convert.AppointmentConverter;
 import com.fuyun.outpatient.dto.FinishVisitRequest;
 import com.fuyun.outpatient.entity.ClinicOrder;
 import com.fuyun.outpatient.entity.QueueTicket;
@@ -152,7 +153,7 @@ public class VisitServiceImpl implements IVisitService {
         visit.setStatus(VisitStatus.IN_CONSULT);
         insertVisitStatusLog(visitId, VisitStatus.WAITING, VisitStatus.IN_CONSULT, "医生站接诊");
         log.info("接诊完成：visitId={}，doctorId={}（admitted_at 由库端 now() 回填）", visitId, OperatorContextHolder.get());
-        return toVO(visit);
+        return AppointmentConverter.INSTANCE.toVisitVO(visit);
     }
 
     /**
@@ -227,7 +228,7 @@ public class VisitServiceImpl implements IVisitService {
                 request.disposition(),
                 OperatorContextHolder.get(),
                 explicitConfirm);
-        return toVO(visit);
+        return AppointmentConverter.INSTANCE.toVisitVO(visit);
     }
 
     /**
@@ -295,26 +296,5 @@ public class VisitServiceImpl implements IVisitService {
         statusLog.setOperator(OperatorContextHolder.get());
         // 数据库写操作：迁移日志每迁必记（红线 5）
         visitStatusLogMapper.insert(statusLog);
-    }
-
-    /**
-     * 实体 → 就诊出参投影（patientId 等长整型经全局 Long→String 定制出网——A.3-8）。
-     *
-     * @param visit 就诊实体（状态/时间字段已按动作回填），非空
-     * @return 就诊出参，非空
-     */
-    private static VisitVO toVO(Visit visit) {
-        return new VisitVO(
-                visit.getId(),
-                visit.getVisitId(),
-                visit.getPatientId(),
-                visit.getApptId(),
-                visit.getDeptCode(),
-                visit.getDoctorId(),
-                visit.getVisitType(),
-                visit.getIsRevisit(),
-                visit.getTriageLevel(),
-                visit.getStatus(),
-                visit.getRegisteredAt());
     }
 }

@@ -12,7 +12,7 @@ import com.fuyun.patient.api.PatientErrorCode;
 import com.fuyun.patient.cache.PatientCacheService;
 import com.fuyun.patient.entity.Patient;
 import com.fuyun.patient.internal.PatientFieldCrypto;
-import com.fuyun.patient.service.PrivacyMaskService;
+import com.fuyun.patient.service.IPrivacyMaskService;
 import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
@@ -37,7 +37,7 @@ class PatientContextResolverTest {
     private PatientFieldCrypto crypto;
 
     @Mock
-    private PrivacyMaskService privacyMaskService;
+    private IPrivacyMaskService privacyMaskService;
 
     @Mock
     private PatientCacheService cacheService;

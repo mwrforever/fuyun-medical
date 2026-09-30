@@ -11,6 +11,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.iot.api.IotErrorCode;
 import com.fuyun.iot.constants.IotMessagingConstants;
@@ -251,6 +253,29 @@ class QualityServiceImplTest {
 
         verify(statMapper).upsertStat(statCaptor.capture());
         assertThat(statCaptor.getValue().getExpectedCount()).isZero();
+    }
+
+    // ---------------------------------------------------------------- EX-39：标称频率装载精确投影
+
+    @Test
+    @DisplayName("标称频率装载映射查询投影契约：恰 1 列 metric_code，谓词 product_id 零变化")
+    void nominalFreqMappingQueryProjectsOnlyMetricCode() {
+        stubOnlineDeviceWithFreq("1");
+
+        service.qualityStats(new QualityStatQueryRequest(0, 20, DEVICE_ID, null));
+
+        // 投影契约（EX-39）：仅取 metric_code 恰 1 列（装载仅消费指标编码，映射宽行全列取回
+        //   徒增内存，A.4.3-14）；谓词零变化锚定：product_id 等值且携带产品标识（防投影修复
+        //   顺带改动标称频率定位行集口径）
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Wrapper<IotMetricMappingEntity>> mappingCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(metricMappingMapper).selectList(mappingCaptor.capture());
+        LambdaQueryWrapper<IotMetricMappingEntity> mappingWrapper =
+                (LambdaQueryWrapper<IotMetricMappingEntity>) mappingCaptor.getValue();
+        // 先物化 WHERE 段再断言参数（MP 条件参数惰性求值，顺序颠倒读到中间态）
+        assertThat(mappingWrapper.getSqlSegment()).contains("product_id");
+        assertThat(mappingWrapper.getParamNameValuePairs().values()).contains(PRODUCT_ID);
+        assertThat(mappingWrapper.getSqlSelect().trim()).isEqualTo("metric_code");
     }
 
     // ---------------------------------------------------------------- 断流判定与发布

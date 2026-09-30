@@ -67,6 +67,7 @@ public class OutpatientRefundApprovedListener {
      */
     void handleRefundApproved(EventEnvelope envelope) {
         // settlementId 非空守卫（brief 冻结）：缺锚帧显式抛出进死信留痕（禁静默丢回执——回执即终态权威）
+        // EX-19 C 类收口留痕：MQ 回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 进死信留痕
         JsonNode settlementNode = envelope.payload().path("settlementId");
         if (settlementNode.isMissingNode() || settlementNode.isNull() || settlementNode.asLong(0L) == 0L) {
             throw new IllegalStateException(

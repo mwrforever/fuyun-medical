@@ -6,5 +6,7 @@
  * Modulith NamedInterface 自本子包显式暴露（父包 com.fuyun.iot.api 的 NamedInterface 默认不
  * 覆盖子包，ward 引用载荷 record 需要 payload 包独立声明）。
  */
-@org.springframework.modulith.NamedInterface("api")
+@NamedInterface("api")
 package com.fuyun.iot.api.payload;
+
+import org.springframework.modulith.NamedInterface;

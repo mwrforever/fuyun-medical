@@ -11,10 +11,12 @@ import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
+import com.fuyun.nursing.constants.NursingTimeConstants;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -223,7 +225,15 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
     private String shiftCodeOfLastIoRecord() {
         Timestamp lastOccurAt = jdbcTemplate.queryForObject(
                 "SELECT max(occur_at) FROM nursing.io_record WHERE visit_id = ?", Timestamp.class, VISIT_ID);
-        LocalTime time = lastOccurAt.toLocalDateTime().toLocalTime();
+        // 班次判定与汇总服务同口径（北京时区钟面，IoRecordServiceImpl#resolveShiftPeriod 医疗日界）：
+        // JDBC 裸挂钟数按写入侧同一 systemDefault 还原真实时刻，再转北京钟面——直接取裸 toLocalTime()
+        // 在非北京时区 JVM（CI UTC）上与北京口径窗口错位，DAY 码查 EVENING 窗零命中汇总归零
+        // （BUG-03 同款 systemDefault 漂移残余，本地 +08 绿掩盖了 CI UTC 必挂）
+        LocalTime time = lastOccurAt
+                .toLocalDateTime()
+                .atZone(ZoneId.systemDefault())
+                .withZoneSameInstant(NursingTimeConstants.HEALTHCARE_TZ)
+                .toLocalTime();
         if (time.isBefore(LocalTime.of(8, 0))) {
             return "NIGHT";
         }

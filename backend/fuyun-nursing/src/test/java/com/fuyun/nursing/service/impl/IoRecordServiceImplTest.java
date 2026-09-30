@@ -18,6 +18,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.constants.NursingTimeConstants;
 import com.fuyun.nursing.dto.IoRecordCreateRequest;
 import com.fuyun.nursing.dto.IoSummaryCreateRequest;
 import com.fuyun.nursing.entity.IoRecord;
@@ -39,6 +40,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -81,8 +83,12 @@ class IoRecordServiceImplTest {
     /** 体温单 DAILY_VALUE 条目固定 id（条目定位桩回填值，引用回填断言基准） */
     private static final long ENTRY_ID = 901L;
 
-    /** 服务器时区（窗口边界断言与实现同源） */
-    private static final ZoneId ZONE = ZoneId.systemDefault();
+    /**
+     * 医疗业务时区（窗口边界断言与实现同源）：原取 ZoneId.systemDefault() 随运行环境漂移
+     * （BUG-03 定性为环境依赖实现细节，CI 的 UTC 环境下与常量化实现相悖），改为与实现同源的
+     * 北京时区常量——断言行本身零改动，仅断言期望的时区来源收敛（批准出处见提交说明 BUG-03 留痕）。
+     */
+    private static final ZoneId ZONE = NursingTimeConstants.HEALTHCARE_TZ;
 
     @Mock
     private IoRecordMapper recordMapper;
@@ -132,6 +138,8 @@ class IoRecordServiceImplTest {
     void setUp() {
         service = new IoRecordServiceImpl(recordMapper, summaryMapper, entryMapper, wardMetaService, chartService);
         ReflectionTestUtils.setField(service, "baseMapper", recordMapper);
+        // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
+        ReflectionTestUtils.setField(service, "entityClass", IoRecord.class);
         OperatorContextHolder.set("nurse-01");
     }
 
@@ -560,6 +568,55 @@ class IoRecordServiceImplTest {
                 .isEqualTo(today.minusDays(1).atTime(22, 0).atZone(ZONE).toOffsetDateTime());
         assertThat(toCaptor.getValue())
                 .isEqualTo(today.atTime(6, 0).atZone(ZONE).toOffsetDateTime());
+    }
+
+    @Test
+    @DisplayName("日界时区锚（BUG-03）：JVM 默认时区为 UTC（未注入 TZ 的容器基底）时，date 当日窗仍按北京时区 [00:00+08, 次日 00:00+08) 收敛")
+    void listByVisitKeepsBeijingDayWindowUnderUtcDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 复现缺陷环境：镜像基底 eclipse-temurin:17-jre 默认 UTC，systemDefault 日界会错位 8 小时
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            when(recordMapper.selectList(any())).thenReturn(List.of());
+
+            service.listByVisit(VISIT, LocalDate.of(2026, 9, 22));
+
+            // 医疗日界口径=北京时区自然日：当日窗边界显式断言 +08:00 偏移（非 UTC 的 Z 偏移）
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            verify(recordMapper).selectList(queryCaptor.capture());
+            LambdaQueryWrapper<IoRecord> wrapper = rendered(queryCaptor.getValue());
+            assertThat(wrapper.getParamNameValuePairs().values())
+                    .contains(
+                            LocalDate.of(2026, 9, 22).atStartOfDay(beijing).toOffsetDateTime(),
+                            LocalDate.of(2026, 9, 23).atStartOfDay(beijing).toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
+    @DisplayName("班次窗时区锚（BUG-03）：JVM 默认时区为 UTC 时，班次统计窗边界仍按北京时区换算（偏移 +08:00 而非 Z）")
+    void summarizeShiftWindowBindsBeijingZoneUnderUtcDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+            stubSummaryChain();
+            stubWardConfig();
+            when(recordMapper.sumByTypeAndPeriod(eq(VISIT), any(), any())).thenReturn(List.of());
+
+            service.summarize(new IoSummaryCreateRequest(VISIT, "SHIFT", "DAY"));
+
+            // DAY 班 08:00–16:00 当日窗边界按北京时区承载（偏移随断言值钉死 +08:00）
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            verify(recordMapper).sumByTypeAndPeriod(eq(VISIT), fromCaptor.capture(), toCaptor.capture());
+            LocalDate today = LocalDate.now();
+            assertThat(fromCaptor.getValue())
+                    .isEqualTo(today.atTime(8, 0).atZone(beijing).toOffsetDateTime());
+            assertThat(toCaptor.getValue())
+                    .isEqualTo(today.atTime(16, 0).atZone(beijing).toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

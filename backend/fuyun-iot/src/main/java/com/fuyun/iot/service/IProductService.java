@@ -1,10 +1,12 @@
 package com.fuyun.iot.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.iot.dto.CreateProductRequest;
 import com.fuyun.iot.dto.ProductQueryRequest;
 import com.fuyun.iot.dto.UpdateCommandsRequest;
 import com.fuyun.iot.dto.UpdateMappingsRequest;
+import com.fuyun.iot.entity.IotProductEntity;
 import com.fuyun.iot.vo.CommandVO;
 import com.fuyun.iot.vo.MetricMappingVO;
 import com.fuyun.iot.vo.ProductVO;
@@ -15,8 +17,13 @@ import java.util.List;
  * 同步与失配检测、镜像查询、命令安全等级标注与属性 MDC 映射编辑的唯一业务出口。
  *
  * <p>注册中心不可用语义：RegistryException 由实现层统一转 IOT-1022（503）业务异常渲染。
+ *
+ * <p>主表配对（宪法 A.4.3-20）：CRUD 型服务主表 iot_product，接口继承 IService、实现已继承
+ * ServiceImpl（半配对收拢，EX-08）；命令标注/属性映射为产品聚合子表（productId 维度全量替换），
+ * 经实现侧注入的子表 mapper 承载，不入 IService 主表面；getById(String) 视图签名与
+ * IService#getById(Serializable) 构成重载并存。
  */
-public interface IProductService {
+public interface IProductService extends IService<IotProductEntity> {
 
     /**
      * 产品上架（POST /api/v1/iot/products 主管道）：Registry.createProduct 受理 + 本地镜像落行
@@ -69,6 +76,17 @@ public interface IProductService {
     List<CommandVO> updateCommands(String productId, UpdateCommandsRequest request);
 
     /**
+     * 命令安全等级回显查询（GET /api/v1/iot/products/{id}/commands）：PUT 全量替换语义的
+     * 回读面——登记弹窗打开时拉取既有全集回显，防仅携增量提交静默清空白名单标注
+     * （FU-M14-09 治疗级管控数据源，BUG-18）。
+     *
+     * @param productId 注册中心产品标识，非空
+     * @return 该产品未删命令标注清单（id 升序与保存序一致），无配置回空清单，非空
+     * @throws com.fuyun.common.exception.BizException IOT-1002（404 产品不存在）
+     */
+    List<CommandVO> listCommands(String productId);
+
+    /**
      * 属性 MDC 映射全量编辑（PUT /api/v1/iot/products/{id}/metric-mappings）：逻辑删旧行 +
      * 落新行；mismatchStrategy 缺省 RAW_PASSTHROUGH。
      *
@@ -80,4 +98,14 @@ public interface IProductService {
      *                                                 IOT-1005（409 同批属性名重复）
      */
     List<MetricMappingVO> updateMetricMappings(String productId, UpdateMappingsRequest request);
+
+    /**
+     * 属性 MDC 映射回显查询（GET /api/v1/iot/products/{id}/metric-mappings）：PUT 全量替换
+     * 语义的回读面——编辑弹窗打开时拉取既有全集回显，防仅携增量提交静默清空（BUG-17）。
+     *
+     * @param productId 注册中心产品标识，非空
+     * @return 该产品未删映射清单（id 升序与保存序一致），无配置回空清单，非空
+     * @throws com.fuyun.common.exception.BizException IOT-1002（404 产品不存在）
+     */
+    List<MetricMappingVO> listMetricMappings(String productId);
 }

@@ -8,7 +8,6 @@
 // （后端 VO 契约即不含姓名），诊断摘要列标注脱敏提示。
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import axios from 'axios';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
@@ -24,6 +23,9 @@ import {
 import type { AdmissionVO, BedMapVO } from '@/api/inpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { usePagedList } from '@/composables/usePagedList';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 住院证状态中文词表（CANCELLED/COMPLETED 兜底直显原文） */
 const STATUS_LABELS: Record<string, string> = {
@@ -33,52 +35,26 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELLED: '已作废',
 };
 
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，建单时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 /* ==================== 左栏：候床队列 ==================== */
-const queueRows = ref<AdmissionVO[]>([]);
-const queueTotal = ref(0);
-const queueLoading = ref(false);
 /** 状态筛选（空串=全部状态；常规视图传 WAITING/SCHEDULED） */
 const statusFilter = ref('');
 
-/** 加载候床队列（后端冻结排序=急诊优先＞预约时段＞候床时长，前端按返回序直出） */
-async function loadQueue(): Promise<void> {
-  queueLoading.value = true;
-  try {
-    const page = await admissions.list({
-      status: statusFilter.value === '' ? undefined : statusFilter.value,
-      page: 0,
-      size: 50,
-    });
-    queueRows.value = page.content ?? [];
-    queueTotal.value = Number(page.total ?? '0');
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    queueLoading.value = false;
-  }
-}
+/** 候床队列三段式（EX-49 范式迁移）：行集/总数/加载态经 usePagedList 收拢（固定首页
+ * size 50 直出，后端冻结排序=急诊优先＞预约时段＞候床时长，前端按返回序直出）；状态筛选
+ * 经快照工厂发起时实时取值，total 双形态由 composable 归一（行为与迁移前一致——失败弹错
+ * 归响应拦截器、驻留旧清单） */
+const {
+  rows: queueRows,
+  total: queueTotal,
+  loading: queueLoading,
+  fetch: loadQueue,
+} = usePagedList({
+  params: () => ({
+    status: statusFilter.value === '' ? undefined : statusFilter.value,
+  }),
+  fetcher: ({ status, page, size }) => admissions.list({ status, page, size }),
+  pageSize: 50,
+});
 
 /** 入院类型中文词表反查（行内类型列） */
 function admissionTypeLabel(code: string | undefined): string {

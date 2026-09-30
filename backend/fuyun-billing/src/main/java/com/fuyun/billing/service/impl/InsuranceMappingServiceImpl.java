@@ -6,6 +6,11 @@ import com.fuyun.billing.entity.InsuranceMapping;
 import com.fuyun.billing.enums.MappingStatus;
 import com.fuyun.billing.mapper.InsuranceMappingMapper;
 import com.fuyun.billing.service.IInsuranceMappingService;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +38,36 @@ public class InsuranceMappingServiceImpl extends ServiceImpl<InsuranceMappingMap
                 .eq(InsuranceMapping::getChargeItemId, chargeItemId)
                 .eq(InsuranceMapping::getStatus, MappingStatus.ACTIVE)
                 .one();
+    }
+
+    /**
+     * 批量取项目当前 ACTIVE 对照（批量快照取价消费，A.4.3-14 N+1 消除）。
+     *
+     * <p>与单查 {@link #effectiveMapping} 的语义分工：本方法只取数（ACTIVE 行按项目键返回，
+     * 未贯标/已失效项目不出键），一次 IN 批查替代逐项目单查——多行单据快照批查的对照腿
+     * 由 N 查收敛为 1 查；每项目至多一条 ACTIVE 行由部分唯一索引保证，无重复键面。
+     *
+     * @param chargeItemIds 收费项目 id 键集，非空集合（空集零 SQL 触达直接返回空 Map）
+     * @return chargeItemId → ACTIVE 对照行（未贯标/已失效项目不出键，非 null）
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, InsuranceMapping> effectiveMappings(Collection<Long> chargeItemIds) {
+        // 空键集守卫：MP in 谓词空集将生成非法 SQL，直接短路返回（无命中项目即零触达）
+        if (chargeItemIds.isEmpty()) {
+            return Map.of();
+        }
+        // 数据库读操作：ACTIVE 对照批查（charge_item_id IN + status 谓词，一次取回替代逐项目单查）
+        return lambdaQuery()
+                .in(InsuranceMapping::getChargeItemId, chargeItemIds)
+                .eq(InsuranceMapping::getStatus, MappingStatus.ACTIVE)
+                .list()
+                .stream()
+                .collect(Collectors.toMap(
+                        InsuranceMapping::getChargeItemId,
+                        Function.identity(),
+                        (first, duplicate) -> first,
+                        LinkedHashMap::new));
     }
 
     /**

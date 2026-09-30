@@ -2,6 +2,9 @@ package com.fuyun.iot.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.iot.api.IotErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 告警状态枚举（iot.iot_alarm.status 列值域，FU-M14-08 告警生命周期）。
@@ -45,8 +48,8 @@ public enum AlarmStatus {
      *
      * @param code 存储值，来源：DB 列读取或查询参数；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或非法请求值），
-     *                                  建议调用方按校验失败/数据异常处置
+     * @throws BizException IOT-1026（400）：code 无对应枚举常量（脏数据或非法请求值），
+     *                      建议调用方按校验失败/数据异常处置
      */
     public static AlarmStatus fromCode(String code) {
         for (AlarmStatus status : values()) {
@@ -54,6 +57,8 @@ public enum AlarmStatus {
                 return status;
             }
         }
-        throw new IllegalArgumentException("未知的告警状态 code: " + code);
+        // 词表外 code 收口（BE-C3-05）：BizException 400 + IOT-1026 直达边界渲染 ProblemDetail，
+        // MQ 解析链调用方（TelemetryFrameParser/快照读取）就地捕获包装，毒丸/降级语义不变
+        throw new BizException(IotErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的告警状态 code: " + code);
     }
 }

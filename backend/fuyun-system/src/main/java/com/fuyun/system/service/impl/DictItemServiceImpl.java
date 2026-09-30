@@ -41,6 +41,22 @@ public class DictItemServiceImpl extends ServiceImpl<DictItemMapper, DictItemEnt
         this.dictConverter = dictConverter;
     }
 
+    /**
+     * 新增字典条目（POST /api/v1/system/dict-versions/{versionId}/items 执行点）：仅在 DRAFT
+     * 草稿版本内追加条目，PUBLISHED/DEPRECATED 版本禁改（版本不可变性 M01 Spec §5）。
+     *
+     * <p>执行流程：版本存在性校验（经 IDictVersionService 跨表查询，A.4.3-21）→ 版本状态
+     * 校验（仅 DRAFT 放行）→ 条目实体组装 → 落库 → 转 VO。同版本内 itemCode 唯一性不做
+     * 前置查询，由 uk_dict_item_version_code 部分唯一索引兜底——并发同码插入时落库抛重复键
+     * 随事务回滚。
+     *
+     * @param versionId 所属字典版本 ID，非空；来源：管理端路径参数
+     * @param request   条目创建请求，非空（itemCode/itemName 非空由 controller 层 @Valid 保证）；
+     *                  itemCode 同版本内唯一、parentCode 空=顶层条目、sort 空按 0（小者在前）
+     * @return 条目出参（含落库后雪花 ID），非空
+     * @throws BizException SYS-1012（字典版本不存在，HTTP 404）、SYS-1013（版本状态非 DRAFT
+     *                      不允许维护条目，HTTP 409，建议刷新版本状态后操作）
+     */
     @Override
     @Transactional
     public DictItemVO addItem(Long versionId, DictItemCreateRequest request) {

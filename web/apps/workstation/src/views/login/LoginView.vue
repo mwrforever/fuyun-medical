@@ -7,7 +7,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useTemplateRef } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
-import type { LoginRequest } from '@/types/auth';
+import type { LoginRequest } from '@/api/auth';
 
 const router = useRouter();
 const route = useRoute();

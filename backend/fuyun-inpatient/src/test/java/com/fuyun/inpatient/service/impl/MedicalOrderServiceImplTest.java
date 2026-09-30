@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -13,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -32,13 +34,14 @@ import com.fuyun.inpatient.enums.OrderClass;
 import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
-import com.fuyun.inpatient.service.OrderAuditService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderAuditService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
 import com.fuyun.patient.api.AllergyChecker;
@@ -61,6 +64,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -74,7 +78,7 @@ import org.springframework.http.HttpStatus;
  * 就诊行单次取数 N+1 消解）、查询面与守卫补充面（操作者非数字/非在院/词表外/号冲突）、
  * 停嘱三态合法（Task 6 冻结用例⑥）、驳回重提面（Task 6：内容重写+状态回 CREATED+重发
  * 开立事件+审核链重入）。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册
- * 表信息。OrderStateMachineService/OrderAuditService 按冻结接口 mock（状态面/审核面语义
+ * 表信息。IOrderStateMachineService/IOrderAuditService 按冻结接口 mock（状态面/审核面语义
  * 由各自独立测试承载）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -120,19 +124,16 @@ class MedicalOrderServiceImplTest {
     private AllergyChecker allergyChecker;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
     private ApplicationEventPublisher events;
 
     @Mock
-    private OrderAuditService orderAuditService;
+    private IOrderAuditService orderAuditService;
 
     @Captor
     private ArgumentCaptor<MedicalOrder> orderCaptor;
-
-    @Captor
-    private ArgumentCaptor<MedicalOrderItem> itemCaptor;
 
     @Captor
     private ArgumentCaptor<InpatientDomainEvent> eventCaptor;
@@ -156,7 +157,8 @@ class MedicalOrderServiceImplTest {
                 itemMapper,
                 frequencyMapper,
                 planMapper,
-                visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 seqGate,
                 practiceCheckPort,
                 allergyChecker,
@@ -182,7 +184,20 @@ class MedicalOrderServiceImplTest {
         // 审核链收口（全员必经）：用药类停留 CREATED 待药师审（mock 承载审核面语义）
         when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
 
-        MedicalOrderVO result = service.create(VISIT_ID, longDrugOrder());
+        MedicalOrderVO result;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            result = service.create(VISIT_ID, longDrugOrder());
+            // 子表落库（EX-37 批插通道锚面迁移：原 verify(itemMapper).insert 换 Db.saveBatch
+            // 捕获；业务断言零变化）：item_seq 1 起递增、名称快照、计费回执两列默认 false
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<MedicalOrderItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            MedicalOrderItem savedItem = rowsCaptor.getValue().get(0);
+            assertThat(savedItem.getItemSeq()).isEqualTo(1);
+            assertThat(savedItem.getNameSnapshot()).isEqualTo("头孢呋辛钠注射液");
+            assertThat(savedItem.getFeePriced()).isFalse();
+            assertThat(savedItem.getFeeStopped()).isFalse();
+        }
 
         // 出参：CREATED 初始态、成组组号缺省回填本医嘱号、医生=操作者上下文
         assertThat(result.orderNo()).isEqualTo(ORDER_NO);
@@ -200,14 +215,6 @@ class MedicalOrderServiceImplTest {
         assertThat(orderCaptor.getValue().getVisitId()).isEqualTo(VISIT_PK);
         assertThat(orderCaptor.getValue().getStandbyFlag()).isFalse();
         assertThat(orderCaptor.getValue().getOrderedAt()).isNotNull();
-
-        // 子表落库：item_seq 1 起递增、名称快照、计费回执两列默认 false
-        verify(itemMapper).insert(itemCaptor.capture());
-        MedicalOrderItem savedItem = itemCaptor.getValue();
-        assertThat(savedItem.getItemSeq()).isEqualTo(1);
-        assertThat(savedItem.getNameSnapshot()).isEqualTo("头孢呋辛钠注射液");
-        assertThat(savedItem.getFeePriced()).isFalse();
-        assertThat(savedItem.getFeeStopped()).isFalse();
 
         // 事件：routing 子键 drug（DomainEventSender eventType 双作信封类型与路由键）；
         // 载荷头小写子键口径 + items 明细（剂量拼串/数量 DECIMAL string/行类型小写）
@@ -342,38 +349,47 @@ class MedicalOrderServiceImplTest {
         when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
 
         // 成组两行：药品行（延续）+检验行（非延续、无剂量——载荷剂量空分支同覆盖）
-        service.create(
-                VISIT_ID,
-                new OrderCreateRequest(
-                        "DRUG",
-                        "LONG",
-                        null,
-                        "GRP20260925001",
-                        "bid",
-                        List.of(
-                                drugItem(true),
-                                new OrderItemRequest(
-                                        "LAB",
-                                        "L0001",
-                                        "血常规",
-                                        null,
-                                        null,
-                                        null,
-                                        null,
-                                        new BigDecimal("1"),
-                                        null,
-                                        null,
-                                        null,
-                                        false))));
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            service.create(
+                    VISIT_ID,
+                    new OrderCreateRequest(
+                            "DRUG",
+                            "LONG",
+                            null,
+                            "GRP20260925001",
+                            "bid",
+                            List.of(
+                                    drugItem(true),
+                                    new OrderItemRequest(
+                                            "LAB",
+                                            "L0001",
+                                            "血常规",
+                                            null,
+                                            null,
+                                            null,
+                                            null,
+                                            new BigDecimal("1"),
+                                            null,
+                                            null,
+                                            null,
+                                            false))));
+            // 子表两行（EX-37 批插通道锚面迁移：原 verify(itemMapper, times(2)).insert 换
+            // Db.saveBatch 捕获；业务断言零变化）：序号组内递增、延续标志逐行、计费回执默认 false
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<MedicalOrderItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue()).hasSize(2);
+            assertThat(rowsCaptor.getValue())
+                    .extracting(MedicalOrderItem::getItemSeq)
+                    .containsExactly(1, 2);
+            assertThat(rowsCaptor.getValue())
+                    .extracting(MedicalOrderItem::getContinueFlag)
+                    .containsExactly(true, false);
+        }
 
         // 主表组号沿传入值（缺省回填仅在缺席时发生）
         verify(orderMapper).insert(orderCaptor.capture());
         assertThat(orderCaptor.getValue().getGroupNo()).isEqualTo("GRP20260925001");
-        // 子表两行：序号组内递增、延续标志逐行、计费回执默认 false
-        verify(itemMapper, times(2)).insert(itemCaptor.capture());
-        List<MedicalOrderItem> saved = itemCaptor.getAllValues();
-        assertThat(saved).extracting(MedicalOrderItem::getItemSeq).containsExactly(1, 2);
-        assertThat(saved).extracting(MedicalOrderItem::getContinueFlag).containsExactly(true, false);
         // 载荷剂量拼串空分支：检验行 dosage 原样（null）透传
         verify(events).publishEvent(eventCaptor.capture());
         OrderCreatedPayload payload =
@@ -382,6 +398,48 @@ class MedicalOrderServiceImplTest {
         assertThat(payload.items()).hasSize(2);
         assertThat(payload.items().get(1).dosage()).isNull();
         assertThat(payload.items().get(1).itemType()).isEqualTo("lab");
+    }
+
+    // ===== EX-37：开立明细批量落库（A.4.3-16 批插锚定）=====
+
+    @Test
+    @DisplayName("EX-37 批插契约：开立明细行集一次批插（Db.saveBatch 恰 1 次携全部行），逐行 insert 通道下线")
+    void createPersistsItemsViaSingleBatchInsert() {
+        when(visitMapper.selectOne(any())).thenReturn(visitRow());
+        when(practiceCheckPort.check(OPERATOR, "PRESCRIPTION")).thenReturn(new PracticeCheckResult(true, null));
+        when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
+        when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("bid"));
+        when(seqGate.nextNo("MO")).thenReturn(ORDER_NO);
+        when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
+
+        MedicalOrderVO result;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            result = service.create(
+                    VISIT_ID,
+                    new OrderCreateRequest(
+                            "DRUG", "LONG", null, "GRP20260925001", "bid", List.of(drugItem(true), drugItem(false))));
+            // EX-37：明细行一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐行 insert 通道已下线
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<MedicalOrderItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()), times(1));
+            // 批插行集锚：组内 item_seq 1/2 递增、延续标志逐行、计价回执两列默认 false
+            assertThat(rowsCaptor.getValue()).hasSize(2);
+            assertThat(rowsCaptor.getValue())
+                    .extracting(MedicalOrderItem::getItemSeq)
+                    .containsExactly(1, 2);
+            assertThat(rowsCaptor.getValue())
+                    .extracting(MedicalOrderItem::getContinueFlag)
+                    .containsExactly(true, false);
+            assertThat(rowsCaptor.getValue()).allSatisfy(row -> {
+                assertThat(row.getNameSnapshot()).isEqualTo("头孢呋辛钠注射液");
+                assertThat(row.getFeePriced()).isFalse();
+                assertThat(row.getFeeStopped()).isFalse();
+            });
+        }
+        // 业务等价锚：开立链正常收口（批插不改变开立语义——审核链停留 CREATED 待药师审）
+        assertThat(result.status()).isEqualTo(OrderStatus.CREATED.getCode());
+        // 逐行 insert 通道下线（EX-37 收口后禁再逐行落库）
+        verify(itemMapper, never()).insert(any(MedicalOrderItem.class));
     }
 
     @Test
@@ -599,29 +657,33 @@ class MedicalOrderServiceImplTest {
         when(frequencyMapper.selectOne(any())).thenReturn(frequencyRow("qd"));
         when(seqGate.nextNo("MO")).thenReturn(ORDER_NO);
         when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
-        MedicalOrderVO result = service.create(
-                VISIT_ID,
-                new OrderCreateRequest(
-                        "DRUG",
-                        "LONG",
-                        null,
-                        null,
-                        "qd",
-                        List.of(
-                                drugItem(false),
-                                new OrderItemRequest(
-                                        "LAB",
-                                        "L0001",
-                                        "血常规",
-                                        "1",
-                                        null,
-                                        null,
-                                        null,
-                                        new BigDecimal("1"),
-                                        null,
-                                        null,
-                                        null,
-                                        false))));
+        MedicalOrderVO result;
+        try (MockedStatic<Db> ignored = Mockito.mockStatic(Db.class)) {
+            // EX-37 批插通道：本子场景达落库面（静态工具桩面机械包裹——业务断言零变化）
+            result = service.create(
+                    VISIT_ID,
+                    new OrderCreateRequest(
+                            "DRUG",
+                            "LONG",
+                            null,
+                            null,
+                            "qd",
+                            List.of(
+                                    drugItem(false),
+                                    new OrderItemRequest(
+                                            "LAB",
+                                            "L0001",
+                                            "血常规",
+                                            "1",
+                                            null,
+                                            null,
+                                            null,
+                                            new BigDecimal("1"),
+                                            null,
+                                            null,
+                                            null,
+                                            false))));
+        }
         assertThat(result.status()).isEqualTo(OrderStatus.CREATED.getCode());
         verify(events).publishEvent(eventCaptor.capture());
         OrderCreatedPayload payload =
@@ -723,29 +785,40 @@ class MedicalOrderServiceImplTest {
         // 审核链重入（全员必经）：用药类停留 CREATED 待药师审（mock 承载审核面语义）
         when(orderAuditService.audit(ORDER_NO)).thenReturn(OrderStatus.CREATED);
 
-        MedicalOrderVO result = service.resubmit(
-                ORDER_NO,
-                new OrderCreateRequest(
-                        "DRUG",
-                        "LONG",
-                        null,
-                        null,
-                        "bid",
-                        List.of(
-                                drugItem(true),
-                                new OrderItemRequest(
-                                        "LAB",
-                                        "L0001",
-                                        "血常规",
-                                        null,
-                                        null,
-                                        null,
-                                        null,
-                                        new BigDecimal("1"),
-                                        null,
-                                        null,
-                                        null,
-                                        false))));
+        MedicalOrderVO result;
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            result = service.resubmit(
+                    ORDER_NO,
+                    new OrderCreateRequest(
+                            "DRUG",
+                            "LONG",
+                            null,
+                            null,
+                            "bid",
+                            List.of(
+                                    drugItem(true),
+                                    new OrderItemRequest(
+                                            "LAB",
+                                            "L0001",
+                                            "血常规",
+                                            null,
+                                            null,
+                                            null,
+                                            null,
+                                            new BigDecimal("1"),
+                                            null,
+                                            null,
+                                            null,
+                                            false))));
+            // 明细重写新行（EX-37 批插通道锚面迁移：原 verify(itemMapper, times(2)).insert 换
+            // Db.saveBatch 捕获；业务断言零变化）：按列表序 1 起重新落库
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<MedicalOrderItem>> rowsCaptor = ArgumentCaptor.forClass(List.class);
+            mockedDb.verify(() -> Db.saveBatch(rowsCaptor.capture()));
+            assertThat(rowsCaptor.getValue())
+                    .extracting(MedicalOrderItem::getItemSeq)
+                    .containsExactly(1, 2);
+        }
 
         // 出参：状态=审核链收口后实态（用药类停留 CREATED）、医嘱号不变（轻量变体禁另开新单）
         assertThat(result.status()).isEqualTo(OrderStatus.CREATED.getCode());
@@ -755,10 +828,6 @@ class MedicalOrderServiceImplTest {
         verify(orderMapper).updateResubmitValues(ORDER_NO, "DRUG", "LONG", false, "bid", String.valueOf(OPERATOR));
         // 明细重写：旧行逻辑删（@TableLogic）+ 新行按列表序 1 起重新落库
         verify(itemMapper).delete(any());
-        verify(itemMapper, times(2)).insert(itemCaptor.capture());
-        assertThat(itemCaptor.getAllValues())
-                .extracting(MedicalOrderItem::getItemSeq)
-                .containsExactly(1, 2);
         // 状态回 CREATED（状态机唯一裁决面——仅 AUDIT_REJECTED 可达；留痕随状态机落库）
         verify(stateMachine).transition(rejected, OrderStatus.CREATED, "驳回后修改重提", OPERATOR);
         // 重发开立事件（drug 子键驱动 M06 重开审方任务——驳回重提闭环）

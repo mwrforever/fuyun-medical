@@ -128,11 +128,20 @@ class AlarmRuleServiceImplTest {
     void listReturnsAllRulesOrderedById() {
         when(ruleMapper.selectList(any())).thenReturn(List.of(thresholdEntity()));
 
-        List<AlarmRuleVO> result = service.list();
+        List<AlarmRuleVO> result = service.listAll();
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).id()).isEqualTo(RULE_ID);
         assertThat(result.get(0).ruleType()).isEqualTo(AlarmRuleType.THRESHOLD);
+    }
+
+    @Test
+    @DisplayName("清单：行数达装载上限截断留痕（200 行硬顶防配置膨胀）")
+    void listAllWarnsWhenRuleLimitReached() {
+        // 200 行夹具（同一行实例复用，仅驱动硬顶判定；DB 侧 LIMIT 200 命中即恰返回 200 行）
+        when(ruleMapper.selectList(any())).thenReturn(java.util.Collections.nCopies(200, thresholdEntity()));
+
+        assertThat(service.listAll()).hasSize(200);
     }
 
     @Test

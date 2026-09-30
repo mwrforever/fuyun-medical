@@ -25,6 +25,7 @@ import type {
   VisitVO,
 } from '@/api/outpatient';
 import { DISPOSITION_OPTIONS } from '@/api/outpatient';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { useAuthStore } from '@/stores/auth';
 
 /** 诊毕离院去向八项（V705 disposition 词表前端常量，来自 api 层唯一导出） */
@@ -125,7 +126,6 @@ const deptCode = ref('DEPT-INT');
 
 /* ---------- 左列：候诊列表（我的队列，行高 56px + current-row 左缘品牌色条） ---------- */
 const queue = ref<DoctorQueueItemVO[]>([]);
-const queueLoading = ref(false);
 /** 当前选中候诊行（↑↓/点击双通道；接诊入口） */
 const selectedRow = ref<DoctorQueueItemVO | null>(null);
 /** 接诊在途标志（左列主按钮 + 中列上下文加载共用） */
@@ -135,7 +135,6 @@ const admitting = ref(false);
 const currentVisit = ref<VisitVO | null>(null);
 /** 当前就诊的在诊单据（RX_REF 与检查检验同源列表，tabs 过滤呈现） */
 const orders = ref<ClinicOrderVO[]>([]);
-const ordersLoading = ref(false);
 
 /** 候诊行等待时长（分钟，§8.3 行内展示；≥30 分钟预警色与分诊台同口径） */
 function waitingMinutes(row: DoctorQueueItemVO): number {
@@ -145,25 +144,20 @@ function waitingMinutes(row: DoctorQueueItemVO): number {
   return Math.max(0, Math.floor((Date.now() - new Date(row.queueTime).getTime()) / 60000));
 }
 
-/** 拉取我的候诊队列（接诊/诊毕后重刷共用；SERVED 行由状态自然灰化下沉） */
-async function loadQueue(): Promise<void> {
+/** 拉取我的候诊队列（接诊/诊毕后重刷共用；SERVED 行由状态自然灰化下沉）：loading 骨架经
+ * useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——失败弹错归响应拦截器、驻留旧
+ * 队列）；未登录早退随任务体保留（不发无效出网）。 */
+const { loading: queueLoading, run: loadQueue } = useAsyncTask(async () => {
   if (doctorId.value === '') {
     // 未登录会话（路由守卫已拦）：静默驻留空队列，不发无效出网
     queue.value = [];
     return;
   }
-  queueLoading.value = true;
-  try {
-    queue.value = await listPatientQueue({
-      deptCode: deptCode.value,
-      doctorId: doctorId.value,
-    });
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧队列
-  } finally {
-    queueLoading.value = false;
-  }
-}
+  queue.value = await listPatientQueue({
+    deptCode: deptCode.value,
+    doctorId: doctorId.value,
+  });
+});
 
 /** 诊区变更：清空上下文并重拉队列 */
 function onDeptChange(): void {
@@ -234,17 +228,11 @@ async function onAdmit(): Promise<void> {
   }
 }
 
-/** 拉取在诊单据（开单/开方/诊毕后重刷共用） */
-async function loadOrders(visitId: string): Promise<void> {
-  ordersLoading.value = true;
-  try {
-    orders.value = await listOrdersByVisit({ visitId });
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧单据
-  } finally {
-    ordersLoading.value = false;
-  }
-}
+/** 拉取在诊单据（开单/开方/诊毕后重刷共用）：loading 骨架经 useAsyncTask 收拢（EX-42
+ * 范式迁移，行为与迁移前一致——失败弹错归响应拦截器、驻留旧单据）。 */
+const { loading: ordersLoading, run: loadOrders } = useAsyncTask(async (visitId: string) => {
+  orders.value = await listOrdersByVisit({ visitId });
+});
 
 /** 检查检验/处置单据（tab 1 呈现面） */
 const examOrders = computed(() => orders.value.filter((order) => order.orderType !== 'RX_REF'));

@@ -1,6 +1,7 @@
 package com.fuyun.iot.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.iot.api.IotErrorCode;
 import com.fuyun.iot.dto.SaveAlarmRuleRequest;
@@ -18,6 +19,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -39,9 +41,14 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>装配归 IotConfig @Import（com.fuyun.iot 不在组件扫描范围，宪法 B.1）；JaCoCo 核心包
  * （com.fuyun.iot.service.impl）LINE=1.00 成员，单测全覆盖。
+ *
+ * <p>主表配对（宪法 A.4.3-20，EX-09 收拢）：extends ServiceImpl 声明主表 iot_alarm_rule 继承面
+ * （baseMapper 由容器注入基类字段）；既有构造器注入的 ruleMapper 与其并存，方法体维持原 mapper
+ * 通道不变（收拢完成态由后续演进消化）；telemetryMapper 为 simulate 回放的副表读通道。
  */
 @Slf4j
-public class AlarmRuleServiceImpl implements IAlarmRuleService {
+public class AlarmRuleServiceImpl extends ServiceImpl<IotAlarmRuleMapper, IotAlarmRuleEntity>
+        implements IAlarmRuleService {
 
     /** 静默窗口默认秒（brief 冻结默认值；请求未携带时补齐） */
     private static final int DEFAULT_SILENCE_WINDOW_SECS = 300;
@@ -51,6 +58,9 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
 
     /** simulate 回放行单窗口上限（LIMIT 硬顶） */
     private static final int SIMULATE_ROW_LIMIT = 5000;
+
+    /** 规则清单单次装载上限（EX-13 风险收拢：LIMIT 硬顶泄压，防配置膨胀全量拉取） */
+    private static final int RULE_LIST_LIMIT = 200;
 
     private final IotAlarmRuleMapper ruleMapper;
 
@@ -67,17 +77,38 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
         this.telemetryMapper = telemetryMapper;
     }
 
+    /**
+     * 上限 200 的规则清单（只读事务）：id 升序稳定输出，软删行经 @TableLogic 自动过滤；规则为
+     * 管理台配置面数据（百级量级），按 brief 口径不分页但以 LIMIT 硬顶泄压防配置膨胀全量拉取
+     * （截断以 warn 留痕，超限截断属防御性收拢）；返回含禁用规则，启用过滤由告警引擎评估侧
+     * 按 enabled 判定。
+     *
+     * @return 在册规则 VO（id 升序，单次装载上限 200），非空；无规则时为空列表
+     */
     @Override
     @Transactional(readOnly = true)
-    public List<AlarmRuleVO> list() {
-        // 数据库读操作：全量规则清单（id 升序稳定输出；@TableLogic 自动携带 deleted=0）
-        return ruleMapper
-                .selectList(Wrappers.<IotAlarmRuleEntity>lambdaQuery().orderByAsc(IotAlarmRuleEntity::getId))
-                .stream()
-                .map(AlarmRuleVO::from)
-                .toList();
+    public List<AlarmRuleVO> listAll() {
+        // 数据库读操作：规则清单装载（id 升序稳定输出；@TableLogic 自动携带 deleted=0；
+        // LIMIT 硬顶泄压，截断 warn 留痕）
+        List<IotAlarmRuleEntity> rules = ruleMapper.selectList(Wrappers.<IotAlarmRuleEntity>lambdaQuery()
+                .orderByAsc(IotAlarmRuleEntity::getId)
+                .last("LIMIT " + RULE_LIST_LIMIT));
+        if (rules.size() >= RULE_LIST_LIMIT) {
+            // 配置行数达硬顶：截断泄压留痕，提示配置膨胀排查（正常量不触发）
+            log.warn("告警规则清单触发装载上限截断：loaded={}，limit={}，请检查配置膨胀", rules.size(), RULE_LIST_LIMIT);
+        }
+        return rules.stream().map(AlarmRuleVO::from).toList();
     }
 
+    /**
+     * 规则登记：抖动防护②前置校验（规则型参数条件必填，缺失即拒）→ 字段覆写（静默窗/升级时限
+     * 缺省补齐默认 300s、enabled 缺省 true）→ 落行（雪花 id 由 MP ASSIGN_ID 生成）→ info 留痕。
+     *
+     * @param request 保存请求（名称/类型/条件参数/级别），非空；来源：管理台规则表单
+     * @return 已登记规则 VO（含生成的 ruleId），非空
+     * @throws BizException 规则形态不满足其类型契约（THRESHOLD/OFFLINE/DEVICE_ALARM 各自必填项
+     *                      缺失，IOT-1013 409 拒保存——引擎评估侧假定参数齐备零防御分叉）
+     */
     @Override
     @Transactional
     public AlarmRuleVO create(SaveAlarmRuleRequest request) {
@@ -97,6 +128,15 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
         return AlarmRuleVO.from(entity);
     }
 
+    /**
+     * 规则更新：存在性校验（404）→ 抖动防护②校验（409）→ 字段全量覆写（updated_at 由数据库
+     * 触发器维护，应用层不触碰审计列）→ info 留痕。
+     *
+     * @param id      规则行 id，非空；来源：管理台规则列表
+     * @param request 保存请求，非空；来源：管理台规则表单
+     * @return 更新后规则 VO，非空
+     * @throws BizException 规则不存在（IOT-1012 404）或形态不满足其类型契约（IOT-1013 409）
+     */
     @Override
     @Transactional
     public AlarmRuleVO update(Long id, SaveAlarmRuleRequest request) {
@@ -113,6 +153,13 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
         return AlarmRuleVO.from(entity);
     }
 
+    /**
+     * 规则软删（@TableLogic 逻辑删）：历史告警行 rule_id 留痕不受影响，引擎评估侧后续按未删
+     * 规则集加载自然失效；硬删仅经数据库运维通道。
+     *
+     * @param id 规则行 id，非空；来源：管理台规则列表
+     * @throws BizException 规则不存在（IOT-1012 404）
+     */
     @Override
     @Transactional
     public void delete(Long id) {
@@ -122,6 +169,17 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
         log.info("告警规则已软删：ruleId={}，ruleName={}", entity.getId(), entity.getRuleName());
     }
 
+    /**
+     * 历史回放模拟（只读事务，纯内存不落库）：回放窗口内规则匹配遥测行按设备分组、时点升序
+     * 逐行判定（与 AlarmEngine 线上状态机同构）——首越限起算、持续达标记触发并回合归零、值恢复
+     * 复位；回放行单窗口 LIMIT 5000 硬顶（防大时段全表扫描），截断以 warn 留痕。
+     *
+     * @param id      规则行 id，非空；仅 THRESHOLD 规则支持回放（透传/离线源无可回放遥测行）
+     * @param request 回放时窗（Instant，from 必须早于 to），非空；来源：管理台模拟表单
+     * @return 回放结果（扫描行数 + 触发明细时点升序），非空；零触发时明细为空列表
+     * @throws BizException 规则不存在（IOT-1012 404）/非 THRESHOLD 规则（IOT-1013 409）/
+     *                      时窗非法（TELEMETRY_QUERY_INVALID 400）
+     */
     @Override
     @Transactional(readOnly = true)
     public SimulateResultVO simulate(Long id, SimulateAlarmRequest request) {
@@ -144,10 +202,8 @@ public class AlarmRuleServiceImpl implements IAlarmRuleService {
         List<IotTelemetryEntity> rows = telemetryMapper.selectList(Wrappers.<IotTelemetryEntity>lambdaQuery()
                 .eq(IotTelemetryEntity::getMetricCode, rule.getMetricCode())
                 .eq(rule.getDeviceId() != null, IotTelemetryEntity::getDeviceId, rule.getDeviceId())
-                .ge(
-                        IotTelemetryEntity::getOccurredAt,
-                        OffsetDateTime.ofInstant(request.from(), java.time.ZoneOffset.UTC))
-                .le(IotTelemetryEntity::getOccurredAt, OffsetDateTime.ofInstant(request.to(), java.time.ZoneOffset.UTC))
+                .ge(IotTelemetryEntity::getOccurredAt, OffsetDateTime.ofInstant(request.from(), ZoneOffset.UTC))
+                .le(IotTelemetryEntity::getOccurredAt, OffsetDateTime.ofInstant(request.to(), ZoneOffset.UTC))
                 .orderByAsc(IotTelemetryEntity::getOccurredAt)
                 .last("LIMIT " + SIMULATE_ROW_LIMIT));
         if (rows.size() >= SIMULATE_ROW_LIMIT) {

@@ -13,6 +13,7 @@ import com.fuyun.iot.constants.IotMessagingConstants;
 import com.fuyun.iot.service.IDashboardService;
 import com.fuyun.iot.service.ITelemetryPushService;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Consumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -136,7 +137,7 @@ public class IotFanoutListener {
      * @param business       消费业务体（载荷解析与推送/刷新动作），非空
      */
     private void consumeWithIdempotency(
-            EventEnvelope envelope, String consumerModule, java.util.function.Consumer<EventEnvelope> business) {
+            EventEnvelope envelope, String consumerModule, Consumer<EventEnvelope> business) {
         // 标准范式①：重复投递（NX 失败且回查确认已处理）直接返回跳过，即 AUTO 确认
         if (!idempotencyService.tryAcquire(envelope.eventId(), consumerModule)) {
             log.info(
@@ -177,7 +178,8 @@ public class IotFanoutListener {
         try {
             event = objectMapper.treeToValue(envelope.payload(), DeviceStatusEvent.class);
         } catch (JsonProcessingException e) {
-            // 载荷不合规（缺字段/类型错）等同业务失败：上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
+            // 内部断言：模块自产事件载荷与 record 契约不符属发布方编程错误，非用户输入路径；
+            // 上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
             throw new IllegalStateException("设备状态事件载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(
@@ -207,6 +209,8 @@ public class IotFanoutListener {
         try {
             payload = objectMapper.treeToValue(envelope.payload(), AlarmTriggeredPayload.class);
         } catch (JsonProcessingException e) {
+            // 内部断言：模块自产事件载荷与 record 契约不符属发布方编程错误，非用户输入路径；
+            // 上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
             throw new IllegalStateException("告警触发事件载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(
@@ -236,6 +240,8 @@ public class IotFanoutListener {
         try {
             payload = objectMapper.treeToValue(envelope.payload(), AlarmClosedPayload.class);
         } catch (JsonProcessingException e) {
+            // 内部断言：模块自产事件载荷与 record 契约不符属发布方编程错误，非用户输入路径；
+            // 上抛由范式③失败收尾（FAILED 留痕后重抛），最终转死信留痕
             throw new IllegalStateException("告警关闭事件载荷与契约不符：event_id=" + envelope.eventId(), e);
         }
         log.info(

@@ -7,9 +7,12 @@
  * 3. 【订阅句柄统一管理】subscribeQueue 返回代理句柄（退订单出口），连接落地前登记待订阅、
  *    onConnect 转正；断线重连由 onConnect 无条件重订阅（stompjs 7.3.0 无自动重订阅，
  *    onWebSocketClose/onStompError 先将在册句柄置 null 作废——useIotStomp PR-5 Finding 2 同款）；
- * 4. 【令牌经 beforeConnect 动态填 connectHeaders】凭证=构建期 VITE_BIGSCREEN_TOKEN（受控演示面，
- *    计划 Interfaces 冻结口径；订阅级鉴权/匿名 STOMP 通道随 P2 演进注记）。令牌为空时 connect()
- *    拒绝建连（页面承载「未配置大屏令牌」横幅 + 整链路零出网）；令牌值禁入任何日志（web A.6）；
+ * 4. 【令牌运行期获取经 beforeConnect 动态填 connectHeaders】凭证=后端匿名签发的 5 分钟短期
+ *    订阅令牌（BUG-19：删除构建期 VITE_BIGSCREEN_TOKEN 内联——web A.2-2 红线；计划 Interfaces
+ *    冻结口径，订阅级鉴权/匿名 STOMP 通道随 P2 演进注记）。初始建连取不到令牌时 connect()
+ *    拒绝建连（tokenFailed 置位，页面承载「大屏令牌获取失败」横幅 + 零 WS 出网）；令牌缓存
+ *    到期由 beforeConnect 按次重签，重签失败本次尝试无凭证交服务端拒绝（useIotStomp 同款
+ *    语义，库内建周期重连时再次尝试）；令牌值禁入任何日志（web A.6）；
  * 5. 【onStompError / onWebSocketClose 统一挂接】经 utils/logger 输出（含主题与 traceId）。
  *
  * <p>连接状态机（页面消费）：disconnected → connecting → connected；deactivate() 承载主动断开。
@@ -21,6 +24,7 @@ import { Client } from '@stomp/stompjs';
 import type { IMessage, StompSubscription } from '@stomp/stompjs';
 import { ref } from 'vue';
 import type { Ref } from 'vue';
+import { fetchBigscreenToken } from '@/api/bigscreenToken';
 import { error as logError, info, warn } from '@/utils/logger';
 
 /** 连接状态机三态（页面消费口径，与 useIotStomp 同构） */
@@ -72,15 +76,79 @@ const RECONNECT_DELAY_MS = 10000;
 /** 双向心跳间隔（毫秒，与后端 STOMP 心跳协商的宪法数值） */
 const HEARTBEAT_MS = 10000;
 
-/**
- * 大屏令牌（构建期 VITE_BIGSCREEN_TOKEN 注入；默认空=「未配置大屏令牌」横幅 + connect 拒建连）。
- * VITE_ 公开性红线（web A.2-2）由部署面承载：该值为受控演示凭证，随镜像构建注入、不入库真实值。
- */
-export const bigscreenToken: string = import.meta.env.VITE_BIGSCREEN_TOKEN ?? '';
+/** 令牌缓存到期安全余量（毫秒）：早于令牌 exp 重签，防「临界有效令牌被服务端判过期」 */
+const TOKEN_REFRESH_SKEW_MS = 30000;
 
-/** 令牌是否已配置（页面横幅与链路启用判定唯一来源） */
-export function isQueueTokenConfigured(): boolean {
-  return bigscreenToken !== '';
+/**
+ * 大屏订阅令牌缓存（运行期经 fetchBigscreenToken 匿名签发，BUG-19 删除构建期 VITE_ 内联；
+ * 空=未持有）。仅模块内存缓存不入 sessionStorage——短期凭证随标签页周期即弃，缩小驻留面。
+ */
+let bigscreenToken = '';
+
+/** 缓存令牌到期时刻（epoch 毫秒；0=无缓存），到期前 TOKEN_REFRESH_SKEW_MS 即重签 */
+let tokenExpiresAt = 0;
+
+/** 在飞令牌签发 Promise（并发 connect/换诊区去重——防重复签发与并发竞态双写） */
+let tokenFetchInFlight: Promise<boolean> | null = null;
+
+/** 初始建连令牌获取失败态可写源（模块内部翻转专用，禁止外泄） */
+const tokenFailedRef = ref(false);
+
+/** 初始建连令牌是否获取失败（页面「数据链路已禁用」整页横幅唯一来源，只读消费；重连路径
+ * 的瞬时重签失败不置位——该路径由服务端拒绝 + 库内建重连承载，页面保持断线横幅即可） */
+export const tokenFailed: Readonly<Ref<boolean>> = tokenFailedRef;
+
+/**
+ * 确保持有未过期的大屏订阅令牌（运行期获取唯一入口）：缓存未到期直接复用；否则经
+ * fetchBigscreenToken 重签并缓存（在飞请求去重）。获取失败清缓存返回 false，不抛出。
+ *
+ * @return true=已持有有效令牌（bigscreenToken 非空）；false=签发失败（connect 入口据此
+ *         拒建连，beforeConnect 路径据此放弃凭证交服务端拒绝）
+ */
+async function ensureQueueToken(): Promise<boolean> {
+  if (bigscreenToken !== '' && Date.now() < tokenExpiresAt - TOKEN_REFRESH_SKEW_MS) {
+    return true;
+  }
+  if (tokenFetchInFlight !== null) {
+    return tokenFetchInFlight;
+  }
+  tokenFetchInFlight = (async () => {
+    try {
+      const granted = await fetchBigscreenToken();
+      // 畸形载荷防御（生成物字段全可选）：缺令牌值视同签发失败——空值拼 Bearer 头必被服务端
+      // 拒绝，交 catch 清缓存走拒建连/重签语义，防 undefined 混入凭证头
+      if (granted.accessToken === undefined || granted.accessToken === '') {
+        throw new Error('签发载荷缺少 accessToken');
+      }
+      bigscreenToken = granted.accessToken;
+      // expiresIn 出网为字符串（后端 Long→String 全局序列化）：显式收窄禁隐式乘法强转；
+      // 缺失/非数值（Number→NaN）兜底为「不可缓存」——到期时刻归零使缓存判定恒 false，
+      // 下次连接尝试立即重签（安全方向：宁可多签发一次，不静默持有未知有效期的令牌），
+      // 防 undefined*1000=NaN 令到期比对恒 false 却表面成功
+      const expiresInSeconds = Number(granted.expiresIn);
+      tokenExpiresAt = Number.isFinite(expiresInSeconds) ? Date.now() + expiresInSeconds * 1000 : 0;
+      // info 仅留痕有效期原文（令牌值禁入日志，web A.6 红线）
+      info(
+        '大屏订阅令牌已获取（运行期签发）',
+        `expiresIn=${granted.expiresIn ?? '缺省'}s`,
+        traceTag(),
+      );
+      return true;
+    } catch (fetchError) {
+      // 签发失败：清缓存（下次连接尝试整体重签）；失败详情不含令牌值，可安全留痕
+      bigscreenToken = '';
+      tokenExpiresAt = 0;
+      warn(
+        '大屏订阅令牌运行期获取失败',
+        fetchError instanceof Error ? fetchError.message : String(fetchError),
+        traceTag(),
+      );
+      return false;
+    } finally {
+      tokenFetchInFlight = null;
+    }
+  })();
+  return tokenFetchInFlight;
 }
 
 /** 全应用唯一 Client 实例（惰性创建，null=尚未首次建连） */
@@ -98,6 +166,13 @@ let queueSubscription: {
 
 /** connect() 传入的状态变更回调（disconnect 时解除，防悬挂引用） */
 let stateChangeListener: ((state: QueueConnectionState) => void) | null = null;
+
+/**
+ * 建连代际计数（竞态防御）：connect 发起时快照当前代际，disconnect 递增作废所有在飞建连链——
+ * 初始建连先异步取令牌再激活 Client，若取令牌在飞期间组件卸载（disconnect 时 client 尚为
+ * null、无从 deactivate），失配的建连链必须放弃激活，否则 WS 在卸载后被激活且永不断开。
+ */
+let connectGeneration = 0;
 
 /** 连接状态可写源（模块内部状态翻转专用，禁止外泄） */
 const connectionStateRef = ref<QueueConnectionState>('disconnected');
@@ -166,15 +241,18 @@ function getOrCreateClient(): Client {
     reconnectDelay: RECONNECT_DELAY_MS,
     heartbeatIncoming: HEARTBEAT_MS,
     heartbeatOutgoing: HEARTBEAT_MS,
-    // 每次连接尝试（含断线自动重连）实时读模块级令牌常量拼 Bearer 头（构建期值，运行期恒定）
-    beforeConnect: () => {
+    // 每次连接尝试（含断线自动重连）先确保令牌未过期（到期重签，stompjs await 异步回调），
+    // 再拼 Bearer 头进 CONNECT 帧——运行期获取实时读取不固化（useIotStomp 范式）
+    beforeConnect: async () => {
       if (client === null) {
         return;
       }
-      if (bigscreenToken !== '') {
+      const tokenReady = await ensureQueueToken();
+      if (tokenReady) {
         client.connectHeaders = { Authorization: `Bearer ${bigscreenToken}` };
       } else {
-        // 令牌缺失：本次尝试无凭证（预期被后端 CONNECT 帧鉴权拒绝）；warn 不含键值
+        // 重签失败（仅重连路径可达——connect 入口失败不激活）：本次尝试无凭证，预期被后端
+        // CONNECT 帧鉴权拒绝后按库内建周期重试（重试时再次签发）；warn 不含键值
         warn('STOMP 连接缺少大屏令牌，本次尝试将被服务端拒绝', traceTag());
       }
     },
@@ -235,9 +313,13 @@ function unsubscribeQueue(): void {
 }
 
 /**
- * 建连（队列大屏唯一入口）：令牌未配置直接拒建连（页面横幅承载，零网络副作用）；已连接态
- * 再次调用走「保持 connected + 不重复 activate」分支（useIotStomp PR-5 Finding 3 同款），
- * 订阅切换由紧随其后的 subscribeQueue 已连接分支承接。
+ * 建连（队列大屏唯一入口）：先运行期获取订阅令牌，取不到直接拒建连（tokenFailed 置位供
+ * 页面整页横幅，零 Client 创建零 WS 出网——拒建连语义保持）；已连接态再次调用走「保持
+ * connected + 不重复 activate」分支（useIotStomp PR-5 Finding 3 同款），订阅切换由紧随其
+ * 后的 subscribeQueue 已连接分支承接。
+ *
+ * <p>状态时序：connect() 同步进入 connecting（含令牌签发阶段）；签发失败回落 disconnected
+ * 并置 tokenFailed；刷新页面或换诊区重连为失败态恢复路径（重试签发）。
  *
  * @param deptCode 诊区编码，非空字符串；非法拒建连（页面入口已先行校验）
  * @param onStateChange 连接状态变更回调（可选）
@@ -250,23 +332,36 @@ export function connect(
     warn('连接被拒绝：诊区编码不得为空');
     return;
   }
-  if (!isQueueTokenConfigured()) {
-    // 未配置大屏令牌：拒绝建连且不创建 Client（页面显示未配置横幅，整链路零出网）
-    warn('连接被拒绝：未配置大屏令牌（VITE_BIGSCREEN_TOKEN 为空）');
-    return;
-  }
   stateChangeListener = onStateChange ?? null;
-  const activeClient = getOrCreateClient();
-  if (activeClient.connected) {
+  if (client !== null && client.connected) {
     // 已连接：保持 connected 态、不重复 activate（no-op）；换诊区重订阅由 subscribeQueue 承接
     setConnectionState('connected');
     info('STOMP 已连接，保持连接并按新参数切换订阅', buildBrokerUrl(), traceTag());
     return;
   }
-  connectionTraceId = generateTraceId();
+  // 先行进入 connecting（覆盖令牌签发阶段，页面呼吸点承载过渡）；令牌就绪后才创建 Client
+  // 并激活——异步链内聚，调用方（页面）无需感知
   setConnectionState('connecting');
-  activeClient.activate();
-  info('STOMP 连接发起', buildBrokerUrl(), traceTag());
+  // 代际快照：本链以发起时刻的代际为准，取令牌在飞期间 disconnect 递增代际即判失配作废
+  const generation = connectGeneration;
+  void ensureQueueToken().then((tokenReady) => {
+    // 代际失配=发起后已发生 disconnect（组件卸载/切换）：本次建连链整体作废——不建 Client
+    // 不激活不置失败态，防「卸载后 WS 被激活且永不再断开」的连接泄漏
+    if (generation !== connectGeneration) {
+      return;
+    }
+    if (!tokenReady) {
+      // 初始建连取不到令牌：拒绝建连（零 Client 创建零激活），置失败横幅态
+      tokenFailedRef.value = true;
+      setConnectionState('disconnected');
+      warn('连接被拒绝：大屏订阅令牌运行期获取失败，数据链路已禁用');
+      return;
+    }
+    tokenFailedRef.value = false;
+    connectionTraceId = generateTraceId();
+    getOrCreateClient().activate();
+    info('STOMP 连接发起', buildBrokerUrl(), traceTag());
+  });
 }
 
 /**
@@ -309,6 +404,9 @@ export function subscribeQueue(
  * 重连计划；状态回归 disconnected。
  */
 export async function disconnect(): Promise<void> {
+  // 先递增代际作废在飞建连链：异步取令牌未落地的 connect 不得在本次断开后激活 WS
+  // （disconnect 时 client 尚为 null 的窗口由代际比对兜底，而非仅靠 deactivate）
+  connectGeneration += 1;
   unsubscribeQueue();
   stateChangeListener = null;
   if (client !== null) {

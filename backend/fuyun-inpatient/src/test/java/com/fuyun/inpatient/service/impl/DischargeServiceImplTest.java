@@ -41,6 +41,7 @@ import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.OrderType;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.DischargeRequestMapper;
 import com.fuyun.inpatient.mapper.FollowUpPlanMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
@@ -48,9 +49,9 @@ import com.fuyun.inpatient.mapper.MedicalOrderMapper;
 import com.fuyun.inpatient.mapper.OrderAuditMapper;
 import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.BedService;
-import com.fuyun.inpatient.service.MedicalOrderService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IBedService;
+import com.fuyun.inpatient.service.IMedicalOrderService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.ClearanceVO;
 import com.fuyun.inpatient.vo.DischargeRequestVO;
 import java.time.Instant;
@@ -131,13 +132,13 @@ class DischargeServiceImplTest {
     private InpatientSeqGate seqGate;
 
     @Mock
-    private MedicalOrderService medicalOrderService;
+    private IMedicalOrderService medicalOrderService;
 
     @Mock
-    private BedService bedService;
+    private IBedService bedService;
 
     @Mock
-    private OrderStateMachineService stateMachine;
+    private IOrderStateMachineService stateMachine;
 
     @Mock
     private BillingAccountQueryPort billingAccountQueryPort;
@@ -169,6 +170,8 @@ class DischargeServiceImplTest {
         objectMapper = new ObjectMapper();
         service = new DischargeServiceImpl(
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 orderMapper,
                 planMapper,
                 auditMapper,
@@ -299,6 +302,7 @@ class DischargeServiceImplTest {
         when(failing.writeValueAsString(any())).thenThrow(new JsonProcessingException("boom") {});
         service = new DischargeServiceImpl(
                 visitMapper,
+                new InpatientVisitAccessor(visitMapper),
                 orderMapper,
                 planMapper,
                 auditMapper,

@@ -2,7 +2,7 @@ package com.fuyun.inpatient.controller;
 
 import com.fuyun.inpatient.dto.ChangeBedRequest;
 import com.fuyun.inpatient.dto.TransferRequest;
-import com.fuyun.inpatient.service.TransferService;
+import com.fuyun.inpatient.service.ITransferService;
 import com.fuyun.inpatient.vo.TransferResultVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -29,7 +29,7 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class VisitTransferController {
 
-    private final TransferService transferService;
+    private final ITransferService transferService;
 
     /**
      * 转科四阶段编排（单事务：停嘱→在途三分→床位流转→transferred 事件）。

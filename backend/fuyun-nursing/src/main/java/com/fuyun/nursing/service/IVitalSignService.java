@@ -1,7 +1,9 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.VitalSignRecordRequest;
 import com.fuyun.nursing.dto.VitalSignRejectRequest;
+import com.fuyun.nursing.entity.VitalSignRecord;
 import com.fuyun.nursing.vo.VitalSignVO;
 import java.time.Instant;
 import java.util.List;
@@ -17,8 +19,14 @@ import java.util.List;
  * REJECTED（不写条目、不发事件）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：主表 vital_sign_record 与实现侧
+ * {@code ServiceImpl<VitalSignRecordMapper, VitalSignRecord>} 配对，接口侧收拢
+ * {@code extends IService<VitalSignRecord>}——主表通用 CRUD 直接复用 IService 契约面；
+ * 归集链（观察行归集 + 体温单条目写入 + 事件发布）与复核状态机（confirm/reject CAS）为带
+ * 守卫链的自有方法承载（极限拒收闸门与幂等语义在自有方法内收口，禁经 IService 通用面绕行）。
  */
-public interface IVitalSignService {
+public interface IVitalSignService extends IService<VitalSignRecord> {
 
     /**
      * 体征录入（手工/PDA 点测）：①生理极限拒收闸门（越界 NS-1005）→ ②在区校验（查无 NS-1004）→

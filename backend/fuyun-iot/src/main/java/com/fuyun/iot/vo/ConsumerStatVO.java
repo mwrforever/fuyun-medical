@@ -1,5 +1,6 @@
 package com.fuyun.iot.vo;
 
+import com.fuyun.iot.entity.IotConsumerStatEntity;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
@@ -27,7 +28,7 @@ public record ConsumerStatVO(
      * @param entity 快照实体，非空
      * @return 快照视图，非空
      */
-    public static ConsumerStatVO from(com.fuyun.iot.entity.IotConsumerStatEntity entity) {
+    public static ConsumerStatVO from(IotConsumerStatEntity entity) {
         return new ConsumerStatVO(
                 entity.getConsumerGroup(),
                 entity.getSampledAt(),

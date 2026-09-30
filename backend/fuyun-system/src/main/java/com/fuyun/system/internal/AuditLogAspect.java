@@ -13,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
 import java.time.OffsetDateTime;
+import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -39,8 +40,11 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  * 打码——含 String 形态的 Authorization 头原文（{@code Bearer <令牌>}，logout 端点入参），禁明文
  * 入审计（§8-5，审核 C-1）。PR-6 修复环 R2 增量白名单：参数名 identifier 的 String 入参与含
  * identifier 组件的 record 入参（PDA 扫码标识三合一，证件号/卡号明文）在 detail 摘要期尾四位
- * 掩码（与 nursing 模块 identifierTail 同形态）；白名单外端点 detail 行为逐字节不变，不改全平台
- * 审计语义。全部 VARCHAR 列（operator/resource/trace_id/client_ip）组装期
+ * 掩码（与 nursing 模块 identifierTail 同形态）。BUG-02 扩展：含敏感命名字段组件（idCardNo/
+ * mobile/phone/address/identifierValue）的白名单外 record 入参（患者建档/更新/补挂标识等）组件
+ * 值经 SensitiveMasker 掩码（对齐 sanitizeReason 先证后机口径，无正则形态整体打码），堵默认
+ * toString 直出身份证/手机号/住址明文；不含敏感组件的 record 保持默认 toString，detail 形态
+ * 不变。全部 VARCHAR 列（operator/resource/trace_id/client_ip）组装期
  * truncate 收口列宽防线，防超长注入致整行写入失败被吞、审计静默丢失（B3.3 审核 Minor-2）。
  * P0 同步写（controller 层、事务外、try-catch 告警），异步批量 P1（简报 §9-5）；切面落
  * internal/（模块内横切设施非对外契约，backend 宪法 B.1），Bean 注册点为 SystemWebConfig
@@ -84,6 +88,17 @@ public class AuditLogAspect {
      * identifierType/identifierValue 等近名参数均不命中，其余端点 detail 行为逐字节不变。
      */
     private static final String IDENTIFIER_PARAM_NAME = "identifier";
+
+    /**
+     * 敏感字段名清单（BUG-02 修复口径）：record 组件名命中本清单的组件值在 detail 摘要中掩码，
+     * 防白名单外 record（如 PatientCreateRequest/PatientUpdateRequest/IdentifierCreateRequest）
+     * 默认 toString 直出身份证/手机号/住址/标识值明文。命名以全平台 DTO 实际组件名为准
+     * （idCardNo/mobile/address/identifierValue），phone 为 mobile 的通用同义扩展；登记新敏感
+     * 载体 DTO 无需改本切面——组件名命中即掩码。不含敏感命名字段组件的 record 保持默认
+     * toString 直出（行为保持，非敏感 detail 形态不变）。
+     */
+    private static final Set<String> SENSITIVE_FIELD_NAMES =
+            Set.of("idCardNo", "mobile", "phone", "address", "identifierValue");
 
     private final IAuditLogService auditLogService;
 
@@ -224,11 +239,14 @@ public class AuditLogAspect {
     /**
      * 组装请求参数摘要（审计 detail）：登录口令/刷新令牌/Authorization 头原文显式打码，其余参数值
      * 直出后截断到列宽防线；标识白名单（identifier 参数/含 identifier 组件的 record，PR-6 修复环
-     * R2）尾四位掩码防证件号/卡号明文入审计。
+     * R2）尾四位掩码防证件号/卡号明文入审计；含敏感命名字段组件的 record（BUG-02）组件值掩码
+     * 防身份证/手机号/住址/标识值明文入审计。
      *
      * <p>禁整对象 toString 直出：LoginRequest/RefreshRequest 为敏感载体，record 默认 toString
-     * 会带出明文密码/令牌；String 入参若携带 Bearer 方案前缀（如 logout 端点的 Authorization 头
-     * {@code Bearer <令牌>}）等同凭证载体，一律打码（脱敏红线 §8-5，审核 C-1）。
+     * 会带出明文密码/令牌；白名单外 record 默认 toString 会带出敏感命名字段明文（BUG-02 根因），
+     * 含 identifier 或敏感命名字段组件时以组件重排 name=value + 掩码替代；String 入参若携带
+     * Bearer 方案前缀（如 logout 端点的 Authorization 头 {@code Bearer <令牌>}）等同凭证载体，
+     * 一律打码（脱敏红线 §8-5，审核 C-1）。
      *
      * @param args       目标方法入参，可空；空参返回 null（detail 列可空）
      * @param paramNames 方法参数名数组（与 args 同序，编译期 -parameters 提供），可空；
@@ -258,9 +276,9 @@ public class AuditLogAspect {
                 // Authorization 头原文（"Bearer <令牌>"）即凭证载体：保留方案名供语义辨识，令牌值打码
                 detail.append(SecurityConstants.BEARER_PREFIX).append(MASKED_SENSITIVE_VALUE);
             } else {
-                // 标识白名单增量掩码：命中（identifier 参数/含 identifier 组件的 record）取掩码摘要，
-                // 未命中返回 null 走原直出——白名单外端点 detail 行为逐字节不变
-                String masked = maskIdentifierArgIfNeeded(arg, paramNames, i);
+                // 标识白名单与敏感字段掩码：命中（identifier 参数/含 identifier 或敏感命名字段组件的
+                // record）取掩码摘要，未命中返回 null 走原直出——无敏感组件的入参 detail 行为不变
+                String masked = maskSensitiveArgIfNeeded(arg, paramNames, i);
                 detail.append(masked != null ? masked : arg);
             }
         }
@@ -295,8 +313,8 @@ public class AuditLogAspect {
     }
 
     /**
-     * 审计摘要标识白名单掩码（PR-6 修复环 R2 增量口径）：仅两类入参命中并返回掩码后摘要，
-     * 其余入参返回 null 由调用方原直出——全平台其他端点 detail 行为逐字节不变。
+     * 审计摘要敏感入参掩码（PR-6 修复环 R2 + BUG-02 扩展口径）：命中掩码规则的入参返回掩码后
+     * 摘要，其余入参返回 null 由调用方原直出——不含敏感组件的入参 detail 行为不变。
      *
      * <ul>
      *   <li>参数名为 identifier 的 String 入参（PDA 患者摘要扫码标识）——尾四位掩码；参数名
@@ -304,14 +322,17 @@ public class AuditLogAspect {
      *   <li>含 identifier 组件的 record 入参（PDA 巡视打卡 PdaPatrolRequest）——按组件重排
      *       name=value，identifier 组件尾四位掩码、其余组件原样；record 默认 toString 直出会带出
      *       标识明文，故以组件反射拼接替代。</li>
+     *   <li>含敏感命名字段组件的 record 入参（BUG-02：PatientCreateRequest 等白名单外敏感载体
+     *       DTO）——同样进入组件重排，命中 {@link #SENSITIVE_FIELD_NAMES} 的组件值经
+     *       {@link #maskSensitiveValue} 掩码、其余组件原样。</li>
      * </ul>
      *
      * @param arg        目标方法入参，可空
      * @param paramNames 方法参数名数组（与 args 同序），可空（不可得时 String 白名单不命中）
      * @param index      当前入参下标（取参数名用）
-     * @return 掩码后的参数摘要；未命中白名单返回 null（调用方原样直出）
+     * @return 掩码后的参数摘要；未命中掩码规则返回 null（调用方原样直出）
      */
-    private String maskIdentifierArgIfNeeded(Object arg, String[] paramNames, int index) {
+    private String maskSensitiveArgIfNeeded(Object arg, String[] paramNames, int index) {
         if (arg instanceof String text) {
             boolean namedIdentifier =
                     paramNames != null && index < paramNames.length && IDENTIFIER_PARAM_NAME.equals(paramNames[index]);
@@ -321,15 +342,17 @@ public class AuditLogAspect {
             return null;
         }
         RecordComponent[] components = arg.getClass().getRecordComponents();
-        // 先探测再渲染：仅含 identifier 组件的 record 进入重排（其余 record 保持默认 toString）
-        boolean hasIdentifier = false;
+        // 先探测再渲染：仅含 identifier 或敏感命名字段组件的 record 进入重排（其余 record 保持
+        // 默认 toString，非敏感 detail 形态不变——行为保持）
+        boolean needsRendering = false;
         for (RecordComponent component : components) {
-            if (IDENTIFIER_PARAM_NAME.equals(component.getName())) {
-                hasIdentifier = true;
+            String name = component.getName();
+            if (IDENTIFIER_PARAM_NAME.equals(name) || SENSITIVE_FIELD_NAMES.contains(name)) {
+                needsRendering = true;
                 break;
             }
         }
-        if (!hasIdentifier) {
+        if (!needsRendering) {
             return null;
         }
         StringBuilder rendered = new StringBuilder();
@@ -345,16 +368,37 @@ public class AuditLogAspect {
             }
             try {
                 Object value = accessor.invoke(arg);
-                rendered.append(
-                        IDENTIFIER_PARAM_NAME.equals(component.getName()) && value instanceof String identifier
-                                ? maskIdentifierTail(identifier)
-                                : value);
+                if (IDENTIFIER_PARAM_NAME.equals(component.getName()) && value instanceof String identifier) {
+                    // identifier 组件沿用尾四位口径（与 nursing identifierTail 同形态，R1/R2 一致）
+                    rendered.append(maskIdentifierTail(identifier));
+                } else if (SENSITIVE_FIELD_NAMES.contains(component.getName()) && value instanceof String sensitive) {
+                    // 敏感命名字段组件值掩码（BUG-02）：证号/手机号保留前后段形态，无正则形态整体打码
+                    rendered.append(maskSensitiveValue(sensitive));
+                } else {
+                    rendered.append(value);
+                }
             } catch (ReflectiveOperationException e) {
                 // 反射失败交由 record() 兜底 catch（审计整行告警跳过，绝不阻断业务）；禁回退默认
-                // toString——那会把 identifier 明文写回审计（等保红线）
+                // toString——那会把 identifier/敏感字段明文写回审计（等保红线）
+                // EX-19 C 类留痕：内部反射防御路径（非用户可达输入），保留 IllegalStateException 语义
                 throw new IllegalStateException("审计参数摘要渲染 record 组件失败：" + component.getName(), e);
             }
         }
         return rendered.toString();
+    }
+
+    /**
+     * 敏感命名字段组件值掩码（BUG-02，对齐 sanitizeReason 先证后机口径）：身份证/手机号正则
+     * 命中时保留前后段（如 110101********1234 / 138****5678，供业务对账辨识）；正则未命中
+     * （住址自由文本、护照号等无固定形态敏感值）整体打码为 {@code ***}——键名仍保留在摘要中，
+     * 参数业务可辨识性不受影响。
+     *
+     * @param value 敏感命名字段组件原文，非空
+     * @return 掩码后值，非空；正则命中为前后段形态，未命中为 ***
+     */
+    private String maskSensitiveValue(String value) {
+        // 先证后机（组合使用约定，SensitiveMasker javadoc）：证号含长数字段，先掩证号再掩手机号
+        String masked = SensitiveMasker.maskPhone(SensitiveMasker.maskIdCard(value));
+        return masked.equals(value) ? MASKED_SENSITIVE_VALUE : masked;
     }
 }

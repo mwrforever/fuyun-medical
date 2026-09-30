@@ -2,6 +2,7 @@ package com.fuyun.nursing.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.fuyun.nursing.entity.NursingTask;
+import java.util.Collection;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
@@ -10,8 +11,8 @@ import org.apache.ibatis.annotations.Update;
  * 护理任务 mapper：单表链式能力 + 终态流转/逾期标记 CAS 条件更新注解 SQL（GC26：@Update +
  * 影响行数判定 + 显式 deleted=0）。行写入主链为 insert（唯一约束冲突由服务层转 NS-1016 幂等
  * 拒绝）；complete/cancel 为仅有状态变更面（单表单语句、零级联），并发重复操作由 CAS 行数
- * 判定兜底；casMarkOverdue 的 overdue_flag=false 谓词保证升级次数仅首次递增（读时惰性判定
- * 的并发幂等根基）。
+ * 判定兜底；casMarkOverdue/casMarkOverdueBatch 的 overdue_flag=false 谓词保证升级次数仅首次
+ * 递增（读时惰性判定的并发幂等根基）。
  */
 @Mapper
 public interface NursingTaskMapper extends BaseMapper<NursingTask> {
@@ -52,4 +53,19 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
     @Update("UPDATE nursing.nursing_task SET overdue_flag = true, escalation_count = escalation_count + 1 "
             + "WHERE id = #{id} AND overdue_flag = false AND deleted = 0")
     int casMarkOverdue(@Param("id") long id);
+
+    /**
+     * 逾期标记批量 CAS（批量在途查询读时惰性判定落点，A.4.3-14 写放大收敛）：单条语句按 id 集
+     * 一次触达，谓词与逐行 {@link #casMarkOverdue} 逐行同构——overdue_flag=false 的行各递增
+     * 恰一次，已标记/已逻辑删行被谓词逐行滤除，并发先行标记行不重复递增（批量形态不改变
+     * per-row 仅首次递增语义，script foreach 承载与 OrderExecutePlanMapper 同款先例）。
+     *
+     * @param ids 待标记任务行 id 集（守卫判定后的受染键集），非空
+     * @return 影响行数（实际首次标记行数；并发先行标记/不可达行不计入）
+     */
+    @Update("<script>UPDATE nursing.nursing_task SET overdue_flag = true, escalation_count = escalation_count + 1 "
+            + "WHERE id IN "
+            + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
+            + "AND overdue_flag = false AND deleted = 0</script>")
+    int casMarkOverdueBatch(@Param("ids") Collection<Long> ids);
 }

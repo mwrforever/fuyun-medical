@@ -84,6 +84,8 @@ public class PatientCacheInvalidationListener {
                 cacheService.evictView(payload.path("restoredPatientId").asLong());
                 cacheService.evictView(payload.path("survivorPatientId").asLong());
             }
+            // EX-19 收口 C 类：内部消费契约断言（队列绑定与常量漂移防御，非用户可达），保留 ISE——
+            // 上抛由幂等三段式③失败收尾（FAILED 留痕后重抛，走有界重试→死信链路，语义不变，零行为变化）
             default -> throw new IllegalStateException("未登记的自消费事件类型（队列绑定与常量漂移），禁止经本监听器消费：" + envelope.eventType());
         }
         log.info("自事件缓存失效完成：eventType={}", envelope.eventType());

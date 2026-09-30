@@ -1,6 +1,6 @@
 package com.fuyun.inpatient.internal;
 
-import com.fuyun.inpatient.service.OrderPlanService;
+import com.fuyun.inpatient.service.IOrderPlanService;
 import java.time.LocalDate;
 import lombok.extern.slf4j.Slf4j;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
@@ -13,21 +13,21 @@ import org.springframework.scheduling.annotation.Scheduled;
  * <p>调度口径（A.5-14）：@Scheduled + ShedLock 多实例互斥（cron 每日 02:00 夜间低峰——
  * PatientDuplicateScanJob 02:30 错峰错开；总开关 fuyun-app SchedulingConfig @EnableScheduling
  * 既有形态，禁自建配置面）。批量分解（候选查询+分批 500 一事务+查前置/唯一约束双幂等）全归
- * {@link OrderPlanService#decomposeNextDay}——本任务仅调度触发与监控日志。归 internal/：
+ * {@link IOrderPlanService#decomposeNextDay}——本任务仅调度触发与监控日志。归 internal/：
  * 模块内设施禁外引（装配归 InpatientMessagingConfig @Import——patient 段
  * PatientDuplicateScanJob 经 PatientMessagingConfig 注册先例）。
  */
 @Slf4j
 public class OrderPlanDecomposeJob {
 
-    private final OrderPlanService orderPlanService;
+    private final IOrderPlanService orderPlanService;
 
     /**
      * 全参构造器（装配归 InpatientMessagingConfig @Import）。
      *
      * @param orderPlanService 医嘱执行计划服务（日切批量分解业务面），非空
      */
-    public OrderPlanDecomposeJob(OrderPlanService orderPlanService) {
+    public OrderPlanDecomposeJob(IOrderPlanService orderPlanService) {
         this.orderPlanService = orderPlanService;
     }
 

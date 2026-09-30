@@ -88,6 +88,7 @@ public class BillingPharmacyOccupyListener {
             rxNo = payload.path("prescriptionId").asText(null);
         }
         if (rxNo == null || rxNo.isBlank()) {
+            // 内部断言：非用户输入路径——上游模块发布帧契约违约，ISE 死信留痕（BE-C3-05 C 类）
             throw new IllegalStateException(
                     "占用回写载荷不合规（缺 rxNo/prescriptionId）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }

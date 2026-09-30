@@ -10,7 +10,7 @@ import lombok.Setter;
 
 /**
  * 住院医嘱状态迁移日志实体（inpatient.order_status_log，V905）——状态机迁移留痕（只增）：
- * OrderStateMachineService.transition 每次迁移自动落一行（回接落库，调用方不另写）；
+ * IOrderStateMachineService.transition 每次迁移自动落一行（回接落库，调用方不另写）；
  * 重整/撤回/停嘱原因亦在此留痕（from_status=to_status 表示无迁移动作留痕，如医嘱重整）。
  * 业务面仅 INSERT（流水先例形态对齐 billing.insurance_call_log）。
  */

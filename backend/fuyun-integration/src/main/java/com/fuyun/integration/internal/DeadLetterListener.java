@@ -181,7 +181,8 @@ public class DeadLetterListener {
             }
             return hex.toString();
         } catch (NoSuchAlgorithmException e) {
-            // SHA-256 为 JDK 内置算法，理论不可达；防御性包装为 IllegalState 使环境缺陷显性暴露
+            // SHA-256 为 JDK 内置算法，理论不可达；防御性包装为 IllegalState 使环境缺陷显性暴露；
+            // EX-19 收口 C 类：JDK 环境级防御断言（非用户可达），保留 ISE 走全局兜底，不转业务错误码
             throw new IllegalStateException("SHA-256 摘要算法不可用（JDK 环境异常）", e);
         }
     }

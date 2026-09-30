@@ -16,6 +16,7 @@ import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -35,11 +36,13 @@ import com.fuyun.inpatient.enums.AdmissionStatus;
 import com.fuyun.inpatient.enums.BedStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.AdmissionMapper;
 import com.fuyun.inpatient.mapper.BedMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.properties.InpatientProperties;
-import com.fuyun.inpatient.service.BedService;
+import com.fuyun.inpatient.service.IAdmissionService;
+import com.fuyun.inpatient.service.IBedService;
 import com.fuyun.inpatient.vo.AdmissionVO;
 import com.fuyun.inpatient.vo.ArrearsAlarmVO;
 import com.fuyun.inpatient.vo.InpatientVisitVO;
@@ -114,7 +117,7 @@ class AdmissionServiceImplTest {
     private PatientNameQuery patientNameQuery;
 
     @Mock
-    private BedService bedService;
+    private IBedService bedService;
 
     @Mock
     private ApplicationEventPublisher events;
@@ -152,6 +155,8 @@ class AdmissionServiceImplTest {
         service = new AdmissionServiceImpl(
                 admissionMapper,
                 visitMapper,
+                // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+                new InpatientVisitAccessor(visitMapper),
                 bedMapper,
                 seqGate,
                 patientContextResolver,
@@ -159,7 +164,10 @@ class AdmissionServiceImplTest {
                 properties,
                 bedService,
                 events);
+        // 链式与 IService 能力的载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设
+        // 免走 getMapperClass 反射解析（GatewayServiceImplTest/BindingServiceImplTest 同款形态）
         ReflectionTestUtils.setField(service, "baseMapper", admissionMapper);
+        ReflectionTestUtils.setField(service, "entityClass", Admission.class);
         OperatorContextHolder.set("adm-01");
     }
 
@@ -304,7 +312,7 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.CANCELLED.getCode());
         assertThat(vo.admissionNo()).isEqualTo(ADMISSION_NO);
-        // 床位联动②锚：床实态预占时作废同事务联动释放（BedService.releaseForAdmission）
+        // 床位联动②锚：床实态预占时作废同事务联动释放（IBedService.releaseForAdmission）
         verify(bedService).releaseForAdmission(BED_ID);
         // GC26 锚：作废 CAS 限定候床/预约两态 + 显式 deleted=0
         String sql = recordSql(AdmissionMapper.class, "casCancel", String.class, String.class);
@@ -376,7 +384,7 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(AdmissionStatus.SCHEDULED.getCode());
         assertThat(vo.targetBedId()).isEqualTo(BED_ID);
-        // 床位联动①锚：携目标床位即同事务联动预占（BedService.reserveForAdmission 置 RESERVED）
+        // 床位联动①锚：携目标床位即同事务联动预占（IBedService.reserveForAdmission 置 RESERVED）
         verify(bedService).reserveForAdmission(BED_ID);
         // GC26 锚：预约 CAS 限定 WAITING 态 + 显式 deleted=0
         String sql = recordSql(
@@ -428,7 +436,7 @@ class AdmissionServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(VisitStatus.ADMITTED.getCode());
         assertThat(vo.currentBedId()).isEqualTo(BED_ID);
-        // 床位联动③锚：床位 RESERVED→OCCUPIED + bed_assign 开 ADMISSION 流水（BedService 同源 CAS）
+        // 床位联动③锚：床位 RESERVED→OCCUPIED + bed_assign 开 ADMISSION 流水（IBedService 同源 CAS）
         verify(bedService).occupyForAdmission(BED_ID, VISIT_ID, PATIENT_ID);
         verify(events).publishEvent(eventCaptor.capture());
         InpatientDomainEvent event = eventCaptor.getValue();
@@ -701,6 +709,17 @@ class AdmissionServiceImplTest {
         assertThat(nullBedRows.get(0).patientName()).isEqualTo("王*");
         assertThat(nullBedRows.get(0).bedNo()).isNull();
         verify(bedMapper, never()).selectList(any());
+    }
+
+    @Test
+    @DisplayName("配对纪律（A.4.3-20）：IAdmissionService 两侧继承 IService/ServiceImpl——契约面扩展不触碰既有 CAS 方法")
+    void serviceCarriesIServicePairingContract() {
+        // CRUD 单表服务强制配对：接口缺 extends IService / 实现缺 extends ServiceImpl 即本用例红；
+        // 契约面护栏：配对仅扩展默认方法集，住院证状态机迁移权威仍走 cas* 条件更新入口
+        assertThat(IService.class.isAssignableFrom(IAdmissionService.class))
+                .as("接口侧配对：IAdmissionService extends IService<Admission>")
+                .isTrue();
+        assertThat(service).as("实现侧配对：AdmissionServiceImpl extends ServiceImpl").isInstanceOf(IService.class);
     }
 
     /** 构造住院证行（状态可变，登记确认/作废/预约用例载体）。 */

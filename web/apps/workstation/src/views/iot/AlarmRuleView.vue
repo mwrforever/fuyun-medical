@@ -11,7 +11,6 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
-import axios from 'axios';
 import {
   alarmRules,
   alarms,
@@ -20,28 +19,10 @@ import {
   RULE_TYPE_LABELS,
 } from '@/api/iot';
 import type { AlarmRuleVO, AlarmVO, SimulateResultVO } from '@/api/iot';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/** 时点展示串（MM-dd HH:mm，告警最后触发列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /**
  * 数值输入显式校验转换（禁裸 parse）：空串返回 undefined（可空字段）；非数字警告并返回
@@ -64,19 +45,12 @@ function readNumber(raw: string, label: string): number | undefined | null {
 
 /* ==================== 规则列表 ==================== */
 const rules = ref<AlarmRuleVO[]>([]);
-const rulesLoading = ref(false);
 
-/** 加载规则列表（全量直出，前端按返回序展示） */
-async function loadRules(): Promise<void> {
-  rulesLoading.value = true;
-  try {
-    rules.value = (await alarmRules.list()) ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    rulesLoading.value = false;
-  }
-}
+/** 加载规则列表（全量直出，前端按返回序展示）：loading 骨架经 useAsyncTask 收拢（EX-42
+ * 范式迁移，行为与迁移前一致——失败弹错归响应拦截器；驻留旧清单） */
+const { loading: rulesLoading, run: loadRules } = useAsyncTask(async () => {
+  rules.value = (await alarmRules.list()) ?? [];
+});
 
 /** 规则类型中文词表反查（类型列徽标） */
 function ruleTypeLabel(code: string | undefined): string {
@@ -103,6 +77,10 @@ function ruleDigest(row: AlarmRuleVO): string {
 const savingRule = ref(false);
 /** 编辑中的规则 id（空串=新建态） */
 const editingRuleId = ref('');
+/** 编辑基线版本（EX-46/FE-A2-08 版本比对锚点）：openEdit 时锚定远端 updatedAt，
+ * 保存前重拉比对——偏离基线即他人已改，冲突确认防无感覆盖（契约无 If-Match/版本号
+ * 入参，前端以确认提示为最小防覆盖实现） */
+let editingBaselineUpdatedAt: string | null = null;
 const ruleForm = ref({
   ruleName: '',
   ruleType: 'THRESHOLD',
@@ -141,6 +119,8 @@ function emptyRuleForm() {
 /** 编辑回填（数值字段以字符串承载回表单，提交时统一校验转换） */
 function openEdit(row: AlarmRuleVO): void {
   editingRuleId.value = row.id ?? '';
+  // 版本比对锚点（EX-46/FE-A2-08）：以打开时刻的远端 updatedAt 为基线
+  editingBaselineUpdatedAt = row.updatedAt ?? null;
   ruleForm.value = {
     ruleName: row.ruleName ?? '',
     ruleType: row.ruleType ?? 'THRESHOLD',
@@ -240,6 +220,23 @@ async function onSaveRule(): Promise<void> {
       await alarmRules.create(payload);
       void ElMessage.success('告警规则已创建');
     } else {
+      // 版本比对回写守卫（EX-46/FE-A2-08）：保存前重拉远端清单比对目标规则 updatedAt——
+      // 偏离打开时基线=他人已改（读改写窗口冲突），确认提示防无感覆盖；取消即零出网。
+      // 重拉失败放行走原保存链（失败弹错归拦截器，保存成败由后端终判）。
+      const latest = await alarmRules.list().catch(() => [] as AlarmRuleVO[]);
+      const remote = (latest ?? []).find((item) => item.id === editingRuleId.value);
+      if (remote !== undefined && (remote.updatedAt ?? null) !== editingBaselineUpdatedAt) {
+        try {
+          await ElMessageBox.confirm(
+            `规则「${ruleForm.value.ruleName.trim()}」已被他人修改（远端更新于 ${remote.updatedAt ?? '未知时间'}），继续保存将覆盖他人变更`,
+            '版本冲突提醒',
+            { type: 'warning', confirmButtonText: '仍要保存', cancelButtonText: '取消' },
+          );
+        } catch {
+          // 取消覆盖：零出网，表单驻留可复核后再决定
+          return;
+        }
+      }
       await alarmRules.update(editingRuleId.value, payload);
       void ElMessage.success('告警规则已更新');
     }
@@ -342,21 +339,19 @@ async function onSimulate(): Promise<void> {
 }
 
 /* ==================== 活跃告警列表 ==================== */
-const alarmRows = ref<AlarmVO[]>([]);
-const alarmsLoading = ref(false);
 
-/** 加载告警列表（全状态直出，活跃行暴露确认/关闭入口） */
-async function loadAlarms(): Promise<void> {
-  alarmsLoading.value = true;
-  try {
-    const page = await alarms.list({ page: 0, size: 50 });
-    alarmRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    alarmsLoading.value = false;
-  }
-}
+/** 加载告警列表（全状态直出，活跃行暴露确认/关闭入口）：页码/行集/加载态经 usePagedList
+ * 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错归响应拦截器；
+ * 驻留旧清单） */
+const {
+  rows: alarmRows,
+  loading: alarmsLoading,
+  fetch: loadAlarms,
+} = usePagedList({
+  params: () => ({}),
+  fetcher: ({ page, size }) => alarms.list({ page, size }),
+  pageSize: 50,
+});
 
 /** 告警等级中文词表反查（等级列徽标） */
 function levelLabel(code: string | undefined): string {

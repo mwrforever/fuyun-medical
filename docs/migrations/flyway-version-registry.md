@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -91,6 +91,9 @@
 | V1100 | V1100__create_ward_call.sql | ward / fuyun-ward | ward_call/ward_call_routing_rule 两表（呼叫对讲状态机，P2 PR-2 Task 12 落盘；ward 段首批——全新 schema 享号段初始化豁免） |
 | V1101 | V1101__create_cold_chain.sql | ward / fuyun-ward | cold_chain_archive/cold_chain_record 两表（冷链合规台账，P2 PR-2 Task 12 落盘） |
 | V1102 | V1102__seed_ward_cold_chain_event.sql | ward / fuyun-ward | ward 域事件登记种子 id 82（ward.cold-chain.alert-archived，P2 PR-2 Task 12 落盘） |
+| V1103 | V1103__add_fee_record_source_ref_index.sql | billing / fuyun-billing | fee_record CAS 谓词 (source_ref, trigger_point) 部分索引（OPT-01：发药事件消费 casMarkDispensed/casReleaseDispense 全表扫描→索引点查；通用段——全局最大 V1102 的下一号，满足乱序守卫） |
+| V1104 | V1104__add_refund_fee_link_fee_id_index.sql | billing / fuyun-billing | refund_fee_link fee_id 前导部分索引（OPT-02：退费聚合下推 l.fee_id IN 驱动路径索引缺失→索引点查集；V603 uk_refund_fee 前导列为 refund_id，同迁移修正 RefundRequestMapper.xml 头注释与 schema 矛盾表述） |
+| V1105 | V1105__add_clinic_order_ext_ref_index.sql | outpatient / fuyun-outpatient | clinic_order 处方引用行 ext_ref 部分索引（OPT-06：casRxRefCharged/casCancelRxRef/casMirrorDispensed/casMirrorReturned 四支 ext_ref 谓词 CAS 全表扫描→索引点查，WHERE order_type='RX_REF' AND deleted=0 与谓词常量同构） |
 
 ## 冻结段速查（禁落新文件）
 

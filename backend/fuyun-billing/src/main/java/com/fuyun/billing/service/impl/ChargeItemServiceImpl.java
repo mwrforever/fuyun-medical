@@ -1,6 +1,7 @@
 package com.fuyun.billing.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.billing.api.BillingErrorCode;
 import com.fuyun.billing.dto.ChargeItemCreateRequest;
@@ -13,7 +14,13 @@ import com.fuyun.billing.mapper.ChargeItemComponentMapper;
 import com.fuyun.billing.mapper.ChargeItemMapper;
 import com.fuyun.billing.service.IChargeItemService;
 import com.fuyun.common.exception.BizException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
@@ -88,6 +95,29 @@ public class ChargeItemServiceImpl extends ServiceImpl<ChargeItemMapper, ChargeI
     }
 
     /**
+     * 按编码集批量取收费项目（预计价链路批量取数，A.4.3-14 N+1 消除）。
+     *
+     * <p>与逐行 {@link #requireActiveByCode} 单查的语义分工：本方法只取数不守卫（INACTIVE 停用行
+     * 同样返回），缺行/停用区分由调用方批查后按原行序逐行补偿校验——两分支错误码与文案仍由
+     * 调用方以单查同口径抛出（uk_charge_item_code 保证编码无重复键面）。
+     *
+     * @param itemCodes 项目编码键集，非空集合（空集零 SQL 触达直接返回空 Map）
+     * @return itemCode → 项目实体（含停用行；键集内无行编码不出键，非 null）
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Map<String, ChargeItem> listByCodes(Collection<String> itemCodes) {
+        // 空键集守卫：MP in 谓词空集将生成非法 SQL，直接短路返回（与单查路径零行命中行为一致）
+        if (itemCodes.isEmpty()) {
+            return Map.of();
+        }
+        // 数据库读操作：编码集批查（item_code IN，一次取回替代逐码单查；含停用行供调用方补偿校验区分）
+        return lambdaQuery().in(ChargeItem::getItemCode, itemCodes).list().stream()
+                .collect(Collectors.toMap(
+                        ChargeItem::getItemCode, Function.identity(), (first, duplicate) -> first, LinkedHashMap::new));
+    }
+
+    /**
      * 组合构成维护（全量覆盖式落成员；仅 combo_flag=TRUE 项目可调）。
      *
      * @param comboItemId 组合项目 id
@@ -105,12 +135,20 @@ public class ChargeItemServiceImpl extends ServiceImpl<ChargeItemMapper, ChargeI
         // 非本 service 主表经 Wrappers 静态工厂（A.4.3-13，禁内联全限定，A.1-13）
         componentMapper.delete(
                 Wrappers.<ChargeItemComponent>lambdaQuery().eq(ChargeItemComponent::getComboItemId, comboItemId));
+        // EX-37：成员落库逐行 insert 改一次批插（Db.saveBatch JDBC 批处理 + ASSIGN_ID 自动填充，先例
+        //   RefundServiceImpl link 批插与 DispenseServiceImpl 明细批插，A.4.3-16 须在事务内调用——本方法
+        //   @Transactional 承载）：成员插入无状态 CAS 依赖，落库行集与行序不变、批量收口零语义变化；
+        //   空清单短路——MP Db 空集合无法解析实体类（Assert 拒），空成员=清空全部成员照常只删旧零批插
+        List<ChargeItemComponent> rows = new ArrayList<>(components.size());
         for (ComboComponentRequest c : components) {
             ChargeItemComponent row = new ChargeItemComponent();
             row.setComboItemId(comboItemId);
             row.setComponentItemId(c.componentItemId());
             row.setDefaultQuantity(c.defaultQuantity());
-            componentMapper.insert(row);
+            rows.add(row);
+        }
+        if (!rows.isEmpty()) {
+            Db.saveBatch(rows);
         }
         log.info("组合构成维护：comboItemId={}，成员数={}", comboItemId, components.size());
     }
@@ -121,5 +159,32 @@ public class ChargeItemServiceImpl extends ServiceImpl<ChargeItemMapper, ChargeI
     public List<ChargeItemComponent> listComponents(long comboItemId) {
         return componentMapper.selectList(
                 Wrappers.<ChargeItemComponent>lambdaQuery().eq(ChargeItemComponent::getComboItemId, comboItemId));
+    }
+
+    /**
+     * 批量列组合成员（预计价链路组合展开批量取数，A.4.3-14 N+1 消除）。
+     *
+     * <p>一次 IN 批查跨组合取回全部构成行，内存按 comboItemId 分组——多组合单据由逐组合
+     * K 查收敛为 1 查；组内 id 升序显式定序（雪花 id 随维护插入时间递增，与单查回放序
+     * 一致且消除未定义序，划价展开成员行序稳定）。
+     *
+     * @param comboItemIds 组合项目 id 键集，非空集合（空集零 SQL 触达直接返回空 Map）
+     * @return comboItemId → 成员清单（未维护构成的组合不出键，非 null）；组内按 id 升序
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Map<Long, List<ChargeItemComponent>> listComponentsByComboItemIds(Collection<Long> comboItemIds) {
+        // 空键集守卫：MP in 谓词空集将生成非法 SQL，直接短路返回（单据无组合项即零触达）
+        if (comboItemIds.isEmpty()) {
+            return Map.of();
+        }
+        // 数据库读操作：组合构成批查（combo_item_id IN + id 升序定序；encounter 序分组保组内行序）
+        return componentMapper
+                .selectList(Wrappers.<ChargeItemComponent>lambdaQuery()
+                        .in(ChargeItemComponent::getComboItemId, comboItemIds)
+                        .orderByAsc(ChargeItemComponent::getId))
+                .stream()
+                .collect(Collectors.groupingBy(
+                        ChargeItemComponent::getComboItemId, LinkedHashMap::new, Collectors.toList()));
     }
 }

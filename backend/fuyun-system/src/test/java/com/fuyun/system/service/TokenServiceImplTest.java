@@ -162,6 +162,27 @@ class TokenServiceImplTest {
     }
 
     @Test
+    @DisplayName("短期单 access 签发（大屏匿名订阅令牌）：exp=自定义 TTL、会话同 TTL 落 Redis，verifyAccessToken 全链通过")
+    void issueAccessProducesShortLivedTokenPassingWsVerifyChain() throws Exception {
+        SessionUser screen = new SessionUser(0L, "bigscreen", "候诊大屏", null, null, List.of());
+        Duration shortTtl = Duration.ofMinutes(5);
+
+        String token = tokenService.issueAccess(screen, shortTtl);
+
+        // 单 access 两段式线格式（与登录令牌同构，无独立令牌形态——WS 鉴权协议零改动前提）
+        assertThat(token).matches("[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+");
+        Map<String, Object> claims = readClaimsJson(token);
+        assertThat(claims.get(SecurityConstants.CLAIM_TYP)).isEqualTo(SecurityConstants.TOKEN_TYPE_ACCESS);
+        assertThat(((Number) claims.get(SecurityConstants.CLAIM_EXP)).longValue())
+                .isEqualTo(NOW.plus(shortTtl).toEpochMilli());
+        // 会话以同值 TTL 落 Redis：短期凭证的会话驻留不长于令牌本体（会话键必有 TTL 红线）
+        verify(valueOps).set(sessionKeyCaptor.capture(), sessionJsonCaptor.capture(), eq(shortTtl));
+        // WS CONNECT 帧鉴权入口（verifyAccessToken）对短期令牌全链通过：会话存在 + 签名 + exp + typ
+        when(valueOps.get(sessionKeyCaptor.getValue())).thenReturn(sessionJsonCaptor.getValue());
+        assertThat(tokenService.verifyAccessToken(token)).isTrue();
+    }
+
+    @Test
     @DisplayName("篡改签名拒绝：重算 HMAC 常量时间比较失败即 SYS-1003/401")
     void tamperedSignatureIsRejected() {
         SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));

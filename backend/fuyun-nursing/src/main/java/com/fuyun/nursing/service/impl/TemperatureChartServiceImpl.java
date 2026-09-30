@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.constants.NursingTimeConstants;
 import com.fuyun.nursing.dto.SpecialEventRequest;
 import com.fuyun.nursing.entity.TemperatureChartEntry;
 import com.fuyun.nursing.entity.TemperatureChartPage;
@@ -20,7 +21,6 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
-import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -154,9 +154,11 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
     @Transactional
     public void appendVitalEntry(String visitId, Instant entryTime, Long vitalRef, String tempSite) {
         TemperatureChartEntry entry = new TemperatureChartEntry();
-        entry.setPageId(
-                ensurePage(visitId, YearMonth.from(LocalDateTime.ofInstant(entryTime, ZoneId.systemDefault()))));
-        entry.setEntryTime(OffsetDateTime.ofInstant(entryTime, ZoneId.systemDefault()));
+        // 月页归属与条目时点按北京时区承载（BUG-03 医疗日界口径）：跨月零点后（北京 00:00-08:00，
+        // UTC 仍在前一日）的体征归次月页，禁 systemDefault 随容器时区漂移；时刻本身不变（TIMESTAMPTZ 口径）
+        entry.setPageId(ensurePage(
+                visitId, YearMonth.from(LocalDateTime.ofInstant(entryTime, NursingTimeConstants.HEALTHCARE_TZ))));
+        entry.setEntryTime(OffsetDateTime.ofInstant(entryTime, NursingTimeConstants.HEALTHCARE_TZ));
         entry.setEntryType(ChartEntryType.VITAL.getCode());
         entry.setVitalRef(vitalRef);
         entry.setTypeKey(tempSite == null ? "" : tempSite);
@@ -256,9 +258,10 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
 
     /** 月页定位（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */
     private TemperatureChartPage locatePage(String visitId, YearMonth month) {
-        return baseMapper.selectOne(Wrappers.<TemperatureChartPage>lambdaQuery()
+        return this.lambdaQuery()
                 .eq(TemperatureChartPage::getVisitId, visitId)
-                .eq(TemperatureChartPage::getChartMonth, month.toString()));
+                .eq(TemperatureChartPage::getChartMonth, month.toString())
+                .one();
     }
 
     /** month 参数权威解析（禁裸 parse 先例 W-22⑦：格式违例显式拒 NS-1019）。 */

@@ -116,6 +116,17 @@ class TelemetryPushServiceImplLifecycleTest {
                         org.mockito.ArgumentMatchers.any(ITelemetryPushService.TelemetrySummary.class));
 
         service.flushDueWindowsQuietly();
+        // 显式断言"捕获不上抛"：到期帧发送确已尝试（异常自发送口抛出），执行流越过吞错点到达此处 = 异常未上抛
+        verify(messagingTemplate)
+                .convertAndSend(
+                        eq("/topic/iot/telemetry/" + WARD_ID),
+                        org.mockito.ArgumentMatchers.any(ITelemetryPushService.TelemetrySummary.class));
+        // 显式断言"不打断调度周期"：下一轮兜底排空仍可正常执行，失败帧已消费不补推（总发送次数恰为 1）
+        service.flushDueWindowsQuietly();
+        verify(messagingTemplate, org.mockito.Mockito.times(1))
+                .convertAndSend(
+                        eq("/topic/iot/telemetry/" + WARD_ID),
+                        org.mockito.ArgumentMatchers.any(ITelemetryPushService.TelemetrySummary.class));
     }
 
     /** 窗口到期帧的预期契约载荷（条数 1/上界=行时刻/单明细），与发送侧映射一一对应 */

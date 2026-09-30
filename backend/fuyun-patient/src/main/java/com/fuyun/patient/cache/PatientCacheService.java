@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.patient.api.PatientContextView;
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -38,9 +40,9 @@ public class PatientCacheService {
     private final ObjectMapper objectMapper;
 
     /** L1 进程内缓存（LRU 访问序 + 值对 = JSON 文本与到期时刻） */
-    private final java.util.LinkedHashMap<Long, L1Entry> l1Cache = new java.util.LinkedHashMap<>(256, 0.75f, true) {
+    private final LinkedHashMap<Long, L1Entry> l1Cache = new LinkedHashMap<>(256, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(java.util.Map.Entry<Long, L1Entry> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<Long, L1Entry> eldest) {
             return size() > L1_MAX_ENTRIES;
         }
     };

@@ -3,8 +3,8 @@ package com.fuyun.inpatient.controller;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.inpatient.dto.ExecuteConfirmRequest;
 import com.fuyun.inpatient.dto.StandbyTriggerRequest;
-import com.fuyun.inpatient.service.OrderPlanService;
-import com.fuyun.inpatient.service.OrderTransferService;
+import com.fuyun.inpatient.service.IOrderPlanService;
+import com.fuyun.inpatient.service.IOrderTransferService;
 import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
@@ -42,9 +42,9 @@ import org.springframework.web.bind.annotation.RestController;
 @Validated
 public class OrderPlanController {
 
-    private final OrderTransferService orderTransferService;
+    private final IOrderTransferService orderTransferService;
 
-    private final OrderPlanService orderPlanService;
+    private final IOrderPlanService orderPlanService;
 
     /**
      * 执行计划日视图：按计划日期（当日窗口）分页，病区可叠加过滤，计划时点升序。

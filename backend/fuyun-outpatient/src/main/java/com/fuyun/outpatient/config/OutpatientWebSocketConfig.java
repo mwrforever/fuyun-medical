@@ -1,6 +1,7 @@
 package com.fuyun.outpatient.config;
 
 import com.fuyun.outpatient.internal.OutpatientConnectAuthInterceptor;
+import com.fuyun.outpatient.internal.QueueCalledPushListener;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -26,15 +27,16 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
  * DelegatingWebSocketMessageBrokerConfiguration 收集全部 WebSocketMessageBrokerConfigurer，
  * 各 registerStompEndpoints 叠加生效（双端点并存），configureMessageBroker 对 /topic 前缀
  * 同值幂等（enableSimpleBroker 重复注册同前缀无害）。消息基础设施 Bean（SimpMessagingTemplate
- * 等）由 @EnableWebSocketMessageBroker 派生装配，TriageServiceImpl 注入消费。
+ * 等）由 @EnableWebSocketMessageBroker 派生装配，QueueCalledPushListener 注入消费（BUG-04：
+ * 叫号推送事件提交后双 topic 推送，TriageServiceImpl 事务内仅发布事件）。
  *
  * <p>com.fuyun.outpatient 包不在 @SpringBootApplication 扫描范围（com.fuyun.app.*）内，本配置
  * 经 fuyun-app OutpatientConfig @Import 生效（不放宽扫描，宪法 B.1）；@Import 引入帧级鉴权
- * 拦截器（构造器注入 TokenVerifier，宪法 A.1-7）。
+ * 拦截器（构造器注入 TokenVerifier，宪法 A.1-7）与叫号推送监听器（WS 推送执行点）。
  */
 @Configuration
 @EnableWebSocketMessageBroker
-@Import(OutpatientConnectAuthInterceptor.class)
+@Import({OutpatientConnectAuthInterceptor.class, QueueCalledPushListener.class})
 public class OutpatientWebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     /** CONNECT 帧鉴权拦截器：挂载于 clientInboundChannel（未授权 CONNECT 被拒，无数据暴露） */

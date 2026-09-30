@@ -20,7 +20,9 @@ import com.fuyun.system.service.IAuthService;
 import com.fuyun.system.service.IRoleService;
 import com.fuyun.system.service.ITokenService;
 import com.fuyun.system.service.IUserService;
+import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +47,24 @@ public class AuthServiceImpl implements IAuthService {
 
     /** 登录失败防枚举文案：账号不存在与口令错误共用（安全红线 §8-11，禁差异文案探测账号存在性） */
     private static final String LOGIN_FAIL_DETAIL = "登录名或密码错误";
+
+    /** 大屏匿名会话哨兵登录名：会话标记（W-39 P2 演进为专用匿名只读通道的锚点），不对应 sys_user 行 */
+    private static final String BIGSCREEN_LOGIN_NAME = "bigscreen";
+
+    /** 大屏匿名会话哨兵显示名：审计/排障可读载体（脱敏出网，非敏感字段） */
+    private static final String BIGSCREEN_DISPLAY_NAME = "候诊大屏";
+
+    /**
+     * 大屏匿名会话哨兵 userId：0 不与雪花 ID 冲突（正数域）；经会话进操作人上下文时以 "0" 呈现，
+     * P2 专用通道落地后随 W-39 收敛。
+     */
+    private static final long BIGSCREEN_SENTINEL_USER_ID = 0L;
+
+    /**
+     * 大屏订阅令牌 TTL：短期凭证（W-39 2026-09-25 用户裁决「缩短 TTL」过渡期口径）。令牌仅承载
+     * STOMP CONNECT 帧鉴权，失效由前端按次重签（换发成本为一次匿名 HTTP），不设 refresh。
+     */
+    private static final Duration BIGSCREEN_TOKEN_TTL = Duration.ofMinutes(5);
 
     private final IUserService userService;
 
@@ -88,6 +108,18 @@ public class AuthServiceImpl implements IAuthService {
         this.securityProperties = securityProperties;
     }
 
+    /**
+     * 登录用例编排（认证链路入口）：账号加载 → 锁定校验（先于口令比对，防锁定期间继续累加
+     * 失败计数）→ 停用校验 → bcrypt 口令比对（失败走 recordLoginFailure 状态机）→ 成功走
+     * recordLoginSuccess 复位 → 组装会话身份（员工反查 + 角色摘要）→ 签发双令牌。
+     *
+     * <p>防枚举口径：账号不存在与口令错误共用 SYS-1001 同文案，禁止差异文案探测账号存在性。
+     *
+     * @param request 登录请求，非空；loginName/password 非空由 controller 层 @Valid 保证
+     * @return 登录响应（双令牌 + 用户身份 VO），非空
+     * @throws BizException SYS-1001（登录名或密码错误/账号不存在，401，防枚举同文案）、
+     *                      SYS-1002（账号锁定中，401，文案含解锁时刻）、SYS-1006（账号已停用，403）
+     */
     @Override
     public LoginResponse login(LoginRequest request) {
         // 1. 加载账号：不存在按 SYS-1001 拒绝（与口令错误同文案，防用户枚举）
@@ -131,6 +163,17 @@ public class AuthServiceImpl implements IAuthService {
                 authConverter.toUserVO(sessionUser));
     }
 
+    /**
+     * 刷新用例编排：以 refresh 令牌换发同 sid 的新 access 令牌（校验成功即滑动续期，refresh
+     * 值不轮换为 P0 口径）。
+     *
+     * <p>换发校验收敛于令牌服务（typ=refresh 强校验，失败统一 SYS-1005 不透出细分）；本方法
+     * 仅从会话状态重组会话身份并组装响应（refresh 原值回填，前端覆盖存储时值未变）。
+     *
+     * @param request 刷新请求，非空；refreshToken 非空由 controller 层 @Valid 保证
+     * @return 登录响应（新 access + 原 refresh + 用户身份 VO），非空
+     * @throws BizException SYS-1005（刷新令牌无效/过期/会话不存在，401）
+     */
     @Override
     public LoginResponse refresh(RefreshRequest request) {
         // 换发收敛于令牌服务：typ=refresh 强校验 + 同 sid 新 access（校验成功即滑动续期），失败统一 SYS-1005
@@ -153,11 +196,40 @@ public class AuthServiceImpl implements IAuthService {
                 authConverter.toUserVO(sessionUser));
     }
 
+    /**
+     * 登出用例编排：typ=access 校验链通过后按令牌内 sid 删除会话键（access 与 refresh 同 sid
+     * 同时失效，"删除即全端失效"语义）。
+     *
+     * <p>校验与删键动作收敛于令牌服务（防伪造/过期令牌触发删除探测）；本方法仅承载用例编排
+     * 与留痕。
+     *
+     * @param rawToken 访问令牌原文（controller 已剥离 Bearer 方案前缀），非空
+     * @throws BizException SYS-1003（令牌无效/会话不存在，401）、SYS-1004（令牌已过期，401）
+     */
     @Override
     public void logout(String rawToken) {
         // typ=access 校验链通过后删会话键（sid 为令牌内部字段，删除动作收敛于令牌服务）
         tokenService.logout(rawToken);
         log.info("登出完成，会话已失效");
+    }
+
+    /**
+     * 大屏订阅令牌签发（BUG-19）：匿名哨兵会话 + 5 分钟短期单 access 令牌。
+     *
+     * <p>哨兵身份零权限面（零角色/零员工/零机构），不查库不写用户状态机；签发留痕经令牌服务
+     * info 日志承载（sid，禁令牌值）。演进注记与安全边界见 {@link IAuthService#issueBigscreenToken}。
+     */
+    @Override
+    public BigscreenTokenVO issueBigscreenToken() {
+        SessionUser screen = new SessionUser(
+                BIGSCREEN_SENTINEL_USER_ID, BIGSCREEN_LOGIN_NAME, BIGSCREEN_DISPLAY_NAME, null, null, List.of());
+        String accessToken = tokenService.issueAccess(screen, BIGSCREEN_TOKEN_TTL);
+        log.info(
+                "大屏订阅令牌已签发：loginName={}，ttl={}s（匿名哨兵会话，令牌值禁入日志）",
+                BIGSCREEN_LOGIN_NAME,
+                BIGSCREEN_TOKEN_TTL.toSeconds());
+        return new BigscreenTokenVO(
+                accessToken, SecurityConstants.BEARER_PREFIX.trim(), BIGSCREEN_TOKEN_TTL.toSeconds());
     }
 
     /**

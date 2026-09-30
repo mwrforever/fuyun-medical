@@ -5,10 +5,10 @@
 // 重试计数/错误留痕；FAILED 行暴露重试按钮，重试计数累加由后端承载）。规则命中与动作投递
 // 全归后端联动引擎，前端只承载治理面。
 import { onMounted, ref } from 'vue';
-import { ElMessage } from 'element-plus';
-// ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
+import { ElMessage, ElMessageBox } from 'element-plus';
+// ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
-import axios from 'axios';
+import 'element-plus/es/components/message-box/style/css';
 import {
   ACTION_TYPE_LABELS,
   LINKAGE_RESULT_LABELS,
@@ -18,17 +18,10 @@ import {
 } from '@/api/iot';
 import type { LinkageLogVO, LinkageRuleVO, SaveLinkageRuleRequest } from '@/api/iot';
 import { WARD_OPTIONS } from '@/api/ward';
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态在此展示 detail 原文 */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
+import { surfaceBizError } from '@/utils/bizError';
+import { formatTime } from '@/utils/timeFormat';
 
 /** 触发源中文词表反查（触发源列徽标） */
 function triggerSourceLabel(code: string | undefined): string {
@@ -55,31 +48,14 @@ function resultClass(code: string | undefined): string {
   return `fuy-linkage-tag--${(code ?? '').toLowerCase()}`;
 }
 
-/** 时点展示串（MM-dd HH:mm，执行时间列共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
 /* ==================== 规则列表 ==================== */
 const rows = ref<LinkageRuleVO[]>([]);
-const listLoading = ref(false);
 
-/** 加载规则列表（量小全量直出，无分页） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    rows.value = await linkageRules.list();
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 加载规则列表（量小全量直出，无分页）：loading 骨架经 useAsyncTask 收拢（EX-42 范式
+ * 迁移，行为与迁移前一致——失败弹错归响应拦截器；驻留旧清单） */
+const { loading: listLoading, run: loadList } = useAsyncTask(async () => {
+  rows.value = await linkageRules.list();
+});
 
 /* ==================== 规则 CRUD 弹窗 ==================== */
 const dialogVisible = ref(false);
@@ -131,6 +107,8 @@ function openCreate(): void {
     targetWardId: '',
     enabled: true,
   };
+  // 未保存草稿守卫基准（EX-46/FE-A2-06）：表单相对打开时的快照偏离即视为脏
+  formSnapshot = JSON.stringify(form.value);
   dialogVisible.value = true;
 }
 
@@ -148,7 +126,50 @@ function openEdit(row: LinkageRuleVO): void {
     targetWardId: row.targetWardId ?? '',
     enabled: row.enabled ?? true,
   };
+  // 未保存草稿守卫基准（EX-46/FE-A2-06）
+  formSnapshot = JSON.stringify(form.value);
   dialogVisible.value = true;
+}
+
+/** 弹窗打开时的表单快照（未保存草稿守卫比对基准；保存成功路径不走守卫直接关窗） */
+let formSnapshot = '';
+
+/** 关闭前未保存草稿守卫（EX-46/FE-A2-06）：表单相对打开时有改动 → 显式确认丢弃后才
+ * 放行关闭，防误触（取消按钮/右上角 X）丢草稿；无改动直接放行零打扰。
+ *
+ * @return true=允许关闭（无改动或已确认丢弃）；false=驻留弹窗保留草稿
+ */
+async function confirmDiscardAndClose(): Promise<boolean> {
+  if (JSON.stringify(form.value) === formSnapshot) {
+    return true;
+  }
+  try {
+    await ElMessageBox.confirm('规则表单已有未保存修改，关闭将丢弃这些内容', '未保存提醒', {
+      type: 'warning',
+      confirmButtonText: '丢弃并关闭',
+      cancelButtonText: '继续编辑',
+    });
+    return true;
+  } catch {
+    // 拒绝丢弃：弹窗驻留，草稿保留
+    return false;
+  }
+}
+
+/** footer 取消按钮关闭入口（走未保存草稿守卫） */
+async function onCancelDialog(): Promise<void> {
+  if (await confirmDiscardAndClose()) {
+    dialogVisible.value = false;
+  }
+}
+
+/** 弹窗 before-close 入口（右上角 X/ESC/遮罩点击；与取消按钮同守卫） */
+function onDialogBeforeClose(done: () => void): void {
+  void confirmDiscardAndClose().then((allowed) => {
+    if (allowed) {
+      done();
+    }
+  });
 }
 
 /**
@@ -204,8 +225,10 @@ async function onSave(): Promise<void> {
 const removingId = ref<string | null>(null);
 
 /**
- * 删除规则（规则删除后不再命中；历史执行日志保留由后端承载）：行级在途守卫（进入即判/
- * finally 复位）防双击窗口内重复出网。
+ * 删除规则（规则删除后不再命中；历史执行日志保留由后端承载）：出网前显式确认带回显
+ * 摘要（EX-46/FE-A2-05，范式对齐 AlarmRuleView.onRemoveRule）——删除为不可逆操作，
+ * 误触不得直接出网；行级在途守卫（进入即判/finally 复位）覆盖确认弹窗期与出网期，
+ * 防双击窗口内重复出网。
  *
  * @param row 删除目标规则行
  */
@@ -213,8 +236,19 @@ async function onRemove(row: LinkageRuleVO): Promise<void> {
   if (row.id === undefined || removingId.value !== null) {
     return;
   }
+  // 在途锚点先于确认置位：确认弹窗打开期间的双击同样被守卫拦截
   removingId.value = row.id;
   try {
+    try {
+      await ElMessageBox.confirm(
+        `即将删除规则「${row.ruleName ?? row.id}」，删除后该规则不再命中执行，确认？`,
+        '规则删除确认',
+        { confirmButtonText: '确认删除', cancelButtonText: '取消' },
+      );
+    } catch {
+      // 用户取消：零出网，守卫经 finally 复位可再次发起
+      return;
+    }
     await linkageRules.remove(row.id);
     void ElMessage.success(`规则已删除：${row.ruleName ?? row.id}`);
     await loadList();
@@ -226,30 +260,24 @@ async function onRemove(row: LinkageRuleVO): Promise<void> {
 }
 
 /* ==================== 执行日志 ==================== */
-const logRows = ref<LinkageLogVO[]>([]);
-const logLoading = ref(false);
 /** 结果筛选（空串=全部三态） */
 const resultFilter = ref('');
 
-/** 加载执行日志（ruleId/triggerSource/actionResult 过滤由后端承载） */
-async function loadLogs(): Promise<void> {
-  logLoading.value = true;
-  try {
-    const page = await linkageLogs.page({
-      actionResult:
-        resultFilter.value === ''
-          ? undefined
-          : (resultFilter.value as LinkageLogVO['actionResult']),
-      page: 0,
-      size: 50,
-    });
-    logRows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    logLoading.value = false;
-  }
-}
+/** 加载执行日志（ruleId/triggerSource/actionResult 过滤由后端承载）：页码/行集/加载态经
+ * usePagedList 收拢（EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错
+ * 归响应拦截器；驻留旧清单） */
+const {
+  rows: logRows,
+  loading: logLoading,
+  fetch: loadLogs,
+} = usePagedList({
+  params: () => ({
+    actionResult:
+      resultFilter.value === '' ? undefined : (resultFilter.value as LinkageLogVO['actionResult']),
+  }),
+  fetcher: ({ actionResult, page, size }) => linkageLogs.page({ actionResult, page, size }),
+  pageSize: 50,
+});
 
 /** 重试在途行锚点（null=无在途；行级守卫防双击窗口内重复投递联动动作——病区播报/护理任务
  * 类副作用真实发生、retryCount 双计） */
@@ -434,11 +462,13 @@ onMounted(() => {
       </el-col>
     </el-row>
 
-    <!-- 规则 CRUD 弹窗（新建/编辑共用；触发条件与动作配置 JSON 显式校验） -->
+    <!-- 规则 CRUD 弹窗（新建/编辑共用；触发条件与动作配置 JSON 显式校验；X/ESC/取消均走
+         未保存草稿守卫 EX-46/FE-A2-06） -->
     <el-dialog
       v-model="dialogVisible"
       :title="editingId === null ? '新建联动规则' : '编辑联动规则'"
       width="520px"
+      :before-close="onDialogBeforeClose"
     >
       <label class="linkage-field-label">规则名称（必填）</label>
       <input
@@ -500,7 +530,7 @@ onMounted(() => {
         </div>
       </div>
       <template #footer>
-        <el-button size="small" @click="dialogVisible = false">取消</el-button>
+        <el-button size="small" @click="onCancelDialog">取消</el-button>
         <el-button type="primary" size="small" :loading="saving" :disabled="saving" @click="onSave"
           >保存规则</el-button
         >

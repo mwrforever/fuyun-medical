@@ -1,13 +1,27 @@
 package com.fuyun.pharmacy.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.pharmacy.dto.PrescriptionCreateRequest;
+import com.fuyun.pharmacy.entity.Prescription;
 import com.fuyun.pharmacy.vo.PrescriptionVO;
 
 /**
  * 处方服务（处方主数据唯一权威源，模块红线 1）：开方（同步返回处方号+预检分级）、作废、查询。
+ * 配对纪律（宪法 A.4.3-20）：本服务以 prescription 为主表（实现侧已 extends
+ * ServiceImpl&lt;PrescriptionMapper, Prescription&gt;），接口侧对应 extends
+ * IService&lt;Prescription&gt;——主表通用能力（分页/批量/链式查询等默认方法集）复用 IService
+ * 契约面，属契约面扩展；自有方法与 IService 默认方法无同名同参冲突（list 六参为 IService
+ * list()/list(Wrapper) 系列的重载、参数列表不同非覆写，与 IDrugService.update(long, ...) 同款）。
+ * 开方主链带执业授权纵深校验与状态机同事务编排——IService 通用写面（save/updateById/
+ * removeById 等）不承载状态语义与授权语义，PH-1xxx 状态迁移与执业授权校验一律走自有方法：
+ * create（CREATED→APPROVED 同事务开方主链：practice/check 执业授权纵深校验——处方权+抗菌药
+ * 分级+麻精类 PH-1017 落库前拦截、prescription_item 明细快照同事务落库）；cancel（未缴费 CAS
+ * 作废+无条件联动 billing PrescriptionFeePort 作废 PENDING 费用行堵 TOCTOU 资金窗口，已缴费
+ * PH-1014 拒并引导退药/退费链）。缴费后处方态迁移（PENDING_FEE/PENDING_DISPENSE/DISPENSED/
+ * 退药终态）归 IDispenseService 消费编排，禁经通用写面直写绕开 CAS 与授权守卫。
  */
-public interface IPrescriptionService {
+public interface IPrescriptionService extends IService<Prescription> {
 
     /**
      * 开方（同步 API：预检恒通过级，CREATED→APPROVED 同事务，Spec :59/:132）。

@@ -6,9 +6,12 @@ import com.fuyun.outpatient.mapper.QueueTicketMapper;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
@@ -87,10 +90,12 @@ public class QueueZsetStore {
     }
 
     /**
-     * 原子出队（按序首个可叫票）：ZRANGE 全量按 score 升序扫描，取首个「票态可叫（WAITING 候诊/
-     * PASSED 过号再入）且未指派或指派一致」的票，经 Lua 守卫原子 ZREM（并发双叫仅一方成功，败者
-     * 继续扫描下一位）；票行缺失或票态不可叫（已叫/已接诊/已取消等遗留态成员——如重呼后未再过号的
-     * 票）则原子移除清理后继续扫描；无匹配返回 null。
+     * 原子出队（按序首个可叫票）：ZRANGE 全量按 score 升序，扫描前一次 {@code selectBatchIds} 键集
+     * 批读全体成员票行（EX-38：失效积压路径逐票 selectById 的 N+1 收敛为恒 1 查；票行缺失由映射缺位
+     * 判定），取首个「票态可叫（WAITING 候诊/PASSED 过号再入）且未指派或指派一致」的票，经 Lua 守卫
+     * 原子 ZREM（并发双叫仅一方成功，败者继续扫描下一位）；票行缺失或票态不可叫（已叫/已接诊/已取消
+     * 等遗留态成员——如重呼后未再过号的票）扫描期登记后一次 ZREM 多成员单命令批量清理；无匹配返回
+     * null。
      *
      * @param deptCode 队列标识，非空
      * @param doctorId 叫号医生 id，非空
@@ -102,13 +107,21 @@ public class QueueZsetStore {
         if (members == null || members.isEmpty()) {
             return null;
         }
+        // 键集前置批读（EX-38，OPT-10 同款形态）：ZSET 全集成员一次 selectBatchIds 取回票行按 pk 文本
+        // 映射（member 仅含 pk，医生指派在票行）——失效票积压时原逐行查库随队列长度线性放大
+        Map<String, QueueTicket> tickets =
+                queueTicketMapper
+                        .selectBatchIds(members.stream().map(Long::parseLong).toList())
+                        .stream()
+                        .collect(Collectors.toMap(t -> String.valueOf(t.getId()), Function.identity()));
+        // 失效成员扫描期登记：票行缺失或票态不可叫的成员收集后一次 ZREM 批量清理
+        List<String> staleMembers = new ArrayList<>();
         for (String member : members) {
-            long ticketPk = Long.parseLong(member);
-            QueueTicket ticket = queueTicketMapper.selectById(ticketPk);
-            // 失效成员清理：票行缺失或票态不在可叫词表（遗留成员留驻会令后续叫号误触状态冲突）——
-            // Lua 原子移除后继续扫描
+            QueueTicket ticket = tickets.get(member);
+            // 失效成员登记：票行缺失（映射缺位）或票态不在可叫词表（遗留成员留驻会令后续叫号误触状态
+            // 冲突）——不中断扫描，末尾一次批量清理
             if (ticket == null || !QUEUEABLE_STATUSES.contains(ticket.getStatus())) {
-                redisTemplate.execute(pollScript, List.of(key), member);
+                staleMembers.add(member);
                 continue;
             }
             // 匹配谓词：未指派或指派一致才可叫（指派不一致保留成员给指派医生）
@@ -118,10 +131,28 @@ public class QueueZsetStore {
             // 缓存写操作：Lua 守卫原子出队（ZSCORE 在位才 ZREM，防并发双叫同票）
             Long polled = redisTemplate.execute(pollScript, List.of(key), member);
             if (polled != null && polled == 1L) {
-                return ticketPk;
+                removeStaleMembers(key, staleMembers);
+                return Long.parseLong(member);
             }
         }
+        removeStaleMembers(key, staleMembers);
         return null;
+    }
+
+    /**
+     * 失效成员批量清理（EX-38）：一次 ZREM 多成员单命令原子移除扫描期登记的失效成员——与原逐成员
+     * Lua 守卫清理等价（守卫返回值在清理路径本被忽略，ZREM 单命令幂等且原子性不降），可叫票出队仍走
+     * Lua 守卫（返回值承载并发双叫胜负判定）；N 成员 N 次脚本往返收敛为 1 次命令。空集零触达。
+     *
+     * @param key          队列键，非空
+     * @param staleMembers 扫描期登记的失效成员（score 遇序），非空集合；空列表零触达 Redis
+     */
+    private void removeStaleMembers(String key, List<String> staleMembers) {
+        if (staleMembers.isEmpty()) {
+            return;
+        }
+        // 缓存写操作：ZREM 多成员单命令批量移除（仅删成员，score 语义无涉）
+        redisTemplate.opsForZSet().remove(key, staleMembers.toArray());
     }
 
     /**

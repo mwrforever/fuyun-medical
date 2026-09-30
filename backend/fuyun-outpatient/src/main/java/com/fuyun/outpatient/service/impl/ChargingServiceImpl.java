@@ -21,6 +21,10 @@ import com.fuyun.outpatient.service.IAppointmentService;
 import com.fuyun.outpatient.service.IChargingService;
 import com.fuyun.outpatient.service.OutpatientVisitStateMachine;
 import com.fuyun.pharmacy.api.PrescriptionCancelledPayload;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.annotation.Transactional;
@@ -117,6 +121,7 @@ public class ChargingServiceImpl implements IChargingService {
         }
         requireSettlementAnchors(payload);
         // 0 元/负额结算拒绝（W-20 两问澄清前沿用既有 400 拒绝语义，不放开不收窄；缺失值落 0 同口径）
+        // EX-19 C 类收口留痕：MQ 结算回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 死信留痕
         if (payload.totalAmount() == null || payload.totalAmount() <= 0) {
             throw new IllegalStateException("结算完成载荷金额违例（0 元/负额结算拒绝，W-20 澄清前维持拒绝口径）：settleNo=" + payload.settleNo()
                     + "，totalAmount=" + payload.totalAmount());
@@ -196,10 +201,25 @@ public class ChargingServiceImpl implements IChargingService {
     @Transactional
     public void onRefundApproved(RefundApprovedPayload payload) {
         SettlementSourceRefs refs = requireSourceRefs(payload.settlementId());
+        // 空清单零查询零日志（与原空循环零查询语义对齐；空键集 IN 不出网）
+        if (refs.orderRefs().isEmpty()) {
+            return;
+        }
+        // 数据库读操作：orderRefs 清单键集一次 IN 批查（uk_order_no 保证每单号至多一行，与原逐单
+        //   selectOne 同语义；退号链/非 M03 开单等缺号不出结果集→映射缺位即原无命中幂等跳过）
+        //   ——A.4.3-14 循环单查改批量，N 单 N 查收敛为 1 查，缩短 refund.approved 消费事务持锁
+        Map<String, ClinicOrder> orderByNo =
+                clinicOrderMapper
+                        .selectList(Wrappers.<ClinicOrder>lambdaQuery().in(ClinicOrder::getOrderNo, refs.orderRefs()))
+                        .stream()
+                        .collect(Collectors.toMap(
+                                ClinicOrder::getOrderNo,
+                                Function.identity(),
+                                (first, duplicate) -> first,
+                                LinkedHashMap::new));
         for (String orderNo : refs.orderRefs()) {
-            // 数据库读操作：按单号定位本域申请单（退号链/非 M03 开单等无命中即幂等跳过）
-            ClinicOrder order = clinicOrderMapper.selectOne(
-                    Wrappers.<ClinicOrder>lambdaQuery().eq(ClinicOrder::getOrderNo, orderNo));
+            // 批查映射取行（原逐单 selectOne 同位替换；缺号映射缺位=null 即原无命中幂等跳过分支）
+            ClinicOrder order = orderByNo.get(orderNo);
             if (order == null) {
                 log.info(
                         "退费逆向幂等跳过（无本域单据命中）：orderNo={}，settlementId={}，refundNo={}",
@@ -317,6 +337,7 @@ public class ChargingServiceImpl implements IChargingService {
                 || payload.visitId().isBlank()
                 || payload.patientId() == null
                 || payload.patientId() == 0L) {
+            // EX-19 C 类收口留痕：MQ 结算回执载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 死信留痕
             throw new IllegalStateException("结算完成载荷不合规（缺 settlementId/settleNo/visitId/patientId 锚）：settleNo="
                     + payload.settleNo() + "，settlementId=" + payload.settlementId() + "，visitId=" + payload.visitId());
         }
@@ -332,6 +353,7 @@ public class ChargingServiceImpl implements IChargingService {
      */
     private static void requireRxRef(String rxNo, String eventType, String bizNo) {
         if (rxNo == null || rxNo.isBlank()) {
+            // EX-19 C 类收口留痕：MQ 回流载荷守卫（内部事件契约违例，非用户输入路径），保留 ISE 死信留痕
             throw new IllegalStateException("回流载荷不合规（缺 rxNo 锚）：" + eventType + "，bizNo=" + bizNo);
         }
     }
@@ -347,6 +369,7 @@ public class ChargingServiceImpl implements IChargingService {
         // 数据库读操作：就诊号定位就诊记录
         Visit visit = visitMapper.selectOne(Wrappers.<Visit>lambdaQuery().eq(Visit::getVisitId, visitId));
         if (visit == null) {
+            // EX-19 C 类收口留痕：内部数据异常断言（非用户输入路径），保留 ISE 死信留痕零行为变化
             throw new IllegalStateException("结算完成消费失败：就诊记录缺失（数据异常，人工对账）：visitId=" + visitId);
         }
         return visit;
@@ -364,6 +387,7 @@ public class ChargingServiceImpl implements IChargingService {
             return settlementQueryPort.sourceRefsOfSettlement(settlementId);
         } catch (RuntimeException e) {
             log.error("结算单反查端口调用异常，拒绝消费编排进死信对账：settlementId={}", settlementId, e);
+            // EX-19 C 类收口留痕：外部端口异常转译断言（非用户输入路径），保留 ISE 死信留痕零行为变化
             throw new IllegalStateException("结算单反查失败（M13 端口异常），拒绝放行/回滚编排：settlementId=" + settlementId);
         }
     }

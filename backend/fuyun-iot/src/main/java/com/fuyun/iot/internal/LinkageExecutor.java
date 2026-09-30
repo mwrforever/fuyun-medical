@@ -298,6 +298,8 @@ public class LinkageExecutor {
         IotAlarmEntity alarm = alarmMapper.selectOne(
                 Wrappers.<IotAlarmEntity>lambdaQuery().eq(IotAlarmEntity::getAlarmNo, triggerRef));
         if (alarm == null) {
+            // 内部断言：告警行由本模块告警引擎先落库后发事件（同源），无命中属数据不一致防御，
+            // 非用户输入路径；保留 ISE 走重试→FAILED 留痕收口
             throw new IllegalStateException("联动 NOTIFY 动作定位告警行失败（trigger_ref 无命中）：" + triggerRef);
         }
         pushService.pushLinkageNotify(alarm, linkageNo);
@@ -328,6 +330,8 @@ public class LinkageExecutor {
                 switch (rule.getActionType()) {
                     case WARD_BROADCAST -> "WardBroadcastUnavailable：M16 病区播报域未上线（回接方收口）";
                     case NURSING_TASK -> "NursingUnavailable：M05 护理任务创建未上线（PR-3 回接）";
+                    // 内部断言：上游 switch 已承接 NOTIFY/M01_NOTIFY/CALL_TRANSFER 三分支，此处仅
+                    // WARD_BROADCAST/NURSING_TASK 可达，default 属穷尽性防御（非用户输入路径）
                     default -> throw new IllegalStateException("暂存分派不承接的动作类型：" + rule.getActionType());
                 };
         log.info(
@@ -366,6 +370,8 @@ public class LinkageExecutor {
         IotAlarmEntity alarm = alarmMapper.selectOne(
                 Wrappers.<IotAlarmEntity>lambdaQuery().eq(IotAlarmEntity::getAlarmNo, triggerRef));
         if (alarm == null) {
+            // 内部断言：告警行由本模块告警引擎先落库后发事件（同源），无命中属数据不一致防御，
+            // 非用户输入路径；保留 ISE 走重试→FAILED 留痕收口
             throw new IllegalStateException("联动 CALL_TRANSFER 动作定位告警行失败（trigger_ref 无命中）：" + triggerRef);
         }
         Instant triggeredAt = Instant.now();

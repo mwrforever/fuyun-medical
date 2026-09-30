@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -90,7 +91,8 @@ class QueueZsetStoreTest {
     void pollTopReturnsFirstUnassignedTicketAfterLuaGuard() {
         Set<String> members = new LinkedHashSet<>(List.of("501", "502"));
         when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
-        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.WAITING, null));
+        when(queueTicketMapper.selectBatchIds(List.of(501L, 502L)))
+                .thenReturn(List.of(ticketOf(501L, TicketStatus.WAITING, null)));
         when(redisTemplate.execute(any(), anyList(), anyString())).thenReturn(1L);
 
         Long polled = store.pollTop("DEP001", "DOC001");
@@ -104,7 +106,8 @@ class QueueZsetStoreTest {
     void pollTopTreatsPassedTicketAsQueueable() {
         Set<String> members = new LinkedHashSet<>(List.of("501"));
         when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
-        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.PASSED, null));
+        when(queueTicketMapper.selectBatchIds(List.of(501L)))
+                .thenReturn(List.of(ticketOf(501L, TicketStatus.PASSED, null)));
         when(redisTemplate.execute(any(), anyList(), anyString())).thenReturn(1L);
 
         assertThat(store.pollTop("DEP001", "DOC001")).isEqualTo(501L);
@@ -116,16 +119,18 @@ class QueueZsetStoreTest {
         Set<String> members = new LinkedHashSet<>(List.of("501", "502"));
         when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
         // 首票已 CALLED（重呼后遗留成员）——清理移除后继续；次票 WAITING 未指派——出队成功
-        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.CALLED, null));
-        when(queueTicketMapper.selectById(502L)).thenReturn(ticketOf(502L, TicketStatus.WAITING, null));
-        when(redisTemplate.execute(any(), anyList(), eq("501"))).thenReturn(1L);
+        when(queueTicketMapper.selectBatchIds(List.of(501L, 502L)))
+                .thenReturn(
+                        List.of(ticketOf(501L, TicketStatus.CALLED, null), ticketOf(502L, TicketStatus.WAITING, null)));
         when(redisTemplate.execute(any(), anyList(), eq("502"))).thenReturn(1L);
 
         Long polled = store.pollTop("DEP001", "DOC001");
 
         assertThat(polled).isEqualTo(502L);
-        // 失效成员清理：对 501 执行过一次 Lua 原子移除
-        verify(redisTemplate).execute(any(), eq(List.of(QUEUE_KEY)), eq("501"));
+        // 失效成员清理（EX-38 批量化迁移）：501 恰一次 ZREM 批量移除，且清理路径零 Lua 脚本触达
+        // （可叫票出队的 Lua 守卫仅作用于 502）
+        verify(zsetOperations).remove(QUEUE_KEY, "501");
+        verify(redisTemplate, never()).execute(any(), anyList(), eq("501"));
     }
 
     @Test
@@ -134,8 +139,9 @@ class QueueZsetStoreTest {
         Set<String> members = new LinkedHashSet<>(List.of("501", "502"));
         when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
         // 首票指派 DOC002≠DOC001 跳过；次票未指派但 Lua 返回 0（并发被夺）继续；无后续→null
-        when(queueTicketMapper.selectById(501L)).thenReturn(ticketOf(501L, TicketStatus.WAITING, "DOC002"));
-        when(queueTicketMapper.selectById(502L)).thenReturn(ticketOf(502L, TicketStatus.WAITING, null));
+        when(queueTicketMapper.selectBatchIds(List.of(501L, 502L)))
+                .thenReturn(List.of(
+                        ticketOf(501L, TicketStatus.WAITING, "DOC002"), ticketOf(502L, TicketStatus.WAITING, null)));
         when(redisTemplate.execute(any(), anyList(), anyString())).thenReturn(0L);
 
         assertThat(store.pollTop("DEP001", "DOC001")).isNull();
@@ -172,6 +178,29 @@ class QueueZsetStoreTest {
         when(zsetOperations.range(QUEUE_KEY, 0, 1L)).thenReturn(null);
 
         assertThat(store.snapshot("DEP001", 2)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("pollTop：键集批读锚定（EX-38）——selectBatchIds 恰一次（键集=ZSET 全集），" + "逐票 selectById 零触达，失效成员单命令 ZREM 批量清理")
+    void pollTopPrefetchesAllTicketsWithSingleBatchReadAndBulkZrem() {
+        // 成员面：501 票行缺失（脏差异）、502 已 CALLED（遗留失效态）、503 WAITING 未指派（可叫票）
+        Set<String> members = new LinkedHashSet<>(List.of("501", "502", "503"));
+        when(zsetOperations.range(QUEUE_KEY, 0, -1)).thenReturn(members);
+        when(queueTicketMapper.selectBatchIds(List.of(501L, 502L, 503L)))
+                .thenReturn(
+                        List.of(ticketOf(502L, TicketStatus.CALLED, null), ticketOf(503L, TicketStatus.WAITING, null)));
+        when(redisTemplate.execute(any(), anyList(), eq("503"))).thenReturn(1L);
+
+        Long polled = store.pollTop("DEP001", "DOC001");
+
+        assertThat(polled).isEqualTo(503L);
+        // 批读锚定：键集前置恰一次且键集=ZSET 全集（含缺失行 501——缺行由映射缺位判定）；逐票零触达
+        verify(queueTicketMapper, times(1)).selectBatchIds(List.of(501L, 502L, 503L));
+        verify(queueTicketMapper, never()).selectById(any());
+        // 失效成员清理：501（缺行）+502（遗留态）一次 ZREM 单命令批量移除（原子性=单命令保持）
+        verify(zsetOperations, times(1)).remove(QUEUE_KEY, "501", "502");
+        // 可叫票出队仍走 Lua 守卫（ZSCORE 在位才 ZREM，防并发双叫同票）
+        verify(redisTemplate).execute(any(), eq(List.of(QUEUE_KEY)), eq("503"));
     }
 
     @Test

@@ -2,45 +2,44 @@
 // 护士工作站页（/nursing/ward，M05 前端面，设计文档 §3 八区块）：病区选择与入区登记 →
 // 床位序患者卡墙（选中驱动全页患者上下文）→ 患者详情/责任护士分配 → 体征录入与待复核 →
 // 体温单渲染（§5 符号契约）与特殊事件 → 护理评估（量表打分判级）→ 护理任务与交接班双签。
-// 全部写操作自带在途守卫（入口早退先于一切 await）+ 4xx 口径显式校验（禁裸 parse，
-// 数值字段一律文本承载经正则+范围双验）；失败弹错归响应拦截器（AxiosError 防双弹，
-// 非 AxiosError 的业务拒绝对象由 surfaceBizError 兜底展示 detail 原文）。
-// 体温单坐标计算在 tempChart.ts 纯函数（spec 双层断言），视图仅做 SVG 映射渲染。
-import { computed, onMounted, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import axios from 'axios';
+// EX-47 巨型组件拆分（web 宪法 B.2-6）：状态与业务逻辑按作业面下沉 composables/
+// （卡墙底座/入区登记/最新体征/分配/体征/体温单/特殊事件/评估/任务/交接班/出入量），
+// 视图只做组装与跨面联动编排；全部写操作自带在途守卫（入口早退先于一切 await）+
+// 4xx 口径显式校验（禁裸 parse，数值字段一律文本承载经正则+范围双验）；失败弹错归响应
+// 拦截器（AxiosError 防双弹，非 AxiosError 的业务拒绝对象由 surfaceBizError 兜底展示
+// detail 原文）。体温单坐标计算在 tempChart.ts 纯函数（spec 双层断言），视图仅做 SVG
+// 映射渲染。
+import { computed, onMounted } from 'vue';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import {
-  assessments,
-  assignments,
-  chart,
   CONDITION_TAG_OPTIONS,
-  handovers,
-  ioRecords,
   NURSING_LEVEL_OPTIONS,
-  SPECIAL_EVENT_OPTIONS,
   SHIFT_OPTIONS,
-  tasks,
+  SPECIAL_EVENT_OPTIONS,
   TEMP_SITE_OPTIONS,
-  vitalSigns,
   WARD_OPTIONS,
-  wardPatients,
-} from '@/api/nursing';
-import type {
-  NurseAssignmentVO,
-  NursingAssessmentVO,
-  NursingTaskVO,
-  ScaleDefinitionVO,
-  ShiftHandoverVO,
-  TemperatureChartVO,
-  VitalSignVO,
-  WardPatientDetailVO,
-  WardPatientVO,
 } from '@/api/nursing';
 import { useAuthStore } from '@/stores/auth';
-import { AXIS_WIDTH, buildTempChart, DAILY_ROWS } from './tempChart';
+import { AXIS_WIDTH, DAILY_ROWS } from './tempChart';
+import { splitTags } from './wardBoardShared';
+import { formatTime } from '@/utils/timeFormat';
+import { tempSiteMark, useLatestVitals } from './composables/useLatestVitals';
+import { ASSIGNMENT_TYPE_OPTIONS, useAssignments } from './composables/useAssignments';
+import { useHandover } from './composables/useHandover';
+import { IO_TYPE_OPTIONS, useIoRecords } from './composables/useIoRecords';
+import {
+  RISK_LEVEL_META,
+  SCALE_TYPE_LABELS,
+  useNursingAssessment,
+} from './composables/useNursingAssessment';
+import { TASK_TYPE_LABELS, useNursingTasks } from './composables/useNursingTasks';
+import { useSpecialEvents } from './composables/useSpecialEvents';
+import { useTempChart } from './composables/useTempChart';
+import { useVitalSigns } from './composables/useVitalSigns';
+import { useWardContext } from './composables/useWardContext';
+import { useWardRegister } from './composables/useWardRegister';
 
 /** 护理级别 → 徽标类映射（后端 NursingLevel 三值；--l2 留全族定义防词表扩值 §2.3） */
 const NURSING_LEVEL_BADGE: Record<string, string> = {
@@ -56,1102 +55,154 @@ const NURSING_LEVEL_LABELS: Record<string, string> = {
   NORMAL: '普通护理',
 };
 
-/** 病情标记 → 角标类/文案映射（§3.11：娩归 brand 系） */
-const CONDITION_FLAG_META: Record<string, { cls: string; text: string }> = {
-  CRITICAL: { cls: 'fuy-nursing-flag--danger', text: '危' },
-  SEVERE: { cls: 'fuy-nursing-flag--warning', text: '重' },
-  NEW: { cls: 'fuy-nursing-flag--brand', text: '新' },
-  SURGERY: { cls: 'fuy-nursing-flag--info', text: '术' },
-  DELIVERY: { cls: 'fuy-nursing-flag--brand', text: '娩' },
-};
-
-/** 床旁风险标识 → 空心角标文案（§3.11：跌倒/压疮红描边空心） */
-const RISK_FLAG_LABELS: Record<string, string> = {
-  FALL: '跌',
-  PRESSURE: '压',
-  TUBE: '管',
-};
-
-/** 任务类型中文词表（NursingTaskVO.taskType 十值枚举展示映射） */
-const TASK_TYPE_LABELS: Record<string, string> = {
-  MEDICATION: '给药',
-  INFUSION_CARE: '输液',
-  TURN: '翻身',
-  PATROL: '巡视',
-  SPECIMEN: '标本',
-  IO_MONITOR: '出入量',
-  IOT_LINKAGE: 'IoT 联动',
-  ASSESS_REMIND: '评估提醒',
-  MANUAL: '手工',
-  PREVENTION: '防范',
-};
-
-/** 任务状态 tag 映射（§3.11：PENDING/IN_PROGRESS/COMPLETED+aa/CANCELLED+strike） */
-const TASK_STATUS_META: Record<
-  string,
-  { type: 'primary' | 'warning' | 'success' | 'info'; text: string; strike?: boolean }
-> = {
-  PENDING: { type: 'info', text: '待执行' },
-  IN_PROGRESS: { type: 'primary', text: '执行中' },
-  COMPLETED: { type: 'success', text: '已完成' },
-  CANCELLED: { type: 'info', text: '已取消', strike: true },
-};
-
-/** 评估风险判级映射（§3.11：HIGH/MEDIUM/LOW 三档 tag 文案） */
-const RISK_LEVEL_META: Record<string, { type: 'danger' | 'warning' | 'success'; text: string }> = {
-  HIGH: { type: 'danger', text: '高风险' },
-  MEDIUM: { type: 'warning', text: '中风险' },
-  LOW: { type: 'success', text: '低风险' },
-};
-
-/** 分配类型词表（PRIMARY 责任患者 / BED 管床） */
-const ASSIGNMENT_TYPE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'BED', label: '管床' },
-  { code: 'PRIMARY', label: '责任患者' },
-];
-
-/** 出入量类型词表（IoType 两值：入量/出量） */
-const IO_TYPE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'INTAKE', label: '入量' },
-  { code: 'OUTPUT', label: '出量' },
-];
-
 const auth = useAuthStore();
 /** 当班护士（交接班确认回显的交班人锚点） */
 const operatorName = computed(() => auth.user?.displayName ?? '—');
 
-/** 本地日期串（yyyy-MM-dd，任务/交接班当日过滤共用） */
-function todayString(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
+/* ==================== 作业面组装（跨面联动编排，时序与拆分前逐字一致） ==================== */
+// 卡墙底座先行创建：病区/班次/选中患者上下文由此派生；跨面联动经惰性回调注入（求值时
+// 各作业面均已初始化，无循环依赖）。换患者复位含四处草稿（体征/评估+结果条/出入量/
+// 特殊事件——后两处为 BUG-15 同类与残留清理修复项）；患者上下文加载含 EX-45 竞态守卫。
+const ward = useWardContext({
+  getWardReloads: () => [
+    vitals.loadPendingReview(),
+    assign.loadAssignments(),
+    nursingTasks.loadTasks(),
+    handoverState.loadHandoverOfDay(),
+  ],
+  onPatientSwitchReset: () => {
+    vitals.resetVitalForm();
+    assessment.resetDraft();
+    ioRecordsState.resetDraft();
+    specialEvents.resetDraft();
+  },
+  onPatientSwitchLoad: () => {
+    void latestVitalsState.loadLatestVitals();
+    void tempChart.loadChart();
+    void assessment.loadAssessmentHistory();
+  },
+});
+const register = useWardRegister({ wardId: ward.wardId, reloadWard: ward.loadWard });
+const latestVitalsState = useLatestVitals({
+  selectedDetail: ward.selectedDetail,
+  selectedVisitId: ward.selectedVisitId,
+});
+const assign = useAssignments({ wardId: ward.wardId, shiftCode: ward.shiftCode });
+const tempChart = useTempChart({
+  selectedDetail: ward.selectedDetail,
+  selectedVisitId: ward.selectedVisitId,
+});
+const specialEvents = useSpecialEvents({
+  selectedDetail: ward.selectedDetail,
+  onEventRecorded: tempChart.loadChart,
+});
+const assessment = useNursingAssessment({
+  selectedDetail: ward.selectedDetail,
+  selectedVisitId: ward.selectedVisitId,
+});
+const nursingTasks = useNursingTasks({ wardId: ward.wardId, detailMap: ward.detailMap });
+const handoverState = useHandover({
+  wardId: ward.wardId,
+  shiftCode: ward.shiftCode,
+  operatorName,
+});
+const ioRecordsState = useIoRecords({ selectedDetail: ward.selectedDetail });
+const vitals = useVitalSigns({
+  selectedPatient: ward.selectedPatient,
+  selectedDetail: ward.selectedDetail,
+  wardId: ward.wardId,
+  // 录入成功联动：先体温单后简报（拆分前 await 链同序）
+  onRecorded: async () => {
+    await tempChart.loadChart();
+    await latestVitalsState.loadLatestVitals();
+  },
+});
 
-/** 时点展示串（MM-dd HH:mm，表格列与确认回显共用） */
-function formatTime(raw: string | undefined): string {
-  if (!raw) {
-    return '—';
-  }
-  const date = new Date(raw);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+/* ==================== 模板绑定面（组装解包，模板零改动） ==================== */
+const {
+  wardId,
+  shiftCode,
+  wardLoading,
+  detailMap,
+  selectedVisitId,
+  sortedPatients,
+  wardCounts,
+  bedFlags,
+  inFlightCount,
+  dutyNurseId,
+  selectedDetail,
+  RISK_FLAG_LABELS,
+  loadWard,
+  onWardChange,
+  selectPatient,
+  onRemovePatient,
+} = ward;
+const { registerVisible, registering, registerForm, onRegister } = register;
+const { latestVitals, latestVitalsLoading } = latestVitalsState;
+const {
+  assignmentList,
+  assignmentLoading,
+  assigning,
+  assignFormVisible,
+  assignForm,
+  loadAssignments,
+  onAssign,
+  onUnassign,
+} = assign;
+const {
+  vitalForm,
+  recording,
+  onVitalFieldChange,
+  onRecordVitals,
+  pendingList,
+  confirmingId,
+  onConfirmVital,
+  onRejectVital,
+} = vitals;
+const { chartMonth, chartLoading, prevMonthDisabled, onMonthChange, chartModel, dailyCellValue } =
+  tempChart;
+const { specialEventType, specialEventRemark, specialEventRecording, onAddSpecialEvent } =
+  specialEvents;
+const {
+  scaleList,
+  scaleType,
+  currentScale,
+  scaleAnswers,
+  assessing,
+  assessResult,
+  assessHistory,
+  loadScales,
+  onScaleChange,
+  onAssess,
+} = assessment;
+const {
+  actingTaskNo,
+  taskList,
+  taskLoading,
+  taskStatusFilter,
+  loadTasks,
+  taskRowClass,
+  taskStatusMeta,
+  taskPatientLabel,
+  onCompleteTask,
+  onCancelTask,
+} = nursingTasks;
+const {
+  handover,
+  handoverLoading,
+  generating,
+  completingHandover,
+  incomingNurseId,
+  loadHandoverOfDay,
+  onGenerateHandover,
+  onCompleteHandover,
+} = handoverState;
+const { ioVisible, ioForm, ioRecording, onCreateIoRecord } = ioRecordsState;
 
-/** 病情标记逗号串拆解（condition_tags 存储「CRITICAL,SEVERE」形态） */
-function splitTags(raw: string | undefined): string[] {
-  return (raw ?? '')
-    .split(',')
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0);
-}
-
-/** 业务失败兜底展示：AxiosError 已由响应拦截器弹错（防双弹）；其余形态（如 api 层直抛的
- * ProblemDetail 对象）在此展示 detail 原文——NS 域 4xx detail 已是中文业务口径（§3.7） */
-function surfaceBizError(error: unknown): void {
-  if (axios.isAxiosError(error)) {
-    return;
-  }
-  const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-  if (typeof detail === 'string' && detail.length > 0) {
-    void ElMessage.error(detail);
-  }
-}
-
-/* ==================== ① 病区选择 + 入区登记 ==================== */
-/** 当前病区（会话内记忆：切换/刷新不回默认病区） */
-const wardId = ref(sessionStorage.getItem('nursing.wardId') ?? WARD_OPTIONS[0].code);
-/** 当前班次（分配与交接班的班次上下文） */
-const shiftCode = ref(SHIFT_OPTIONS[0].code);
-
-function onWardChange(): void {
-  sessionStorage.setItem('nursing.wardId', wardId.value);
-  selectedVisitId.value = null;
-  void loadWard();
-}
-
+/** 班次切换：分配与交接班随班次上下文重载（时序与拆分前一致） */
 function onShiftChange(): void {
   void loadAssignments();
   void loadHandoverOfDay();
-}
-
-/** 入区登记弹窗态 */
-const registerVisible = ref(false);
-const registering = ref(false);
-const registerForm = ref({
-  patientId: '',
-  visitId: '',
-  patientName: '',
-  bedNo: '',
-  nursingLevel: 'NORMAL',
-  conditionTags: [] as string[],
-});
-
-/** 重置登记表单（弹窗打开/提交成功后） */
-function resetRegisterForm(): void {
-  registerForm.value = {
-    patientId: '',
-    visitId: '',
-    patientName: '',
-    bedNo: '',
-    nursingLevel: 'NORMAL',
-    conditionTags: [],
-  };
-}
-
-/** visit 号格式：I 前缀 + 13 位数字（I+8 位日期+5 位流水，共 14 字符，§3.3 冻结） */
-const VISIT_NO_PATTERN = /^I\d{13}$/;
-
-/** 入区登记提交：显式校验（缺项/格式非法零出网）→ 出网 → 成功关窗重载卡墙。 */
-async function onRegister(): Promise<void> {
-  if (registering.value) {
-    return;
-  }
-  const form = registerForm.value;
-  if (!/^\d+$/.test(form.patientId.trim())) {
-    void ElMessage.warning('患者 ID 应为数字编号，请核对住院登记');
-    return;
-  }
-  if (!VISIT_NO_PATTERN.test(form.visitId.trim())) {
-    void ElMessage.warning('visit 号应以 I 开头共 14 位（I+日期+流水），请核对入区单');
-    return;
-  }
-  if (form.patientName.trim() === '') {
-    void ElMessage.warning('请填写患者姓名');
-    return;
-  }
-  if (form.bedNo.trim() === '') {
-    void ElMessage.warning('请填写床位号');
-    return;
-  }
-  if (form.nursingLevel === '') {
-    void ElMessage.warning('请选择护理级别');
-    return;
-  }
-  registering.value = true;
-  try {
-    await wardPatients.register({
-      visitId: form.visitId.trim(),
-      patientId: form.patientId.trim(),
-      wardId: wardId.value,
-      bedNo: form.bedNo.trim(),
-      patientName: form.patientName.trim(),
-      nursingLevel: form.nursingLevel,
-      conditionTags: form.conditionTags.join(','),
-    });
-    void ElMessage.success('入区登记完成');
-    registerVisible.value = false;
-    resetRegisterForm();
-    await loadWard();
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    registering.value = false;
-  }
-}
-
-/* ==================== ② 床位序患者卡墙 ==================== */
-const patientList = ref<WardPatientVO[]>([]);
-const wardLoading = ref(false);
-/** 详情按 visitId 索引（卡墙姓名/角标富化 + ③ 详情面板数据源） */
-const detailMap = ref<Record<string, WardPatientDetailVO>>({});
-/** 选中患者 visitId（全页患者上下文锚点；null=未选） */
-const selectedVisitId = ref<string | null>(null);
-
-/** 床位序患者清单（床位号字符串升序=临床序，spec 冻结语序断言） */
-const sortedPatients = computed(() =>
-  [...patientList.value].sort((a, b) => (a.bedNo ?? '').localeCompare(b.bedNo ?? '')),
-);
-
-/** 病区概览计数（在区/危/重，头部病情计数行） */
-const wardCounts = computed(() => {
-  let critical = 0;
-  let severe = 0;
-  for (const patient of patientList.value) {
-    const tags = splitTags(detailMap.value[patient.visitId ?? '']?.conditionTags);
-    if (tags.includes('CRITICAL')) {
-      critical += 1;
-    }
-    if (tags.includes('SEVERE')) {
-      severe += 1;
-    }
-  }
-  return { total: patientList.value.length, critical, severe };
-});
-
-/** 卡墙角标行（§3.4：显示优先级 过敏>危>重>风险>其余，上限 4 个 + 溢出 +N） */
-function bedFlags(detail: WardPatientDetailVO | undefined): {
-  shown: Array<{ cls: string; text: string }>;
-  overflow: number;
-} {
-  if (detail === undefined) {
-    return { shown: [], overflow: 0 };
-  }
-  const ordered: Array<{ cls: string; text: string; rank: number }> = [];
-  if (detail.allergyFlag === true) {
-    ordered.push({ cls: 'fuy-nursing-flag--danger', text: '敏', rank: 0 });
-  }
-  for (const tag of splitTags(detail.conditionTags)) {
-    const meta = CONDITION_FLAG_META[tag];
-    if (meta !== undefined) {
-      ordered.push({
-        cls: meta.cls,
-        text: meta.text,
-        rank: tag === 'CRITICAL' ? 1 : tag === 'SEVERE' ? 2 : 4,
-      });
-    }
-  }
-  for (const risk of splitTags(detail.riskFlags)) {
-    const label = RISK_FLAG_LABELS[risk];
-    if (label !== undefined) {
-      ordered.push({ cls: 'fuy-nursing-flag--outline', text: label, rank: 3 });
-    }
-  }
-  ordered.sort((a, b) => a.rank - b.rank);
-  return {
-    shown: ordered.slice(0, 4).map(({ cls, text }) => ({ cls, text })),
-    overflow: Math.max(0, ordered.length - 4),
-  };
-}
-
-/** 卡墙在途任务数（无详情时缺省 0） */
-function inFlightCount(detail: WardPatientDetailVO | undefined): number {
-  return detail?.inFlightTasks?.length ?? 0;
-}
-
-/** 卡墙责任护士（当班分配首条 nurseId 直显；M01 姓名随 P2 组织机构对齐） */
-function dutyNurseId(detail: WardPatientDetailVO | undefined): string {
-  return detail?.assignments?.[0]?.nurseId ?? '—';
-}
-
-/** 病区主加载：一览 → 逐床详情富化（Promise.allSettled 容错，单床失败不阻塞卡墙）→
- * 待复核/分配/任务/交接班并行重载。 */
-async function loadWard(): Promise<void> {
-  wardLoading.value = true;
-  try {
-    patientList.value = await wardPatients.list(wardId.value);
-    const results = await Promise.allSettled(
-      patientList.value.map((patient) => wardPatients.detail(patient.visitId ?? '')),
-    );
-    const map: Record<string, WardPatientDetailVO> = {};
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        map[patientList.value[index]?.visitId ?? ''] = result.value;
-      }
-    });
-    detailMap.value = map;
-    await Promise.all([loadPendingReview(), loadAssignments(), loadTasks(), loadHandoverOfDay()]);
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    wardLoading.value = false;
-  }
-}
-
-/** 卡墙选中：驱动 ③⑤⑥⑦ 患者上下文 */
-function selectPatient(patient: WardPatientVO): void {
-  selectedVisitId.value = patient.visitId ?? null;
-  void loadLatestVitals();
-  void loadChart();
-  void loadAssessmentHistory();
-}
-
-/** 出区在途标志（防双击重复出区） */
-const removing = ref(false);
-
-/** 出区（高风险档 §6.2：danger 确认 + 必填原因 + 回显摘要） */
-async function onRemovePatient(detail: WardPatientDetailVO): Promise<void> {
-  if (removing.value) {
-    return;
-  }
-  removing.value = true;
-  try {
-    try {
-      const { value } = await ElMessageBox.prompt(
-        `即将为 ${detail.bedNo ?? ''} ${detail.patientName ?? ''} 办理出区，出区后不可恢复`,
-        '出区确认',
-        {
-          type: 'warning',
-          confirmButtonText: '确认出区',
-          confirmButtonClass: 'el-button--danger',
-          inputPlaceholder: '出区原因（必填）',
-          inputValidator: (input: string) => (input.trim() === '' ? '出区原因不能为空' : true),
-        },
-      );
-      if (value.trim() === '') {
-        return;
-      }
-      await wardPatients.remove(detail.visitId ?? '', { reason: value.trim() });
-      void ElMessage.success(`已出区：${detail.bedNo ?? ''} ${detail.patientName ?? ''}`);
-      if (selectedVisitId.value === detail.visitId) {
-        selectedVisitId.value = null;
-      }
-      await loadWard();
-    } catch {
-      // 用户取消或出区失败：取消静默，失败弹错归拦截器
-    }
-  } finally {
-    removing.value = false;
-  }
-}
-
-/* ==================== ③ 患者详情面板 ==================== */
-const selectedDetail = computed<WardPatientDetailVO | undefined>(() =>
-  selectedVisitId.value === null ? undefined : detailMap.value[selectedVisitId.value],
-);
-const selectedPatient = computed<WardPatientVO | undefined>(() =>
-  patientList.value.find((patient) => patient.visitId === selectedVisitId.value),
-);
-
-/** 最新体征行（前端另调 GET /vital-signs 近 24h 组装，简报冻结口径） */
-const latestVitals = ref<VitalSignVO | null>(null);
-const latestVitalsLoading = ref(false);
-
-async function loadLatestVitals(): Promise<void> {
-  const detail = selectedDetail.value;
-  if (detail === undefined || !detail.patientId) {
-    latestVitals.value = null;
-    return;
-  }
-  latestVitalsLoading.value = true;
-  try {
-    const from = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
-    const to = new Date().toISOString();
-    const rows = await vitalSigns.list({ patientId: String(detail.patientId), from, to });
-    latestVitals.value = rows.length > 0 ? (rows[rows.length - 1] ?? null) : null;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧体征
-  } finally {
-    latestVitalsLoading.value = false;
-  }
-}
-
-/** 体温部位单字符号（详情面板最新体征行 ×/●/〇 直显） */
-function tempSiteMark(site: string | undefined): string {
-  if (site === 'AXILLARY') {
-    return '×';
-  }
-  if (site === 'ORAL') {
-    return '●';
-  }
-  if (site === 'RECTAL') {
-    return '〇';
-  }
-  return '';
-}
-
-/* ==================== ④ 责任护士分配 ==================== */
-const assignmentList = ref<NurseAssignmentVO[]>([]);
-const assignmentLoading = ref(false);
-const assigning = ref(false);
-/** 新增分配内联表单（BED 管床需床位；PRIMARY 责任需患者 ID） */
-const assignFormVisible = ref(false);
-const assignForm = ref({ nurseId: '', assignmentType: 'BED', bedNo: '', patientId: '' });
-
-async function loadAssignments(): Promise<void> {
-  assignmentLoading.value = true;
-  try {
-    assignmentList.value = await assignments.list(wardId.value, shiftCode.value);
-  } catch {
-    // 失败弹错归响应拦截器
-  } finally {
-    assignmentLoading.value = false;
-  }
-}
-
-/** 新增分配：必填面前置校验零出网 → 出网 → 重载（FU-M05-01 拖拽批量分配 P-later 登记）。 */
-async function onAssign(): Promise<void> {
-  if (assigning.value) {
-    return;
-  }
-  const form = assignForm.value;
-  if (form.nurseId.trim() === '') {
-    void ElMessage.warning('请填写护士工号');
-    return;
-  }
-  if (form.assignmentType === 'BED' && form.bedNo.trim() === '') {
-    void ElMessage.warning('管床分配需填写床位号');
-    return;
-  }
-  assigning.value = true;
-  try {
-    await assignments.create({
-      wardId: wardId.value,
-      nurseId: form.nurseId.trim(),
-      assignmentType: form.assignmentType,
-      shiftCode: shiftCode.value,
-      bedNo: form.assignmentType === 'BED' ? form.bedNo.trim() : undefined,
-      patientId:
-        form.assignmentType === 'PRIMARY' && form.patientId.trim() !== ''
-          ? form.patientId.trim()
-          : undefined,
-    });
-    void ElMessage.success('分配已保存');
-    assignFormVisible.value = false;
-    assignForm.value = { nurseId: '', assignmentType: 'BED', bedNo: '', patientId: '' };
-    await loadAssignments();
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    assigning.value = false;
-  }
-}
-
-/** 移除分配（中档确认带回显） */
-async function onUnassign(row: NurseAssignmentVO): Promise<void> {
-  try {
-    await ElMessageBox.confirm(
-      `即将移除护士 ${row.nurseId ?? ''} 的${row.assignmentType === 'BED' ? `管床（${row.bedNo ?? ''}）` : '责任患者分配'}，确认？`,
-      '移除分配确认',
-      { confirmButtonText: '确认移除', cancelButtonText: '取消' },
-    );
-  } catch {
-    return;
-  }
-  try {
-    await assignments.remove(String(row.id ?? ''));
-    void ElMessage.success('分配已移除');
-    await loadAssignments();
-  } catch (error) {
-    surfaceBizError(error);
-  }
-}
-
-/* ==================== ⑤ 体征录入 + 待复核 ==================== */
-/** 体征录入表单（文本承载：整数/小数一律经正则+范围双验后数值化，禁裸 parse） */
-const vitalForm = ref({
-  temperature: '',
-  tempSite: 'AXILLARY',
-  pulse: '',
-  respiration: '',
-  systolicBp: '',
-  diastolicBp: '',
-  spo2: '',
-  weight: '',
-  height: '',
-  painScore: '',
-});
-const recording = ref(false);
-
-/** 整数字段显式校验（纯数字正则 + 范围判定） */
-function isValidInt(raw: string, min: number, max: number): boolean {
-  if (!/^\d+$/.test(raw)) {
-    return false;
-  }
-  const value = Number(raw);
-  return Number.isInteger(value) && value >= min && value <= max;
-}
-
-/** 一位小数字段显式校验（一到三位整数 + 可选一位小数 + 范围判定） */
-function isValidDecimal(raw: string, min: number, max: number): boolean {
-  if (!/^\d{1,3}(\.\d)?$/.test(raw)) {
-    return false;
-  }
-  const value = Number(raw);
-  return value >= min && value <= max;
-}
-
-/** 各字段校验器（文案冻结于设计文档 §3.7 表） */
-const VITAL_VALIDATORS: Record<string, () => boolean> = {
-  temperature: () =>
-    vitalForm.value.temperature === '' ||
-    isValidDecimal(vitalForm.value.temperature, 35, 42) ||
-    warn('体温应为 35.0–42.0 的数值（如 36.5），请重新输入'),
-  pulse: () =>
-    vitalForm.value.pulse === '' ||
-    isValidInt(vitalForm.value.pulse, 20, 250) ||
-    warn('脉搏应为 20–250 的整数'),
-  respiration: () =>
-    vitalForm.value.respiration === '' ||
-    isValidInt(vitalForm.value.respiration, 5, 60) ||
-    warn('呼吸应为 5–60 的整数'),
-  systolicBp: () =>
-    vitalForm.value.systolicBp === '' ||
-    isValidInt(vitalForm.value.systolicBp, 60, 250) ||
-    warn('收缩压应为 60–250 的整数'),
-  diastolicBp: () =>
-    vitalForm.value.diastolicBp === '' ||
-    isValidInt(vitalForm.value.diastolicBp, 30, 180) ||
-    warn('舒张压应为 30–180 的整数'),
-  spo2: () =>
-    vitalForm.value.spo2 === '' ||
-    isValidInt(vitalForm.value.spo2, 50, 100) ||
-    warn('血氧应为 50–100 的整数'),
-  weight: () =>
-    vitalForm.value.weight === '' ||
-    isValidDecimal(vitalForm.value.weight, 20, 300) ||
-    warn('体重应为 20–300 的数值（kg）'),
-  height: () =>
-    vitalForm.value.height === '' ||
-    isValidInt(vitalForm.value.height, 30, 250) ||
-    warn('身高应为 30–250 的整数（cm）'),
-  painScore: () =>
-    vitalForm.value.painScore === '' ||
-    isValidInt(vitalForm.value.painScore, 0, 10) ||
-    warn('疼痛评分应为 0–10 的整数'),
-};
-
-/** 提示并返回 false（校验器短路出口） */
-function warn(message: string): boolean {
-  void ElMessage.warning(message);
-  return false;
-}
-
-/** 字段 change 校验（@change 触发单字段；提交时全字段双触发兜底） */
-function onVitalFieldChange(field: string): void {
-  VITAL_VALIDATORS[field]?.();
-}
-
-/** 数值化出参（校验通过后按类型安全转换；体温/体重保留一位小数语义由字符串直转承载） */
-function toNumberOrNull(raw: string): number | undefined {
-  return raw === '' ? undefined : Number(raw);
-}
-
-/** 体征录入提交：全字段显式校验 → 至少一项 → 出网 → 成功清表单并刷新体温单。 */
-async function onRecordVitals(): Promise<void> {
-  if (recording.value) {
-    return;
-  }
-  if (selectedPatient.value === null || selectedPatient.value === undefined) {
-    void ElMessage.warning('请先从床位卡墙选择患者');
-    return;
-  }
-  const form = vitalForm.value;
-  const allValid = Object.values(VITAL_VALIDATORS).every((validate) => validate());
-  if (!allValid) {
-    return;
-  }
-  if (
-    form.temperature === '' &&
-    form.pulse === '' &&
-    form.respiration === '' &&
-    form.systolicBp === '' &&
-    form.diastolicBp === '' &&
-    form.spo2 === '' &&
-    form.weight === '' &&
-    form.height === '' &&
-    form.painScore === ''
-  ) {
-    void ElMessage.warning('请至少录入一项体征数据');
-    return;
-  }
-  recording.value = true;
-  try {
-    await vitalSigns.record({
-      visitId: selectedPatient.value.visitId ?? '',
-      source: 'MANUAL',
-      temperature: toNumberOrNull(form.temperature),
-      tempSite: form.temperature === '' ? undefined : form.tempSite,
-      pulse: toNumberOrNull(form.pulse),
-      respiration: toNumberOrNull(form.respiration),
-      systolicBp: toNumberOrNull(form.systolicBp),
-      diastolicBp: toNumberOrNull(form.diastolicBp),
-      spo2: toNumberOrNull(form.spo2),
-      weight: toNumberOrNull(form.weight),
-      height: toNumberOrNull(form.height),
-      painScore: toNumberOrNull(form.painScore),
-    });
-    void ElMessage.success('体征已录入');
-    vitalForm.value = {
-      temperature: '',
-      tempSite: 'AXILLARY',
-      pulse: '',
-      respiration: '',
-      systolicBp: '',
-      diastolicBp: '',
-      spo2: '',
-      weight: '',
-      height: '',
-      painScore: '',
-    };
-    await loadChart();
-    await loadLatestVitals();
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    recording.value = false;
-  }
-}
-
-/* ---------- 待复核列表 ---------- */
-const pendingList = ref<VitalSignVO[]>([]);
-const pendingLoading = ref(false);
-const confirmingId = ref<string | null>(null);
-
-async function loadPendingReview(): Promise<void> {
-  pendingLoading.value = true;
-  try {
-    pendingList.value = await vitalSigns.pendingReview(wardId.value);
-  } catch {
-    // 失败弹错归响应拦截器
-  } finally {
-    pendingLoading.value = false;
-  }
-}
-
-/** 待复核确认（中档确认带回显「确认将 … 入体温单？」；成功该行移除，spec 冻结语义） */
-async function onConfirmVital(row: VitalSignVO): Promise<void> {
-  if (confirmingId.value !== null) {
-    return;
-  }
-  try {
-    await ElMessageBox.confirm(
-      `确认将 ${formatTime(row.measuredAt)} 体温 ${row.temperature ?? '—'} 入体温单？`,
-      '体征复核确认',
-      { confirmButtonText: '确认', cancelButtonText: '取消' },
-    );
-  } catch {
-    return;
-  }
-  confirmingId.value = String(row.id ?? '');
-  try {
-    await vitalSigns.confirm(String(row.id ?? ''));
-    void ElMessage.success('已确认入体温单');
-    pendingList.value = pendingList.value.filter((item) => String(item.id) !== String(row.id));
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    confirmingId.value = null;
-  }
-}
-
-/** 待复核驳回（中档确认 + 必填原因） */
-async function onRejectVital(row: VitalSignVO): Promise<void> {
-  if (confirmingId.value !== null) {
-    return;
-  }
-  try {
-    const { value } = await ElMessageBox.prompt(
-      `驳回 ${formatTime(row.measuredAt)} 体温 ${row.temperature ?? '—'} 的体征数据`,
-      '体征驳回确认',
-      {
-        confirmButtonText: '确认驳回',
-        cancelButtonText: '取消',
-        inputPlaceholder: '驳回原因（必填）',
-        inputValidator: (input: string) => (input.trim() === '' ? '驳回原因不能为空' : true),
-      },
-    );
-    confirmingId.value = String(row.id ?? '');
-    await vitalSigns.reject(String(row.id ?? ''), { reason: value.trim() });
-    void ElMessage.success('已驳回该体征');
-    pendingList.value = pendingList.value.filter((item) => String(item.id) !== String(row.id));
-  } catch (error) {
-    if (!axios.isAxiosError(error)) {
-      // 用户取消弹窗：静默返回（ElMessageBox 取消抛非 Axios 的 reject('cancel')）
-      return;
-    }
-    surfaceBizError(error);
-  } finally {
-    confirmingId.value = null;
-  }
-}
-
-/* ==================== ⑥ 体温单渲染区 + 特殊事件 ==================== */
-/** 当前月页键（yyyy-MM） */
-const chartMonth = ref(
-  `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`,
-);
-const chartData = ref<TemperatureChartVO | null>(null);
-const chartLoading = ref(false);
-/** 月页体征值行（体温/脉搏数值经 vitalRef 关联补齐的取值来源） */
-const monthVitals = ref<VitalSignVO[]>([]);
-
-/** 月页起止 ISO（vital-signs 查询窗口） */
-function monthWindow(month: string): { from: string; to: string } {
-  const [year, mon] = month.split('-').map((part) => Number(part));
-  const from = new Date(year, mon - 1, 1);
-  const to = new Date(year, mon, 1);
-  return { from: from.toISOString(), to: to.toISOString() };
-}
-
-/** 月键加减一月 */
-function shiftMonth(month: string, delta: number): string {
-  const [year, mon] = month.split('-').map((part) => Number(part));
-  const date = new Date(year, mon - 1 + delta, 1);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-/** 早于入院月的上月按钮禁用（§5.8 越界禁用） */
-const prevMonthDisabled = computed(() => {
-  const admittedAt = selectedDetail.value?.admittedAt;
-  if (!admittedAt) {
-    return false;
-  }
-  const admittedMonth = admittedAt.slice(0, 7);
-  return chartMonth.value <= admittedMonth;
-});
-
-async function loadChart(): Promise<void> {
-  const detail = selectedDetail.value;
-  if (detail === undefined || !detail.visitId || !detail.patientId) {
-    chartData.value = null;
-    monthVitals.value = [];
-    return;
-  }
-  chartLoading.value = true;
-  try {
-    const range = monthWindow(chartMonth.value);
-    const [chartPage, vitals] = await Promise.all([
-      chart.query(detail.visitId, chartMonth.value),
-      vitalSigns.list({ patientId: String(detail.patientId), from: range.from, to: range.to }),
-    ]);
-    chartData.value = chartPage;
-    monthVitals.value = vitals;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧月页
-  } finally {
-    chartLoading.value = false;
-  }
-}
-
-function onMonthChange(delta: number): void {
-  if (delta < 0 && prevMonthDisabled.value) {
-    return;
-  }
-  chartMonth.value = shiftMonth(chartMonth.value, delta);
-  void loadChart();
-}
-
-/** 体温单渲染模型（纯函数 computed 缓存，§7 单月页节点预算内） */
-const chartModel = computed(() =>
-  buildTempChart(chartData.value, monthVitals.value, chartMonth.value),
-);
-
-/** 日行值单元格取值（按天 × 行键） */
-function dailyCellValue(
-  day: number,
-  rowKey: string,
-): { text: string; ruleClass?: string } | undefined {
-  const cell = chartModel.value.dailyCells.find(
-    (item) => item.day === day && item.rowKey === rowKey,
-  );
-  return cell === undefined ? undefined : { text: cell.valueText, ruleClass: cell.ruleClass };
-}
-
-/* ---------- 特殊事件录入 ---------- */
-const specialEventType = ref('ADMISSION');
-const specialEventRemark = ref('');
-const specialEventRecording = ref(false);
-
-/** 特殊事件记录（§3.8：事件类型 + 备注；时点由后端服务器时间承载 GC25） */
-async function onAddSpecialEvent(): Promise<void> {
-  if (specialEventRecording.value) {
-    return;
-  }
-  const detail = selectedDetail.value;
-  if (detail === undefined || !detail.visitId) {
-    void ElMessage.warning('请先从床位卡墙选择患者');
-    return;
-  }
-  specialEventRecording.value = true;
-  try {
-    await chart.addSpecialEvent(detail.visitId, {
-      eventType: specialEventType.value,
-      remark: specialEventRemark.value.trim() === '' ? undefined : specialEventRemark.value.trim(),
-    });
-    void ElMessage.success('特殊事件已记录');
-    specialEventRemark.value = '';
-    await loadChart();
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    specialEventRecording.value = false;
-  }
-}
-
-/* ==================== ⑦ 护理评估 ==================== */
-const scaleList = ref<ScaleDefinitionVO[]>([]);
-const scaleType = ref('');
-/** 当前量表条目定义（条目码/名称/选项分值对齐展开） */
-const currentScale = computed<ScaleDefinitionVO | undefined>(() =>
-  scaleList.value.find((scale) => scale.scaleType === scaleType.value),
-);
-/** 打分表答案（条目码 → 分值） */
-const scaleAnswers = ref<Record<string, number>>({});
-const assessing = ref(false);
-const assessResult = ref<NursingAssessmentVO | null>(null);
-const assessHistory = ref<NursingAssessmentVO[]>([]);
-
-/** 量表中文词表（scaleType 五值展示映射） */
-const SCALE_TYPE_LABELS: Record<string, string> = {
-  BRADEN: 'Braden 压疮',
-  MORSE: 'Morse 跌倒',
-  NRS: 'NRS 疼痛',
-  BARTHEL: 'Barthel 自理',
-  MEWS: 'MEWS 早期预警',
-};
-
-async function loadScales(): Promise<void> {
-  try {
-    scaleList.value = await assessments.scales();
-    if (scaleList.value.length > 0 && scaleType.value === '') {
-      scaleType.value = scaleList.value[0]?.scaleType ?? '';
-    }
-  } catch {
-    // 失败弹错归响应拦截器；评估区块空量表态
-  }
-}
-
-function onScaleChange(): void {
-  scaleAnswers.value = {};
-  assessResult.value = null;
-}
-
-/** 评估提交：未选患者/未选量表/存在未答条目前置拦截零出网 → 出网 → 结果条 + 历史刷新。 */
-async function onAssess(): Promise<void> {
-  if (assessing.value) {
-    return;
-  }
-  const detail = selectedDetail.value;
-  if (detail === undefined || !detail.visitId) {
-    void ElMessage.warning('请先从床位卡墙选择患者');
-    return;
-  }
-  const scale = currentScale.value;
-  if (scale === undefined) {
-    void ElMessage.warning('请选择评估量表');
-    return;
-  }
-  const unanswered = (scale.itemCodes ?? []).filter(
-    (code) => scaleAnswers.value[code] === undefined,
-  );
-  if (unanswered.length > 0) {
-    void ElMessage.warning('存在未作答条目，请完成全部条目后提交');
-    return;
-  }
-  assessing.value = true;
-  try {
-    assessResult.value = await assessments.create({
-      visitId: detail.visitId,
-      scaleType: scale.scaleType ?? '',
-      answers: { ...scaleAnswers.value },
-      assessedAt: new Date().toISOString(),
-    });
-    void ElMessage.success('评估已提交');
-    await loadAssessmentHistory();
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    assessing.value = false;
-  }
-}
-
-async function loadAssessmentHistory(): Promise<void> {
-  const detail = selectedDetail.value;
-  if (detail === undefined || !detail.visitId) {
-    assessHistory.value = [];
-    return;
-  }
-  try {
-    assessHistory.value = await assessments.list({ visitId: detail.visitId });
-  } catch {
-    // 失败弹错归响应拦截器
-  }
-}
-
-/* ==================== ⑧ 护理任务 + 交接班双签 ==================== */
-/** 任务动作在途标志（完成/取消互斥，同任务同时至多一个可发） */
-const actingTaskNo = ref<string | null>(null);
-const taskList = ref<NursingTaskVO[]>([]);
-const taskLoading = ref(false);
-const taskStatusFilter = ref('');
-
-async function loadTasks(): Promise<void> {
-  taskLoading.value = true;
-  try {
-    taskList.value = await tasks.list({
-      wardId: wardId.value,
-      status: taskStatusFilter.value === '' ? undefined : taskStatusFilter.value,
-      date: todayString(),
-    });
-  } catch {
-    // 失败弹错归响应拦截器
-  } finally {
-    taskLoading.value = false;
-  }
-}
-
-/** 任务行类（§3.10 逾期契约：overdueFlag=true 挂 .fuy-task-overdue，spec 机器判据） */
-function taskRowClass({ row }: { row: NursingTaskVO }): string {
-  return row.overdueFlag === true ? 'fuy-task-overdue' : '';
-}
-
-function taskStatusMeta(status: string | undefined): {
-  type: 'primary' | 'warning' | 'success' | 'info';
-  text: string;
-  strike?: boolean;
-} {
-  return TASK_STATUS_META[status ?? ''] ?? { type: 'info', text: status ?? '—' };
-}
-
-/** 任务患者回显名（visitId → 详情映射姓名；缺详情回退床位号） */
-function taskPatientLabel(row: NursingTaskVO): string {
-  const detail = detailMap.value[row.visitId ?? ''];
-  return detail?.patientName ?? row.bedNo ?? '—';
-}
-
-/** 完成任务（中档确认带回显；逾期任务仍可完成——M05 Spec §5 状态机口径） */
-async function onCompleteTask(row: NursingTaskVO): Promise<void> {
-  if (actingTaskNo.value !== null) {
-    return;
-  }
-  const typeLabel = TASK_TYPE_LABELS[row.taskType ?? ''] ?? row.taskType ?? '';
-  try {
-    await ElMessageBox.confirm(
-      `完成任务 ${row.taskNo ?? ''}（${row.bedNo ?? ''} ${taskPatientLabel(row)} ${typeLabel}）？`,
-      '任务完成确认',
-      { confirmButtonText: '确认完成', cancelButtonText: '取消' },
-    );
-  } catch {
-    return;
-  }
-  actingTaskNo.value = row.taskNo ?? '';
-  try {
-    await tasks.complete(row.taskNo ?? '');
-    void ElMessage.success(`任务已完成：${row.taskNo ?? ''}`);
-    await loadTasks();
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    actingTaskNo.value = null;
-  }
-}
-
-/** 取消任务（中档确认 + 必填原因） */
-async function onCancelTask(row: NursingTaskVO): Promise<void> {
-  if (actingTaskNo.value !== null) {
-    return;
-  }
-  try {
-    const { value } = await ElMessageBox.prompt(
-      `取消任务 ${row.taskNo ?? ''}（${row.bedNo ?? ''} ${taskPatientLabel(row)}），取消原因必填`,
-      '任务取消确认',
-      {
-        confirmButtonText: '确认取消任务',
-        cancelButtonText: '返回',
-        inputPlaceholder: '取消原因（必填）',
-        inputValidator: (input: string) => (input.trim() === '' ? '取消原因不能为空' : true),
-      },
-    );
-    actingTaskNo.value = row.taskNo ?? '';
-    await tasks.cancel(row.taskNo ?? '', { reason: value.trim() });
-    void ElMessage.success(`任务已取消：${row.taskNo ?? ''}`);
-    await loadTasks();
-  } catch (error) {
-    if (!axios.isAxiosError(error)) {
-      return;
-    }
-    surfaceBizError(error);
-  } finally {
-    actingTaskNo.value = null;
-  }
-}
-
-/* ---------- 交接班双签 ---------- */
-const handover = ref<ShiftHandoverVO | null>(null);
-const handoverLoading = ref(false);
-const generating = ref(false);
-const completingHandover = ref(false);
-/** 接班护士工号（完成交接必填入参） */
-const incomingNurseId = ref('');
-
-async function loadHandoverOfDay(): Promise<void> {
-  handoverLoading.value = true;
-  try {
-    const rows = await handovers.list({ wardId: wardId.value, date: todayString() });
-    handover.value = rows.length > 0 ? (rows[rows.length - 1] ?? null) : null;
-  } catch {
-    // 失败弹错归响应拦截器
-  } finally {
-    handoverLoading.value = false;
-  }
-}
-
-/** 生成交接班（SBAR 自动汇总；本班次已存在时后端幂等返回当日材料） */
-async function onGenerateHandover(): Promise<void> {
-  if (generating.value) {
-    return;
-  }
-  generating.value = true;
-  try {
-    handover.value = await handovers.generate({ wardId: wardId.value, shiftCode: shiftCode.value });
-    void ElMessage.success('交接班材料已生成');
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    generating.value = false;
-  }
-}
-
-/** 完成交接双签（中档确认带回显「交班 X → 接班 Y」；DRAFT 可点 / COMPLETED 置灰 §3.10） */
-async function onCompleteHandover(): Promise<void> {
-  if (completingHandover.value || handover.value === null) {
-    return;
-  }
-  if (incomingNurseId.value.trim() === '') {
-    void ElMessage.warning('请填写接班护士工号');
-    return;
-  }
-  try {
-    await ElMessageBox.confirm(
-      `交班 ${operatorName.value} → 接班 ${incomingNurseId.value.trim()}，确认完成交接？`,
-      '完成交接确认',
-      { confirmButtonText: '确认完成交接', cancelButtonText: '取消' },
-    );
-  } catch {
-    return;
-  }
-  completingHandover.value = true;
-  try {
-    handover.value = await handovers.complete(handover.value.handoverNo ?? '', {
-      incomingNurseId: incomingNurseId.value.trim(),
-    });
-    void ElMessage.success('交接已完成');
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    completingHandover.value = false;
-  }
-}
-
-/** 出入量明细快录（⑥ 日行值的生产入口；quantity string 透传零运算） */
-const ioVisible = ref(false);
-const ioForm = ref({ ioType: 'INTAKE', itemCode: '', quantity: '', unit: 'ml' });
-const ioRecording = ref(false);
-
-async function onCreateIoRecord(): Promise<void> {
-  if (ioRecording.value) {
-    return;
-  }
-  const detail = selectedDetail.value;
-  if (detail === undefined || !detail.visitId) {
-    void ElMessage.warning('请先从床位卡墙选择患者');
-    return;
-  }
-  if (ioForm.value.itemCode.trim() === '') {
-    void ElMessage.warning('请填写项目编码');
-    return;
-  }
-  if (!/^\d+(\.\d)?$/.test(ioForm.value.quantity.trim())) {
-    void ElMessage.warning('数量应为数值（最多一位小数）');
-    return;
-  }
-  ioRecording.value = true;
-  try {
-    await ioRecords.create({
-      visitId: detail.visitId,
-      ioType: ioForm.value.ioType,
-      itemCode: ioForm.value.itemCode.trim(),
-      quantity: ioForm.value.quantity.trim(),
-      unit: ioForm.value.unit.trim() === '' ? undefined : ioForm.value.unit.trim(),
-      source: 'MANUAL',
-    });
-    void ElMessage.success('出入量明细已记录');
-    ioForm.value = { ioType: 'INTAKE', itemCode: '', quantity: '', unit: 'ml' };
-  } catch (error) {
-    surfaceBizError(error);
-  } finally {
-    ioRecording.value = false;
-  }
 }
 
 onMounted(() => {

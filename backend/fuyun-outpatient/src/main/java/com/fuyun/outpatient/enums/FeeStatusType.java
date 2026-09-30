@@ -53,6 +53,7 @@ public enum FeeStatusType {
                 return status;
             }
         }
+        // EX-19 C 类收口留痕：code 来源为 DB 列读取（脏数据属数据异常 500 语义，非用户输入路径），保留 IAE
         throw new IllegalArgumentException("未知的挂号费状态 code: " + code);
     }
 }

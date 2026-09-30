@@ -50,7 +50,7 @@ public interface DischargeRequestMapper extends BaseMapper<DischargeRequest> {
             @Param("operator") String operator);
 
     /**
-     * 离院完成 CAS（DischargeService.confirm 面）：READY→COMPLETED 终态；前置双条件
+     * 离院完成 CAS（IDischargeService.confirm 面）：READY→COMPLETED 终态；前置双条件
      * （READY+结算标记）已由服务层 GC19 三重校验裁决，本 CAS 兜底并发窗口。
      *
      * @param requestNo 出院申请单号，非空
@@ -62,7 +62,7 @@ public interface DischargeRequestMapper extends BaseMapper<DischargeRequest> {
     int casComplete(@Param("requestNo") String requestNo, @Param("operator") String operator);
 
     /**
-     * 取消出院 CAS（DischargeService.cancel 面）：REQUESTED→CANCELLED 终态；仅申请中可取消
+     * 取消出院 CAS（IDischargeService.cancel 面）：REQUESTED→CANCELLED 终态；仅申请中可取消
      * （READY/BLOCKED 态取消须先经业务裁决，Spec §5 状态机冻结边）。
      *
      * @param requestNo 出院申请单号，非空

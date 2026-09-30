@@ -68,6 +68,7 @@ public class PharmacyOrderCancelledListener {
         JsonNode payload = envelope.payload();
         JsonNode rxNosNode = payload.path("rxNos");
         if (!rxNosNode.isArray()) {
+            // EX-19 C 类留痕：内部 MQ 帧契约守卫（消费侧，非用户输入路径），保留 ISE 进死信留痕，不在 A/B 收口范围
             throw new IllegalStateException(
                     "门诊退费逆向事件载荷不合规（缺 rxNos 数组）：eventType=" + envelope.eventType() + "，payload=" + payload);
         }

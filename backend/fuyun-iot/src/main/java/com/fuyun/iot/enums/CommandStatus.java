@@ -2,6 +2,9 @@ package com.fuyun.iot.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.iot.api.IotErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 命令状态枚举（iot.iot_command_log.status 列值域，V1009 / 14-iot §词汇）：命令下发状态机
@@ -51,8 +54,8 @@ public enum CommandStatus {
      *
      * @param code 存储值，来源：DB 列读取或结果帧 status 字段；非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举常量（脏数据或非法入参），
-     *                                  建议调用方按数据异常/毒丸处置
+     * @throws BizException IOT-1026（400）：code 无对应枚举常量（脏数据或非法入参），
+     *                      建议调用方按数据异常/毒丸处置
      */
     public static CommandStatus fromCode(String code) {
         for (CommandStatus status : values()) {
@@ -60,6 +63,8 @@ public enum CommandStatus {
                 return status;
             }
         }
-        throw new IllegalArgumentException("未知的命令状态 code: " + code);
+        // 词表外 code 收口（BE-C3-05）：BizException 400 + IOT-1026 直达边界渲染 ProblemDetail，
+        // MQ 解析链调用方（TelemetryFrameParser/快照读取）就地捕获包装，毒丸/降级语义不变
+        throw new BizException(IotErrorCode.ENUM_CODE_INVALID, HttpStatus.BAD_REQUEST, "未知的命令状态 code: " + code);
     }
 }

@@ -1,5 +1,6 @@
 package com.fuyun.billing.controller;
 
+import com.fuyun.billing.convert.ChargeItemConverter;
 import com.fuyun.billing.dto.ChargeItemCreateRequest;
 import com.fuyun.billing.dto.ComboComponentRequest;
 import com.fuyun.billing.service.IChargeItemService;
@@ -54,8 +55,8 @@ public class ChargeItemController {
     @AuditLog(actionType = AuditActionType.WRITE)
     public ChargeItemVO create(@Valid @RequestBody ChargeItemCreateRequest req) {
         long id = chargeItemService.createChargeItem(req);
-        // 实体禁直出：落库后按 id 回读经静态工厂转 VO（出网边界唯一出口）
-        return ChargeItemVO.from(chargeItemService.getById(id));
+        // 实体禁直出：落库后按 id 回读经 MapStruct 转换器转 VO（出网边界唯一出口，BUG-23 迁入）
+        return ChargeItemConverter.INSTANCE.toVO(chargeItemService.getById(id));
     }
 
     /**
@@ -68,7 +69,7 @@ public class ChargeItemController {
     @Operation(summary = "按编码查生效项目", operationId = "getActiveChargeItem")
     @GetMapping("/charge-items/by-code/{itemCode}")
     public ChargeItemVO getByCode(@PathVariable String itemCode) {
-        return ChargeItemVO.from(chargeItemService.requireActiveByCode(itemCode));
+        return ChargeItemConverter.INSTANCE.toVO(chargeItemService.requireActiveByCode(itemCode));
     }
 
     /**

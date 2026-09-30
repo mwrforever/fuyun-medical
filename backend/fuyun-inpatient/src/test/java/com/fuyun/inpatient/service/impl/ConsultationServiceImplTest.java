@@ -30,6 +30,7 @@ import com.fuyun.inpatient.enums.ConsultationStatus;
 import com.fuyun.inpatient.enums.ConsultationUrgency;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.ConsultationMapper;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.vo.ConsultationVO;
@@ -114,7 +115,9 @@ class ConsultationServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new ConsultationServiceImpl(consultationMapper, visitMapper, seqGate, events);
+        // EX-44：就诊 load+check 下沉共享访问器——真实访问器包 mock mapper，桩面零变化
+        service = new ConsultationServiceImpl(
+                consultationMapper, visitMapper, new InpatientVisitAccessor(visitMapper), seqGate, events);
         OperatorContextHolder.set(String.valueOf(OPERATOR));
     }
 

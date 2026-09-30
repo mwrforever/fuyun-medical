@@ -9,12 +9,14 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fuyun.common.exception.BizException;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.iot.api.payload.CallTriggeredPayload;
+import com.fuyun.ward.api.WardErrorCode;
 import com.fuyun.ward.cache.WardSeqGate;
 import com.fuyun.ward.constants.WardMessagingConstants;
 import com.fuyun.ward.entity.WardCallEntity;
@@ -25,6 +27,7 @@ import com.fuyun.ward.mapper.WardCallMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import org.assertj.core.api.InstanceOfAssertFactories;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -152,6 +155,26 @@ class CallTriggeredEventListenerTest {
         assertThatThrownBy(() -> listener.onCallTriggered(broken)).isInstanceOf(IllegalStateException.class);
         verify(idempotencyService).settleFailure(any(), any());
         verify(idempotencyService, never()).recordProcessed(any());
+    }
+
+    @Test
+    @DisplayName("词表外呼叫类型：fromCode 收口 BizException（WD-1007）按消费失败处置（settleFailure 后重抛走死信）")
+    void rejectsUnknownCallTypeCodeAsConsumeFailure() {
+        when(idempotencyService.tryAcquire(EVENT_ID, WardMessagingConstants.MODULE))
+                .thenReturn(true);
+
+        // 载荷结构合规但 callType 词表外（EX-19 收口 A 类：fromCode 裸 IAE → BizException，消费失败语义不变）
+        Message frame = message(
+                new CallTriggeredPayload(TRIGGER_REF, "dev-bedside-9", "NOT_IN_VOCAB", 12L, 1001L, OCCURRED_AT));
+
+        assertThatThrownBy(() -> listener.onCallTriggered(frame))
+                .isInstanceOf(BizException.class)
+                .extracting("errorCode.code", InstanceOfAssertFactories.STRING)
+                .isEqualTo(WardErrorCode.ENUM_CODE_INVALID.getCode());
+        // 三段式③失败收尾语义锚：FAILED 留痕后重抛走死信，与原裸 IAE 通道一致（零链路行为变化）
+        verify(idempotencyService).settleFailure(any(), any());
+        verify(idempotencyService, never()).recordProcessed(any());
+        verify(callMapper, never()).insert(any(WardCallEntity.class));
     }
 
     /** 原始消息帧构造（UTF-8 信封线格式，codec 同源序列化） */

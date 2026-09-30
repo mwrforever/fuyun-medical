@@ -1,7 +1,9 @@
 package com.fuyun.nursing.service;
 
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.HandoverCompleteRequest;
 import com.fuyun.nursing.dto.HandoverGenerateRequest;
+import com.fuyun.nursing.entity.ShiftHandover;
 import com.fuyun.nursing.vo.ShiftHandoverVO;
 import java.time.LocalDate;
 import java.util.List;
@@ -12,8 +14,14 @@ import java.util.List;
  * 统计消费）；未完成不阻塞业务（DRAFT 草稿无任何副作用）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
+ *
+ * <p>配对纪律（宪法 A.4.3-20）：单主表 shift_handover（生成/完成的唯一写落点）与实现侧
+ * {@code ServiceImpl<ShiftHandoverMapper, ShiftHandover>} 配对，接口侧收拢
+ * {@code extends IService<ShiftHandover>}——主表通用 CRUD 直接复用 IService 契约面；
+ * 汇总生成（generate 六步链：在区视图/在途任务汇总 + SBAR 初稿）与双签 CAS 流转为带
+ * 守卫链的自有方法承载（禁经 IService 通用面绕行——通用面不盖章双签审计列、不发完成事件）。
  */
-public interface IShiftHandoverService {
+public interface IShiftHandoverService extends IService<ShiftHandover> {
 
     /**
      * 交接班单生成（Spec :138 流程 5）：病区配置校验（无配置行 NS-1016 未知病区——wardConfig

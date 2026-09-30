@@ -2,6 +2,9 @@ package com.fuyun.pharmacy.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.fuyun.common.exception.BizException;
+import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import org.springframework.http.HttpStatus;
 
 /**
  * 住院用药审方任务状态三值（V1000 review_task.status 列注释冻结）：PENDING（消费 drug 子键
@@ -43,7 +46,7 @@ public enum ReviewTaskStatus {
      *
      * @param code 存储值，非空
      * @return 对应枚举常量，非空
-     * @throws IllegalArgumentException code 无对应枚举（脏数据）
+     * @throws BizException PH-1022（400）code 无对应枚举（值域外 code 显式拒绝——EX-19 BE-C3-05 A 类收口）
      */
     public static ReviewTaskStatus fromCode(String code) {
         for (ReviewTaskStatus value : values()) {
@@ -51,6 +54,7 @@ public enum ReviewTaskStatus {
                 return value;
             }
         }
-        throw new IllegalArgumentException("未知的审方任务状态 code: " + code);
+        throw new BizException(
+                PharmacyErrorCode.ENUM_CODE_MALFORMED, HttpStatus.BAD_REQUEST, "未知的审方任务状态 code: " + code);
     }
 }

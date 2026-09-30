@@ -10,7 +10,7 @@ import static org.mockito.Mockito.verify;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
-import com.fuyun.inpatient.service.OrderAuditService;
+import com.fuyun.inpatient.service.IOrderAuditService;
 import java.time.Clock;
 import java.time.Instant;
 import org.junit.jupiter.api.DisplayName;
@@ -36,7 +36,7 @@ class PharmacyAuditReplyListenerTest {
     private IdempotentConsumerSupport consumerSupport;
 
     @Mock
-    private OrderAuditService orderAuditService;
+    private IOrderAuditService orderAuditService;
 
     /** 构造审方回执信封（producer=pharmacy，载荷 JSON 直构）。 */
     private EventEnvelope envelope(String eventType, String payloadJson) throws Exception {

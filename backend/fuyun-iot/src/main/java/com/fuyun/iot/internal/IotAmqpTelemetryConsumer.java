@@ -368,6 +368,10 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
         return 1;
     }
 
+    /**
+     * 覆写意图：显式声明消费链随容器自动启动（装配与否已由 enabled 条件 Bean 收口，此处恒
+     * true）——连接失败不阻塞启动，由消费线程后台重试承接（宪法 B.4-4）。
+     */
     @Override
     public boolean isAutoStartup() {
         return true;
@@ -454,6 +458,12 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
             this.queueAddress = queueAddress;
         }
 
+        /**
+         * 单队列消费主循环（本类即 supervisor 重建语义的载体）：running 且未被中断期间循环
+         * 「确保连接（ensureConnected，断链时新时间戳凭证重建）→ 切片 receive → 单帧分发」；
+         * 连接级异常交 handleConnectionFailure 退避重建，停机引发的异常/中断直接退出；退出前
+         * 幂等关闭本线程上下文（未确认交付随会话销毁回归 broker 重投域）。
+         */
         @Override
         public void run() {
             log.info("AMQP 消费线程启动：queue={}", queueAddress);
@@ -603,7 +613,8 @@ public class IotAmqpTelemetryConsumer implements SmartLifecycle, ExceptionListen
                 // 命令结果帧（Task 8 结果回推消费源）：交命令域监听器（终态迁移+事件发布），成功后即时确认
                 handleCommandResultFrame(commandFrame, message);
             } else {
-                // sealed 五形态穷尽兜底（新增形态未接线即显性暴露，不可达防御）
+                // 内部断言：sealed 五形态穷尽兜底，新增形态未接线即显性暴露（编译器穷尽性保障的
+                // 不可达防御，非用户输入路径），保留 ISE 语义
                 throw new IllegalStateException("未接线的帧解析形态：" + frame.getClass().getName());
             }
         } catch (InterruptedException e) {

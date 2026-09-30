@@ -111,6 +111,8 @@ public class MdmDispatchListener {
     private void doBusiness(EventEnvelope envelope) {
         String topic = MdmConstants.TOPIC_BY_EVENT_TYPE.get(envelope.eventType());
         if (topic == null) {
+            // EX-19 收口 C 类：内部消费契约断言（队列绑定与主题映射常量漂移防御，非用户可达），
+            // 保留 ISE——上抛经三段式③失败收尾（FAILED 留痕后重抛，走有界重试→死信链路，零行为变化）
             throw new IllegalStateException("事件类型未登记为主数据主题，禁止经本监听器消费：" + envelope.eventType());
         }
         JsonNode versionNode = envelope.payload().path("version");

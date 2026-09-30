@@ -22,6 +22,7 @@ import com.fuyun.inpatient.enums.OrderStatus;
 import com.fuyun.inpatient.enums.PlanStatus;
 import com.fuyun.inpatient.enums.VisitStatus;
 import com.fuyun.inpatient.internal.InpatientDomainEvent;
+import com.fuyun.inpatient.internal.InpatientVisitAccessor;
 import com.fuyun.inpatient.mapper.InpatientVisitMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderItemMapper;
 import com.fuyun.inpatient.mapper.MedicalOrderMapper;
@@ -30,8 +31,8 @@ import com.fuyun.inpatient.mapper.OrderExecutePlanMapper;
 import com.fuyun.inpatient.mapper.OrderFrequencyMapper;
 import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
-import com.fuyun.inpatient.service.OrderPlanService;
-import com.fuyun.inpatient.service.OrderStateMachineService;
+import com.fuyun.inpatient.service.IOrderPlanService;
+import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import java.time.LocalDate;
@@ -84,7 +85,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * decomposeNextDay 分批编程式事务；事件一律事务内 publishEvent → AFTER_COMMIT 出 MQ（GC8）。
  */
 @Slf4j
-public class OrderPlanServiceImpl implements OrderPlanService {
+public class OrderPlanServiceImpl implements IOrderPlanService {
 
     /** 日切分批事务的批量上界（brief 冻结：每 500 医嘱一事务，可断点续跑） */
     private static final int DECOMPOSE_BATCH_SIZE = 500;
@@ -135,9 +136,11 @@ public class OrderPlanServiceImpl implements OrderPlanService {
 
     private final InpatientVisitMapper visitMapper;
 
+    private final InpatientVisitAccessor visitAccessor;
+
     private final InpatientSeqGate seqGate;
 
-    private final OrderStateMachineService stateMachine;
+    private final IOrderStateMachineService stateMachine;
 
     private final ApplicationEventPublisher events;
 
@@ -153,7 +156,8 @@ public class OrderPlanServiceImpl implements OrderPlanService {
      * @param auditMapper         审核流水 mapper，非空；追溯审核环节聚合
      * @param statusLogMapper     状态迁移日志 mapper，非空；追溯状态环节聚合
      * @param transferLogMapper   转抄台账 mapper，非空；追溯转抄环节聚合
-     * @param visitMapper         住院就诊 mapper，非空；在院候选与病区定位
+     * @param visitMapper         住院就诊 mapper，非空；在院候选批量取数
+     * @param visitAccessor       住院就诊共享访问器（EX-44 下沉），非空；回签/追溯关联就诊定位
      * @param seqGate             住院业务号发号器（PL 计划号），非空
      * @param stateMachine        医嘱状态机服务（医嘱头迁移唯一执行面），非空
      * @param events              进程内事件发布器（AFTER_COMMIT 出 MQ），非空
@@ -168,8 +172,9 @@ public class OrderPlanServiceImpl implements OrderPlanService {
             OrderStatusLogMapper statusLogMapper,
             OrderTransferLogMapper transferLogMapper,
             InpatientVisitMapper visitMapper,
+            InpatientVisitAccessor visitAccessor,
             InpatientSeqGate seqGate,
-            OrderStateMachineService stateMachine,
+            IOrderStateMachineService stateMachine,
             ApplicationEventPublisher events,
             TransactionTemplate transactionTemplate) {
         this.orderMapper = orderMapper;
@@ -180,6 +185,7 @@ public class OrderPlanServiceImpl implements OrderPlanService {
         this.statusLogMapper = statusLogMapper;
         this.transferLogMapper = transferLogMapper;
         this.visitMapper = visitMapper;
+        this.visitAccessor = visitAccessor;
         this.seqGate = seqGate;
         this.stateMachine = stateMachine;
         this.events = events;
@@ -326,7 +332,10 @@ public class OrderPlanServiceImpl implements OrderPlanService {
                     "执行计划状态不允许回签（仅 PENDING 待执行态）：planNo=" + planNo + "，当前状态=" + current.getStatus());
         }
         MedicalOrder order = requireOrderById(plan.getOrderId());
-        InpatientVisit visit = requireVisitById(order.getVisitId());
+        // 关联就诊定位（未命中 IP-1007 数据不一致——load+check 经共享访问器，文案参数化保持
+        // 对外契约零变化——EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
         // 医嘱头三态推进（唯一经状态机——留痕随状态机自动落 order_status_log）；executedAt
         // 同源传入作为 end_at 守卫的「当日」基准（回签执行时点即判定基准）
         advanceOrderHead(order, executedAt, operator);
@@ -356,7 +365,9 @@ public class OrderPlanServiceImpl implements OrderPlanService {
     @Transactional(readOnly = true)
     public OrderTraceVO trace(String orderNo) {
         MedicalOrder order = requireOrder(orderNo);
-        InpatientVisit visit = requireVisitById(order.getVisitId());
+        // 关联就诊定位（未命中 IP-1007 数据不一致——共享访问器统一承载，EX-44）
+        InpatientVisit visit =
+                visitAccessor.requireByPk(order.getVisitId(), "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + order.getVisitId());
         List<OrderTraceVO.TraceEntry> entries = new ArrayList<>();
         // 环节一·开立：医嘱头承载（开立医生/开立时点；detail 携类型/分类/频次定位面）
         entries.add(new OrderTraceVO.TraceEntry(
@@ -416,15 +427,20 @@ public class OrderPlanServiceImpl implements OrderPlanService {
      * （brief 冻结候选面；COMPLETED/STOPPED/CANCELLED 终态不再分解）× end_at 未越界——
      * 次日已越过医嘱明示结束日（end_at）者不排程（审查修复环 R1，与回签终态守卫
      * {@link #longOrderExhausted} 语义一致：end_at 到期日之后生命周期已尽，无需再生成次日
-     * 计划）。
+     * 计划）。在院就诊查询 .select 仅取 id 列（唯一消费面=组装候选医嘱 IN 集——夜间批任务
+     * 千级宽行全列取回仅 map(getId)，A.4.3-14），谓词与候选口径不因投影而变（行集不变仅
+     * 列收敛，IN 集与全列取回完全等价）。
      *
      * @param planDate 目标计划日期（end_at 越界判定基准），非空
      * @return 候选医嘱行全集（未分批），非空（空集=无候选）
      */
     private List<MedicalOrder> decomposeCandidates(LocalDate planDate) {
-        // 数据库读操作：在院就诊全集（ADMITTED——出院申请中患者的在途医嘱由出院清理面收口）
-        List<InpatientVisit> visits = visitMapper.selectList(
-                Wrappers.<InpatientVisit>lambdaQuery().eq(InpatientVisit::getStatus, VisitStatus.ADMITTED.getCode()));
+        // 数据库读操作：在院就诊全集（ADMITTED——出院申请中患者的在途医嘱由出院清理面收口）——
+        //   仅消费 id 列（组装下方候选医嘱 IN 集），.select 精确投影免千级就诊宽行全列入内存
+        //   （A.4.3-14；行集不变仅列收敛，IN 集与全列取回完全等价）
+        List<InpatientVisit> visits = visitMapper.selectList(Wrappers.<InpatientVisit>lambdaQuery()
+                .select(InpatientVisit::getId)
+                .eq(InpatientVisit::getStatus, VisitStatus.ADMITTED.getCode()));
         if (visits.isEmpty()) {
             return List.of();
         }
@@ -783,18 +799,6 @@ public class OrderPlanServiceImpl implements OrderPlanService {
             throw new BizException(InpatientErrorCode.PLAN_NOT_FOUND, HttpStatus.NOT_FOUND, "执行计划不存在：" + planNo);
         }
         return plan;
-    }
-
-    /** 按就诊主键定位行（未命中定性 IP-1007 数据不一致；逻辑删由 @TableLogic 自动过滤）。 */
-    private InpatientVisit requireVisitById(Long visitPk) {
-        InpatientVisit visit = visitMapper.selectById(visitPk);
-        if (visit == null) {
-            throw new BizException(
-                    InpatientErrorCode.VISIT_NOT_FOUND,
-                    HttpStatus.NOT_FOUND,
-                    "医嘱关联住院就诊不存在（数据不一致）：visitId(pk)=" + visitPk);
-        }
-        return visit;
     }
 
     /**
