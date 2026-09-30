@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { createDispenseReturn, listDispenses } from '@/api/pharmacy';
 import type { DispenseVO } from '@/api/pharmacy';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { dispenseStatusText } from '@/utils/dispenseDisplay';
 
 /** 退药编辑行（与 DispenseItemVO 展示字段 + ReturnLine 录入字段合并，行编辑同构） */
@@ -37,12 +38,37 @@ const dispense = ref<DispenseVO | null>(null);
 const searched = ref(false);
 /** 退药行编辑模型（检索回显时重建，防上一单残留） */
 const rows = reactive<ReturnLineRow[]>([]);
-const loading = ref(false);
 /** 提交在途标志（防双击二次出网，根除重复退药受理） */
 const submitting = ref(false);
 
 /** 受理模式：ISSUED_RETURN 发药后实物退 / DISPENSING_CANCEL 发药中明细退场 */
 const mode = ref<'ISSUED_RETURN' | 'DISPENSING_CANCEL'>('ISSUED_RETURN');
+
+/** 检索发药单任务体：检索成功后的 searched 置位、发药单回显与行编辑重建均在此成功
+ * 路径承载。loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——
+ * 失败弹错归响应拦截器、驻留旧单且 searched 保持原态防误显「无单」空态）。 */
+const { loading, run: searchDispense } = useAsyncTask(async (rxNoParam: string) => {
+  const list = await listDispenses({ rxNo: rxNoParam });
+  // 检索已成功返回（失败驻留旧单时保持原 searched 态，防误显「无单」空态）
+  searched.value = true;
+  dispense.value = list.length > 0 ? list[0] : null;
+  rows.splice(
+    0,
+    rows.length,
+    ...(dispense.value?.items ?? []).map((i) => ({
+      itemId: i.id ?? '',
+      prescriptionItemId: String(i.prescriptionItemId),
+      itemCode: i.itemCode ?? '',
+      requestedQuantity: i.requestedQuantity ?? '',
+      batchNo: i.batchNo ?? '',
+      returnQuantity: '1',
+      traceCodes: '',
+    })),
+  );
+  if (!dispense.value) {
+    void ElMessage.warning('该处方无发药单');
+  }
+});
 
 /** 检索发药单：处方号空前置拦截不出网；检回后重建逐行录入（退药数默认 1）。 */
 async function handleSearch(): Promise<void> {
@@ -50,33 +76,7 @@ async function handleSearch(): Promise<void> {
     void ElMessage.warning('请输入处方号');
     return;
   }
-  loading.value = true;
-  try {
-    const list = await listDispenses({ rxNo: rxNo.value.trim() });
-    // 检索已成功返回（失败驻留旧单时保持原 searched 态，防误显「无单」空态）
-    searched.value = true;
-    dispense.value = list.length > 0 ? list[0] : null;
-    rows.splice(
-      0,
-      rows.length,
-      ...(dispense.value?.items ?? []).map((i) => ({
-        itemId: i.id ?? '',
-        prescriptionItemId: String(i.prescriptionItemId),
-        itemCode: i.itemCode ?? '',
-        requestedQuantity: i.requestedQuantity ?? '',
-        batchNo: i.batchNo ?? '',
-        returnQuantity: '1',
-        traceCodes: '',
-      })),
-    );
-    if (!dispense.value) {
-      void ElMessage.warning('该处方无发药单');
-    }
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧单
-  } finally {
-    loading.value = false;
-  }
+  await searchDispense(rxNo.value.trim());
 }
 
 /**

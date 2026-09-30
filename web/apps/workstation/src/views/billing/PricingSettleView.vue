@@ -17,6 +17,7 @@ import type {
   SettlementPreviewVO,
   SettlementVO,
 } from '@/api/billing';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { fenToYuanDisplay } from '@/utils/money';
 
 /** 患者号（建档 id，string 承载雪花 ID；划价/预结算/手工计费入参） */
@@ -42,7 +43,6 @@ const preview = ref<SettlementPreviewVO | null>(null);
  * 自动清除，驻留至下一次结算成功覆盖——新查询后旧横幅与摘要并存属既定口径，仅注记不改逻辑 */
 const settled = ref<SettlementVO | null>(null);
 
-const feesLoading = ref(false);
 const quoting = ref(false);
 const previewing = ref(false);
 const settling = ref(false);
@@ -62,25 +62,20 @@ function requireVisit(): boolean {
 
 /** 加载待收费用（后端 0 基缺省分页，本页取 PENDING 行展示）。承载 EX-45/FE-A1-05
  * 判空与竞态收口：回包 content 缺失兜底空清单（不驻留旧就诊费用误导收费员）；发起时
- * 锚定当前就诊号，回包时已改号（查询/手工计费/结算后刷新多入口并发）则整包丢弃。 */
-async function loadFees(): Promise<void> {
-  feesLoading.value = true;
-  try {
-    // 发起时锚定当前就诊号：回包前再改号（含手工计费等旁路刷新）即形成在途竞态
-    const visitAtRequest = visitId.value.trim();
-    const page = await listFees({ visitId: visitAtRequest });
-    // 过期回包丢弃：旧就诊慢回包晚到不得覆盖新就诊的待收表
-    if (visitId.value.trim() !== visitAtRequest) {
-      return;
-    }
-    // 判空兜底：契约外 content 缺失按空数据处理，防驻留上一就诊的旧费用
-    pendingFees.value = (page?.content ?? []).filter((row) => row.status === 'PENDING');
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧结果
-  } finally {
-    feesLoading.value = false;
+ * 锚定当前就诊号，回包时已改号（查询/手工计费/结算后刷新多入口并发）则整包丢弃。
+ * loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前一致——失败弹错归
+ * 响应拦截器、驻留旧结果）。 */
+const { loading: feesLoading, run: loadFees } = useAsyncTask(async () => {
+  // 发起时锚定当前就诊号：回包前再改号（含手工计费等旁路刷新）即形成在途竞态
+  const visitAtRequest = visitId.value.trim();
+  const page = await listFees({ visitId: visitAtRequest });
+  // 过期回包丢弃：旧就诊慢回包晚到不得覆盖新就诊的待收表
+  if (visitId.value.trim() !== visitAtRequest) {
+    return;
   }
-}
+  // 判空兜底：契约外 content 缺失按空数据处理，防驻留上一就诊的旧费用
+  pendingFees.value = (page?.content ?? []).filter((row) => row.status === 'PENDING');
+});
 
 /** 查询费用：就诊号空前置拦截不出网 */
 async function handleQueryFees(): Promise<void> {

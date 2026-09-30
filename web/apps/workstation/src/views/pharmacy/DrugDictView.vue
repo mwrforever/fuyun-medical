@@ -11,6 +11,7 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { createDrug, mapInsurance, searchDrugs, updateDrug } from '@/api/pharmacy';
 import type { DrugVO } from '@/api/pharmacy';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 
 /** 检索关键词（名称/拼音/医保码模糊） */
 const keyword = ref('');
@@ -21,24 +22,18 @@ const insuranceMapped = ref<boolean | undefined>(undefined);
 
 /** 药品行集（检索结果，仅启用面） */
 const rows = ref<DrugVO[]>([]);
-const loading = ref(false);
 
-/** 加载药品检索（默认启用面，建档/变更/对照成功后重刷）。 */
-async function loadDrugs(): Promise<void> {
-  loading.value = true;
-  try {
-    const page = await searchDrugs({
-      keyword: keyword.value.trim() === '' ? undefined : keyword.value.trim(),
-      essential: essential.value,
-      insuranceMapped: insuranceMapped.value,
-    });
-    rows.value = page.content;
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧结果
-  } finally {
-    loading.value = false;
-  }
-}
+/** 加载药品检索（默认启用面，建档/变更/对照成功后重刷；后端 0 基缺省分页兜底，本页
+ * 不传 page/size）：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前
+ * 一致——失败弹错归响应拦截器、驻留旧结果）。 */
+const { loading, run: loadDrugs } = useAsyncTask(async () => {
+  const page = await searchDrugs({
+    keyword: keyword.value.trim() === '' ? undefined : keyword.value.trim(),
+    essential: essential.value,
+    insuranceMapped: insuranceMapped.value,
+  });
+  rows.value = page.content;
+});
 
 /** 检索按钮：同 loadDrugs（空关键词=全启用面检索，后端分页兜底）。 */
 async function handleSearch(): Promise<void> {

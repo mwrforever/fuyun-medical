@@ -10,6 +10,7 @@ import { ElMessageBox } from 'element-plus';
 import 'element-plus/es/components/message-box/style/css';
 import { changeFreeze, getPatient } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import {
   patientArchiveSourceText,
   patientRegisterChannelText,
@@ -25,19 +26,23 @@ const patientId = computed(() => String(route.params.patientId ?? ''));
 
 /** 档案数据（null=未取到；挂载与状态动作成功后刷新复用） */
 const patient = ref<PatientVO | null>(null);
-const loading = ref(false);
 /** 冻结/解冻在途标志：true 期间动作按钮 loading 且重复点击直接返回（防双击二次出网） */
 const freezing = ref(false);
 
-/** 拉取详情：失败弹错归响应拦截器，详情区保持空态 */
-async function load(): Promise<void> {
-  loading.value = true;
-  try {
+/** 拉取详情：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移）。原样板无 catch，
+ * 异常上抛语义保持——经 onError 重抛，失败仍向调用方传播（弹错归响应拦截器，详情区
+ * 保持空态）。 */
+const { loading, run: load } = useAsyncTask(
+  async () => {
     patient.value = await getPatient(patientId.value);
-  } finally {
-    loading.value = false;
-  }
-}
+  },
+  {
+    onError: (error) => {
+      // 原样板无 catch，异常上抛语义保持（onMounted 路径失败即 unhandled rejection）
+      throw error;
+    },
+  },
+);
 
 onMounted(load);
 

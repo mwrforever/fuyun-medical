@@ -11,30 +11,26 @@ import { ElMessage } from 'element-plus';
 import 'element-plus/es/components/message/style/css';
 import { REVIEW_TASK_STATUS_OPTIONS, reviewTasks } from '@/api/pharmacy';
 import type { ReviewTaskVO } from '@/api/pharmacy';
+import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 
 /* ==================== 待审任务列表 ==================== */
-const rows = ref<ReviewTaskVO[]>([]);
-const listLoading = ref(false);
 /** 状态过滤（默认待审态；空串=全部状态） */
 const statusFilter = ref('PENDING');
 
-/** 加载审方任务列表（先到先审 FIFO 排序由后端承载，前端按返回序直出） */
-async function loadList(): Promise<void> {
-  listLoading.value = true;
-  try {
-    const page = await reviewTasks.list({
-      status: statusFilter.value === '' ? undefined : statusFilter.value,
-      page: 0,
-      size: 50,
-    });
-    rows.value = page.content ?? [];
-  } catch {
-    // 失败弹错归响应拦截器；驻留旧清单
-  } finally {
-    listLoading.value = false;
-  }
-}
+/** 待审任务列表三段式（EX-49 范式迁移，固定首页清单形态——page 恒 0、size 50 直出，
+ * 无翻页 UI）：行集/加载态经 usePagedList 收拢，状态过滤归本页持有经快照工厂实时
+ * 取值合并出网（先到先审 FIFO 排序由后端承载，前端按返回序直出；行为与迁移前一致
+ * ——失败弹错归响应拦截器、驻留旧清单）。 */
+const {
+  rows,
+  loading: listLoading,
+  fetch: loadList,
+} = usePagedList({
+  params: () => ({ status: statusFilter.value === '' ? undefined : statusFilter.value }),
+  fetcher: (query) => reviewTasks.list(query),
+  pageSize: 50,
+});
 
 /** 状态切换：重拉清单 */
 function onFilterChange(): void {
