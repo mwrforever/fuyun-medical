@@ -249,8 +249,10 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
             from = period.from();
             to = period.to();
         } else {
-            // 24H 全天窗：当日零点单次取钟（防两次取钟跨零点漂移），止于次日零点
-            LocalDate today = LocalDate.now();
+            // 24H 全天窗：当日零点单次取钟（防两次取钟跨零点漂移），止于次日零点；
+            // 日期来源同取北京钟面（N8 后补：LocalDate.now() 无时区参数在非北京时区 JVM 上取错医疗日，
+            // 北京 00:00~08:00 时段 CI UTC 日期仍为前一日，SHIFT/24H 双分支窗口整体错位一天——BUG-03 残余）
+            LocalDate today = LocalDate.now(NursingTimeConstants.HEALTHCARE_TZ);
             from = dayStart(today);
             to = dayStart(today.plusDays(1));
         }
@@ -386,7 +388,9 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
                     HttpStatus.BAD_REQUEST,
                     "病区班次定义中不存在该班次：shiftCode=" + shiftCode);
         }
-        LocalDate today = LocalDate.now();
+        // 医疗日（「当日」）取北京钟面日期：与下方 HEALTHCARE_TZ 拼窗同口径——systemDefault 日期在
+        // 非北京时区 JVM（CI UTC）深夜（北京 00:00~08:00）晚于北京日，窗口整体错位一天（BUG-03 残余）
+        LocalDate today = LocalDate.now(NursingTimeConstants.HEALTHCARE_TZ);
         try {
             LocalTime start = LocalTime.parse(definition.start());
             LocalDate fromDate = today;

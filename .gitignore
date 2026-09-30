@@ -25,3 +25,6 @@ web/api-docs.json
 .superpowers/
 # 浏览器调试过程面不入库（playwright-cli 会话与截图目录）
 .playwright-cli/
+# 全仓风险扫描报告与分片（2026-09-28 graph 任务 N0 约定：本地留存禁 add -f）
+docs/bugs/
+docs/pref/
