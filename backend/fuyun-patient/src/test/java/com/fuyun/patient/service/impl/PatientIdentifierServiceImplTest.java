@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,12 +32,14 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 患者标识注册表实现单测：挂接加密落库（密文+盲索引+初值 ACTIVE）与唯一索引兜底语义、
  * ACTIVE 等值解析（挂失/解绑/替换即解析失效）、按档案展开清单与 identifier.changed
- * 事件载荷只携 valueHash 不携明文（解析缓存失效依据）。
+ * 事件载荷只携 valueHash 不携明文（解析缓存失效依据）；四支 CAS 条件更新影响行数
+ * 透传（EX-25 就诊卡状态机：service 不加壳，1/0 由调用方重读定性）。
  */
 @ExtendWith(MockitoExtension.class)
 class PatientIdentifierServiceImplTest {
@@ -127,7 +130,7 @@ class PatientIdentifierServiceImplTest {
     }
 
     @Test
-    @DisplayName("ACTIVE 标识解析命中返回行（等值盲索引语义由 mock hash 承载）")
+    @DisplayName("ACTIVE 标识解析命中返回行：等值条件为类型+盲索引摘要（明文不作查询条件，敏感红线）")
     void activeIdentifierResolves() {
         queryResult = List.of(row("ACTIVE"));
         when(identifierMapper.selectList(any())).thenReturn(queryResult);
@@ -136,27 +139,57 @@ class PatientIdentifierServiceImplTest {
 
         assertThat(hit.getStatus()).isEqualTo("ACTIVE");
         assertThat(hit.getPatientId()).isEqualTo(5L);
+        // 盲索引等值查锁定：等值列为 identifier_type/value_hash，入参只有类型值与 HMAC 摘要（明文不出现）
+        ArgumentCaptor<Wrapper<PatientIdentifier>> captor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(identifierMapper).selectList(captor.capture());
+        LambdaQueryWrapper<PatientIdentifier> wrapper = (LambdaQueryWrapper<PatientIdentifier>) captor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("identifier_type").contains("value_hash");
+        assertThat(wrapper.getParamNameValuePairs().values())
+                .contains("ID_CARD")
+                .contains("h_" + Integer.toHexString("110101199003077890".hashCode()));
     }
 
     @Test
-    @DisplayName("挂失（LOST）标识解析即失效：PAT-1001（挂失后解析立即失效语义）")
+    @DisplayName("挂失（LOST）标识解析即失效：PAT-1001 404「标识未登记或已失效」（挂失后解析立即失效语义）")
     void lostIdentifierFailsResolution() {
         queryResult = List.of(row("LOST"));
         when(identifierMapper.selectList(any())).thenReturn(queryResult);
 
         assertThatThrownBy(() -> identifierService.resolveActive("ID_CARD", "x"))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PatientErrorCode.PATIENT_NOT_FOUND));
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.PATIENT_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getMessage()).isEqualTo("标识未登记或已失效");
+                });
     }
 
     @Test
-    @DisplayName("未登记标识（空命中）按未解析拒绝：PAT-1001")
+    @DisplayName("未登记标识（空命中）按未解析拒绝：PAT-1001 404「标识未登记或已失效」")
     void unknownIdentifierFailsResolution() {
         when(identifierMapper.selectList(any())).thenReturn(List.of());
 
         assertThatThrownBy(() -> identifierService.resolveActive("ID_CARD", "x"))
-                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
-                        .isEqualTo(PatientErrorCode.PATIENT_NOT_FOUND));
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(PatientErrorCode.PATIENT_NOT_FOUND);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(e.getMessage()).isEqualTo("标识未登记或已失效");
+                });
+    }
+
+    @Test
+    @DisplayName("盲索引多行脏数据命中取首行：解析不因重复行中断（list 取首行防御语义，不抛 TooManyResults）")
+    void duplicateHashRowsResolveFirstRow() {
+        PatientIdentifier first = row("ACTIVE");
+        PatientIdentifier duplicate = row("ACTIVE");
+        duplicate.setId(99L);
+        duplicate.setPatientId(66L);
+        queryResult = List.of(first, duplicate);
+        when(identifierMapper.selectList(any())).thenReturn(queryResult);
+
+        PatientIdentifier hit = identifierService.resolveActive("ID_CARD", "110101199003077890");
+
+        assertThat(hit.getId()).isEqualTo(1L);
+        assertThat(hit.getPatientId()).isEqualTo(5L);
     }
 
     @Test
@@ -208,5 +241,45 @@ class PatientIdentifierServiceImplTest {
         assertThat(String.valueOf(captor.getValue().payload()))
                 .doesNotContain(plaintext)
                 .contains(expectedHash);
+    }
+
+    @Test
+    @DisplayName("无主卡绑定 CAS 透传影响行数：1=抢得绑定权 / 0=并发输家由调用方重读定性（EX-25）")
+    void casBindUnownedPassesThroughRowEffect() {
+        when(identifierMapper.casBindUnowned(9L, 5L)).thenReturn(1, 0);
+
+        assertThat(identifierService.casBindUnowned(9L, 5L)).isEqualTo(1);
+        assertThat(identifierService.casBindUnowned(9L, 5L)).isEqualTo(0);
+        verify(identifierMapper, times(2)).casBindUnowned(9L, 5L);
+    }
+
+    @Test
+    @DisplayName("挂失 CAS 透传影响行数：1=ACTIVE→LOST 抢锚成功 / 0=并发已处理由调用方重读定性（EX-25）")
+    void casMarkLostPassesThroughRowEffect() {
+        when(identifierMapper.casMarkLost(9L)).thenReturn(1, 0);
+
+        assertThat(identifierService.casMarkLost(9L)).isEqualTo(1);
+        assertThat(identifierService.casMarkLost(9L)).isEqualTo(0);
+        verify(identifierMapper, times(2)).casMarkLost(9L);
+    }
+
+    @Test
+    @DisplayName("补卡旧卡退役 CAS 透传影响行数：1=LOST→REPLACED 抢锚成功 / 0=并发已处理由调用方重读定性（EX-25）")
+    void casRetireReplacedPassesThroughRowEffect() {
+        when(identifierMapper.casRetireReplaced(9L)).thenReturn(1, 0);
+
+        assertThat(identifierService.casRetireReplaced(9L)).isEqualTo(1);
+        assertThat(identifierService.casRetireReplaced(9L)).isEqualTo(0);
+        verify(identifierMapper, times(2)).casRetireReplaced(9L);
+    }
+
+    @Test
+    @DisplayName("解绑 CAS 透传影响行数：1=ACTIVE→DISABLED 抢锚成功 / 0=并发已处理由调用方重读定性（EX-25）")
+    void casDisablePassesThroughRowEffect() {
+        when(identifierMapper.casDisable(9L)).thenReturn(1, 0);
+
+        assertThat(identifierService.casDisable(9L)).isEqualTo(1);
+        assertThat(identifierService.casDisable(9L)).isEqualTo(0);
+        verify(identifierMapper, times(2)).casDisable(9L);
     }
 }
