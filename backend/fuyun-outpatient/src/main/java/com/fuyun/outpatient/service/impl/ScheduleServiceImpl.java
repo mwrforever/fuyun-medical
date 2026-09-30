@@ -28,6 +28,7 @@ import com.fuyun.outpatient.service.IScheduleService;
 import com.fuyun.outpatient.vo.NumberPoolVO;
 import com.fuyun.outpatient.vo.ScheduleTemplateVO;
 import com.fuyun.outpatient.vo.ScheduleVO;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -38,6 +39,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.ibatis.exceptions.PersistenceException;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
@@ -65,6 +67,12 @@ public class ScheduleServiceImpl implements IScheduleService {
 
     /** 单次加号数量上限（超出判 OP-1019；契约 @Max(50) 与服务端双层校验） */
     private static final int EXTRA_QUOTA_MAX = 50;
+
+    /**
+     * 排班唯一约束名（uk_schedule：template_id+sched_date+session 部分唯一索引，DDL 见
+     * V200__create_schedule_and_pool.sql）——批写原生异常解包判定的约束名依据（SQLState 缺失时兜底）
+     */
+    private static final String UNIQUE_KEY_SCHEDULE = "uk_schedule";
 
     /** 池键 TTL 锚点时刻：排班日次日 02:00（Redis↔池行每日对账窗口缓冲，A.5-1） */
     private static final LocalTime POOL_KEY_TTL_ANCHOR = LocalTime.of(2, 0);
@@ -289,11 +297,18 @@ public class ScheduleServiceImpl implements IScheduleService {
                 // PG 事务 aborted 语义：批写任一语句 uk 冲突后本事务后续语句全部拒续，不得续跑——抛
                 // 业务异常整批回滚（@Transactional 生效），调用方重试即走预过滤幂等路径（Spring 环境下
                 // 批写冲突经 MyBatisExceptionTranslator 以 DuplicateKeyException 冒出，原逐条语义保持）
-                log.warn("放号并发冲突整批回滚：window={}~{}", start, end);
-                throw new BizException(
-                        OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
-                        HttpStatus.CONFLICT,
-                        "放号并发冲突，整批已回滚请重试：window=" + start + "~" + end);
+                throw scheduleConflictRolledBack(start, end);
+            } catch (PersistenceException e) {
+                // MyBatis 原生批处理异常（EX-37 并发回归修复，N5 验收场景 3a）：Db.saveBatch 经
+                // MybatisBatch.flushStatements 抛出的 PersistenceException 不经 Spring 异常翻译链
+                // （翻译仅覆盖 SqlSessionTemplate 常规执行路径），沿 cause 链解包找 SQLException
+                // （BatchUpdateException 等）按 SQLState 23xxx/约束名 uk_schedule 判定唯一冲突——
+                // 命中转 409 与翻译型分支同语义；非唯一冲突原样上抛（不吞连接类等其他异常，交全局
+                // 处理器按系统异常定性）
+                if (isUniqueConstraintViolation(e)) {
+                    throw scheduleConflictRolledBack(start, end);
+                }
+                throw e;
             }
         }
         log.info("放号生成完成：endDate={}，days={}，模板数={}，生成排班={}", end, request.days(), templates.size(), generated);
@@ -491,6 +506,51 @@ public class ScheduleServiceImpl implements IScheduleService {
         } catch (DataAccessException e) {
             log.error("加号后池键刷新失败（日对账兜底）：poolId={}，加号数量={}，原因={}", poolId, count, e.getMessage(), e);
         }
+    }
+
+    /**
+     * 放号并发冲突业务异常构造（翻译型 DuplicateKeyException 分支与原生批处理
+     * PersistenceException 分支共用出参，单一来源保证同错误码同状态码同文案）：PG 事务 aborted
+     * 语义下整批已回滚，调用方重试即走预过滤幂等路径。
+     *
+     * @param start 放号窗口起始日（endDate-days+1 推算），非空
+     * @param end   放号窗口截止日（请求 endDate 原值），非空
+     * @return OP-1004/409 业务异常（窗口期文案），由调用方直接抛出
+     */
+    private BizException scheduleConflictRolledBack(LocalDate start, LocalDate end) {
+        // 竞态输家的预期路径（非系统故障）：warn 留痕窗口区间，供对账放号重放排查
+        log.warn("放号并发冲突整批回滚：window={}~{}", start, end);
+        return new BizException(
+                OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
+                HttpStatus.CONFLICT,
+                "放号并发冲突，整批已回滚请重试：window=" + start + "~" + end);
+    }
+
+    /**
+     * 沿 cause 链解包判定唯一约束冲突：Db.saveBatch 批处理 uk 冲突以 MyBatis 原生
+     * PersistenceException 冒出（cause 链含 BatchUpdateException，实测链形态见 N5 验收场景
+     * 3a），二选一命中即判唯一冲突——SQLState 23xxx（完整性约束违例类，PG 唯一冲突 23505
+     * 属之）或异常消息携带排班唯一约束名 uk_schedule（SQLState 缺失时兜底）。
+     *
+     * @param e 批写冒出的 MyBatis 原生持久化异常，非空
+     * @return true=唯一约束冲突（转放号并发冲突 409）；false=其他异常形态（调用方原样上抛）
+     */
+    private boolean isUniqueConstraintViolation(PersistenceException e) {
+        // 逐层解包（getCause 自引用场景 JDK 保证返回 null，循环天然终止）：约束冲突语义只承载在
+        // SQLException 节点（BatchUpdateException/SQLIntegrityConstraintViolationException 均其子类）
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            if (current instanceof SQLException sqlException) {
+                String sqlState = sqlException.getSQLState();
+                if (sqlState != null && sqlState.startsWith("23")) {
+                    return true;
+                }
+                if (sqlException.getMessage() != null
+                        && sqlException.getMessage().contains(UNIQUE_KEY_SCHEDULE)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

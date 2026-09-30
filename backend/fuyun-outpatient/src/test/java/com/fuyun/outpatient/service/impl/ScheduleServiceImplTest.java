@@ -43,6 +43,7 @@ import com.fuyun.outpatient.mapper.ScheduleTemplateMapper;
 import com.fuyun.outpatient.vo.NumberPoolVO;
 import com.fuyun.outpatient.vo.ScheduleTemplateVO;
 import com.fuyun.outpatient.vo.ScheduleVO;
+import java.sql.BatchUpdateException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,6 +51,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.exceptions.PersistenceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -309,6 +311,56 @@ class ScheduleServiceImplTest {
                         assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
                         assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
                     });
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
+    }
+
+    @Test
+    @DisplayName(
+            "generate：批写抛 MyBatis 原生 PersistenceException（uk_schedule 唯一冲突，不经翻译链）——解包判定转 OP-1004/409 窗口期文案（EX-37 并发回归锚定）")
+    void generateAbortsBatchOnNativeBatchUniqueConflict() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // N5 验收场景 3a 真实异常形态（3/3 复现 500 的根因）：Db.saveBatch 批处理 uk 冲突经
+        // flushStatements 抛 MyBatis 原生 PersistenceException（cause 链 BatchUpdateException，
+        // SQLState 23505+约束名 uk_schedule），不经 Spring 翻译链——catch(DuplicateKeyException)
+        // 不命中即冒全局 500；本用例在旧实现下红（PersistenceException 原样冒出而非 BizException）
+        BatchUpdateException ukConflict = new BatchUpdateException(
+                "duplicate key value violates unique constraint \"uk_schedule\"", "23505", new int[0]);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList()))
+                    .thenThrow(new PersistenceException(
+                            "Error flushing statements. Cause: BatchExecutorException: ScheduleMapper.insert (batch index #1) failed.",
+                            ukConflict));
+
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOfSatisfying(BizException.class, e -> {
+                        assertThat(e.getErrorCode()).isEqualTo(OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED);
+                        assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                        // 窗口期文案与逐条写时代码路径 DuplicateKeyException 分支逐字对齐（endDate=09-27、
+                        // days=7 → 窗口 09-21~09-27）
+                        assertThat(e.getMessage()).isEqualTo("放号并发冲突，整批已回滚请重试：window=2026-09-21~2026-09-27");
+                    });
+            verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
+        }
+    }
+
+    @Test
+    @DisplayName("generate：批写抛非唯一冲突 PersistenceException（连接类 SQLState 08006）——原样上抛不吞（不转 409）")
+    void generateRethrowsNonUniquePersistenceException() {
+        when(scheduleTemplateMapper.selectList(any())).thenReturn(List.of(template("1000000")));
+        when(scheduleMapper.selectList(any())).thenReturn(List.of());
+        // 非唯一冲突形态（连接失败 SQLState 08006）：解包判定不命中不得吞异常转 409——原样上抛交全局
+        // 处理器按系统异常定性，避免把基础设施故障误报为放号并发冲突
+        BatchUpdateException connectionFailure =
+                new BatchUpdateException("connection reset by peer", "08006", new int[0]);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            mockedDb.when(() -> Db.saveBatch(anyList()))
+                    .thenThrow(new PersistenceException("Error flushing statements.", connectionFailure));
+
+            assertThatThrownBy(() -> service.generate(new ScheduleGenerateRequest(LocalDate.of(2026, 9, 27), 7)))
+                    .isInstanceOf(PersistenceException.class)
+                    .hasMessageContaining("Error flushing statements");
             verify(poolRedisGate, never()).prime(anyLong(), anyLong(), any(Duration.class));
         }
     }
