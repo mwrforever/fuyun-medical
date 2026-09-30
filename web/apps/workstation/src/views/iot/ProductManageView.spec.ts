@@ -1,7 +1,8 @@
 // 产品与物模型管理页单测（/iot/products，M14 FU-M14-02 前端面）：产品列表加载与物模型
 // 同步状态三态徽标渲染（fuy-sync-tag--{status} 状态类契约机器判据）、上架表单必填缺项
 // 零出网显式校验、上架提交出网携表单字段并刷新列表、同步物模型行操作出网、术语映射
-// 编辑弹窗（指标字典加载/缺项零出网/提交 PUT 携映射行）、命令安全等级登记 PUT 出网。
+// 编辑弹窗（指标字典加载/缺项零出网/提交 PUT 携映射行）、命令安全等级登记 PUT 出网、
+// EX-45/FE-A1-07/08 映射与命令行 v-for 稳定 key（删中间行后剩余行 DOM 节点保位不串值）。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），不打真实网络；
 // 断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -287,7 +288,11 @@ describe('产品与物模型管理页', () => {
           metricCode: 'MDC_ECG_HEART_RATE',
           mismatchStrategy: 'RAW_PASSTHROUGH',
         },
-        { propertyName: 'spo2', metricCode: 'MDC_PULSE_OXIM_SPO2', mismatchStrategy: 'RAW_PASSTHROUGH' },
+        {
+          propertyName: 'spo2',
+          metricCode: 'MDC_PULSE_OXIM_SPO2',
+          mismatchStrategy: 'RAW_PASSTHROUGH',
+        },
       ],
     });
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
@@ -355,7 +360,9 @@ describe('产品与物模型管理页', () => {
     // 打开弹窗即拉取既有命令标注全集（BUG-18 修复面）
     expect(products.listCommands).toHaveBeenCalledWith('prod-1');
     // 既有两条命令回填两行（命令名/安全等级/放行状态回显）
-    const nameInputs = wrapper.findAll('input[aria-label="命令名称"], input[aria-label="命令名称 2"]');
+    const nameInputs = wrapper.findAll(
+      'input[aria-label="命令名称"], input[aria-label="命令名称 2"]',
+    );
     expect(nameInputs).toHaveLength(2);
     expect((nameInputs[0].element as HTMLInputElement).value).toBe('setWorkMode');
     expect((nameInputs[1].element as HTMLInputElement).value).toBe('defibrillate');
@@ -384,5 +391,104 @@ describe('产品与物模型管理页', () => {
       ],
     });
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+  });
+
+  it('术语映射行删除中间行后剩余行输入节点保位不串值（稳定 key，EX-45/FE-A1-07）', async () => {
+    vi.mocked(products.list).mockResolvedValue({
+      content: threeStateProducts(),
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    vi.mocked(products.listMappings).mockResolvedValue([
+      {
+        id: '1',
+        productId: 'prod-1',
+        propertyName: 'heartRate',
+        metricCode: 'MDC_ECG_HEART_RATE',
+        mismatchStrategy: 'RAW_PASSTHROUGH',
+      },
+      {
+        id: '2',
+        productId: 'prod-1',
+        propertyName: 'spo2',
+        metricCode: 'MDC_PULSE_OXIM_SPO2',
+        mismatchStrategy: 'RAW_PASSTHROUGH',
+      },
+    ]);
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    await findRow(wrapper, '监护仪')
+      ?.findAll('button')
+      .find((b) => b.text() === '术语映射')
+      ?.trigger('click');
+    await flushPromises();
+    const propInputs = wrapper.findAll(
+      'input[aria-label="物模型属性名"], input[aria-label="物模型属性名 2"]',
+    );
+    expect(propInputs).toHaveLength(2);
+    // 记录第二行（spo2）输入节点身份：删除首行后该节点必须原位保留——index 键会改写首行
+    // 节点承载第二行数据（节点身份漂移，焦点/输入态错位到错误行）
+    const secondInputEl = propInputs[1].element;
+    const firstRowRemove = wrapper
+      .findAll('.product-mapping-row')[0]
+      .findAll('button')
+      .find((b) => b.text() === '删除');
+    await firstRowRemove?.trigger('click');
+    await flushPromises();
+    const remaining = wrapper.findAll('input[aria-label="物模型属性名"]');
+    expect(remaining).toHaveLength(1);
+    expect((remaining[0].element as HTMLInputElement).value).toBe('spo2');
+    expect(remaining[0].element).toBe(secondInputEl);
+  });
+
+  it('命令登记行删除中间行后剩余行输入节点保位不串值（稳定 key，EX-45/FE-A1-08）', async () => {
+    vi.mocked(products.list).mockResolvedValue({
+      content: threeStateProducts(),
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    vi.mocked(products.listCommands).mockResolvedValue([
+      {
+        id: '1',
+        productId: 'prod-1',
+        commandName: 'setWorkMode',
+        serviceId: 'vital',
+        safetyLevel: 'SAFETY',
+        allowed: true,
+      },
+      {
+        id: '2',
+        productId: 'prod-1',
+        commandName: 'defibrillate',
+        serviceId: 'treatment',
+        safetyLevel: 'TREATMENT',
+        allowed: false,
+      },
+    ]);
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    await findRow(wrapper, '监护仪')
+      ?.findAll('button')
+      .find((b) => b.text() === '命令登记')
+      ?.trigger('click');
+    await flushPromises();
+    const nameInputs = wrapper.findAll(
+      'input[aria-label="命令名称"], input[aria-label="命令名称 2"]',
+    );
+    expect(nameInputs).toHaveLength(2);
+    // 记录第二行（defibrillate）输入节点身份：删除首行后该节点必须原位保留（错位即窜行）
+    const secondInputEl = nameInputs[1].element;
+    const firstRowRemove = wrapper
+      .findAll('.product-mapping-row')[0]
+      .findAll('button')
+      .find((b) => b.text() === '删除');
+    await firstRowRemove?.trigger('click');
+    await flushPromises();
+    const remaining = wrapper.findAll('input[aria-label="命令名称"]');
+    expect(remaining).toHaveLength(1);
+    expect((remaining[0].element as HTMLInputElement).value).toBe('defibrillate');
+    expect(remaining[0].element).toBe(secondInputEl);
   });
 });

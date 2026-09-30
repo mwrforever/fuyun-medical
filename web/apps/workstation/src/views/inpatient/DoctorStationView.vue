@@ -75,7 +75,9 @@ const allergyFlagMap = ref<Map<string, boolean>>(new Map());
 /** 当前选中在院患者 */
 const selectedVisit = ref<WardPatientVO | null>(null);
 
-/** 加载在院患者列表与病区欠费清单（病区切换/操作后刷新共用） */
+/** 加载在院患者列表与病区欠费清单（病区切换/操作后刷新共用）。回包判空兜底
+ * （EX-45/FE-A1-09）：契约外整包缺失（rows/arrears 为 null）时兜底空数组，
+ * 防渲染层 patients.length 空指针白屏与旧清单驻留误导。 */
 async function loadPatients(): Promise<void> {
   patientsLoading.value = true;
   try {
@@ -83,9 +85,10 @@ async function loadPatients(): Promise<void> {
       wardPatients.list(wardId.value),
       visits.arrears(wardId.value),
     ]);
-    patients.value = rows;
+    // 判空兜底：rows 缺失兜空清单（渲染层不再接触 undefined），arrears 缺失兜空集
+    patients.value = rows ?? [];
     arrearsVisitIds.value = new Set(
-      arrears.map((row) => row.visitId ?? '').filter((id) => id !== ''),
+      (arrears ?? []).map((row) => row.visitId ?? '').filter((id) => id !== ''),
     );
   } catch {
     // 失败弹错归响应拦截器；驻留旧清单
@@ -124,18 +127,26 @@ const ordersLoading = ref(false);
 /** 当前点选医嘱（追溯锚点） */
 const selectedOrder = ref<MedicalOrderVO | null>(null);
 
-/** 拉取在院医嘱分页（开立时间倒序，开立/选中患者后重刷共用） */
+/** 拉取在院医嘱分页（开立时间倒序，开立/选中患者后重刷共用）。承载 EX-45/FE-A1-03
+ * 竞态守卫：发起时锚定当前选中患者，回包时已切换患者则整包丢弃——旧患者慢回包
+ * 晚到不得覆盖新患者的医嘱列表（守卫形态同 nursing useWardContext 系先例）。 */
 async function loadOrders(): Promise<void> {
-  if (selectedVisit.value?.visitId === undefined) {
+  const visitId = selectedVisit.value?.visitId;
+  if (visitId === undefined) {
     return;
   }
   ordersLoading.value = true;
   try {
+    // 发起时锚定当前选中患者：回包前再切换患者即形成在途竞态（EX-45/FE-A1-03）
     const page = await orders.list({
-      visitId: selectedVisit.value.visitId,
+      visitId,
       page: 0,
       size: 50,
     });
+    // 过期回包丢弃：旧患者慢回包晚到不得覆盖新患者的医嘱列表
+    if (selectedVisit.value?.visitId !== visitId) {
+      return;
+    }
     orderRows.value = page.content ?? [];
   } catch {
     // 失败弹错归响应拦截器；驻留旧清单

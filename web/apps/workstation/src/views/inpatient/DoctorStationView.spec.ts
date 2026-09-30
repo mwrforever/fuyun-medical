@@ -1,6 +1,8 @@
 // 住院医生站单测（/inpatient/station，M04 FU-M04-03/04 前端面）：在院患者列表加载渲染
 // （护理级别/欠费标识，病区维度）、开立用药医嘱出网携「待药师审」提示、开立检验医嘱（非用药）
-// 出网、闭环追溯时间线渲染、长期医嘱缺频次显式校验拦截（IP-1011 类零出网）。
+// 出网、闭环追溯时间线渲染、长期医嘱缺频次显式校验拦截（IP-1011 类零出网）、
+// EX-45/FE-A1-03 换患者竞态守卫（旧患者医嘱慢回包整包丢弃）、EX-45/FE-A1-09 病区一览
+// 回包缺省判空兜底（rows/arrears 缺失不白屏）。
 // api mock 承载零出网（vi.mock('@/api/inpatient')/@/api/nursing 整模块替身），不打真实网络；
 // 断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -426,5 +428,58 @@ describe('住院医生站', () => {
     await flushPromises();
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('第 1 行项目编码/名称必填');
     expect(orders.create).not.toHaveBeenCalled();
+  });
+
+  it('换患者竞态守卫：旧患者医嘱慢回包整包丢弃不覆盖新患者列表（EX-45/FE-A1-03）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([
+      wardPatientMock({ visitId: 'I2026092500001', bedNo: '01' }),
+      wardPatientMock({ visitId: 'I2026092500002', bedNo: '02' }),
+    ]);
+    // 旧患者（01 床）医嘱回包挂起至用例放行——复现「旧请求在途时切换患者」竞态窗口
+    let releaseOldOrders: (page: unknown) => void = () => {};
+    vi.mocked(orders.list).mockImplementationOnce(
+      () => new Promise((resolve) => (releaseOldOrders = resolve)) as never,
+    );
+    // 新患者（02 床）医嘱回包先行落位
+    vi.mocked(orders.list).mockResolvedValueOnce({
+      content: [orderMock({ orderNo: 'MO-NEW-02', visitId: 'I2026092500002' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    const wrapper = mount(DoctorStationView);
+    await flushPromises();
+    // 选中 01 床患者（医嘱请求在途挂起）→ 切换 02 床患者（新请求先行返回）
+    await wrapper.findAll('.station-patient-row')[0].trigger('click');
+    await flushPromises();
+    await wrapper.findAll('.station-patient-row')[1].trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('MO-NEW-02');
+    // 旧患者慢回包晚到：过期回包丢弃，不得覆盖 02 床患者的医嘱列表
+    releaseOldOrders({
+      content: [orderMock({ orderNo: 'MO-OLD-01', visitId: 'I2026092500001' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('MO-OLD-01');
+    expect(wrapper.text()).toContain('MO-NEW-02');
+  });
+
+  it('病区一览回包缺省判空兜底：rows/arrears 整包缺失兜底空清单不驻留旧数据（EX-45/FE-A1-09）', async () => {
+    // 首载正常返回 1 名在院患者（欠费清单走 beforeEach 兜底空）
+    vi.mocked(wardPatients.list).mockResolvedValueOnce([wardPatientMock()]);
+    const wrapper = mount(DoctorStationView);
+    await flushPromises();
+    expect(wrapper.text()).toContain('I2026092500001');
+    // 刷新遭遇契约外空回包（一览 rows 与欠费 arrears 整包缺失）：兜底空数组渲染空态，
+    // 不白屏也不驻留旧清单（旧患者行不得残留误导医护）
+    vi.mocked(wardPatients.list).mockResolvedValue(undefined as never);
+    vi.mocked(visits.arrears).mockResolvedValue(undefined as never);
+    await clickButton(wrapper, '刷新');
+    await flushPromises();
+    expect(wrapper.text()).toContain('当前病区暂无在院患者');
+    expect(wrapper.text()).not.toContain('I2026092500001');
   });
 });

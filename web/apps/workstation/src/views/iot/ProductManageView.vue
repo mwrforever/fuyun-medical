@@ -158,18 +158,49 @@ const mappingVisible = ref(false);
 const mappingSaving = ref(false);
 /** 弹窗上下文锚点（目标产品） */
 const mappingTarget = ref<ProductVO | null>(null);
-/** 映射行集合（propertyName→metricCode；mismatchStrategy 空串=默认策略不传） */
-const mappingRows = ref<
-  Array<{ propertyName: string; metricCode: string; mismatchStrategy: string }>
->([]);
+
+/**
+ * 弹窗编辑行本地序号（稳定键兜底段）：新增空行无后端 id，以「前缀+序号」组合键兜底，
+ * 行创建时一次性分配、生命周期内不变。
+ */
+let draftRowSeq = 0;
+
+/** 生成编辑行本地组合键（无业务 id 行的稳定键兜底） */
+function nextDraftRowKey(): string {
+  draftRowSeq += 1;
+  return `draft-${draftRowSeq}`;
+}
+
+/** 行稳定键：既有行取后端 id 业务键（`id-` 前缀隔离命名空间），缺 id 回落本地组合键 */
+function draftRowKey(id: string | undefined): string {
+  return id !== undefined && id !== '' ? `id-${id}` : nextDraftRowKey();
+}
+
+/**
+ * 术语映射编辑行（propertyName→metricCode；mismatchStrategy 空串=默认策略不传）。
+ * rowKey=行稳定键：v-for 禁 index 键（EX-45/FE-A1-07）——删中间行后剩余行节点原位
+ * 保留，焦点/输入态不窜行；rowKey 仅前端行身份，保存时逐字段映射不入出网面。
+ */
+interface MappingRowDraft {
+  rowKey: string;
+  propertyName: string;
+  metricCode: string;
+  mismatchStrategy: string;
+}
+const mappingRows = ref<MappingRowDraft[]>([]);
 /** 指标字典（弹窗打开预载，MDC 编码选项源） */
 const metricOptions = ref<MetricDictVO[]>([]);
+
+/** 新增一条空映射行（本地组合键） */
+function blankMappingRow(): MappingRowDraft {
+  return { rowKey: nextDraftRowKey(), propertyName: '', metricCode: '', mismatchStrategy: '' };
+}
 
 /** 打开术语映射弹窗：拉取既有映射回显（PUT 整组替换语义下缺回显会使保存静默清空既有 N 条）
  * 并预载指标字典；两路加载互不拖垮。 */
 async function openMapping(row: ProductVO): Promise<void> {
   mappingTarget.value = row;
-  mappingRows.value = [{ propertyName: '', metricCode: '', mismatchStrategy: '' }];
+  mappingRows.value = [blankMappingRow()];
   mappingVisible.value = true;
   try {
     // 既有映射全集回显（BUG-17 修复面）；空配置回落单空行快速录入
@@ -177,11 +208,12 @@ async function openMapping(row: ProductVO): Promise<void> {
     mappingRows.value =
       existing.length > 0
         ? existing.map((vo) => ({
+            rowKey: draftRowKey(vo.id),
             propertyName: vo.propertyName ?? '',
             metricCode: vo.metricCode ?? '',
             mismatchStrategy: vo.mismatchStrategy ?? '',
           }))
-        : [{ propertyName: '', metricCode: '', mismatchStrategy: '' }];
+        : [blankMappingRow()];
   } catch {
     // 回显失败弹错归拦截器；驻留空行（整组替换下保存有清空风险，重开弹窗重试回显）
   }
@@ -195,7 +227,7 @@ async function openMapping(row: ProductVO): Promise<void> {
 
 /** 新增一条映射行 */
 function addMappingRow(): void {
-  mappingRows.value.push({ propertyName: '', metricCode: '', mismatchStrategy: '' });
+  mappingRows.value.push(blankMappingRow());
 }
 
 /** 删除指定映射行 */
@@ -241,14 +273,31 @@ const commandVisible = ref(false);
 const commandSaving = ref(false);
 /** 弹窗上下文锚点（目标产品） */
 const commandTarget = ref<ProductVO | null>(null);
-/** 命令行集合（safetyLevel 安全级/治疗级；allowed 白名单放行——治疗级默认禁用） */
-const commandRows = ref<CommandItem[]>([]);
+
+/**
+ * 命令登记编辑行（CommandItem 扩稳定键；safetyLevel 安全级/治疗级；allowed 白名单
+ * 放行——治疗级默认禁用）。rowKey=行稳定键（v-for 禁 index 键，EX-45/FE-A1-08），
+ * 保存时逐字段映射剔除，不入出网面。
+ */
+interface CommandRowDraft {
+  rowKey: string;
+  commandName: string;
+  serviceId?: string;
+  safetyLevel: 'SAFETY' | 'TREATMENT';
+  allowed?: boolean;
+}
+const commandRows = ref<CommandRowDraft[]>([]);
+
+/** 新增一条空命令行（本地组合键） */
+function blankCommandRow(): CommandRowDraft {
+  return { rowKey: nextDraftRowKey(), commandName: '', safetyLevel: 'SAFETY', allowed: false };
+}
 
 /** 打开命令登记弹窗：拉取既有命令标注回显（PUT 整组替换语义下缺回显会使保存静默清空
  * FU-M14-09 白名单数据源）；空配置回落单空行快速录入。 */
 async function openCommand(row: ProductVO): Promise<void> {
   commandTarget.value = row;
-  commandRows.value = [{ commandName: '', safetyLevel: 'SAFETY', allowed: false }];
+  commandRows.value = [blankCommandRow()];
   commandVisible.value = true;
   try {
     // 既有命令标注全集回显（BUG-18 修复面；serviceId 随行透传防保存静默清空）
@@ -256,12 +305,13 @@ async function openCommand(row: ProductVO): Promise<void> {
     commandRows.value =
       existing.length > 0
         ? existing.map((vo) => ({
+            rowKey: draftRowKey(vo.id),
             commandName: vo.commandName ?? '',
             serviceId: vo.serviceId,
             safetyLevel: vo.safetyLevel ?? 'SAFETY',
             allowed: vo.allowed ?? false,
           }))
-        : [{ commandName: '', safetyLevel: 'SAFETY', allowed: false }];
+        : [blankCommandRow()];
   } catch {
     // 回显失败弹错归拦截器；驻留空行（整组替换下保存有清空风险，重开弹窗重试回显）
   }
@@ -269,7 +319,7 @@ async function openCommand(row: ProductVO): Promise<void> {
 
 /** 新增一条命令行 */
 function addCommandRow(): void {
-  commandRows.value.push({ commandName: '', safetyLevel: 'SAFETY', allowed: false });
+  commandRows.value.push(blankCommandRow());
 }
 
 /** 删除指定命令行 */
@@ -467,7 +517,7 @@ onMounted(() => {
         <span class="fuy-num">{{ mappingTarget?.productId ?? '' }}</span>
         —— 物模型属性映射 MDC 指标编码（跨品牌归一）
       </p>
-      <div v-for="(item, index) in mappingRows" :key="index" class="product-mapping-row">
+      <div v-for="(item, index) in mappingRows" :key="item.rowKey" class="product-mapping-row">
         <input
           v-model="item.propertyName"
           class="product-input product-mapping-prop"
@@ -511,7 +561,7 @@ onMounted(() => {
         <span class="fuy-num">{{ commandTarget?.productId ?? '' }}</span>
         —— 安全级默认放行，治疗级默认禁用（豁免需系统参数开启并审计）
       </p>
-      <div v-for="(item, index) in commandRows" :key="index" class="product-mapping-row">
+      <div v-for="(item, index) in commandRows" :key="item.rowKey" class="product-mapping-row">
         <input
           v-model="item.commandName"
           class="product-input product-mapping-prop"

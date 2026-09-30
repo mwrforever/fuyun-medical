@@ -60,12 +60,21 @@ function requireVisit(): boolean {
   return true;
 }
 
-/** 加载待收费用（后端 0 基缺省分页，本页取 PENDING 行展示） */
+/** 加载待收费用（后端 0 基缺省分页，本页取 PENDING 行展示）。承载 EX-45/FE-A1-05
+ * 判空与竞态收口：回包 content 缺失兜底空清单（不驻留旧就诊费用误导收费员）；发起时
+ * 锚定当前就诊号，回包时已改号（查询/手工计费/结算后刷新多入口并发）则整包丢弃。 */
 async function loadFees(): Promise<void> {
   feesLoading.value = true;
   try {
-    const page = await listFees({ visitId: visitId.value.trim() });
-    pendingFees.value = page.content.filter((row) => row.status === 'PENDING');
+    // 发起时锚定当前就诊号：回包前再改号（含手工计费等旁路刷新）即形成在途竞态
+    const visitAtRequest = visitId.value.trim();
+    const page = await listFees({ visitId: visitAtRequest });
+    // 过期回包丢弃：旧就诊慢回包晚到不得覆盖新就诊的待收表
+    if (visitId.value.trim() !== visitAtRequest) {
+      return;
+    }
+    // 判空兜底：契约外 content 缺失按空数据处理，防驻留上一就诊的旧费用
+    pendingFees.value = (page?.content ?? []).filter((row) => row.status === 'PENDING');
   } catch {
     // 失败弹错归响应拦截器；驻留旧结果
   } finally {
