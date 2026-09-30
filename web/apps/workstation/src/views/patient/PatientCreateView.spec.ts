@@ -1,23 +1,38 @@
 // 建档页单测（FU-M02-01 前端面）：知情同意缺失被校验拦截不出网、预检 SUSPECT 页内提示转人工核对、
-// 建档成功跳详情路由；api 层与 useRouter mock 承载（不打真实网络、不做懒加载真导航），
+// 建档成功跳详情路由、EX-46/FE-A2-07 录入中离开路由守卫（脏表单确认拦截/未录入零确认/
+// 建档成功跳转放行）；api 层与 useRouter mock 承载（不打真实网络、不做懒加载真导航），
 // 弹错口径归 http.spec 覆盖不重复断言。
+// 桩面：vue-router 替身补 onBeforeRouteLeave（守卫回调经替身捕获后直调单测）；离开守卫
+// 确认走 ElMessageBox.confirm 替身（默认确认放行，用例按需 mockRejectedValueOnce 覆写）。
 import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElFormItem, ElSelect } from 'element-plus';
+import { ElFormItem, ElMessageBox, ElSelect } from 'element-plus';
+import { onBeforeRouteLeave } from 'vue-router';
 import { createPatient, matchCheck } from '@/api/patient';
 import PatientCreateView from './PatientCreateView.vue';
 
-// useRouter 替身：建档成功后的跳转以 push spy 断言
+// useRouter/onBeforeRouteLeave 替身：建档成功后的跳转以 push spy 断言；离开守卫回调经
+// onBeforeRouteLeave spy 捕获后由用例直调（组件脱离真实路由上下文单测守卫行为）
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
+  onBeforeRouteLeave: vi.fn(),
 }));
 
 vi.mock('@/api/patient', () => ({
   matchCheck: vi.fn(),
   createPatient: vi.fn(),
 }));
+
+// 仅替身 ElMessageBox.confirm（离开守卫确认断言用），其余导出原样保留供组件解析
+vi.mock('element-plus', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('element-plus')>();
+  return {
+    ...mod,
+    ElMessageBox: { ...mod.ElMessageBox, confirm: vi.fn().mockResolvedValue('confirm') },
+  };
+});
 
 /** 按按钮文案点击 el-button（避免 DOM 结构序号耦合） */
 async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
@@ -48,6 +63,8 @@ describe('患者建档页', () => {
     vi.mocked(matchCheck).mockReset();
     vi.mocked(createPatient).mockReset();
     pushMock.mockReset();
+    vi.mocked(onBeforeRouteLeave).mockReset();
+    vi.mocked(ElMessageBox.confirm).mockClear();
   });
 
   it('知情同意凭证未填点击建档被校验拦截，不调用建档接口', async () => {
@@ -102,6 +119,56 @@ describe('患者建档页', () => {
     await vi.waitFor(() => {
       expect(pushMock).toHaveBeenCalledWith('/patients/1932000000000000001');
     });
+    wrapper.unmount();
+  });
+
+  it('录入中离开路由守卫：脏表单确认拦截，拒绝则留在本页（EX-46/FE-A2-07）', async () => {
+    const wrapper = mount(PatientCreateView);
+    await fillRequired(wrapper, false);
+    // 守卫回调经 vue-router 替身捕获（组件脱离真实路由上下文，直调单测守卫行为）
+    const guard = vi.mocked(onBeforeRouteLeave).mock.calls[0]?.[0] as
+      (() => Promise<boolean>) | undefined;
+    expect(guard).toBeTypeOf('function');
+    // 拒绝离开：确认框带丢失警示文案，导航被拦（返回 false=留页）
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel');
+    await expect(guard?.()).resolves.toBe(false);
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('离开'),
+      '未保存提醒',
+      expect.anything(),
+    );
+    // 确认离开：放行导航（返回 true）
+    await expect(guard?.()).resolves.toBe(true);
+    wrapper.unmount();
+  });
+
+  it('未录入时离开路由零确认直接放行（EX-46/FE-A2-07）', async () => {
+    const wrapper = mount(PatientCreateView);
+    const guard = vi.mocked(onBeforeRouteLeave).mock.calls[0]?.[0] as
+      (() => Promise<boolean>) | undefined;
+    expect(guard).toBeTypeOf('function');
+    // 表单未偏离建档缺省态：零打扰直接放行
+    await expect(guard?.()).resolves.toBe(true);
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('建档成功后的离开跳转不触发未保存确认（EX-46/FE-A2-07）', async () => {
+    vi.mocked(createPatient).mockResolvedValue({
+      outcome: 'NO_MATCH',
+      candidatePatientId: '1932000000000000001',
+    });
+    const wrapper = mount(PatientCreateView);
+    await fillRequired(wrapper, true);
+    await clickButton(wrapper, '建档');
+    await vi.waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith('/patients/1932000000000000001');
+    });
+    // 成功跳转为既定流程：守卫放行且零确认（草稿已随建档落库）
+    const guard = vi.mocked(onBeforeRouteLeave).mock.calls[0]?.[0] as
+      (() => Promise<boolean>) | undefined;
+    await expect(guard?.()).resolves.toBe(true);
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled();
     wrapper.unmount();
   });
 });

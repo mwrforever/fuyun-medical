@@ -103,6 +103,10 @@ function ruleDigest(row: AlarmRuleVO): string {
 const savingRule = ref(false);
 /** 编辑中的规则 id（空串=新建态） */
 const editingRuleId = ref('');
+/** 编辑基线版本（EX-46/FE-A2-08 版本比对锚点）：openEdit 时锚定远端 updatedAt，
+ * 保存前重拉比对——偏离基线即他人已改，冲突确认防无感覆盖（契约无 If-Match/版本号
+ * 入参，前端以确认提示为最小防覆盖实现） */
+let editingBaselineUpdatedAt: string | null = null;
 const ruleForm = ref({
   ruleName: '',
   ruleType: 'THRESHOLD',
@@ -141,6 +145,8 @@ function emptyRuleForm() {
 /** 编辑回填（数值字段以字符串承载回表单，提交时统一校验转换） */
 function openEdit(row: AlarmRuleVO): void {
   editingRuleId.value = row.id ?? '';
+  // 版本比对锚点（EX-46/FE-A2-08）：以打开时刻的远端 updatedAt 为基线
+  editingBaselineUpdatedAt = row.updatedAt ?? null;
   ruleForm.value = {
     ruleName: row.ruleName ?? '',
     ruleType: row.ruleType ?? 'THRESHOLD',
@@ -240,6 +246,23 @@ async function onSaveRule(): Promise<void> {
       await alarmRules.create(payload);
       void ElMessage.success('告警规则已创建');
     } else {
+      // 版本比对回写守卫（EX-46/FE-A2-08）：保存前重拉远端清单比对目标规则 updatedAt——
+      // 偏离打开时基线=他人已改（读改写窗口冲突），确认提示防无感覆盖；取消即零出网。
+      // 重拉失败放行走原保存链（失败弹错归拦截器，保存成败由后端终判）。
+      const latest = await alarmRules.list().catch(() => [] as AlarmRuleVO[]);
+      const remote = (latest ?? []).find((item) => item.id === editingRuleId.value);
+      if (remote !== undefined && (remote.updatedAt ?? null) !== editingBaselineUpdatedAt) {
+        try {
+          await ElMessageBox.confirm(
+            `规则「${ruleForm.value.ruleName.trim()}」已被他人修改（远端更新于 ${remote.updatedAt ?? '未知时间'}），继续保存将覆盖他人变更`,
+            '版本冲突提醒',
+            { type: 'warning', confirmButtonText: '仍要保存', cancelButtonText: '取消' },
+          );
+        } catch {
+          // 取消覆盖：零出网，表单驻留可复核后再决定
+          return;
+        }
+      }
       await alarmRules.update(editingRuleId.value, payload);
       void ElMessage.success('告警规则已更新');
     }

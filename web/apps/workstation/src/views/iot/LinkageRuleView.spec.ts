@@ -2,12 +2,15 @@
 // 加载与触发源/动作类型词表徽标（fuy-rule-tag--{source} 机器判据）、新建触发条件 JSON 非法
 // 零出网、新建合法出网携词表值并刷新、编辑预填回显并出网 update、删除出网并刷新（含删除在途
 // 守卫双击仅一次出网）、执行日志渲染结果三态徽标（fuy-linkage-tag--{result}）与 FAILED 行
-// 重试出网并刷新（含重试在途守卫双击仅一次出网——防重复投递联动动作）。
+// 重试出网并刷新（含重试在途守卫双击仅一次出网——防重复投递联动动作）、EX-46/FE-A2-05
+// 删除前确认框（取消零出网/确认出网）、EX-46/FE-A2-06 弹窗未保存草稿守卫（脏表单关闭需
+// 确认丢弃，无改动零确认）。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），断言业务结果不绑定实现细节。
+// 桩面：删除/守卫确认走 ElMessageBox.confirm 替身（默认确认放行，既有删除链业务断言零改动）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { linkageLogs, linkageRules } from '@/api/iot';
 import type { LinkageLogVO, LinkageRuleVO } from '@/api/iot';
 import LinkageRuleView from './LinkageRuleView.vue';
@@ -35,12 +38,13 @@ vi.mock('@/api/ward', () => ({
   WARD_OPTIONS: [{ code: '1001', label: '1001 演示病区' }],
 }));
 
-// 仅替身 ElMessage（提示断言用），其余导出原样保留供组件解析
+// 仅替身 ElMessage/ElMessageBox（提示与删除/未保存守卫确认断言用），其余导出原样保留
 vi.mock('element-plus', async (importOriginal) => {
   const mod = await importOriginal<typeof import('element-plus')>();
   return {
     ...mod,
     ElMessage: { warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+    ElMessageBox: { ...mod.ElMessageBox, confirm: vi.fn().mockResolvedValue('confirm') },
   };
 });
 
@@ -136,6 +140,8 @@ describe('联动规则页', () => {
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.error).mockClear();
     vi.mocked(ElMessage.success).mockClear();
+    // 确认框替身调用记录清零（实现默认确认放行，单用例按需 mockRejectedValueOnce 覆写）
+    vi.mocked(ElMessageBox.confirm).mockClear();
     // 只读面兜底空：防未 stub 的 resolve 断链
     vi.mocked(linkageRules.list).mockResolvedValue([]);
     vi.mocked(linkageLogs.page).mockResolvedValue(emptyLogPage());
@@ -304,5 +310,65 @@ describe('联动规则页', () => {
     await flushPromises();
     expect(linkageLogs.retry).toHaveBeenCalledTimes(1);
     expect(linkageLogs.retry).toHaveBeenCalledWith('LK20260926001');
+  });
+
+  it('规则删除前确认：取消零出网，确认后出网并刷新（EX-46/FE-A2-05）', async () => {
+    vi.mocked(linkageRules.list).mockResolvedValue([ruleMock()]);
+    vi.mocked(linkageRules.remove).mockResolvedValue(undefined);
+    const wrapper = mount(LinkageRuleView);
+    await flushPromises();
+    // 取消：确认框带规则名回显摘要，零出网
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel');
+    await clickRowButton(wrapper, '危急告警转呼叫', '删除');
+    await flushPromises();
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('危急告警转呼叫'),
+      '规则删除确认',
+      expect.anything(),
+    );
+    expect(linkageRules.remove).not.toHaveBeenCalled();
+    // 确认：出网删除并刷新列表（取消后守卫复位可再次发起）
+    await clickRowButton(wrapper, '危急告警转呼叫', '删除');
+    await flushPromises();
+    expect(linkageRules.remove).toHaveBeenCalledWith('701');
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    expect(linkageRules.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('规则弹窗未保存草稿守卫：脏表单取消/X 关闭需确认丢弃，拒绝则弹窗驻留（EX-46/FE-A2-06）', async () => {
+    const wrapper = mount(LinkageRuleView);
+    await flushPromises();
+    await clickButton(wrapper, '新建规则');
+    await wrapper.find('input[aria-label="规则名称"]').setValue('新规则');
+    // 取消按钮关闭：脏表单先确认丢弃；拒绝 → 弹窗驻留草稿
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel');
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('未保存'),
+      '未保存提醒',
+      expect.anything(),
+    );
+    expect(wrapper.find('input[aria-label="规则名称"]').isVisible()).toBe(true);
+    // 右上角 X 关闭走同款守卫：拒绝丢弃 → 弹窗驻留
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel');
+    await wrapper.find('.el-dialog__headerbtn').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('input[aria-label="规则名称"]').isVisible()).toBe(true);
+    // 再次取消并确认丢弃 → 弹窗关闭
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    expect(wrapper.find('input[aria-label="规则名称"]').isVisible()).toBe(false);
+  });
+
+  it('规则弹窗无改动时取消关闭零确认（EX-46/FE-A2-06）', async () => {
+    const wrapper = mount(LinkageRuleView);
+    await flushPromises();
+    await clickButton(wrapper, '新建规则');
+    // 未做任何录入：直接关闭零打扰（不弹未保存确认）
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled();
+    expect(wrapper.find('input[aria-label="规则名称"]').isVisible()).toBe(false);
   });
 });

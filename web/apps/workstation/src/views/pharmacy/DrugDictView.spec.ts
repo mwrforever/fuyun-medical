@@ -1,11 +1,13 @@
 // 药品字典页单测（FU-M06-01/02 前端面）：未对照药品渲染「不可医保结算」标记（对照态可视面）、
 // 对照表单三字段提交以行 id 调 mapInsurance（雪花 ID string 原样入网，禁 number 处理）；
-// 对照提交在途防抖（W-22⑥）：慢响应窗口内按钮禁用且二次点击零出网，结束后复位可再点。
+// 对照提交在途防抖（W-22⑥）：慢响应窗口内按钮禁用且二次点击零出网，结束后复位可再点；
+// EX-46/FE-A2-09 变更提交整单覆盖二次确认（取消零出网/确认出网，建档路径不确认）。
 // api mock 承载，不打真实网络。
+// 桩面：覆盖确认走 ElMessageBox.confirm 替身（默认确认放行，用例按需 mockRejectedValueOnce 覆写）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { createDrug, mapInsurance, searchDrugs, updateDrug } from '@/api/pharmacy';
 import type { DrugVO } from '@/api/pharmacy';
 import DrugDictView from './DrugDictView.vue';
@@ -17,12 +19,13 @@ vi.mock('@/api/pharmacy', () => ({
   mapInsurance: vi.fn(),
 }));
 
-// 仅替身 ElMessage（前置校验提示断言用），其余导出原样保留供组件解析
+// 仅替身 ElMessage/ElMessageBox（提示与覆盖确认断言用），其余导出原样保留供组件解析
 vi.mock('element-plus', async (importOriginal) => {
   const mod = await importOriginal<typeof import('element-plus')>();
   return {
     ...mod,
     ElMessage: { warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+    ElMessageBox: { ...mod.ElMessageBox, confirm: vi.fn().mockResolvedValue('confirm') },
   };
 });
 
@@ -93,6 +96,8 @@ describe('药品字典页', () => {
     vi.mocked(updateDrug).mockReset();
     vi.mocked(mapInsurance).mockReset();
     vi.mocked(ElMessage.warning).mockClear();
+    // 确认框替身调用记录清零（实现默认确认放行，单用例按需 mockRejectedValueOnce 覆写）
+    vi.mocked(ElMessageBox.confirm).mockClear();
     // 挂载即检索：默认空页兜底，防未 stub 的 resolve 断链
     vi.mocked(searchDrugs).mockResolvedValue({ content: [], page: 0, size: 20, total: '0' });
     vi.mocked(mapInsurance).mockResolvedValue();
@@ -183,6 +188,62 @@ describe('药品字典页', () => {
     releaseMapping();
     await flushPromises();
     expect(findButton(wrapper, '确认对照').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  it('药品变更提交前整单覆盖二次确认：取消零出网，确认后出网（EX-46/FE-A2-09）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    vi.mocked(updateDrug).mockResolvedValue(drugRow({}));
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+    // 打开变更弹窗（管控属性等 11 字段已按行预填，必填校验可直接通过）
+    await clickButton(wrapper, '变更');
+    await flushPromises();
+    // 先取消覆盖确认 → 零出网，弹窗与录入驻留
+    vi.mocked(ElMessageBox.confirm).mockRejectedValueOnce('cancel');
+    await clickButton(wrapper, '确认变更');
+    await flushPromises();
+    expect(ElMessageBox.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('覆盖'),
+      '变更覆盖确认',
+      expect.anything(),
+    );
+    expect(vi.mocked(updateDrug)).not.toHaveBeenCalled();
+    expect(wrapper.find('input[placeholder="院内药品编码"]').isVisible()).toBe(true);
+    // 再确认 → 整单变更出网（管控属性随表单回写由后端承载）
+    await clickButton(wrapper, '确认变更');
+    await flushPromises();
+    expect(vi.mocked(updateDrug)).toHaveBeenCalledWith(
+      '7',
+      expect.objectContaining({ drugCode: 'D001', genericName: '阿莫西林胶囊' }),
+    );
+    wrapper.unmount();
+  });
+
+  it('药品建档不经覆盖确认直接出网（EX-46/FE-A2-09 范围界定：仅变更路径确认）', async () => {
+    vi.mocked(createDrug).mockResolvedValue(drugRow({ drugCode: 'D002' }));
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+    await clickButton(wrapper, '药品建档');
+    await flushPromises();
+    // 建档必填五项（药码/通用名/抗菌药分级/危险级/麻精分级）
+    await wrapper.find('input[placeholder="院内药品编码"]').setValue('D002');
+    await wrapper.find('input[placeholder="通用名"]').setValue('布洛芬片');
+    await wrapper.find('input[placeholder="非抗菌填 NONE"]').setValue('NONE');
+    await wrapper.find('input[placeholder="高危药分级，普通填 NONE"]').setValue('NONE');
+    await wrapper.find('input[placeholder="非麻精填 NONE"]').setValue('NONE');
+    await clickButton(wrapper, '确认建档');
+    await flushPromises();
+    // 新建无覆盖面：零确认直接出网
+    expect(ElMessageBox.confirm).not.toHaveBeenCalled();
+    expect(vi.mocked(createDrug)).toHaveBeenCalledWith(
+      expect.objectContaining({ drugCode: 'D002', genericName: '布洛芬片' }),
+    );
     wrapper.unmount();
   });
 });
