@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.api.ConsumerQueueSpec;
@@ -101,13 +102,13 @@ class OutpatientFullFlowIT extends FuyunStackITBase {
     private static String doctorToken = "";
 
     /**
-     * CF-3 当日首位就诊号冻结形态（O+今日+00001——容器独占 Redis 流水键自 1 起签发）。日期段取
-     * 系统默认时区 {@code LocalDate.now()}：与生成器 VisitIdIssuerImpl.issue 的流水键日期戳同源
-     * （其取值无时区参），亦与本文件造数 endDate/池定位同源——原 UTC 取值在 UTC+8 每日 00:00-08:00
-     * 与生成器错日分叉致假红窗。
+     * CF-3 当日首位就诊号冻结形态（O+今日+00001——容器独占 Redis 流水键自 1 起签发）。日期段按
+     * 北京钟面推导：与生成器 VisitIdIssuerImpl 流水键日期戳（时区纪律专项 B 类已收敛
+     * HEALTHCARE_TZ）同源，亦与本文件造数 endDate/池定位同源——裸 {@code LocalDate.now()} 在
+     * CI UTC 每日 00:00-08:00（北京）与生成器错日分叉致假红窗。
      */
     private static final String EXPECTED_VISIT_ID =
-            "O" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
+            "O" + LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
 
     /** 跨用例链路状态（JUnit 每用例新实例，业务号/单据锚经 static 传递） */
     private static long poolId;
@@ -396,17 +397,23 @@ class OutpatientFullFlowIT extends FuyunStackITBase {
                 TEMPLATE_ID,
                 DEPT_CODE);
         ObjectNode generate = objectMapper.createObjectNode();
-        generate.put("endDate", LocalDate.now().toString()).put("days", 1);
+        // 当日放号窗口按北京钟面取当日（与本类号池定位/期望就诊号同源；裸 now() 在 CI UTC 深夜窗
+        // 错归前一日，形成「昨日池」造数）
+        generate.put("endDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString())
+                .put("days", 1);
         assertThat(postJson("/api/v1/outpatient/schedules/generate", adminToken, generate)
                         .asInt())
                 .as("当日窗口×单模板应生成一行排班")
                 .isEqualTo(1);
+        // 当日号源池定位与放号 endDate 同日耦合，同按北京钟面取当日（禁 CURRENT_DATE：测试库会话
+        // 时区为 UTC，深夜分歧窗下与北京当日错日致池行漏定位）
         poolId = jdbcTemplate.queryForObject(
                 "SELECT p.id FROM outpatient.appt_number_pool p"
                         + " JOIN outpatient.schedule s ON s.id = p.schedule_id"
-                        + " WHERE s.sched_date = CURRENT_DATE AND p.deleted = 0 AND s.deleted = 0"
+                        + " WHERE s.sched_date = ? AND p.deleted = 0 AND s.deleted = 0"
                         + " ORDER BY p.id LIMIT 1",
-                Long.class);
+                Long.class,
+                LocalDate.now(TimeConstants.HEALTHCARE_TZ));
         assertThat(poolId).as("当日号源池行应在位").isNotNull();
 
         // V705 门诊字典在位断言（brief 冻结计数：就诊类型 6+离院去向 8+号别 5=19 条）

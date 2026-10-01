@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.billing.api.BillingAccountQueryPort;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
@@ -302,7 +303,9 @@ class BillingInpatientLinkageIT extends FuyunStackITBase {
         ObjectNode schedule = objectMapper.createObjectNode();
         schedule.put("targetWardId", WARD_FROM)
                 .put("targetBedId", BED_FROM_ID)
-                .put("expectDate", LocalDate.now().toString());
+                // 期望入住日按北京钟面取当日（时区纪律专项 A 类先例 InpatientDailyDecomposeIT 同款，
+                // broaden 同带：裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
         postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", adminToken, schedule);
         visitId = postJson(
                         "/api/v1/inpatient/admissions/" + admissionNo + "/register",

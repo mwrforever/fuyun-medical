@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.outpatient.constants.OutpatientMessagingConstants;
@@ -229,9 +230,14 @@ class OutpatientPoolConcurrencyIT extends FuyunStackITBase {
                 DEPT_CODE,
                 POOL_TOTAL_QUOTA);
 
-        // T+N 放号（真实生成链：排班+池行落库+Redis 池键 prime 预热——双道闸第一道自本调用生效）
+        // T+N 放号（真实生成链：排班+池行落库+Redis 池键 prime 预热——双道闸第一道自本调用生效）。
+        // 窗口与池定位同按北京钟面推导（时区纪律专项 broaden：生产号池/业务日已收敛 HEALTHCARE_TZ，
+        // 裸 now() 在 CI UTC 深夜窗整体前移一日）
         ObjectNode generate = objectMapper.createObjectNode();
-        generate.put("endDate", LocalDate.now().plusDays(1).toString()).put("days", 2);
+        generate.put(
+                        "endDate",
+                        LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1).toString())
+                .put("days", 2);
         int generated = postJson("/api/v1/outpatient/schedules/generate", adminToken, generate)
                 .asInt();
         assertThat(generated).as("两日窗口×单模板应生成两行排班").isEqualTo(2);
@@ -243,7 +249,7 @@ class OutpatientPoolConcurrencyIT extends FuyunStackITBase {
                         + " WHERE s.sched_date = ? AND p.deleted = 0 AND s.deleted = 0"
                         + " ORDER BY p.id LIMIT 1",
                 Long.class,
-                LocalDate.now());
+                LocalDate.now(TimeConstants.HEALTHCARE_TZ));
         assertThat(located).as("当日号源池行应在位").isNotNull();
         poolId = located;
         Long total = jdbcTemplate.queryForObject(

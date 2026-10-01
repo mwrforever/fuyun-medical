@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
@@ -331,7 +332,9 @@ class InpatientTransferDischargeIT extends FuyunStackITBase {
         ObjectNode schedule = objectMapper.createObjectNode();
         schedule.put("targetWardId", WARD_FROM)
                 .put("targetBedId", BED_FROM_ID)
-                .put("expectDate", LocalDate.now().toString());
+                // 期望入住日按北京钟面取当日（时区纪律专项 A 类先例 InpatientDailyDecomposeIT 同款；
+                // 裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
         postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", adminToken, schedule);
         visitId = postJson(
                         "/api/v1/inpatient/admissions/" + admissionNo + "/register",
@@ -366,8 +369,12 @@ class InpatientTransferDischargeIT extends FuyunStackITBase {
         assertThat(orderStatus(longOrderNo)).isEqualTo("TRANSFERRED");
         assertThat(orderStatus(statOrderNo)).isEqualTo("TRANSFERRED");
 
-        // 长期医嘱次日计划预置（日切服务直调，等价 02:30 任务面）：qd→次日 08:00 一行 PENDING
-        int created = orderPlanService.decomposeNextDay(LocalDate.now().plusDays(1));
+        // 长期医嘱次日计划预置（日切服务直调，等价 02:30 任务面）：qd→次日 08:00 一行 PENDING。
+        // 基准日按北京钟面推导（与生产日切/补偿时钟同源）：裸 now() 在 CI UTC 深夜窗取到北京
+        // 「当日」，与转抄链 compensateToday（北京钟面）已补生成的当日计划撞日，查前置幂等
+        // 跳过致零新行假红
+        int created = orderPlanService.decomposeNextDay(
+                LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1));
         assertThat(created).as("长期 qd 次日计划应生成一行").isEqualTo(1);
     }
 
