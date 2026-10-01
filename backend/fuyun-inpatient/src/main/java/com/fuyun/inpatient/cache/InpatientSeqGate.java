@@ -1,5 +1,6 @@
 package com.fuyun.inpatient.cache;
 
+import com.fuyun.common.constants.TimeConstants;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -79,9 +80,9 @@ public class InpatientSeqGate {
         return next(KEY_PREFIX + VISIT_KEY_TYPE + ":" + day, VISIT_ID_PREFIX, day);
     }
 
-    /** 取服务器当日 yyyyMMdd 日期段。 */
+    /** 取当日 yyyyMMdd 日期段：技术日切取北京钟面（时区纪律专项 B 类），号段不随容器时区漂移。 */
     private String day() {
-        return LocalDate.now().format(DAY);
+        return LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DAY);
     }
 
     /**

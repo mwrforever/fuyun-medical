@@ -592,6 +592,9 @@ public class ScheduleServiceImpl implements IScheduleService {
      * @return 距锚点时刻的时长（放号窗口面向未来，恒为正）
      */
     private Duration poolKeyTtl(LocalDate schedDate) {
-        return Duration.between(LocalDateTime.now(), schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
+        // TTL 锚起算取北京钟面（时区纪律专项 B 类）：排班日次日 02:00 对账锚不随容器时区漂移
+        return Duration.between(
+                LocalDateTime.now(TimeConstants.HEALTHCARE_TZ),
+                schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
     }
 }

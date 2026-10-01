@@ -1,5 +1,6 @@
 package com.fuyun.iot.cache;
 
+import com.fuyun.common.constants.TimeConstants;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -80,8 +81,9 @@ public class IotSeqGate {
      * @return type + yyyyMMdd + %05d 五位右补零序号；序号 ≥ 100000 时自然扩位不丢位
      */
     private String next(String type) {
-        // 日期段单次采样：键与单号共用同一天，规避跨零点窗口键/号日期错位
-        String day = LocalDate.now().format(DAY);
+        // 日期段单次采样：键与单号共用同一天，规避跨零点窗口键/号日期错位；技术日切取北京钟面
+        // （时区纪律专项 B 类），号段不随容器时区提前/延后 8 小时翻段
+        String day = LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DAY);
         String key = KEY_PREFIX + type + ":" + day;
         // Redis INCR 原子自增取号：多实例并发不重号（单命令原子，禁 Lua/额外锁——计划 GC13）
         Long seq = redisTemplate.opsForValue().increment(key);

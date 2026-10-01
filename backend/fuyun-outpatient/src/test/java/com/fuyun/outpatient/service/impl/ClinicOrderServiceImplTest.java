@@ -50,6 +50,7 @@ import com.fuyun.pharmacy.api.PrescriptionOpenResult;
 import com.fuyun.system.api.PracticeCheckPort;
 import com.fuyun.system.api.PracticeCheckResult;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -81,6 +82,9 @@ class ClinicOrderServiceImplTest {
 
     /** 单号日期段格式（与主类同源：OP+yyyyMMdd+6 位流水） */
     private static final DateTimeFormatter SEQ_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+
+    /** 北京钟面（时区纪律专项 B 类）：号段日期期望与生产技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private ClinicOrderMapper clinicOrderMapper;
@@ -238,9 +242,9 @@ class ClinicOrderServiceImplTest {
                 .insert(any(ClinicOrder.class));
     }
 
-    /** 今日单号（OP+yyyyMMdd+6 位流水段）。 */
+    /** 今日单号（OP+yyyyMMdd+6 位流水段）：日期段按北京钟面推导（时区纪律专项 B 类，禁裸 now()）。 */
     private String orderNoOf(long seq) {
-        return "OP" + LocalDate.now().format(SEQ_DATE) + String.format("%06d", seq);
+        return "OP" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + String.format("%06d", seq);
     }
 
     // ---------------------------------------------------------------- 冻结用例

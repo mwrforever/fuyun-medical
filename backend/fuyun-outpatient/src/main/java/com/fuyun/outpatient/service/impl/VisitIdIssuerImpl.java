@@ -1,5 +1,6 @@
 package com.fuyun.outpatient.service.impl;
 
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.outpatient.service.IVisitIdIssuer;
 import com.fuyun.patient.api.VisitIdValidator;
 import java.time.Duration;
@@ -51,7 +52,8 @@ public class VisitIdIssuerImpl implements IVisitIdIssuer {
      */
     @Override
     public String issue() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        // 技术日切取北京钟面（时区纪律专项 B 类）：visit_id 日期段与当日键不随容器时区漂移
+        String today = LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(SEQ_DATE);
         String seqKey = SEQ_KEY_PREFIX + today;
         // 数据库写操作前置：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);

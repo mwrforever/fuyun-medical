@@ -106,7 +106,7 @@ class AppointmentCancelRescheduleTest {
     /** 签发日期段格式（yyyyMMdd） */
     private static final DateTimeFormatter SEQ_DATE = DateTimeFormatter.BASIC_ISO_DATE;
 
-    /** 北京钟面（时区纪律专项 A 类）：退号时限造数与限约解除期望与生产医疗日同源口径，禁裸 now() */
+    /** 北京钟面（时区纪律专项 A/B 类）：退号时限/限约解除与号段日期期望同生产医疗日/技术日切口径，禁裸 now() */
     private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
@@ -747,7 +747,7 @@ class AppointmentCancelRescheduleTest {
         when(scheduleMapper.selectById(12L)).thenReturn(newSchedule());
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(5L);
         // 新池第一道闸预扣由各用例自定（3=持有在位 / -2=键缺失降级 / 异常=连接降级），此处不 stub
         doAnswer(inv -> {

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +25,9 @@ import org.springframework.data.redis.core.ValueOperations;
 @ExtendWith(MockitoExtension.class)
 class IotSeqGateTest {
 
+    /** 北京钟面（时区纪律专项 B 类）：号段日期期望与生产技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
+
     @Mock
     private StringRedisTemplate redisTemplate;
 
@@ -40,7 +44,7 @@ class IotSeqGateTest {
     @Test
     @DisplayName("nextAlarmNo：fy:iot:seq:AL:{yyyyMMdd} INCR 取号 → AL+日期+五位序号，并续 48h TTL")
     void nextAlarmNoIncrementsDailyKeyAndFormatsAlarmNo() {
-        String day = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        String day = LocalDate.now(BEIJING_TZ).format(DateTimeFormatter.BASIC_ISO_DATE);
         String key = "fy:iot:seq:AL:" + day;
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(key)).thenReturn(7L);
@@ -55,7 +59,7 @@ class IotSeqGateTest {
     @Test
     @DisplayName("nextCommandNo：fy:iot:seq:CMD:{yyyyMMdd} INCR 取号 → CMD+日期+五位序号（同形态独立通道）")
     void nextCommandNoUsesCommandKeyChannel() {
-        String day = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        String day = LocalDate.now(BEIJING_TZ).format(DateTimeFormatter.BASIC_ISO_DATE);
         String key = "fy:iot:seq:CMD:" + day;
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(key)).thenReturn(99999L);

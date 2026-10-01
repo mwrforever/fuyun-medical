@@ -83,7 +83,7 @@ class ScheduleServiceImplTest {
     /** 与主类 DEFAULT_CHANNEL_QUOTA 同源（渠道配额 JSON 缺省值；私有常量不外引，字面量双锚防漂移） */
     private static final String DEFAULT_CHANNEL_QUOTA_JSON = "{\"PORTAL\":60,\"WINDOW\":30,\"KIOSK\":5,\"RESERVED\":5}";
 
-    /** 北京钟面（时区纪律专项 A 类）：恢复时效判定造数与生产业务日同源口径，禁裸 now() */
+    /** 北京钟面（时区纪律专项 A/B 类）：恢复时效造数与池键 TTL 锚期望同生产业务日/技术日切口径，禁裸 now() */
     private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
@@ -264,11 +264,12 @@ class ScheduleServiceImplTest {
             verify(poolRedisGate, times(2)).prime(poolIdCaptor.capture(), totalCaptor.capture(), ttlCaptor.capture());
             assertThat(poolIdCaptor.getAllValues()).containsExactly(201L, 202L);
             assertThat(totalCaptor.getAllValues()).containsExactly(4L, 4L);
-            // TTL 与「各自排班日次日 02:00」同刻（时钟取样误差放宽到 60s）：周一/周二两池键分别锚定
+            // TTL 与「各自排班日次日 02:00」同刻（时钟取样误差放宽到 60s）：周一/周二两池键分别锚定；
+            // 期望起算取北京钟面（时区纪律专项 B 类），与生产 TTL 锚同源口径
             Duration expectedMonday = Duration.between(
-                    LocalDateTime.now(), LocalDate.of(2026, 9, 22).atTime(2, 0));
+                    LocalDateTime.now(BEIJING_TZ), LocalDate.of(2026, 9, 22).atTime(2, 0));
             Duration expectedTuesday = Duration.between(
-                    LocalDateTime.now(), LocalDate.of(2026, 9, 23).atTime(2, 0));
+                    LocalDateTime.now(BEIJING_TZ), LocalDate.of(2026, 9, 23).atTime(2, 0));
             assertThat(Math.abs(ttlCaptor
                             .getAllValues()
                             .get(0)
@@ -495,8 +496,9 @@ class ScheduleServiceImplTest {
         // R1 快路径同步：池键 INCRBY 5、封顶锚=新总量 9、TTL 续期至排班次日 02:00
         ArgumentCaptor<Duration> refreshTtlCaptor = ArgumentCaptor.forClass(Duration.class);
         verify(poolRedisGate).increase(eq(31L), eq(5L), eq(9L), refreshTtlCaptor.capture());
-        Duration expectedTtl =
-                Duration.between(LocalDateTime.now(), LocalDate.of(2026, 9, 24).atTime(2, 0));
+        // 期望起算取北京钟面（时区纪律专项 B 类），与生产 TTL 锚同源口径
+        Duration expectedTtl = Duration.between(
+                LocalDateTime.now(BEIJING_TZ), LocalDate.of(2026, 9, 24).atTime(2, 0));
         assertThat(Math.abs(refreshTtlCaptor.getValue().minus(expectedTtl).toSeconds()))
                 .isLessThan(60);
         // 上限外（count=51）与零数量（count=0）：入参显式格式校验拒绝，池行与池键零触达

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fuyun.billing.api.PrescriptionFeePort;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -544,7 +545,8 @@ public class PrescriptionServiceImpl extends ServiceImpl<PrescriptionMapper, Pre
 
     /** 签发处方号：R+yyyyMMdd+6 位纳秒尾数（uk_rx_no 兜底并发重号，P1 演示序列与 billing fee_no 同口径） */
     private String nextRxNo() {
-        return "R" + LocalDate.now().format(RX_DATE)
+        // 技术日切取北京钟面（时区纪律专项 B 类）：处方号日期段不随容器时区漂移
+        return "R" + LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(RX_DATE)
                 + String.format("%06d", Math.floorMod(System.nanoTime(), 1_000_000L));
     }
 

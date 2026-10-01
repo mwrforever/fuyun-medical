@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.billing.api.SettlementQueryPort;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.pharmacy.api.DispenseCompletedPayload;
@@ -1032,7 +1033,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     /** 建 CREATED 发药单与明细入队（uk_dispense_rx_active 兜底重复建单） */
     private void createDispense(Prescription rx) {
         Dispense dispense = new Dispense();
-        dispense.setDispenseNo("D" + LocalDate.now().format(RX_DATE)
+        // 技术日切取北京钟面（时区纪律专项 B 类）：摆药单号日期段不随容器时区漂移
+        dispense.setDispenseNo("D" + LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(RX_DATE)
                 + String.format("%06d", Math.floorMod(System.nanoTime(), 1_000_000L)));
         dispense.setDispenseType("OUTPATIENT");
         dispense.setPrescriptionId(rx.getId());

@@ -3,6 +3,7 @@ package com.fuyun.outpatient.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fuyun.billing.api.OutpatientBillingPort;
 import com.fuyun.billing.api.VisitFeeView;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OrderCreatedPayload;
@@ -566,7 +567,8 @@ public class ClinicOrderServiceImpl implements IClinicOrderService {
      *                               人工介入，禁止违例值落库
      */
     private String issueOrderNo() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        // 技术日切取北京钟面（时区纪律专项 B 类）：号段日期与当日键不随容器时区漂移
+        String today = LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(SEQ_DATE);
         String seqKey = ORDER_SEQ_KEY_PREFIX + today;
         // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);

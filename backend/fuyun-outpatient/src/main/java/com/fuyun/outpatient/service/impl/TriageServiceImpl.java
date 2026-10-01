@@ -821,8 +821,10 @@ public class TriageServiceImpl implements ITriageService {
      * @return 距锚点时刻的时长（恒为正）
      */
     private static Duration ttlOfTodayEndPlus2h() {
-        return Duration.between(
-                LocalDateTime.now(), LocalDateTime.now().plusDays(1).with(QUEUE_KEY_TTL_ANCHOR));
+        // TTL 锚起算取北京钟面（时区纪律专项 B 类）：当日末+2h 锚不随容器时区漂移（双取值同钟面，
+        // 保证墙钟差语义与时区解耦）
+        LocalDateTime now = LocalDateTime.now(TimeConstants.HEALTHCARE_TZ);
+        return Duration.between(now, now.plusDays(1).with(QUEUE_KEY_TTL_ANCHOR));
     }
 
     /**

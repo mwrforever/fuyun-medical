@@ -1091,7 +1091,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
      * @throws IllegalStateException Redis 流水返回空（连接异常由底层异常上抛），预约无法落号
      */
     private String issueApptNo() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        // 技术日切取北京钟面（时区纪律专项 B 类）：号段日期与当日键不随容器时区漂移
+        String today = LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(SEQ_DATE);
         String seqKey = APPT_SEQ_KEY_PREFIX + today;
         // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
@@ -1177,7 +1178,10 @@ public class AppointmentServiceImpl implements IAppointmentService {
      * @return 距锚点时刻的时长（预约面向未来排班，恒为正）
      */
     private Duration poolKeyTtl(LocalDate schedDate) {
-        return Duration.between(LocalDateTime.now(), schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
+        // TTL 锚起算取北京钟面（时区纪律专项 B 类）：排班日次日 02:00 对账锚不随容器时区漂移
+        return Duration.between(
+                LocalDateTime.now(TimeConstants.HEALTHCARE_TZ),
+                schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
     }
 
     /**
