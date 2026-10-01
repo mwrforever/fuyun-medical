@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
@@ -231,24 +232,31 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
     }
 
     /**
-     * 读该医嘱指定日期的计划行时点（HH:mm 升序）：时点以 JDBC Timestamp 的 JVM 默认时区墙面渲染，
-     * 与 impl 生成器（JVM 默认 offset 构建计划时点）同源，规避 to_char 的服务端会话时区漂移。
+     * 读该医嘱指定日期的计划行时点（HH:mm 升序）：查询窗口偏移与时点墙面渲染均取北京钟面，与
+     * impl 生成器（plan_time 按北京偏移构建，时区纪律专项 A 类）同源——裸 JVM 缺省时区在 CI UTC
+     * 下整体前移 8 小时，深夜分歧窗断言必碎；规避 to_char 的服务端会话时区漂移维持原口径。
      */
     private List<String> planTimesOn(String orderNoText, String status, LocalDate date) {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        // 投影偏移与生产 generatePlans 同源推导（禁镜像容器时区偏移），写读一致
+        ZoneOffset offset = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset();
         return jdbcTemplate.query(
                 "SELECT p.plan_time FROM inpatient.order_execute_plan p"
                         + " JOIN inpatient.medical_order o ON o.id = p.order_id"
                         + " WHERE o.order_no = ? AND p.status = ? AND p.deleted = 0"
                         + " AND p.plan_time >= ? AND p.plan_time < ? ORDER BY p.plan_time",
-                (rs, i) -> rs.getTimestamp(1).toLocalDateTime().toLocalTime().toString(),
+                // timestamptz 读回经 Timestamp 按 JVM 缺省时区渲染墙面——必须显式归一北京钟面取 LocalTime
+                (rs, i) -> rs.getTimestamp(1)
+                        .toInstant()
+                        .atZone(TimeConstants.HEALTHCARE_TZ)
+                        .toLocalTime()
+                        .toString(),
                 orderNoText,
                 status,
                 date.atStartOfDay().atOffset(offset),
                 date.plusDays(1).atStartOfDay().atOffset(offset));
     }
 
-    /** 读该医嘱指定日期的计划行数（默认时区日期对齐 impl 的计划窗口口径）。 */
+    /** 读该医嘱指定日期的计划行数（北京钟面日期对齐 impl 的计划窗口口径——时区纪律专项 A 类同源）。 */
     private int planCountOn(String orderNoText, String status, LocalDate date) {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM inpatient.order_execute_plan p"
@@ -258,8 +266,13 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
                 Integer.class,
                 orderNoText,
                 status,
-                date.atStartOfDay().atOffset(OffsetDateTime.now().getOffset()),
-                date.plusDays(1).atStartOfDay().atOffset(OffsetDateTime.now().getOffset()));
+                date.atStartOfDay()
+                        .atOffset(
+                                OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset()),
+                date.plusDays(1)
+                        .atStartOfDay()
+                        .atOffset(
+                                OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset()));
         return count == null ? 0 : count;
     }
 
@@ -326,7 +339,8 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
         ObjectNode schedule = objectMapper.createObjectNode();
         schedule.put("targetWardId", WARD_ID)
                 .put("targetBedId", BED_ID)
-                .put("expectDate", LocalDate.now().toString());
+                // 期望入住日按北京钟面取当日（与生产床位排程日期判定同源；裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
         postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", adminToken, schedule);
         visitId = postJson(
                         "/api/v1/inpatient/admissions/" + admissionNo + "/register",
@@ -349,7 +363,9 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
     @Order(2)
     @DisplayName("日切分解：decomposeNextDay(次日) 生成 2+1 行（bid 08:00/16:00 + qd 08:00），班次与计划号逐行勾稽")
     void decomposeNextDayCreatesPlanRows() throws Exception {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        // 期望面必然同步北京钟面（时区纪律专项 A 类修复环）：生产日切基准日已收敛 HEALTHCARE_TZ，
+        // 裸 now() 期望在 CI UTC 深夜窗（北京 00:00-08:00）日期分歧即碎（90c88f5 先例同款）
+        LocalDate tomorrow = LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1);
         int created = orderPlanService.decomposeNextDay(tomorrow);
         assertThat(created).as("两条长期医嘱应生成 2+1 行次日计划").isEqualTo(3);
         assertThat(planTimesOn(bidOrderNo, "PENDING", tomorrow))
@@ -359,8 +375,8 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
                 .as("qd 医嘱次日计划时点=08:00")
                 .containsExactly("08:00");
 
-        // 班次落值（窗口左闭右开）：08:00→DAY、16:00→EVENING（按 JVM 墙面时点匹配，同生成器口径）
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        // 班次落值（窗口左闭右开）：08:00→DAY、16:00→EVENING（窗口偏移取北京钟面，与生产生成器同源）
+        ZoneOffset offset = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset();
         List<Map<String, Object>> shiftRows = jdbcTemplate.queryForList(
                 "SELECT p.shift, p.ward_id, p.plan_time FROM inpatient.order_execute_plan p"
                         + " JOIN inpatient.medical_order o ON o.id = p.order_id"
@@ -374,8 +390,10 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
         Map<String, Object> evening = shiftRows.get(1);
         assertThat(morning.get("shift")).as("08:00 计划落白班").isEqualTo("DAY");
         assertThat(morning.get("ward_id")).as("计划病区=患者当前病区").isEqualTo(WARD_ID);
+        // timestamptz 读回经 Timestamp 按 JVM 缺省时区渲染墙面——显式归一北京钟面取计划日期
         assertThat(((java.sql.Timestamp) morning.get("plan_time"))
-                        .toLocalDateTime()
+                        .toInstant()
+                        .atZone(TimeConstants.HEALTHCARE_TZ)
                         .toLocalDate())
                 .as("计划日期=次日")
                 .isEqualTo(tomorrow);
@@ -410,7 +428,8 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
     @Order(3)
     @DisplayName("重复执行幂等：同参数重跑日切零新行，计划行数不变")
     void decomposeRerunIsIdempotent() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        // 幂等重跑基准日同 Order(2) 口径按北京钟面推导（与生产日切基准日同源，禁裸 now()）
+        LocalDate tomorrow = LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1);
         int secondRun = orderPlanService.decomposeNextDay(tomorrow);
         assertThat(secondRun).as("重复日切应零新行（查前置+唯一约束双幂等）").isZero();
         assertThat(planTimesOn(bidOrderNo, "PENDING", tomorrow)).hasSize(2);
@@ -422,15 +441,20 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
     @DisplayName("当日增量补偿：晚于日切的新转抄长期医嘱仅补生成 now 之后剩余时点（与 impl 同源过滤规则）")
     void lateTransferredLongOrderCompensatesRemainingPoints() {
         // 第三条长期医嘱（qn 20:00）转抄——转抄链内自动触发 compensateToday
-        OffsetDateTime now = OffsetDateTime.now();
+        // 补偿基准时点与生产 compensateToday 同源取北京钟面（基准时刻/日期/偏移三者全北京）：
+        // 裸 JVM 缺省时区在 CI UTC 深夜窗判错「20:00 已过与否」走错断言分支
+        OffsetDateTime now = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
         ZoneOffset offset = now.getOffset();
         openLongOrder("qn");
         // impl 同源规则：仅生成基准时点之后的当日时点（qd=08:00 单时点）
-        boolean expectedRemaining =
-                LocalDate.now().atTime(LocalTime.of(20, 0)).atOffset(offset).isAfter(now);
-        // 重新读取（openLongOrder 已写入 qdOrderNo）
-        int todayRows = planCountOn(qdOrderNo, "PENDING", LocalDate.now());
-        int tomorrowRows = planCountOn(qdOrderNo, "PENDING", LocalDate.now().plusDays(1));
+        boolean expectedRemaining = LocalDate.now(TimeConstants.HEALTHCARE_TZ)
+                .atTime(LocalTime.of(20, 0))
+                .atOffset(offset)
+                .isAfter(now);
+        // 重新读取（openLongOrder 已写入 qdOrderNo）；当日/次日窗口日期同按北京钟面推导
+        int todayRows = planCountOn(qdOrderNo, "PENDING", LocalDate.now(TimeConstants.HEALTHCARE_TZ));
+        int tomorrowRows = planCountOn(
+                qdOrderNo, "PENDING", LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1));
         if (expectedRemaining) {
             assertThat(todayRows).as("20:00 未到应补生成当日剩余时点一行").isEqualTo(1);
         } else {
@@ -443,7 +467,8 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
     @Order(5)
     @DisplayName("停嘱联动：bid 医嘱 STOPPED→次日 PENDING 计划全 CANCELLED（2 行）")
     void stopOrderCancelsNextDayPlans() {
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        // 停嘱联动核对面基准日同 Order(2) 口径按北京钟面推导（与生产日切基准日同源，禁裸 now()）
+        LocalDate tomorrow = LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1);
         ObjectNode stop = objectMapper.createObjectNode().put("reason", "IT 验收：停嘱联动");
         assertThat(postForEntity("/api/v1/inpatient/orders/" + bidOrderNo + "/stop", doctorToken, stop)
                         .getStatusCode()
@@ -452,7 +477,10 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
         assertThat(planTimesOn(bidOrderNo, "PENDING", tomorrow))
                 .as("停嘱后 PENDING 计划清零")
                 .isEmpty();
-        assertThat(planCountOn(bidOrderNo, "CANCELLED", LocalDate.now().plusDays(1)))
+        assertThat(planCountOn(
+                        bidOrderNo,
+                        "CANCELLED",
+                        LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1)))
                 .as("次日两行计划应全部作废")
                 .isEqualTo(2);
     }
