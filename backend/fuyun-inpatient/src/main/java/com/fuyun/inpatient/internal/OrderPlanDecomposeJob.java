@@ -1,5 +1,6 @@
 package com.fuyun.inpatient.internal;
 
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.inpatient.service.IOrderPlanService;
 import java.time.LocalDate;
 import lombok.extern.slf4j.Slf4j;
@@ -38,8 +39,9 @@ public class OrderPlanDecomposeJob {
     @Scheduled(cron = "0 0 2 * * ?")
     @SchedulerLock(name = "inpatient-order-plan-decompose", lockAtMostFor = "PT30M")
     public void decompose() {
-        // 次日计划日期（凌晨 02:00 触发——生成当日剩余夜间时点与日间全部时点）
-        LocalDate planDate = LocalDate.now().plusDays(1);
+        // 次日计划日期（凌晨 02:00 触发——生成当日剩余夜间时点与日间全部时点）；基准日取北京钟面
+        // （时区纪律专项 A 类）：非北京时区 JVM 禁把医疗日界错归邻日、次日计划错位整日
+        LocalDate planDate = LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1);
         log.info("长期医嘱日切分解任务开始：planDate={}", planDate);
         int created = orderPlanService.decomposeNextDay(planDate);
         log.info("长期医嘱日切分解任务完成：planDate={}，生成次日计划 {} 行", planDate, created);

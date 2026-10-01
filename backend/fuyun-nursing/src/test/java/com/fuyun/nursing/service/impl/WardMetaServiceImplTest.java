@@ -59,11 +59,16 @@ import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -115,6 +120,9 @@ class WardMetaServiceImplTest {
             "[{\"code\":\"DAY\",\"name\":\"白班\",\"start\":\"08:00\",\"end\":\"16:00\"},"
                     + "{\"code\":\"EVENING\",\"name\":\"小夜班\",\"start\":\"16:00\",\"end\":\"24:00\"},"
                     + "{\"code\":\"NIGHT\",\"name\":\"大夜班\",\"start\":\"00:00\",\"end\":\"08:00\"}]";
+
+    /** 北京钟面（时区纪律专项 A 类）：validFrom 缺省期望与生产医疗日同源口径的推导，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private NursingWardPatientMapper wardPatientMapper;
@@ -704,6 +712,44 @@ class WardMetaServiceImplTest {
     }
 
     @Test
+    @DisplayName("当班班次分歧时区锚（时区纪律专项 A 类）：默认时区钟面与北京不同班窗时，当班过滤按北京墙钟判班")
+    void detailJudgesCurrentShiftByBeijingClockUnderDivergedDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前班窗必然分歧的默认时区：偏移差 +4h/-4h 动态二选一——三班各 8h 窗，
+            // 钟面平移 +4h 的班窗分歧区间 [04,08)∪[12,16)∪[20,24) 与 -4h 的 [00,04)∪[08,12)∪[16,20)
+            // 并集覆盖全天，任意时刻可复现「非北京时区 JVM 按容器墙钟判错班次」（锚定模式确定性红）
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            LocalTime beijingClock = LocalTime.now(beijing);
+            int divergeMillis = 12 * 3600_000; // Δ=+4h：默认时区 UTC+12，钟面比北京快 4h
+            if (shiftCodeOf(beijingClock).equals(shiftCodeOf(beijingClock.plusHours(4)))) {
+                divergeMillis = 4 * 3600_000; // +4h 同窗时改用 -4h：默认时区 UTC+4，钟面比北京慢 4h
+            }
+            // 期望班次按北京墙钟锁定推导（与服务端医疗班次同口径，禁再取服务端外裸 now() 当期望源）
+            String expectedShift = shiftCodeOf(beijingClock);
+            when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
+            when(wardConfigMapper.selectOne(any())).thenReturn(configRow());
+            when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
+            when(assignmentMapper.selectList(any())).thenReturn(List.of());
+            when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
+            // setDefault 窗口最小化（锚定模式）：stub 先行 → setDefault → 调用捕获 → finally 恢复
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            service.detail(VISIT);
+
+            // 断言对象=服务端按墙钟判定的当班班次（selectList 谓词参数承载）：缺陷实现（裸
+            // LocalTime.now()）在分歧默认时区下按容器墙钟判错班（错挂他班谓词），北京班次断言即红
+            verify(assignmentMapper).selectList(assignmentQueryCaptor.capture());
+            LambdaQueryWrapper<NurseAssignment> wrapper = renderedAssignment(assignmentQueryCaptor.getValue());
+            assertThat(wrapper.getParamNameValuePairs().values()).contains(expectedShift);
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
     @DisplayName("责任分配：类型 code 非法显式拒 NS-1019")
     void assignRejectsUnknownTypeCode() {
         NurseAssignmentRequest req =
@@ -764,7 +810,9 @@ class WardMetaServiceImplTest {
         NurseAssignmentVO vo = service.assign(req);
 
         assertThat(vo.bedNo()).isEqualTo("02");
-        assertThat(vo.validFrom()).isEqualTo(LocalDate.now());
+        // 期望面必然同步北京钟面（时区纪律专项 A 类）：validFrom 缺省已收敛北京钟面医疗日，
+        // 裸 now() 期望在非北京时区 JVM 深夜窗（北京 00:00-08:00）日期分歧即碎
+        assertThat(vo.validFrom()).isEqualTo(LocalDate.now(BEIJING_TZ));
     }
 
     @Test
@@ -995,6 +1043,20 @@ class WardMetaServiceImplTest {
     }
 
     // ===================== 测试数据与断言辅助 =====================
+
+    /**
+     * 三班种子窗判定（锚定用例期望推导辅助，与 WardMetaServiceImpl.matchesShiftWindow 同口径：
+     * 含头不含尾、「24:00」止于当日最大时刻——种子三班覆盖全天恒命中一班）。
+     *
+     * @param clock 待判定的墙钟时刻，非空；来源：锚定用例按北京钟面取值
+     * @return 班次 code（NIGHT/DAY/EVENING），非空
+     */
+    private String shiftCodeOf(LocalTime clock) {
+        if (clock.isBefore(LocalTime.of(8, 0))) {
+            return "NIGHT";
+        }
+        return clock.isBefore(LocalTime.of(16, 0)) ? "DAY" : "EVENING";
+    }
 
     /** 登记入参构造（patientId 固定 7，其余缺省）。 */
     private WardPatientRegisterRequest registerReq(String visitId, String bedNo) {

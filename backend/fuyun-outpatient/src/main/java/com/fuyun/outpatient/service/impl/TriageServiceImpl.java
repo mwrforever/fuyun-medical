@@ -2,6 +2,7 @@ package com.fuyun.outpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.OutpatientErrorCode;
@@ -708,10 +709,11 @@ public class TriageServiceImpl implements ITriageService {
      * @return 诊室名；无排班为 null
      */
     private String roomOf(String deptCode, String doctorId) {
+        // 当日排班定位取北京钟面（时区纪律专项 A 类）：医疗日基准不随容器时区漂移
         Schedule schedule = scheduleMapper.selectOne(Wrappers.<Schedule>lambdaQuery()
                 .eq(Schedule::getDeptCode, deptCode)
                 .eq(Schedule::getDoctorId, doctorId)
-                .eq(Schedule::getSchedDate, LocalDate.now())
+                .eq(Schedule::getSchedDate, LocalDate.now(TimeConstants.HEALTHCARE_TZ))
                 .orderByAsc(Schedule::getId)
                 .last("LIMIT 1"));
         return schedule == null ? null : schedule.getRoom();

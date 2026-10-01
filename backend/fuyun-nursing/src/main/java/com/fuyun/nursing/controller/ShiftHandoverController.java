@@ -1,5 +1,6 @@
 package com.fuyun.nursing.controller;
 
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.nursing.dto.HandoverCompleteRequest;
 import com.fuyun.nursing.dto.HandoverGenerateRequest;
 import com.fuyun.nursing.service.IShiftHandoverService;
@@ -76,6 +77,7 @@ public class ShiftHandoverController {
             @RequestParam("wardId") String wardId,
             @RequestParam(value = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
                     LocalDate date) {
-        return handoverService.listByWard(wardId, date == null ? LocalDate.now() : date);
+        // 日期缺省取北京钟面当日（时区纪律专项 A 类）：按日检索的医疗日界不随容器时区漂移
+        return handoverService.listByWard(wardId, date == null ? LocalDate.now(TimeConstants.HEALTHCARE_TZ) : date);
     }
 }

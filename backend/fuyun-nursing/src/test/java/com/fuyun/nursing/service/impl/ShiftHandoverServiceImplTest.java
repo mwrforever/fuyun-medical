@@ -42,6 +42,7 @@ import com.fuyun.nursing.vo.ShiftHandoverVO;
 import com.fuyun.nursing.vo.WardConfigVO;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Collection;
@@ -100,6 +101,9 @@ class ShiftHandoverServiceImplTest {
 
     /** 交接班行固定 id（insert 桩回填值） */
     private static final long ROW_ID = 701L;
+
+    /** 北京钟面（时区纪律专项 A 类）：交接班日期期望与生产医疗日同源口径的推导，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private ShiftHandoverMapper handoverMapper;
@@ -300,7 +304,9 @@ class ShiftHandoverServiceImplTest {
         assertThat(row.getHandoverNo()).isEqualTo(HANDOVER_NO);
         assertThat(row.getWardId()).isEqualTo(WARD);
         assertThat(row.getShiftCode()).isEqualTo(SHIFT);
-        assertThat(row.getHandoverDate()).isEqualTo(LocalDate.now());
+        // 期望面必然同步北京钟面（时区纪律专项 A 类）：handoverDate 落库已收敛北京钟面医疗日，
+        // 裸 now() 期望在非北京时区 JVM 深夜窗（北京 00:00-08:00）日期分歧即碎
+        assertThat(row.getHandoverDate()).isEqualTo(LocalDate.now(BEIJING_TZ));
         assertThat(row.getStatus()).isEqualTo("DRAFT");
         assertThat(row.getOutgoingNurseId()).isEqualTo("nurse-01");
         assertThat(row.getOutgoingSignedAt()).isCloseTo(before, within(2, ChronoUnit.SECONDS));

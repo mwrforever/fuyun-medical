@@ -66,6 +66,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -104,6 +105,9 @@ class AppointmentCancelRescheduleTest {
 
     /** 签发日期段格式（yyyyMMdd） */
     private static final DateTimeFormatter SEQ_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+
+    /** 北京钟面（时区纪律专项 A 类）：退号时限造数与限约解除期望与生产医疗日同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private PatientContextResolver patientContextResolver;
@@ -498,9 +502,11 @@ class AppointmentCancelRescheduleTest {
     @DisplayName("cancel 退号时限：PORTAL 线上渠道超窗拒 OP-1010（就诊日当日窗口已关）；同参 WINDOW 渠道放行（窗口不受限——分支 2 直走）")
     void cancelRejectsBeyondOnlineWindow() {
         // 线上渠道：sched_date=今日、onlineCancelBeforeDays=1 → 截止日=昨日已过 → OP-1010（偏差注记：
-        // brief 原拟今日+3 在 Properties 冻结语义「就诊日前不足 N 天关闭」下不触发，测试参数按可触发值取今日）
-        Appointment portalToday =
-                appointment(ApptStatus.RESERVED, FeeStatusType.UNPAID, null, ApptChannel.PORTAL, LocalDate.now(), null);
+        // brief 原拟今日+3 在 Properties 冻结语义「就诊日前不足 N 天关闭」下不触发，测试参数按可触发值取今日）；
+        // sched_date 造数必然同步北京钟面（时区纪律专项 A 类）：当日判定已收敛北京钟面，按容器日期
+        // 造数在非北京时区 JVM 下漂移（JVM 日期晚于北京侧时窗口误开，OP-1010 断言即碎）
+        Appointment portalToday = appointment(
+                ApptStatus.RESERVED, FeeStatusType.UNPAID, null, ApptChannel.PORTAL, LocalDate.now(BEIJING_TZ), null);
         when(appointmentMapper.selectOne(any())).thenReturn(portalToday);
         assertThatThrownBy(() -> service.cancel("AP20260920000001", "行程变动取消"))
                 .isInstanceOfSatisfying(BizException.class, e -> {
@@ -510,9 +516,15 @@ class AppointmentCancelRescheduleTest {
         verify(appointmentMapper, never()).casStatus(anyLong(), anyString(), anyString());
         verifyNoInteractions(billingPort);
 
-        // 窗口渠道不受限：同 sched_date=今日、已支付未取号 → 直走分支 2 退费链
+        // 窗口渠道不受限：同 sched_date=今日、已支付未取号 → 直走分支 2 退费链（同用例同语义
+        // 造数随北京钟面统一收口；该分支因渠道短路不评估时限，同步仅为口径一致）
         Appointment windowToday = appointment(
-                ApptStatus.RESERVED, FeeStatusType.PAID, 501L, ApptChannel.WINDOW, LocalDate.now(), "O20260921000001");
+                ApptStatus.RESERVED,
+                FeeStatusType.PAID,
+                501L,
+                ApptChannel.WINDOW,
+                LocalDate.now(BEIJING_TZ),
+                "O20260921000001");
         when(appointmentMapper.selectOne(any())).thenReturn(windowToday);
         when(billingPort.feesByVisit("O20260921000001")).thenReturn(List.of(settledFee(1L, 501L)));
         when(billingPort.applyRefund(any(VisitRefundCommand.class))).thenReturn(903L);
@@ -1363,10 +1375,12 @@ class AppointmentCancelRescheduleTest {
         ArgumentCaptor<ApptCreditRecord> captor = ArgumentCaptor.forClass(ApptCreditRecord.class);
         verify(apptCreditRecordMapper).updateById(captor.capture());
         ApptCreditRecord updated = captor.getValue();
-        assertThat(updated.getRestrictTo()).isEqualTo(LocalDate.now().minusDays(1));
+        // 期望面必然同步北京钟面（时区纪律专项 A 类）：解除落库已收敛北京钟面医疗日（今日-1），
+        // 裸 now() 期望在非北京时区 JVM 深夜窗日期分歧即碎
+        assertThat(updated.getRestrictTo()).isEqualTo(LocalDate.now(BEIJING_TZ).minusDays(1));
         assertThat(updated.getReleaseReason()).isEqualTo("患者申诉核实通过");
         assertThat(updated.getUpdatedBy()).isEqualTo("admin001");
-        assertThat(vo.restrictTo()).isEqualTo(LocalDate.now().minusDays(1));
+        assertThat(vo.restrictTo()).isEqualTo(LocalDate.now(BEIJING_TZ).minusDays(1));
         assertThat(vo.releaseReason()).isEqualTo("患者申诉核实通过");
     }
 

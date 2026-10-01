@@ -1,6 +1,7 @@
 package com.fuyun.inpatient.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.inpatient.api.InpatientErrorCode;
@@ -226,11 +227,15 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
         return created;
     }
 
-    /** 当日增量补偿入口（服务器时钟形态）：见 {@link #compensateToday(String, OffsetDateTime)}。 */
+    /**
+     * 当日增量补偿入口（缺省北京钟面当前时刻）：见 {@link #compensateToday(String, OffsetDateTime)}。
+     * 缺省时刻经 toLocalDate() 推导业务日（planDate），与 generatePlans 偏移源同钟面写读同源
+     * （时区纪律专项 A 类——裸 now() 业务日推导族入界站点）。
+     */
     @Override
     @Transactional
     public int compensateToday(String orderNo) {
-        return compensateToday(orderNo, OffsetDateTime.now());
+        return compensateToday(orderNo, OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ));
     }
 
     /**
@@ -295,8 +300,12 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
     public ExecuteConfirmVO executeConfirm(String planNo, ExecuteConfirmRequest req) {
         OrderExecutePlan plan = requirePlan(planNo);
         long operator = parseOperatorAsEmployeeId();
-        // 执行时点缺省服务器时间（W-33 契约：executedAt 可空缺省服务器时间）
-        OffsetDateTime executedAt = req.executedAt() == null ? OffsetDateTime.now() : req.executedAt();
+        // 执行时点缺省取北京钟面当前时刻（W-33 契约：executedAt 可空缺省服务器时间）：该缺省值
+        // 除落库记录外，同时是 longOrderExhausted end_at 守卫「回签当日 ≥ end_at 当日」医疗日
+        // 比较的推导基准——裸 now() 在非北京时区 JVM 取容器日期会漂移医疗日（时区纪律专项 A 类）；
+        // 显式请求值携带客户端自身偏移语义，按值透传不动
+        OffsetDateTime executedAt =
+                req.executedAt() == null ? OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ) : req.executedAt();
         // 数据库写操作：计划行状态 CAS（PENDING 限定；0 行=非 PENDING 态——幂等/拒绝裁决面）
         int rows = planMapper.casExecuteConfirm(
                 plan.getPlanNo(),
@@ -511,7 +520,9 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
                     order.getVisitId());
             return 0;
         }
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        // 窗口/时点组合偏移源取北京钟面（时区纪律专项 A 类）：有效时点过滤、查前置窗口与
+        // planTime 落库构造（buildPlan）同源共用本偏移——写读一致，禁镜像容器时区偏移
+        ZoneOffset offset = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset();
         // 有效时点过滤：补偿面仅保留基准时点之后的当日时点；日切面全量
         List<LocalTime> effectivePoints = points.stream()
                 .filter(point -> notBefore == null
@@ -620,7 +631,7 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
      * @param visit    关联就诊行（病区/就诊主键取数面），非空
      * @param planDate 计划日期，非空
      * @param point    计划时点，非空
-     * @param offset   服务器时区偏移（日期+时点→OffsetDateTime 组合基准），非空
+     * @param offset   北京钟面时区偏移（日期+时点→OffsetDateTime 组合基准；与 generatePlans 偏移源同源——时区纪律专项 A 类），非空
      * @param operator 审计操作者，非空
      * @return 待落库计划行（未落库），非空
      */

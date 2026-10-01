@@ -2,6 +2,7 @@ package com.fuyun.nursing.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
@@ -316,10 +317,12 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
                     "同周期出入量小结已存在（幂等拒绝，不覆盖首值）：visitId=" + req.visitId() + "，summaryType=" + type.getCode()
                             + "，periodStart=" + from + "，shiftCode=" + shiftCode);
         }
-        // 步骤④：体温单 DAILY_VALUE 条目写入 + 条目引用同事务回填（失败上抛不吞，整体回滚）
+        // 步骤④：体温单 DAILY_VALUE 条目写入 + 条目引用同事务回填（失败上抛不吞，整体回滚）；
+        // 月页归属取北京钟面当月（时区纪律专项 A 类）：北京月初 00:00-08:00 的非北京时区 JVM
+        // 禁把小结条目整页错归前月（NursingTimeConstants javadoc 冻结口径）
         String valueText =
                 "入 " + intake.toPlainString() + " / 出 " + output.toPlainString() + " / 平衡 " + balance.toPlainString();
-        Long pageId = chartService.ensurePage(req.visitId(), YearMonth.now());
+        Long pageId = chartService.ensurePage(req.visitId(), YearMonth.now(TimeConstants.HEALTHCARE_TZ));
         chartService.appendDailyValue(req.visitId(), type.getChartValueType(), valueText, operator);
         TemperatureChartEntry entry = requireWrittenEntry(pageId, type.getChartValueType(), valueText, operator);
         row.setChartEntryRef(entry.getId());

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
@@ -276,11 +277,14 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         }
         // 数据库读操作：当班责任护士（shift_code 由病区配置班次按时钟判定，无配置行则不过滤班次）
         String shiftCode = currentShiftCode(row.getWardId());
+        // 当日有效窗口取北京钟面医疗日（时区纪律专项 A 类）：分配有效判定的日界不随容器时区漂移
         LambdaQueryWrapper<NurseAssignment> wrapper = Wrappers.<NurseAssignment>lambdaQuery()
                 .eq(NurseAssignment::getWardId, row.getWardId())
                 .eq(NurseAssignment::getStatus, "ACTIVE")
-                .le(NurseAssignment::getValidFrom, LocalDate.now())
-                .and(w -> w.isNull(NurseAssignment::getValidTo).or().ge(NurseAssignment::getValidTo, LocalDate.now()))
+                .le(NurseAssignment::getValidFrom, LocalDate.now(TimeConstants.HEALTHCARE_TZ))
+                .and(w -> w.isNull(NurseAssignment::getValidTo)
+                        .or()
+                        .ge(NurseAssignment::getValidTo, LocalDate.now(TimeConstants.HEALTHCARE_TZ)))
                 .orderByAsc(NurseAssignment::getBedNo);
         if (shiftCode != null) {
             wrapper.eq(NurseAssignment::getShiftCode, shiftCode);
@@ -350,7 +354,8 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
                     HttpStatus.BAD_REQUEST,
                     "管床分配必须携床位且不得携责任患者：wardId=" + req.wardId() + "，nurseId=" + req.nurseId());
         }
-        LocalDate validFrom = req.validFrom() == null ? LocalDate.now() : req.validFrom();
+        // 生效日缺省取北京钟面当日（时区纪律专项 A 类）：与当日有效窗口判定同源医疗日
+        LocalDate validFrom = req.validFrom() == null ? LocalDate.now(TimeConstants.HEALTHCARE_TZ) : req.validFrom();
         // 守卫链②：班次唯一前置查重（uk_assignment_bed_shift / uk_assignment_patient_shift 的业务侧前置）
         Long dup = type == AssignmentType.BED
                 ? assignmentMapper.selectCount(Wrappers.<NurseAssignment>lambdaQuery()
@@ -431,13 +436,16 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
     @Override
     @Transactional(readOnly = true)
     public List<NurseAssignmentVO> listAssignments(String wardId, String shiftCode) {
-        // 数据库读操作：当日生效窗口内的班次分配（交接班快照引用）
+        // 数据库读操作：当日生效窗口内的班次分配（交接班快照引用）；窗口取北京钟面医疗日
+        // （时区纪律专项 A 类），与 detail 当日有效判定同口径
         List<NurseAssignment> rows = assignmentMapper.selectList(Wrappers.<NurseAssignment>lambdaQuery()
                 .eq(NurseAssignment::getWardId, wardId)
                 .eq(NurseAssignment::getShiftCode, shiftCode)
                 .eq(NurseAssignment::getStatus, "ACTIVE")
-                .le(NurseAssignment::getValidFrom, LocalDate.now())
-                .and(w -> w.isNull(NurseAssignment::getValidTo).or().ge(NurseAssignment::getValidTo, LocalDate.now()))
+                .le(NurseAssignment::getValidFrom, LocalDate.now(TimeConstants.HEALTHCARE_TZ))
+                .and(w -> w.isNull(NurseAssignment::getValidTo)
+                        .or()
+                        .ge(NurseAssignment::getValidTo, LocalDate.now(TimeConstants.HEALTHCARE_TZ)))
                 .orderByAsc(NurseAssignment::getBedNo));
         return rows.stream().map(NurseAssignmentVO::from).toList();
     }
@@ -589,7 +597,9 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         if (config == null) {
             return null;
         }
-        LocalTime now = LocalTime.now();
+        // 当班判定墙钟取北京钟面（时区纪律专项 A 类）：班次窗口业务语义按北京墙钟承载，
+        // 非北京时区 JVM 禁按容器墙钟判错班次
+        LocalTime now = LocalTime.now(TimeConstants.HEALTHCARE_TZ);
         String hit = null;
         for (ShiftDefinition shift : parseShifts(config, wardId)) {
             if (matchesShiftWindow(shift, now)) {

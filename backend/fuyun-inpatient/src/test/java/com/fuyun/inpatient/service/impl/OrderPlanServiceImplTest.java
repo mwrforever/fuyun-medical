@@ -56,6 +56,7 @@ import com.fuyun.system.api.PracticeCheckPort;
 import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -122,6 +123,9 @@ class OrderPlanServiceImplTest {
 
     /** 计划号（日切分解断言载体） */
     private static final String PLAN_NO = "PL2026092500001";
+
+    /** 北京钟面（时区纪律专项 A 类）：补偿基准时点造数与生成偏移源同源的推导口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private MedicalOrderMapper orderMapper;
@@ -427,10 +431,13 @@ class OrderPlanServiceImplTest {
     @Test
     @DisplayName("用例⑥全部终态推进：EXECUTING 医嘱末个计划回签（PENDING 计数 0 且 end_at 到期）→COMPLETED")
     void executeConfirmCompletesExecutingOrderWhenAllPlansTerminal() {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
         MedicalOrder order = orderRow(OrderStatus.EXECUTING, "LONG", false, "bid");
-        // 医嘱明示结束日=当日（审查修复环 R1 守卫生效面）：生命周期内计划确已穷尽方判 COMPLETED
-        order.setEndAt(LocalDate.now().atTime(23, 59).atOffset(offset));
+        // 医嘱明示结束日=当日（审查修复环 R1 守卫生效面）：生命周期内计划确已穷尽方判 COMPLETED；
+        // end_at 造数必然同步北京钟面（时区纪律专项 A 类修复环）：回签 executedAt 缺省已收敛北京
+        // 钟面，「回签当日 ≥ end_at 当日」守卫按容器日期造数在非北京时区 JVM 下漂移（JVM 日期
+        // 晚于北京侧守卫误 false，COMPLETED 断言即碎）
+        order.setEndAt(
+                LocalDate.now(BEIJING_TZ).atTime(23, 59).atZone(BEIJING_TZ).toOffsetDateTime());
         doAnswer(invocation -> {
                     invocation
                             .getArgument(0, MedicalOrder.class)
@@ -502,10 +509,12 @@ class OrderPlanServiceImplTest {
     @Test
     @DisplayName("跨日窗口守卫（end_at 到期面）：qd 有 end_at=当日，末点回签后全终态→COMPLETED")
     void executeConfirmCompletesQdOrderWhenEndAtReachedToday() {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
         MedicalOrder order = orderRow(OrderStatus.EXECUTING, "LONG", false, "qd");
-        // 医嘱明示结束日=当日：末点回签后已有计划全终态且生命周期确已穷尽——允许 COMPLETED
-        order.setEndAt(LocalDate.now().atTime(23, 59).atOffset(offset));
+        // 医嘱明示结束日=当日：末点回签后已有计划全终态且生命周期确已穷尽——允许 COMPLETED；
+        // end_at 造数必然同步北京钟面（同 executeConfirmCompletesExecutingOrderWhenAllPlansTerminal
+        // ——executedAt 缺省北京钟面后按容器日期造数即漂移「当日」守卫）
+        order.setEndAt(
+                LocalDate.now(BEIJING_TZ).atTime(23, 59).atZone(BEIJING_TZ).toOffsetDateTime());
         doAnswer(invocation -> {
                     invocation
                             .getArgument(0, MedicalOrder.class)
@@ -763,8 +772,11 @@ class OrderPlanServiceImplTest {
 
         // 正常补偿面 + 操作者上下文缺失：审计列回退 system（转抄链防御回退口径）
         OperatorContextHolder.clear();
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
-        OffsetDateTime at1000 = LocalDate.now().atTime(10, 0).atOffset(offset);
+        // 补偿基准时点造数必然同步北京钟面（时区纪律专项 A 类修复环）：generatePlans 偏移源已
+        // 收敛北京钟面，容器时区推导的 10:00 在非北京时区 JVM 下与 +08:00 时点组合漂移 8 小时，
+        // 「16:00 剩余时点」判定不再恒定（CI UTC 深夜窗即碎）
+        OffsetDateTime at1000 =
+                LocalDate.now(BEIJING_TZ).atTime(10, 0).atZone(BEIJING_TZ).toOffsetDateTime();
         when(orderMapper.selectOne(any())).thenReturn(orderRow(OrderStatus.TRANSFERRED, "LONG", false, "bid"));
         when(frequencyMapper.selectOne(any())).thenReturn(freqRow("bid", "08:00,16:00", false));
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)));
@@ -782,8 +794,10 @@ class OrderPlanServiceImplTest {
     @Test
     @DisplayName("补偿冲突仅 warn：并发唯一冲突 IP-1023 降级不向上传播（转抄主链成功不受阻断）")
     void compensateTodayDegradesConflictToWarnWithoutBlockingTransferChain() {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
-        OffsetDateTime at1000 = LocalDate.now().atTime(10, 0).atOffset(offset);
+        // 补偿基准时点造数必然同步北京钟面（同 compensateTodayCoversGuardFaces——冲突降级面
+        // 须真实触达 insert：非北京时区 JVM 下剩余时点判定不再漂移成零生成）
+        OffsetDateTime at1000 =
+                LocalDate.now(BEIJING_TZ).atTime(10, 0).atZone(BEIJING_TZ).toOffsetDateTime();
         when(orderMapper.selectOne(any())).thenReturn(orderRow(OrderStatus.TRANSFERRED, "LONG", false, "bid"));
         when(frequencyMapper.selectOne(any())).thenReturn(freqRow("bid", "08:00,16:00", false));
         when(itemMapper.selectList(any())).thenReturn(List.of(itemRow(101L)));
@@ -850,10 +864,11 @@ class OrderPlanServiceImplTest {
     @Test
     @DisplayName("首个回签穿透终态判定（单点日计划全回签且 end_at 到期场景）：TRANSFERRED→EXECUTING→COMPLETED 链式迁移")
     void executeConfirmChainsFirstConfirmIntoTerminalAdvance() {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
         MedicalOrder order = orderRow(OrderStatus.TRANSFERRED, "LONG", false, "qn");
-        // 医嘱明示结束日=当日（审查修复环 R1）：单点频次当日全回签且生命周期穷尽——链式迁移
-        order.setEndAt(LocalDate.now().atTime(23, 59).atOffset(offset));
+        // 医嘱明示结束日=当日（审查修复环 R1）：单点频次当日全回签且生命周期穷尽——链式迁移；
+        // end_at 造数必然同步北京钟面（时区纪律专项 A 类修复环，守卫「当日」基准随缺省收敛）
+        order.setEndAt(
+                LocalDate.now(BEIJING_TZ).atTime(23, 59).atZone(BEIJING_TZ).toOffsetDateTime());
         doAnswer(invocation -> {
                     invocation
                             .getArgument(0, MedicalOrder.class)

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
@@ -155,7 +156,8 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
         row.setHandoverNo(handoverNo);
         row.setWardId(req.wardId());
         row.setShiftCode(req.shiftCode());
-        row.setHandoverDate(LocalDate.now());
+        // 交接班日期取北京钟面医疗日（时区纪律专项 A 类）：非北京时区 JVM 禁把交接日错归邻日
+        row.setHandoverDate(LocalDate.now(TimeConstants.HEALTHCARE_TZ));
         row.setOutgoingNurseId(operator);
         row.setPatientSummary(toJsonb(summary, handoverNo));
         row.setSbarSituation(sbarSituation);

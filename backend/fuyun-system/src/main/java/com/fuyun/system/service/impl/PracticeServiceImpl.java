@@ -1,6 +1,7 @@
 package com.fuyun.system.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
@@ -53,15 +54,21 @@ public class PracticeServiceImpl implements IPracticeService {
      * 执业授权校验：生效行命中判通过；未命中回查「EFFECTIVE 但已过期」行区分两态 reason（读侧
      * 派生，不回写库）。
      *
-     * @param request 校验请求，非空；checkTime 可空（null 取服务端当前时刻）
+     * @param request 校验请求，非空；checkTime 可空（null 取服务端北京钟面当前时刻）
      * @return 校验响应（入参回显 + passed + reason），非空；passed=true reason=执业授权有效：
      *         {grantType}；passed=false reason=授权已过期：{grantType} 或 无有效执业授权记录：{grantType}
      */
     @Override
     public PracticeCheckResponse check(PracticeCheckRequest request) {
-        // 校验日期归一：checkTime 缺省取服务端当前时刻（有效期含当日语义：valid_from <= 今日 <= valid_to）
-        LocalDate checkDate = (request.checkTime() != null ? request.checkTime() : OffsetDateTime.now()).toLocalDate();
-        OffsetDateTime checkTime = request.checkTime() == null ? OffsetDateTime.now() : request.checkTime();
+        // 校验日期归一：checkTime 缺省取北京钟面当前时刻（时区纪律专项 A 类：非北京时区 JVM
+        // 取容器日期会漂移医疗日；有效期含当日语义：valid_from <= 今日 <= valid_to）；显式入参按值透传
+        LocalDate checkDate = (request.checkTime() != null
+                        ? request.checkTime()
+                        : OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ))
+                .toLocalDate();
+        // 同一缺省时刻与上方 checkDate 同源北京钟面（原两处独立裸 now() 可能漂移出双基准）
+        OffsetDateTime checkTime =
+                request.checkTime() == null ? OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ) : request.checkTime();
         PracticeGrant grant = practiceGrantMapper.selectEffective(request.employeeId(), request.grantType(), checkDate);
         if (grant != null) {
             log.info(
@@ -180,7 +187,9 @@ public class PracticeServiceImpl implements IPracticeService {
     @Override
     @Transactional(readOnly = true)
     public List<PracticeGrantVO> listByEmployee(long employeeId) {
-        LocalDate today = LocalDate.now();
+        // 展示基准日取北京钟面当日（时区纪律专项 A 类）：EXPIRED 派生按医疗日界，非北京时区
+        // JVM 取容器日期会错派过期态（如 +14h 钟面把 valid_to=北京今日行错派 EXPIRED）
+        LocalDate today = LocalDate.now(TimeConstants.HEALTHCARE_TZ);
         // 逻辑删过滤由 @TableLogic 自动携带 deleted=0；id 降序保证清单唯一顺序（A.4.3-17）
         List<PracticeGrant> rows = practiceGrantMapper.selectList(Wrappers.<PracticeGrant>lambdaQuery()
                 .eq(PracticeGrant::getEmployeeId, employeeId)
@@ -192,7 +201,7 @@ public class PracticeServiceImpl implements IPracticeService {
      * 实体转展示 VO：EFFECTIVE 且 valid_to 已过当日派生 EXPIRED 展示态（不回写库）。
      *
      * @param row   授权行，非空
-     * @param today 展示基准日（服务端当日），非空
+     * @param today 展示基准日（服务端北京钟面当日），非空
      * @return 展示 VO，非空
      */
     private PracticeGrantVO toVO(PracticeGrant row, LocalDate today) {

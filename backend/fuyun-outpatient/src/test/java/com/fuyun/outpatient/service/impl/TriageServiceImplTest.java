@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -44,8 +45,14 @@ import com.fuyun.outpatient.vo.QueueCalledNotice;
 import com.fuyun.outpatient.vo.QueueTicketVO;
 import com.fuyun.patient.api.PatientDisplayName;
 import com.fuyun.patient.api.PatientNameQuery;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -128,6 +135,10 @@ class TriageServiceImplTest {
 
     @Captor
     private ArgumentCaptor<LambdaQueryWrapper<QueueTicket>> wrapperCaptor;
+
+    /** 当日排班查询 wrapper 捕获（叫号诊室定位分歧时区锚用，EX-39 口径物化载体） */
+    @Captor
+    private ArgumentCaptor<Wrapper<Schedule>> scheduleQueryCaptor;
 
     private ITriageService service;
 
@@ -441,6 +452,53 @@ class TriageServiceImplTest {
         assertThat(notice.patientName()).isEqualTo("张*");
         assertThat(notice.doctorId()).isEqualTo("DOC001");
         assertThat(notice.room()).isNull();
+    }
+
+    @Test
+    @DisplayName("叫号诊室定位分歧时区锚（时区纪律专项 A 类）：默认时区钟面与北京不同日时，当日排班谓词按北京钟面取日")
+    void callResolvesRoomScheduleByBeijingClockUnderDivergedDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日历日期必然分歧的默认时区：-12h/+14h 固定偏移二选一（两偏移对北京
+            // 的日期分歧窗并集覆盖全天，引理见锚定模式）——任意时刻可复现「非北京时区 JVM 按
+            // 容器日期查错当日排班」；时区 ID 必须取偏移字面量（自定义 ID 使 LocalDate.now()
+            // 抛 ZoneRulesException）
+            Instant now = Instant.now();
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(beijing)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            // 期望按北京钟面锁定推导（禁裸 now() 当期望源）
+            LocalDate expectedToday = LocalDate.now(beijing);
+            QueueTicket first = ticket(501L, TicketType.FIRST, 100, 1, TicketStatus.WAITING, 0);
+            when(queueTicketMapper.selectWaiting("DEP001")).thenReturn(List.of(first));
+            when(queueZsetStore.rebuildIfMissing(eq("DEP001"), any())).thenReturn(-1);
+            when(queueZsetStore.pollTop("DEP001", "DOC001")).thenReturn(501L);
+            when(queueTicketMapper.selectById(501L)).thenReturn(first);
+            when(queueTicketMapper.casCall(501L, "WAITING", "nurse001")).thenReturn(1);
+            when(visitMapper.selectOne(any())).thenReturn(visit(VisitStatus.WAITING, null, (short) 0));
+            when(patientNameQuery.displayNamesOf(anyCollection()))
+                    .thenReturn(List.of(new PatientDisplayName(9L, "张*")));
+            // setDefault 窗口最小化（锚定模式）：stub 先行 → setDefault → 调用捕获 → finally 恢复
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            service.call(new QueueCallRequest("DEP001", "DOC001"));
+
+            // 断言对象=服务端组装的当日排班查询谓词（captor 捕获 schedDate 参数）：缺陷实现
+            // （裸 LocalDate.now()）在分歧默认时区下按容器日期查排班，北京今日断言即红
+            verify(scheduleMapper).selectOne(scheduleQueryCaptor.capture());
+            LambdaQueryWrapper<Schedule> wrapper = (LambdaQueryWrapper<Schedule>) scheduleQueryCaptor.getValue();
+            wrapper.getSqlSegment(); // 渲染惰性条件，将谓词参数写入参数表
+            assertThat(wrapper.getParamNameValuePairs().values()).contains(expectedToday);
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

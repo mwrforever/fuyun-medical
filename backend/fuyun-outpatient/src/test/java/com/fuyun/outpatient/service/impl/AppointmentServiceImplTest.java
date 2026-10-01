@@ -62,12 +62,17 @@ import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
 import com.fuyun.patient.api.VisitIdValidator;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -102,6 +107,9 @@ class AppointmentServiceImplTest {
 
     /** 签发日期段格式（yyyyMMdd） */
     private static final DateTimeFormatter SEQ_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+
+    /** 北京钟面（时区纪律专项 A 类）：限约区间期望与生产医疗日同源口径的推导，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private PatientContextResolver patientContextResolver;
@@ -634,8 +642,60 @@ class AppointmentServiceImplTest {
         assertThat(credit.getPatientId()).isEqualTo(9L);
         assertThat(credit.getAction()).isEqualTo("NO_SHOW");
         assertThat(credit.getWindowDays()).isEqualTo(90);
-        assertThat(credit.getRestrictFrom()).isEqualTo(LocalDate.now());
-        assertThat(credit.getRestrictTo()).isEqualTo(LocalDate.now().plusDays(90));
+        // 期望面必然同步北京钟面（时区纪律专项 A 类）：限约区间落库已收敛北京钟面医疗日，
+        // 裸 now() 期望在非北京时区 JVM 深夜窗（北京 00:00-08:00）日期分歧即碎
+        assertThat(credit.getRestrictFrom()).isEqualTo(LocalDate.now(BEIJING_TZ));
+        assertThat(credit.getRestrictTo()).isEqualTo(LocalDate.now(BEIJING_TZ).plusDays(90));
+    }
+
+    @Test
+    @DisplayName("爽约限约落库分歧时区锚（时区纪律专项 A 类）：默认时区钟面与北京不同日时，限约区间仍按北京钟面写入")
+    void markTimeoutWritesCreditRestrictionWindowByBeijingClockUnderDivergedDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日历日期必然分歧的默认时区：-12h/+14h 固定偏移二选一（两偏移对北京
+            // 的日期分歧窗并集覆盖全天，引理见锚定模式）——任意时刻可复现「非北京时区 JVM 按
+            // 容器日期写错限约区间」；时区 ID 必须取偏移字面量（自定义 ID 使 LocalDate.now()
+            // 抛 ZoneRulesException）
+            Instant now = Instant.now();
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(beijing)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            // 期望按北京钟面锁定推导（禁裸 now() 当期望源）：restrictDays 缺省 90（setUp 同源）
+            LocalDate expectedFrom = LocalDate.now(beijing);
+            LocalDate expectedTo = expectedFrom.plusDays(90);
+            Appointment held = reservedAppointment(
+                    ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(20), null);
+            when(appointmentMapper.selectOne(any())).thenReturn(held);
+            when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(1);
+            ApptNumberPool pool = activePool(PoolStatus.ACTIVE);
+            pool.setVersion(7);
+            when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool);
+            when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+            when(apptNumberPoolMapper.casRelease(31L, 7)).thenReturn(1);
+            // 窗口内既有 2 次+本次 1 次命中阈值 3 → 写限约区间（restrictFrom/restrictTo 落库值受检）
+            when(apptCreditRecordMapper.selectCount(any())).thenReturn(2L);
+            // setDefault 窗口最小化（锚定模式）：stub 先行 → setDefault → 调用捕获 → finally 恢复
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            service.markTimeout(new AppointmentTimeoutPayload("AP20260920000001", 9L, 31L));
+
+            // 断言对象=服务端计算并落库的限约区间（captor 捕获 credit 行）：缺陷实现（裸
+            // LocalDate.now()）在分歧默认时区下落容器日期，北京钟面断言即红
+            ArgumentCaptor<ApptCreditRecord> creditCaptor = ArgumentCaptor.forClass(ApptCreditRecord.class);
+            verify(apptCreditRecordMapper).insert(creditCaptor.capture());
+            assertThat(creditCaptor.getValue().getRestrictFrom()).isEqualTo(expectedFrom);
+            assertThat(creditCaptor.getValue().getRestrictTo()).isEqualTo(expectedTo);
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

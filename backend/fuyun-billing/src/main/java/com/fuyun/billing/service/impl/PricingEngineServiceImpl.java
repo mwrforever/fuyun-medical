@@ -23,6 +23,7 @@ import com.fuyun.billing.service.IChargeItemService;
 import com.fuyun.billing.service.IChargePriceService;
 import com.fuyun.billing.service.IPricingEngineService;
 import com.fuyun.billing.vo.QuoteVO;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -164,7 +165,8 @@ public class PricingEngineServiceImpl extends ServiceImpl<FeeRecordMapper, FeeRe
      */
     private long chargeOne(FeeGenerateCommand cmd, ChargeItem item) {
         PriceSnapshot snap = priceService.snapshot(cmd.itemCode(), item.getId());
-        LocalDate billingDate = LocalDate.now();
+        // 计费日取北京钟面（时区纪律专项 A 类）：医疗日界与 billing_key 防重段同源，禁依赖容器默认时区
+        LocalDate billingDate = LocalDate.now(TimeConstants.HEALTHCARE_TZ);
         // 唯一键五段（患者维度入键，见 V602 注释）：long 拼接走字符串化，无金额语义
         String billingKey = cmd.patientId() + "|" + cmd.sourceRef() + "|"
                 + cmd.trigger().getCode() + "|" + item.getId() + "|" + billingDate;
