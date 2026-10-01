@@ -298,7 +298,9 @@ class OrderPlanServiceImplTest {
     @DisplayName("用例②重复日切幂等：目标日已有行（查前置+唯一约束双保险）零新行零事件")
     void decomposeNextDayIsIdempotentWhenPlansAlreadyExist() {
         LocalDate planDate = LocalDate.of(2026, 9, 26);
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        // 已有计划行偏移源同步北京钟面（时区纪律专项 A 类同族）：查前置窗口按北京偏移圈定
+        // （generatePlans 偏移源同源），禁裸 now() 偏移投影——容器偏移行恒落窗内属偶然非口径
+        ZoneOffset offset = OffsetDateTime.now(BEIJING_TZ).getOffset();
         when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
         when(orderMapper.selectList(any())).thenReturn(List.of(orderRow(OrderStatus.EXECUTING, "LONG", false, "bid")));
         when(frequencyMapper.selectOne(any())).thenReturn(freqRow("bid", "08:00,16:00", false));
@@ -320,8 +322,11 @@ class OrderPlanServiceImplTest {
     @Test
     @DisplayName("用例③当日补偿：16:30 转抄 bid 医嘱→当日 0 行（16:00 已过）次日 2 行（日切全量）")
     void compensateTodaySkipsPastPointsAndNextDayDecomposeGeneratesAll() {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
-        OffsetDateTime at1630 = LocalDate.now().atTime(16, 30).atOffset(offset);
+        // 补偿基准时点造数必然同步北京钟面（时区纪律专项 A 类修复环三批抓漏）：compensateToday
+        // 按北京 +08:00 解释当日时点（generatePlans 偏移源同源），容器墙钟「今天 16:30」在
+        // 非北京时区 JVM 下绝对时刻漂移（Etc/GMT-14 下 16:00 时点误判「未过」），当日 0 行即碎
+        OffsetDateTime at1630 =
+                LocalDate.now(BEIJING_TZ).atTime(16, 30).atZone(BEIJING_TZ).toOffsetDateTime();
         MedicalOrder order = orderRow(OrderStatus.TRANSFERRED, "LONG", false, "bid");
         when(orderMapper.selectOne(any())).thenReturn(order);
         when(frequencyMapper.selectOne(any())).thenReturn(freqRow("bid", "08:00,16:00", false));
@@ -333,8 +338,9 @@ class OrderPlanServiceImplTest {
         verify(planMapper, never()).insert(any(OrderExecutePlan.class));
         verifyNoInteractions(events, seqGate);
 
-        // 次日日切：全量时点 2 行（08:00/16:00）
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        // 次日日切：全量时点 2 行（08:00/16:00）；次日基准同步北京钟面（与上方补偿「当日」
+        // 同钟面自洽——容器次日可漂至北京 +2 日）
+        LocalDate tomorrow = LocalDate.now(BEIJING_TZ).plusDays(1);
         when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
         when(orderMapper.selectList(any())).thenReturn(List.of(order));
         when(planMapper.selectList(any())).thenReturn(List.of());
@@ -485,12 +491,17 @@ class OrderPlanServiceImplTest {
 
         // 次日日切：该医嘱仍入候选（end_at 为空不越界）——qd 单时点 1 行；end_at 已过医嘱被过滤不排程
         Mockito.reset(planMapper, orderMapper, frequencyMapper, itemMapper, seqGate, events);
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
         MedicalOrder expired = orderRow(OrderStatus.EXECUTING, "LONG", false, "bid");
         expired.setId(9002L);
         expired.setOrderNo("MO2026092500002");
-        expired.setEndAt(LocalDate.now().minusDays(1).atTime(8, 0).atOffset(offset));
-        LocalDate tomorrow = LocalDate.now().plusDays(1);
+        // end_at 越界造数与次日基准同步北京钟面（时区纪律专项 A 类同族）：容器「昨日/次日」
+        // 与北京钟面分歧时（如 Etc/GMT-14 下次日=北京 +2 日）越界与排程语义漂移，统一北京口径
+        expired.setEndAt(LocalDate.now(BEIJING_TZ)
+                .minusDays(1)
+                .atTime(8, 0)
+                .atZone(BEIJING_TZ)
+                .toOffsetDateTime());
+        LocalDate tomorrow = LocalDate.now(BEIJING_TZ).plusDays(1);
         when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
         when(orderMapper.selectList(any())).thenReturn(List.of(order, expired));
         when(frequencyMapper.selectOne(any())).thenReturn(freqRow("qd", "08:00", false));
