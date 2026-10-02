@@ -2,9 +2,9 @@
  * 护理域 API（M05 前端面，一域一文件）：病区患者（一览/详情）、责任护士分配、
  * 体征（录入/查询/待复核 confirm/reject）、体温单（月页查询/特殊事件）、出入量明细、
  * 护理记录单（创建/提交/修订）、护理评估（量表定义/提交/历史）、护理任务（列表/完成/取消/
- * 认领/常规模板生成）、交接班（生成/完成/清单）、PDA（患者摘要/巡视打卡）、执行单
- * （工作台清单/闭环追溯/签收/核对/开始/完成/撤销）、在途输注（监测挂接聚合）、护理不良
- * 事件（分页/上报/处理/关闭/退回）。
+ * 认领/常规模板生成）、交接班（生成/完成/清单）、PDA（患者摘要/巡视打卡/输液拔针/破码放行
+ * 双授权）、执行单（工作台清单/闭环追溯/签收/核对/开始/完成/撤销）、在途输注（监测挂接
+ * 聚合）、护理不良事件（分页/上报/处理/关闭/退回）。
  * 路径前缀 /v1/nursing/**（baseURL 已含 /api）；雪花 id 与数量金额一律 string 承载
  * （web A.3-6），本域无金额运算面（quantity 透传零运算）。
  * REST 面为后端 Task 1-11 冻结契约；函数按资源分组导出（spec mock 面）。
@@ -41,6 +41,8 @@ export type HandoverGenerateRequest = components['schemas']['HandoverGenerateReq
 export type HandoverCompleteRequest = components['schemas']['HandoverCompleteRequest'];
 export type PdaPatientSummaryVO = components['schemas']['PdaPatientSummaryVO'];
 export type PdaPatrolRequest = components['schemas']['PdaPatrolRequest'];
+export type NeedleOutRequest = components['schemas']['NeedleOutRequest'];
+export type OverrideCheckRequest = components['schemas']['OverrideCheckRequest'];
 export type OrderExecutionVO = components['schemas']['OrderExecutionVO'];
 export type OrderExecutionTraceVO = components['schemas']['OrderExecutionTraceVO'];
 export type CheckLogVO = components['schemas']['CheckLogVO'];
@@ -386,7 +388,8 @@ export const handovers = {
   },
 };
 
-/** PDA 资源组：腕带/卡号解析患者摘要 / 巡视打卡。 */
+/** PDA 资源组（Task 15 扩 executions 面）：腕带/卡号解析患者摘要 / 巡视打卡 /
+ * 输液拔针 / 破码放行双授权。清单与 check/start/finish 复用执行单资源组同族端点。 */
 export const pda = {
   /** 患者摘要（脱敏口径：无证件/手机号字段；identifier 为腕带住院号或患者卡号）。 */
   patientSummary: async (identifier: string): Promise<PdaPatientSummaryVO> => {
@@ -398,6 +401,21 @@ export const pda = {
   /** 巡视打卡（生成巡视任务完成回执，taskNo 回显）。 */
   patrol: async (payload: PdaPatrolRequest): Promise<NursingTaskVO> => {
     const resp = await http.post<NursingTaskVO>('/v1/nursing/pda/patrol', payload);
+    return resp.data;
+  },
+  /** 输液拔针（INFUSION 型完成形态：腕带复扫核对+实际输注量→挂接收口+自动入量+双路回签；
+   * GENERIC 型完成走执行单资源组 finish 端点，后端型守卫 fail-closed）。 */
+  needleOut: async (no: string, payload: NeedleOutRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(
+      `/v1/nursing/executions/${no}/needle-out`,
+      payload,
+    );
+    return resp.data;
+  },
+  /** 破码放行双授权（扫码核对失败后双人授权留痕：override_flag 置位 + OVERRIDE 流水落行；
+   * 两授权人不得相同与角色校验归后端把守，前端显式校验前置零出网）。 */
+  overrideCheck: async (payload: OverrideCheckRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>('/v1/nursing/pda/override-check', payload);
     return resp.data;
   },
 };
