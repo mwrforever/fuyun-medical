@@ -8,7 +8,7 @@ import java.util.Set;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * 护理业务单号发号器（住院单 NR/评估单 AS/任务单 TK/交接班单 HO 四类业务号的统一取号出口）。
+ * 护理业务单号发号器（住院单 NR/评估单 AS/任务单 TK/交接班单 HO/执行单 EX 五类业务号的统一取号出口）。
  *
  * <p>键 {@code fy:nursing:seq:{type}:{yyyyMMdd}}（A.5-1 命名），Redis INCR 原子自增取号后格式化
  * 为 {@code type + yyyyMMdd + %05d}（例 NR2026092200001）；每次自增后对当日键续 48h TTL——次日
@@ -28,8 +28,8 @@ public class NursingSeqGate {
     /** 当日键 TTL：48 小时（覆盖跨日重叠请求窗口，过期由 Redis 兜底免定时清理） */
     private static final Duration KEY_TTL = Duration.ofHours(48);
 
-    /** 合法业务号类型白名单（NR 住院单/AS 评估单/TK 任务单/HO 交接班单） */
-    private static final Set<String> TYPES = Set.of("NR", "AS", "TK", "HO");
+    /** 合法业务号类型白名单（NR 住院单/AS 评估单/TK 任务单/HO 交接班单/EX 执行单——Task 4 生成域扩） */
+    private static final Set<String> TYPES = Set.of("NR", "AS", "TK", "HO", "EX");
 
     private final StringRedisTemplate redisTemplate;
 
@@ -45,13 +45,13 @@ public class NursingSeqGate {
     /**
      * 取下一业务单号（类型助记 + 当日 + 五位日内序号）。
      *
-     * @param type 业务号类型：NR/AS/TK/HO 四值之一，非空
+     * @param type 业务号类型：NR/AS/TK/HO/EX 五值之一，非空
      * @return 形如 NR2026092200001 的业务单号，非空；日内序号超 99999 时自然进位不截断
-     * @throws IllegalArgumentException type 不在四值白名单内（编程错误，fail-fast，不触碰 Redis）
+     * @throws IllegalArgumentException type 不在五值白名单内（编程错误，fail-fast，不触碰 Redis）
      */
     public String nextNo(String type) {
         if (!TYPES.contains(type)) {
-            // EX-19 C 类收口留痕：内部断言（生产调用点全部传 NR/AS/TK/HO 字面量，编程错误 fail-fast，非用户输入路径），保留 IAE
+            // EX-19 C 类收口留痕：内部断言（生产调用点全部传 NR/AS/TK/HO/EX 字面量，编程错误 fail-fast，非用户输入路径），保留 IAE
             throw new IllegalArgumentException("未知业务号类型：" + type);
         }
         // 技术日切取北京钟面（时区纪律专项 B 类）：键与单号日期段不随容器时区漂移

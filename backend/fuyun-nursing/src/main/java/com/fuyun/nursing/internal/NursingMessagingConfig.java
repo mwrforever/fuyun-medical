@@ -22,13 +22,18 @@ import org.springframework.context.annotation.Import;
  * 生效——装配根豁免 Modulith 边界，IotConfig 引 iot/internal 先例）。交换机全集归 integration
  * 禁私建（A.5-4）；订阅队列声明随消费任务逐批追加（先登记后订阅红线，Task 3 起三订阅），
  * 监听器类同步追加进 @Import；发布面经 NursingEventPublisher 于业务事务提交后出 MQ。
+ * P2 PR-3 Task 4 追加：inpatient 医嘱事件族（order.transferred/order-plan.generated/
+ * stopped/cancelled 四路合一）与就诊事件族（visit.admitted/transferred/discharge-requested/
+ * discharged/bed.changed 五路）两监听器。
  */
 @Configuration
 @Import({
     NursingEventPublisher.class,
     PatientHealthSummaryListener.class,
     PatientMergedListener.class,
-    PatientSplitListener.class
+    PatientSplitListener.class,
+    InpatientOrderEventListener.class,
+    InpatientVisitEventListener.class
 })
 public class NursingMessagingConfig {
 

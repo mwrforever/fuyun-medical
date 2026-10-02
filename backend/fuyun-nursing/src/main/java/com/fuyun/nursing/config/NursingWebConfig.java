@@ -16,6 +16,7 @@ import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
 import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
+import com.fuyun.nursing.service.impl.OrderExecutionGenerateServiceImpl;
 import com.fuyun.nursing.service.impl.PdaServiceImpl;
 import com.fuyun.nursing.service.impl.ShiftHandoverServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
@@ -36,7 +37,8 @@ import org.springframework.context.annotation.Import;
  * （{@link NursingProperties}，BillingWebConfig @EnableConfigurationProperties 先例形态）。
  * Task 8 追加：护理评估服务（五量表引擎 + 高危联动）与评估控制器。Task 9 追加：交接班服务
  * （SBAR 自动汇总/双签/事件发布）与交接班控制器。Task 10 追加：PDA 护理面服务
- * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。
+ * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。P2 PR-3 Task 4 追加：执行单生成域服务
+ * （inpatient 医嘱事件族消费落单，IOrderExecutionService 三方法）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -50,6 +52,7 @@ import org.springframework.context.annotation.Import;
     VitalSignServiceImpl.class,
     IoRecordServiceImpl.class,
     NursingTaskServiceImpl.class,
+    OrderExecutionGenerateServiceImpl.class,
     NursingAssessmentServiceImpl.class,
     ShiftHandoverServiceImpl.class,
     PdaServiceImpl.class,

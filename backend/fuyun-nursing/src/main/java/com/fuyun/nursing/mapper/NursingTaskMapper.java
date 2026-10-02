@@ -68,4 +68,22 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
             + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
             + "AND overdue_flag = false AND deleted = 0</script>")
     int casMarkOverdueBatch(@Param("ids") Collection<Long> ids);
+
+    /**
+     * 出院终清按就诊撤销 CAS（visit.discharged 消费面，Task 4 InpatientVisitEventListener）：
+     * 该就诊全部在途任务（PENDING/IN_PROGRESS）批量 CANCELLED、原因固定「出院终清」留痕——
+     * 与逐单 cancel 的 CAS 谓词同构，定位键换 visit_id（终清面=整就诊在途任务，非单任务号）；
+     * 不发布任务事件（消费面零发布，终态广播语义归任务域自身动作面）。status 字面量与
+     * TaskStatus code 同源；deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param visitId   住院就诊号（终清定位键），非空；来源：事件载荷
+     * @param reason    终清原因（固定文案「出院终清」，审计留痕），非空
+     * @param updatedBy 操作者（消费链路 system 回退），非空
+     * @return 影响行数（0=无在途任务/重复投递已终清——幂等达成）
+     */
+    @Update(
+            "UPDATE nursing.nursing_task SET status = 'CANCELLED', cancel_reason = #{reason}, updated_by = #{updatedBy} "
+                    + "WHERE visit_id = #{visitId} AND status IN ('PENDING', 'IN_PROGRESS') AND deleted = 0")
+    int casCancelByVisit(
+            @Param("visitId") String visitId, @Param("reason") String reason, @Param("updatedBy") String updatedBy);
 }
