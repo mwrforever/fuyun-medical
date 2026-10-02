@@ -5,6 +5,7 @@ import com.fuyun.common.web.PageResult;
 import com.fuyun.nursing.dto.CancelExecutionRequest;
 import com.fuyun.nursing.dto.CheckRequest;
 import com.fuyun.nursing.dto.FinishRequest;
+import com.fuyun.nursing.dto.NeedleOutRequest;
 import com.fuyun.nursing.dto.OverrideCheckRequest;
 import com.fuyun.nursing.dto.SignReceiveRequest;
 import com.fuyun.nursing.dto.StartRequest;
@@ -105,6 +106,24 @@ public interface IOrderExecutionOperateService extends IService<OrderExecution> 
      *                 EXECUTING 态）
      */
     OrderExecutionVO finish(String executionNo, FinishRequest req);
+
+    /**
+     * 输液拔针（Task 6 / FU-M05-06，INFUSION 型 finish 承接端点）：腕带三向核对（visitId
+     * 匹配，FAIL NS-1022 流水落行）→ 实际输注量守卫（0~5000 越界 NS-1019）→ EXECUTING→
+     * COMPLETED CAS（needle_out_at/finished_at 同刻）→ 挂接收口 ENDED（非 MONITORING
+     * NS-1024）→ 自动入量行（INFUSION_AUTO/IV_FLUID，quantity=actualVolumeMl）→ 事务内
+     * 发布 nursing.infusion.completed（id 63，iot 停监测/ward 呼叫复位消费）→ 回签同 finish
+     * 双路（辅路径 id 64 事件 + 主路径事务提交后回签端口）。
+     *
+     * @param executionNo 执行单号，非空；来源：路径参数
+     * @param req         拔针入参（executorId 必填/actualVolumeMl 必填 0~5000/wristbandCode 必填），非空
+     * @return 拔针后执行单出参
+     * @throws com.fuyun.common.exception.BizException NS-1020（404）/ NS-1021（409 GENERIC 型
+     *                 走 finish 端点/非 EXECUTING 态）/ NS-1022（409 腕带核对不符，FAIL 流水落行）/
+     *                 NS-1019（400 实际输注量越界）/ NS-1024（409 无在途输注监测挂接）/
+     *                 NS-1004（409 患者不在区——自动入量守卫，事务整体回滚）
+     */
+    OrderExecutionVO needleOut(String executionNo, NeedleOutRequest req);
 
     /**
      * 执行单撤销（两分支）：未执行三态（CREATED/SIGNED/CHECKED）→CANCELLED 原因留痕；

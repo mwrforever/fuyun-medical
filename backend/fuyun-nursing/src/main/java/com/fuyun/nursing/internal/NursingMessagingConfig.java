@@ -27,7 +27,9 @@ import org.springframework.context.annotation.Import;
  * discharged/bed.changed 五路）两监听器。 P2 PR-3 Task 5 追加：摆药签收衔接监听器
  * （DispenseSignoffListener——pharmacy.dispense.completed 首消费者，队列声明随既有
  * SUBSCRIBED_EVENT_TYPES id 28 项）与回签补偿扫描组件（ExecutionConfirmCompensator——
- * tick 接线归 Task 9，本任务仅注册 Bean 供调用）。
+ * tick 接线归 Task 9，本任务仅注册 Bean 供调用）。P2 PR-3 Task 6 追加：IoT 告警执行单
+ * 挂接监听器（IotAlarmExecutionListener——iot.alarm.triggered/escalated/closed 三路，
+ * 队列声明随既有 SUBSCRIBED_EVENT_TYPES id 74–76 项）。
  */
 @Configuration
 @Import({
@@ -38,7 +40,8 @@ import org.springframework.context.annotation.Import;
     InpatientOrderEventListener.class,
     InpatientVisitEventListener.class,
     DispenseSignoffListener.class,
-    ExecutionConfirmCompensator.class
+    ExecutionConfirmCompensator.class,
+    IotAlarmExecutionListener.class
 })
 public class NursingMessagingConfig {
 

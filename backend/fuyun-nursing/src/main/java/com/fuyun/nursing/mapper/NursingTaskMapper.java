@@ -86,4 +86,20 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
                     + "WHERE visit_id = #{visitId} AND status IN ('PENDING', 'IN_PROGRESS') AND deleted = 0")
     int casCancelByVisit(
             @Param("visitId") String visitId, @Param("reason") String reason, @Param("updatedBy") String updatedBy);
+
+    /**
+     * 告警升级优先级上调 CAS（Task 6 IotAlarmExecutionListener）：按 source_ref=告警号定位
+     * 挂接任务（INFUSION_ALARM 源任务 source_ref 落告警号；联动挂接任务经 Task 12 端口创建、
+     * source_ref 落联动号——本 CAS 只命中显式挂接该告警的行，无挂接 0 行跳过）在途两态
+     * priority 上调 HIGH。priority&lt;&gt;'HIGH' 谓词承载幂等（重复升级 0 行不重复写）。
+     * status 字面量与 TaskStatus code 同源；deleted=0 显式补齐。
+     *
+     * @param alarmNo   告警业务号（source_ref 定位键），非空；来源：iot 告警事件载荷
+     * @param updatedBy 操作者（MQ 链路 SYSTEM 桥接），非空
+     * @return 影响行数（0=该告警无在途挂接任务/已 HIGH——「无挂接则跳过」幂等达成）
+     */
+    @Update("UPDATE nursing.nursing_task SET priority = 'HIGH', updated_by = #{updatedBy} "
+            + "WHERE source_ref = #{alarmNo} AND status IN ('PENDING', 'IN_PROGRESS') "
+            + "AND priority <> 'HIGH' AND deleted = 0")
+    int casEscalatePriorityBySourceRef(@Param("alarmNo") String alarmNo, @Param("updatedBy") String updatedBy);
 }

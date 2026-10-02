@@ -647,6 +647,50 @@ class IoRecordServiceImplTest {
         assertThat(allWrapper.getSqlSegment()).doesNotContain("period_start >=");
     }
 
+    // ===================== Task 6 输液拔针自动入量面 =====================
+
+    @Test
+    @DisplayName("自动入量行：INFUSION_AUTO/IV_FLUID 落库（source_ref=执行单号，occurAt=拔针时点，患者/病区在区归一）")
+    void appendInfusionIntakeWritesAutoRow() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        OffsetDateTime needleOutAt = OffsetDateTime.now(NursingTimeConstants.HEALTHCARE_TZ);
+
+        service.appendInfusionIntake(VISIT, "EX2026100200001", 250, needleOutAt, 9L);
+
+        verify(recordMapper).insert(rowCaptor.capture());
+        IoRecord row = rowCaptor.getValue();
+        assertThat(row.getVisitId()).isEqualTo(VISIT);
+        // 患者主索引/病区经在区行服务端装配（不信调用方）
+        assertThat(row.getPatientId()).isEqualTo(7L);
+        assertThat(row.getWardId()).isEqualTo(WARD);
+        assertThat(row.getIoType()).isEqualTo("INTAKE");
+        assertThat(row.getItemCode()).isEqualTo("IV_FLUID");
+        assertThat(row.getItemName()).isEqualTo("静脉输液");
+        // 数量=实际输注量（NUMERIC(10,2) 两位小数规整）+单位 ml
+        assertThat(row.getQuantity()).isEqualByComparingTo(new BigDecimal("250.00"));
+        assertThat(row.getUnit()).isEqualTo("ml");
+        // P2 执行域写入方：INFUSION_AUTO 预留源落值 + 来源单据引用=执行单号
+        assertThat(row.getSource()).isEqualTo("INFUSION_AUTO");
+        assertThat(row.getSourceRef()).isEqualTo("EX2026100200001");
+        assertThat(row.getOccurAt()).isEqualTo(needleOutAt);
+        assertThat(row.getRecorderId()).isEqualTo("9");
+    }
+
+    @Test
+    @DisplayName("自动入量守卫：患者不在区 NS-1004 上抛（拔针事务整体回滚 fail-closed），零落库")
+    void appendInfusionIntakeRejectsWhenPatientNotInWard() {
+        when(wardMetaService.detail(VISIT))
+                .thenThrow(new BizException(NursingErrorCode.WARD_PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "在区行不存在"));
+
+        assertThatThrownBy(
+                        () -> service.appendInfusionIntake(VISIT, "EX2026100200001", 250, OffsetDateTime.now(ZONE), 9L))
+                .isInstanceOf(BizException.class)
+                .satisfies(
+                        e -> assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.PATIENT_BLOCKED));
+
+        verify(recordMapper, never()).insert(any(IoRecord.class));
+    }
+
     // ===================== 测试数据与断言辅助 =====================
 
     /** 小结全链桩（在区 + 月页 + 条目定位 + 小结 insert；SHIFT 用例另行桩病区班次定义）。 */

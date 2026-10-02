@@ -1,6 +1,7 @@
 package com.fuyun.nursing.config;
 
 import com.fuyun.nursing.cache.NursingSeqGate;
+import com.fuyun.nursing.controller.InfusionController;
 import com.fuyun.nursing.controller.IoController;
 import com.fuyun.nursing.controller.NursingAssessmentController;
 import com.fuyun.nursing.controller.NursingRecordController;
@@ -12,6 +13,7 @@ import com.fuyun.nursing.controller.TemperatureChartController;
 import com.fuyun.nursing.controller.VitalSignController;
 import com.fuyun.nursing.controller.WardController;
 import com.fuyun.nursing.properties.NursingProperties;
+import com.fuyun.nursing.service.impl.InfusionServiceImpl;
 import com.fuyun.nursing.service.impl.IoRecordServiceImpl;
 import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
@@ -42,7 +44,8 @@ import org.springframework.context.annotation.Import;
  * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。P2 PR-3 Task 4 追加：执行单生成域服务
  * （inpatient 医嘱事件族消费落单，IOrderExecutionService 三方法）。P2 PR-3 Task 5 追加：
  * 执行单操作域服务（五环节状态链+工作台/占用/追溯+双路回签，回签端口经构造器注入解析
- * inpatient OrderExecutionConfirmPort Bean）与执行单控制器。
+ * inpatient OrderExecutionConfirmPort Bean）与执行单控制器。P2 PR-3 Task 6 追加：输液闭环
+ * 域服务（start 的 INFUSION 分支挂接/告警升级挂单三路）与输液控制器（拔针+在途输注清单）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -61,6 +64,7 @@ import org.springframework.context.annotation.Import;
     ShiftHandoverServiceImpl.class,
     PdaServiceImpl.class,
     OrderExecutionOperateServiceImpl.class,
+    InfusionServiceImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,
@@ -69,6 +73,7 @@ import org.springframework.context.annotation.Import;
     NursingAssessmentController.class,
     ShiftHandoverController.class,
     PdaController.class,
-    OrderExecutionController.class
+    OrderExecutionController.class,
+    InfusionController.class
 })
 public class NursingWebConfig {}

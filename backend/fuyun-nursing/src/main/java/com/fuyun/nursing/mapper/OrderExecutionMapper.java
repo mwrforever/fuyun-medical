@@ -291,4 +291,55 @@ public interface OrderExecutionMapper extends BaseMapper<OrderExecution> {
             + "updated_by = #{updatedBy} WHERE m04_order_no = #{m04OrderNo} AND status = 'SIGNED' "
             + "AND execution_type = 'GENERIC' AND deleted = 0")
     int casUpgradeInfusionByOrder(@Param("m04OrderNo") String m04OrderNo, @Param("updatedBy") String updatedBy);
+
+    /**
+     * 拔针完成 CAS（Task 6 输液闭环 needle-out 端点）：EXECUTING 且仅 INFUSION 型可拔针完成
+     * （输液类 finish 由拔针端点承接），同刻落 needle_out_at 与 finished_at（环节时点集收口
+     * ——回签 executedAt 基准取 finished_at）。GENERIC 型 EXECUTING 由谓词滤除（0 行）。
+     * status/execution_type 字面量与 ExecutionStatus/ExecutionType code 同源；deleted=0 显式补齐。
+     *
+     * @param executionNo 执行单号，非空；来源：路径参数
+     * @param needleOutAt 拔针时点（北京钟面 now，双时点同刻承载），非空
+     * @param updatedBy   操作者（审计留痕），非空
+     * @return 影响行数（0=非 EXECUTING 态或非 INFUSION 型，调用方 NS-1021 拒绝）
+     */
+    @Update("UPDATE nursing.order_execution SET status = 'COMPLETED', needle_out_at = #{needleOutAt}, "
+            + "finished_at = #{needleOutAt}, updated_by = #{updatedBy} WHERE execution_no = #{executionNo} "
+            + "AND status = 'EXECUTING' AND execution_type = 'INFUSION' AND deleted = 0")
+    int casNeedleOut(
+            @Param("executionNo") String executionNo,
+            @Param("needleOutAt") OffsetDateTime needleOutAt,
+            @Param("updatedBy") String updatedBy);
+
+    /**
+     * 告警升级挂单 CAS（Task 6 IotAlarmExecutionListener triggered/escalated 路）：在途输液
+     * 执行单 escalation_count 自增（COALESCE 兜底 NULL 初值——V1106 默认 0，防御脏数据）并
+     * 刷新 latest_alarm_no（挂单锚）。EXECUTING+INFUSION 谓词限定在途面——终态行不升级。
+     * closed 复位路见 {@link #casResetAlarmByAlarmNo}（escalation_count 保留追溯）。
+     *
+     * @param executionNo 执行单号，非空；来源：患者直配/告警号反查定位的在途行
+     * @param alarmNo     告警业务号（latest_alarm_no 刷新值），非空；来源：iot 告警事件载荷
+     * @param updatedBy   操作者（MQ 链路 SYSTEM 桥接），非空
+     * @return 影响行数（0=并发他方已终态——幂等达成，调用方零副作用收口）
+     */
+    @Update("UPDATE nursing.order_execution SET escalation_count = COALESCE(escalation_count, 0) + 1, "
+            + "latest_alarm_no = #{alarmNo}, updated_by = #{updatedBy} WHERE execution_no = #{executionNo} "
+            + "AND status = 'EXECUTING' AND execution_type = 'INFUSION' AND deleted = 0")
+    int casEscalateAlarm(
+            @Param("executionNo") String executionNo,
+            @Param("alarmNo") String alarmNo,
+            @Param("updatedBy") String updatedBy);
+
+    /**
+     * 告警关闭复位 CAS（Task 6 IotAlarmExecutionListener closed 路）：按告警号反查挂接行
+     * latest_alarm_no 复位为 NULL（escalation_count 保留追溯——升级史不随关闭抹除）。
+     * latest_alarm_no=告警号谓词承载精确复位与幂等（重复关闭 0 行）。
+     *
+     * @param alarmNo    告警业务号（复位定位键），非空；来源：iot.alarm.closed 载荷
+     * @param updatedBy  操作者（MQ 链路 SYSTEM 桥接），非空
+     * @return 影响行数（0=该告警无挂接在途行/重复关闭——幂等达成）
+     */
+    @Update("UPDATE nursing.order_execution SET latest_alarm_no = NULL, updated_by = #{updatedBy} "
+            + "WHERE latest_alarm_no = #{alarmNo} AND deleted = 0")
+    int casResetAlarmByAlarmNo(@Param("alarmNo") String alarmNo, @Param("updatedBy") String updatedBy);
 }

@@ -21,12 +21,14 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.inpatient.api.ExecuteConfirmRequest;
 import com.fuyun.inpatient.api.OrderExecutionConfirmPort;
+import com.fuyun.nursing.api.InfusionCompletedPayload;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.api.OrderExecutionCompletedPayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.CancelExecutionRequest;
 import com.fuyun.nursing.dto.CheckRequest;
 import com.fuyun.nursing.dto.FinishRequest;
+import com.fuyun.nursing.dto.NeedleOutRequest;
 import com.fuyun.nursing.dto.OverrideCheckRequest;
 import com.fuyun.nursing.dto.SignReceiveRequest;
 import com.fuyun.nursing.dto.StartRequest;
@@ -41,6 +43,8 @@ import com.fuyun.nursing.mapper.ExecutionCheckLogMapper;
 import com.fuyun.nursing.mapper.InfusionMonitorLinkMapper;
 import com.fuyun.nursing.mapper.NursingWardConfigMapper;
 import com.fuyun.nursing.mapper.OrderExecutionMapper;
+import com.fuyun.nursing.service.IInfusionService;
+import com.fuyun.nursing.service.IIoRecordService;
 import com.fuyun.nursing.vo.OrderExecutionTraceVO;
 import com.fuyun.nursing.vo.OrderExecutionVO;
 import java.time.LocalDate;
@@ -112,6 +116,12 @@ class OrderExecutionOperateServiceImplTest {
     @Mock
     private OrderExecutionConfirmPort confirmPort;
 
+    @Mock
+    private IInfusionService infusionService;
+
+    @Mock
+    private IIoRecordService ioRecordService;
+
     @Captor
     private ArgumentCaptor<ExecutionCheckLog> checkLogCaptor;
 
@@ -138,7 +148,14 @@ class OrderExecutionOperateServiceImplTest {
     @BeforeEach
     void setUp() {
         service = new OrderExecutionOperateServiceImpl(
-                executionMapper, checkLogMapper, monitorLinkMapper, wardConfigMapper, events, confirmPort);
+                executionMapper,
+                checkLogMapper,
+                monitorLinkMapper,
+                wardConfigMapper,
+                events,
+                confirmPort,
+                infusionService,
+                ioRecordService);
         ReflectionTestUtils.setField(service, "baseMapper", executionMapper);
         // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
         ReflectionTestUtils.setField(service, "entityClass", OrderExecution.class);
@@ -351,6 +368,162 @@ class OrderExecutionOperateServiceImplTest {
         OrderExecutionVO vo = service.finish(EXEC, new FinishRequest(EXECUTOR, null));
 
         assertThat(vo.status()).isEqualTo(ExecutionStatus.COMPLETED.getCode());
+        verifyNoInteractions(events);
+        verifyNoInteractions(confirmPort);
+    }
+
+    // ===================== Task 6 输液闭环面（start 分支接线 + 拔针全链） =====================
+
+    @Test
+    @DisplayName("T6① start INFUSION 分支接线：CAS 后委托输液域建链（deviceId 透传），GENERIC 不触达")
+    void startInfusionBranchDelegatesAndGenericSkips() {
+        // GENERIC 型开始：不触达输液域（无监测挂接链）
+        OrderExecution generic = row(ExecutionStatus.CHECKED, ExecutionType.GENERIC, null);
+        when(executionMapper.selectOne(any())).thenReturn(generic);
+        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(1);
+        service.start(EXEC, new StartRequest(EXECUTOR, null, null));
+        verifyNoInteractions(infusionService);
+
+        // INFUSION 型开始：CAS 成功后段扩展点委托（row 已同步 EXECUTING/startedAt，deviceId 透传）
+        OrderExecution infusion = row(ExecutionStatus.CHECKED, ExecutionType.INFUSION, null);
+        when(executionMapper.selectOne(any())).thenReturn(infusion);
+        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(1);
+
+        service.start(EXEC, new StartRequest(EXECUTOR, "PUMP-01", null));
+
+        // 委托行时点同步断言（激活 CAS 与事件共用单钟——startedAt 已置值）
+        org.mockito.ArgumentCaptor<OrderExecution> rowCaptor =
+                org.mockito.ArgumentCaptor.forClass(OrderExecution.class);
+        verify(infusionService).startInfusion(rowCaptor.capture(), eq("PUMP-01"));
+        assertThat(rowCaptor.getValue().getStatus()).isEqualTo(ExecutionStatus.EXECUTING.getCode());
+        assertThat(rowCaptor.getValue().getStartedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("T6② 拔针全链：腕带 PASS+CAS 迁移+挂接 ENDED+自动入量行+双事件+回签双路")
+    void needleOutCompletesFullChainWithIntakeAndDualConfirm() {
+        OrderExecution target = row(ExecutionStatus.EXECUTING, ExecutionType.INFUSION, "AL2026100200001");
+        when(executionMapper.selectOne(any())).thenReturn(target);
+        when(executionMapper.casNeedleOut(eq(EXEC), any(), any())).thenReturn(1);
+        when(monitorLinkMapper.casEnd(eq(EXEC), any(), any())).thenReturn(1);
+        when(executionMapper.casMarkConfirmStatus(eq(EXEC), eq("PENDING"), eq("CONFIRMED"), any()))
+                .thenReturn(1);
+
+        OrderExecutionVO vo = service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 250, VISIT));
+
+        assertThat(vo.status()).isEqualTo(ExecutionStatus.COMPLETED.getCode());
+        assertThat(vo.needleOutAt()).isNotNull();
+        // 腕带核对 PASS 流水（拔针护士为核对主体）
+        verify(checkLogMapper).insert(checkLogCaptor.capture());
+        assertThat(checkLogCaptor.getValue().getCheckType()).isEqualTo("WRISTBAND");
+        assertThat(checkLogCaptor.getValue().getCheckResult()).isEqualTo("PASS");
+        assertThat(checkLogCaptor.getValue().getOperatorId()).isEqualTo(EXECUTOR);
+        // 拔针完成 CAS+挂接收口 CAS（双时点同刻）
+        verify(executionMapper).casNeedleOut(eq(EXEC), any(), any());
+        verify(monitorLinkMapper).casEnd(eq(EXEC), any(), any());
+        // 自动入量行：INFUSION_AUTO/IV_FLUID 维度经出入量服务承载（quantity=实际输注量，occurAt=拔针时点）
+        verify(ioRecordService)
+                .appendInfusionIntake(eq(VISIT), eq(EXEC), eq(250), any(OffsetDateTime.class), eq(EXECUTOR));
+        // 双事件：infusion.completed（id 63 四字段）+ order-execution.completed（id 64 回执）
+        verify(events, times(2)).publishEvent(eventCaptor.capture());
+        NursingDomainEvent infusionEvent =
+                (NursingDomainEvent) eventCaptor.getAllValues().get(0);
+        assertThat(infusionEvent.eventType()).isEqualTo(NursingMessagingConstants.EVENT_INFUSION_COMPLETED);
+        InfusionCompletedPayload infusionPayload = (InfusionCompletedPayload) infusionEvent.payload();
+        assertThat(infusionPayload.executionNo()).isEqualTo(EXEC);
+        assertThat(infusionPayload.patientId()).isEqualTo(7L);
+        assertThat(infusionPayload.visitId()).isEqualTo(VISIT);
+        assertThat(infusionPayload.endedAt()).isNotNull();
+        NursingDomainEvent receiptEvent =
+                (NursingDomainEvent) eventCaptor.getAllValues().get(1);
+        assertThat(receiptEvent.eventType()).isEqualTo(NursingMessagingConstants.EVENT_ORDER_EXECUTION_COMPLETED);
+        // 回签主路径（无事务环境直调——单测形态）：executedAt=拔针时点，routeCheckResult 无来源透空
+        verify(confirmPort).executeConfirm(eq(PLAN_NO), confirmCaptor.capture());
+        assertThat(confirmCaptor.getValue().executorId()).isEqualTo(EXECUTOR);
+        assertThat(confirmCaptor.getValue().executedAt()).isNotNull();
+        verify(executionMapper).casMarkConfirmStatus(eq(EXEC), eq("PENDING"), eq("CONFIRMED"), any());
+    }
+
+    @Test
+    @DisplayName("T6③ 拔针实际输注量越界：5001 拒 NS-1019 400（-1 同拒），零 CAS 零事件")
+    void needleOutRejectsOutOfBoundaryVolume() {
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.INFUSION, null));
+
+        assertThatThrownBy(() -> service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 5001, VISIT)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e ->
+                        assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID));
+        assertThatThrownBy(() -> service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, -1, VISIT)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e ->
+                        assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID));
+
+        verify(executionMapper, never()).casNeedleOut(any(), any(), any());
+        verifyNoInteractions(events);
+        verifyNoInteractions(ioRecordService);
+    }
+
+    @Test
+    @DisplayName("T6④ 拔针腕带核对不符：NS-1022 409+FAIL 流水落行（WRISTBAND_MISMATCH）不迁移")
+    void needleOutRejectsWristbandMismatchWithFailLog() {
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.INFUSION, null));
+
+        assertThatThrownBy(() -> service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 250, "I9999999999999")))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(NursingErrorCode.EXECUTION_CHECK_FAILED));
+
+        // FAIL 流水落行（三向核对语义：失败详情落 execution_check_log）
+        verify(checkLogMapper).insert(checkLogCaptor.capture());
+        assertThat(checkLogCaptor.getValue().getCheckResult()).isEqualTo("FAIL");
+        assertThat(checkLogCaptor.getValue().getFailType()).isEqualTo("WRISTBAND_MISMATCH");
+        verify(executionMapper, never()).casNeedleOut(any(), any(), any());
+        verifyNoInteractions(ioRecordService);
+        verifyNoInteractions(confirmPort);
+    }
+
+    @Test
+    @DisplayName("T6 拔针守卫：GENERIC 型 NS-1021；CAS 零行 NS-1021；挂接非 MONITORING NS-1024")
+    void needleOutCoversTypeStateAndLinkGuards() {
+        // GENERIC 型走 finish 端点 → NS-1021
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.GENERIC, null));
+        assertThatThrownBy(() -> service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 250, VISIT)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(NursingErrorCode.EXECUTION_STATE_NOT_ALLOWED));
+
+        // 拔针完成 CAS 零行（非 EXECUTING 态）→ NS-1021
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.INFUSION, null));
+        when(executionMapper.casNeedleOut(eq(EXEC), any(), any())).thenReturn(0);
+        assertThatThrownBy(() -> service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 250, VISIT)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(NursingErrorCode.EXECUTION_STATE_NOT_ALLOWED));
+
+        // 挂接收口 CAS 零行（无 MONITORING 挂接）→ NS-1024 fail-closed（事务整体回滚）
+        when(executionMapper.casNeedleOut(eq(EXEC), any(), any())).thenReturn(1);
+        when(monitorLinkMapper.casEnd(eq(EXEC), any(), any())).thenReturn(0);
+        assertThatThrownBy(() -> service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 250, VISIT)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e ->
+                        assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.INFUSION_NOT_ACTIVE));
+        verifyNoInteractions(ioRecordService);
+        verifyNoInteractions(confirmPort);
+    }
+
+    @Test
+    @DisplayName("T6 finish 型守卫：INFUSION 型拒 NS-1021 不迁移（完成形态由拔针端点 needle-out 承接）")
+    void finishRejectsInfusionTypeWithoutMigration() {
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.INFUSION, null));
+
+        assertThatThrownBy(() -> service.finish(EXEC, new FinishRequest(EXECUTOR, null)))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("needle-out")
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(NursingErrorCode.EXECUTION_STATE_NOT_ALLOWED));
+
+        // 状态不迁移：零 CAS 零事件零回签（直接 finish 会绕过拔针链，fail-closed 拒绝）
+        verify(executionMapper, never()).casFinish(any(), any(), any());
         verifyNoInteractions(events);
         verifyNoInteractions(confirmPort);
     }

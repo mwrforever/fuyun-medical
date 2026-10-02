@@ -10,12 +10,14 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.inpatient.api.ExecuteConfirmRequest;
 import com.fuyun.inpatient.api.OrderExecutionConfirmPort;
+import com.fuyun.nursing.api.InfusionCompletedPayload;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.api.OrderExecutionCompletedPayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.CancelExecutionRequest;
 import com.fuyun.nursing.dto.CheckRequest;
 import com.fuyun.nursing.dto.FinishRequest;
+import com.fuyun.nursing.dto.NeedleOutRequest;
 import com.fuyun.nursing.dto.OverrideCheckRequest;
 import com.fuyun.nursing.dto.SignReceiveRequest;
 import com.fuyun.nursing.dto.StartRequest;
@@ -31,6 +33,8 @@ import com.fuyun.nursing.mapper.ExecutionCheckLogMapper;
 import com.fuyun.nursing.mapper.InfusionMonitorLinkMapper;
 import com.fuyun.nursing.mapper.NursingWardConfigMapper;
 import com.fuyun.nursing.mapper.OrderExecutionMapper;
+import com.fuyun.nursing.service.IInfusionService;
+import com.fuyun.nursing.service.IIoRecordService;
 import com.fuyun.nursing.service.IOrderExecutionOperateService;
 import com.fuyun.nursing.vo.OrderExecutionTraceVO;
 import com.fuyun.nursing.vo.OrderExecutionVO;
@@ -65,6 +69,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 归 Task 9）。回签双路仅对 m04PlanNo 非空行生效——临时单（m04_plan_no NULL）无 M04 计划
  * 对账锚（临时单次计划不经 order-plan.generated 事件下发，P1 世界由 M04 execute-confirm
  * 端点人工回签承载；差异注记见 PR 报告，M05 批量自动回签覆盖长期计划拆分行）。
+ *
+ * <p>P2 PR-3 Task 6 追加：start 的 INFUSION 分支扩展（监测挂接建/激活委托 IInfusionService，
+ * deviceId 透传——deviceId 不进 infusion.started 事件契约）与拔针全链（INFUSION 型 finish
+ * 承接：腕带核对+实际输注量守卫+挂接收口 ENDED+自动入量行+infusion.completed 事件+回签同
+ * finish 双路）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
@@ -121,15 +130,22 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
 
     private final OrderExecutionConfirmPort confirmPort;
 
+    private final IInfusionService infusionService;
+
+    private final IIoRecordService ioRecordService;
+
     /**
      * 全参构造器（装配归 NursingWebConfig @Import）。
      *
      * @param executionMapper  执行单 mapper，非空；ServiceImpl 基座 mapper
-     * @param checkLogMapper   扫码核对流水 mapper，非空；check/override-check 落行与 trace 聚合取数面
+     * @param checkLogMapper   扫码核对流水 mapper，非空；check/override-check/拔针腕带核对落行与 trace 聚合取数面
      * @param monitorLinkMapper 输液监测挂接 mapper，非空；瓶签核对取数与 PIVAS 建链面
      * @param wardConfigMapper 病区配置 mapper，非空；时间窗/授权角色取数面
      * @param events           进程内事件发布器，非空；回执事件事务内发布（AFTER_COMMIT 出 MQ）
      * @param confirmPort      M04 回签端口，非空；主路径进程内直调（事务提交后）
+     * @param infusionService  输液闭环域服务，非空；start 的 INFUSION 分支挂接扩展点（建链/
+     *                         激活+infusion.started 事件，Task 6 接入）
+     * @param ioRecordService  出入量服务，非空；拔针自动入量行（INFUSION_AUTO/IV_FLUID）
      */
     public OrderExecutionOperateServiceImpl(
             OrderExecutionMapper executionMapper,
@@ -137,12 +153,16 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
             InfusionMonitorLinkMapper monitorLinkMapper,
             NursingWardConfigMapper wardConfigMapper,
             ApplicationEventPublisher events,
-            OrderExecutionConfirmPort confirmPort) {
+            OrderExecutionConfirmPort confirmPort,
+            IInfusionService infusionService,
+            IIoRecordService ioRecordService) {
         this.checkLogMapper = checkLogMapper;
         this.monitorLinkMapper = monitorLinkMapper;
         this.wardConfigMapper = wardConfigMapper;
         this.events = events;
         this.confirmPort = confirmPort;
+        this.infusionService = infusionService;
+        this.ioRecordService = ioRecordService;
     }
 
     /**
@@ -300,6 +320,14 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
         if (baseMapper.casStart(executionNo, now, req.executorId(), operator()) == 0) {
             throw stateNotAllowed(executionNo, row.getStatus(), "开始执行");
         }
+        row.setStatus(ExecutionStatus.EXECUTING.getCode());
+        row.setStartedAt(now);
+        row.setExecutorId(req.executorId());
+        // INFUSION 分支扩展点（Task 6 接入）：监测挂接建/激活 + 事务内发布 infusion.started
+        // （挂接缺行/非 MONITORING NS-1024 fail-closed——建链唯一正规入口=摆药签收 PIVAS 升格）
+        if (ExecutionType.INFUSION.getCode().equals(row.getExecutionType())) {
+            infusionService.startInfusion(row, req.deviceId());
+        }
         log.info(
                 "执行单开始执行：executionNo={}，executorId={}，executionType={}，deviceId={}，override={}",
                 executionNo,
@@ -307,9 +335,6 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
                 row.getExecutionType(),
                 req.deviceId(),
                 override);
-        row.setStatus(ExecutionStatus.EXECUTING.getCode());
-        row.setStartedAt(now);
-        row.setExecutorId(req.executorId());
         return OrderExecutionVO.from(row);
     }
 
@@ -321,6 +346,11 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
     @Transactional
     public OrderExecutionVO finish(String executionNo, FinishRequest req) {
         OrderExecution row = requireByNo(executionNo);
+        // 型守卫：完成为非输液类专属形态（INFUSION 型直接 finish 会绕过拔针链——挂接僵死
+        // MONITORING、无自动入量行、无 infusion.completed 事件，fail-closed 拒绝并指引拔针端点）
+        if (ExecutionType.INFUSION.getCode().equals(row.getExecutionType())) {
+            throw stateNotAllowed(executionNo, row.getStatus(), "完成（INFUSION 型完成由拔针端点 needle-out 承接）");
+        }
         OffsetDateTime finishedAt = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
         // 数据库写操作：完成 CAS（EXECUTING 限定；0 行=未开始/终态）
         if (baseMapper.casFinish(executionNo, finishedAt, operator()) == 0) {
@@ -333,6 +363,80 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
         // 主路径：事务提交后进程内回签（无事务环境直调——单测形态）
         registerConfirmAfterCommit(row, req.executorId(), req.routeCheckResult());
         log.info("执行单完成（双路回签编排）：executionNo={}，executorId={}", executionNo, req.executorId());
+        return OrderExecutionVO.from(row);
+    }
+
+    /**
+     * 输液拔针（Task 6 / FU-M05-06，INFUSION 型 finish 承接）：守卫（GENERIC 型走 finish /
+     * 实际输注量 0~5000）→ 腕带三向核对（visitId 匹配，FAIL 流水落行 NS-1022）→ 拔针完成
+     * CAS（needle_out_at/finished_at 同刻）→ 挂接收口 ENDED（非 MONITORING NS-1024）→
+     * 自动入量行 → 事务内发布 infusion.completed（id 63）→ 回签同 finish 双路。
+     */
+    @Override
+    @Transactional
+    public OrderExecutionVO needleOut(String executionNo, NeedleOutRequest req) {
+        OrderExecution row = requireByNo(executionNo);
+        // 型守卫：拔针为输液类专属完成形态（GENERIC 型走 finish 端点）
+        if (!ExecutionType.INFUSION.getCode().equals(row.getExecutionType())) {
+            throw stateNotAllowed(executionNo, row.getStatus(), "拔针（GENERIC 型走执行完成端点）");
+        }
+        int volume = req.actualVolumeMl();
+        // 实际输注量业务边界守卫（brief 冻结 0~5000——Bean Validation 之外兜住服务层直调路径）
+        if (volume < 0 || volume > 5000) {
+            throw new BizException(
+                    NursingErrorCode.PARAM_FORMAT_INVALID,
+                    HttpStatus.BAD_REQUEST,
+                    "实际输注量越界（0~5000 ml）：" + volume + "：executionNo=" + executionNo);
+        }
+        // 腕带三向核对（同 check 端点腕带维语义：患者腕带=visitId 匹配；FAIL 流水落行 NS-1022）
+        boolean wristbandPass = row.getVisitId() != null && row.getVisitId().equals(req.wristbandCode());
+        OffsetDateTime needleOutAt = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
+        // 数据库写操作：核对流水只增落行（PASS/FAIL 双落——拔针腕带核对审计底座）
+        checkLogMapper.insert(checkLogRow(
+                executionNo, CheckType.WRISTBAND, wristbandPass, req.wristbandCode(), req.executorId(), needleOutAt));
+        if (!wristbandPass) {
+            log.warn(
+                    "拔针腕带核对失败：executionNo={}，executorId={}，failType={}",
+                    executionNo,
+                    req.executorId(),
+                    CheckType.WRISTBAND.failType());
+            throw new BizException(
+                    NursingErrorCode.EXECUTION_CHECK_FAILED,
+                    HttpStatus.CONFLICT,
+                    "拔针腕带核对不匹配（WRISTBAND，fail_type=" + CheckType.WRISTBAND.failType() + "）：executionNo=" + executionNo);
+        }
+        // 数据库写操作：拔针完成 CAS（EXECUTING+INFUSION 限定，双时点同刻；0 行=未执行/终态）
+        if (baseMapper.casNeedleOut(executionNo, needleOutAt, operator()) == 0) {
+            throw stateNotAllowed(executionNo, row.getStatus(), "拔针");
+        }
+        row.setStatus(ExecutionStatus.COMPLETED.getCode());
+        row.setNeedleOutAt(needleOutAt);
+        row.setFinishedAt(needleOutAt);
+        // 数据库写操作：监测挂接收口 CAS（MONITORING→ENDED；0 行=无在途输注监测 NS-1024 fail-closed）
+        if (monitorLinkMapper.casEnd(executionNo, needleOutAt, operator()) == 0) {
+            log.warn("拔针挂接收口失败（无 MONITORING 挂接）：executionNo={}", executionNo);
+            throw new BizException(
+                    NursingErrorCode.INFUSION_NOT_ACTIVE,
+                    HttpStatus.CONFLICT,
+                    "拔针时无在途输注监测挂接（MONITORING）：executionNo=" + executionNo);
+        }
+        // 自动入量行（INFUSION_AUTO/IV_FLUID——quantity=实际输注量，occurredAt=拔针时点；
+        // 患者不在区 NS-1004 上抛整体回滚 fail-closed）
+        ioRecordService.appendInfusionIntake(row.getVisitId(), executionNo, volume, needleOutAt, req.executorId());
+        // 消息发送：事务内发布拔针事件（id 63——iot 停止监测/ward 呼叫复位消费；deviceId/
+        // 计划锚不进契约，患者维度消费面）
+        events.publishEvent(new NursingDomainEvent(
+                NursingMessagingConstants.EVENT_INFUSION_COMPLETED,
+                new InfusionCompletedPayload(
+                        executionNo, row.getPatientId(), row.getVisitId(), needleOutAt.toInstant())));
+        // 回签同 finish 双路：辅路径 id 64 回执事件（长期计划拆分行）+ 主路径事务提交后回签端口
+        publishCompletedReceipt(row, req.executorId());
+        registerConfirmAfterCommit(row, req.executorId(), null);
+        log.info(
+                "执行单拔针完成（挂接收口+自动入量+双路回签编排）：executionNo={}，executorId={}，actualVolumeMl={}",
+                executionNo,
+                req.executorId(),
+                volume);
         return OrderExecutionVO.from(row);
     }
 
