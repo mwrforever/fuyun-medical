@@ -5,8 +5,10 @@ import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
+import com.fuyun.integration.api.DelayQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
+import java.time.Duration;
 import java.util.Arrays;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -58,8 +60,10 @@ public class NursingMessagingConfig {
     }
 
     /**
-     * 声明订阅队列并绑定 fy.topic（事件未登记时构件抛异常阻断启动；V105 id 11/12/16 既有登记）。
-     * Task 3 交付三条：健康档案变更/患者合并/患者拆分（成对口径 M-25）。
+     * 声明订阅队列并绑定 fy.topic（事件未登记时构件抛异常阻断启动；V105 id 11/12/16 与 V800/V702/V1004
+     * 登记面既有）。P1 三条：健康档案变更/患者合并/患者拆分（成对口径 M-25）；P2 PR-3 扩十三条：
+     * inpatient 医嘱/就诊/床位九条（Task 4/7 消费面）+ pharmacy 摆药签收一条（Task 6）+ iot 告警三条（Task 6），
+     * 队列名由治理构件按 q.nursing.&lt;eventType&gt; 统一推导（契约锚 NursingEventContractTest）。
      *
      * @param governance 消息治理构件，非空
      * @return 声明集合（quorum 队列 + 绑定）；RabbitAdmin 幂等声明
@@ -71,5 +75,20 @@ public class NursingMessagingConfig {
                         new ConsumerQueueSpec(NursingMessagingConstants.MODULE, eventType)))
                 .flatMap(ds -> ds.getDeclarables().stream())
                 .toList());
+    }
+
+    /**
+     * 任务逾期延迟档位（05-nursing Spec §4 / V805 头注：delay.task-overdue；单档位、TTL=60 秒）：
+     * 到期经 DLX 以 nursing.task-overdue.tick 路由键回 fy.topic，由 Task 9 tick 监听器消费驱动
+     * 逾期扫描与升级广播（nursing.task.overdue）。tick 键非事件不入 event_registry（先登记后订阅
+     * 红线豁免口径见 NursingMessagingConstants 类注释）；声明幂等（RabbitAdmin）。
+     *
+     * @param governance 消息治理构件，非空
+     * @return 声明集合（延迟队列 + 绑定）
+     */
+    @Bean
+    public Declarables taskOverdueDelayQueue(MessagingGovernance governance) {
+        return governance.declareDelayQueue(new DelayQueueSpec(
+                "task-overdue", Duration.ofSeconds(60), NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK));
     }
 }
