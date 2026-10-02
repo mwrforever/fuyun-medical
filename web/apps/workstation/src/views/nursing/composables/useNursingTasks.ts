@@ -1,7 +1,8 @@
 /**
  * 病区看板作业面⑧前半：护理任务（WardBoardView 巨型脚本随迁，EX-47 拆分）。当日任务
  * 清单加载（状态过滤）+ 完成/取消（中档确认带回显；逾期任务仍可完成——M05 Spec §5
- * 状态机口径）+ 逾期行类契约。行为与拆分前逐字一致。
+ * 状态机口径）+ 逾期行类契约 + 待执行认领与常规模板生成（PR-3 Task 9 面：assigneeId
+ * 会话留痕、批量生成确认后出网）。行为与拆分前逐字一致（认领/生成为 PR-3 新增面）。
  */
 import { ref } from 'vue';
 import type { Ref } from 'vue';
@@ -37,12 +38,20 @@ export const TASK_STATUS_META: Record<
   CANCELLED: { type: 'info', text: '已取消', strike: true },
 };
 
+/** 生成常规任务的在途哨兵锚点（批量动作无 taskNo，复用 actingTaskNo 单互斥通道） */
+const ROUTINE_ACTION_KEY = '__routine__';
+
 /** 护理任务参数对象（病区上下文与卡墙详情索引经底座注入） */
 export interface UseNursingTasksOptions {
   /** 当前病区代码（任务清单范围），来自 useWardContext.wardId */
   wardId: Ref<string>;
   /** 详情按 visitId 索引（任务患者回显名取值源），来自 useWardContext.detailMap */
   detailMap: Ref<Record<string, WardPatientDetailVO>>;
+  /**
+   * 认领/生成常规任务的操作人 userId 取值器（会话惰性取值；缺省空串——认领前显式
+   * 判空拦截零出网）。来源：auth store 会话用户。
+   */
+  getAssigneeId?: () => string;
 }
 
 /** 初始化任务面（每组件实例独立状态，仅 setup 同步调用） */
@@ -144,6 +153,57 @@ export function useNursingTasks(options: UseNursingTasksOptions) {
     }
   }
 
+  /** 认领任务（PENDING → 执行中；assigneeId=当班护士留痕，缺会话身份零出网显式拦截） */
+  async function onClaimTask(row: NursingTaskVO): Promise<void> {
+    if (actingTaskNo.value !== null) {
+      return;
+    }
+    const assigneeId = options.getAssigneeId?.() ?? '';
+    if (assigneeId === '') {
+      void ElMessage.warning('会话缺少操作人身份，无法认领（请重新登录后再试）');
+      return;
+    }
+    actingTaskNo.value = row.taskNo ?? '';
+    try {
+      await tasks.claim(row.taskNo ?? '', { assigneeId });
+      void ElMessage.success(`已认领任务：${row.taskNo ?? ''}`);
+      await loadTasks();
+    } catch (error) {
+      surfaceBizError(error);
+    } finally {
+      actingTaskNo.value = null;
+    }
+  }
+
+  /** 生成常规任务（常规模板按病区+当日批量生成；确认后出网，回显生成条数并重拉清单） */
+  async function onGenerateRoutine(): Promise<void> {
+    if (actingTaskNo.value !== null) {
+      return;
+    }
+    try {
+      await ElMessageBox.confirm(
+        `按 ${options.wardId.value} 病区常规模板生成当日任务？重复生成由后端模板日去重承载`,
+        '生成常规任务',
+        { confirmButtonText: '确认生成', cancelButtonText: '取消' },
+      );
+    } catch {
+      return;
+    }
+    actingTaskNo.value = ROUTINE_ACTION_KEY;
+    try {
+      const result = await tasks.generateRoutine({
+        wardId: options.wardId.value,
+        date: todayString(),
+      });
+      void ElMessage.success(`已生成 ${result.createdTasks ?? 0} 条常规任务`);
+      await loadTasks();
+    } catch (error) {
+      surfaceBizError(error);
+    } finally {
+      actingTaskNo.value = null;
+    }
+  }
+
   return {
     actingTaskNo,
     taskList,
@@ -155,5 +215,7 @@ export function useNursingTasks(options: UseNursingTasksOptions) {
     taskPatientLabel,
     onCompleteTask,
     onCancelTask,
+    onClaimTask,
+    onGenerateRoutine,
   };
 }

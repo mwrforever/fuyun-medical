@@ -40,13 +40,13 @@ describe('侧栏权限过滤', () => {
     await router.push('/login');
   });
 
-  it('权限点集缺失（空集）：全量显示 30 项菜单（与守卫全放行同口径）', () => {
+  it('权限点集缺失（空集）：全量显示 32 项菜单（与守卫全放行同口径）', () => {
     injectSession(undefined);
     const wrapper = mount(AppSidebar, { global: { plugins: [pinia, router] } });
 
-    // 断言业务结果：数据源缺失时侧栏不做任何过滤——全量 30 项（与 MENU_ITEMS 常量同数，
+    // 断言业务结果：数据源缺失时侧栏不做任何过滤——全量 32 项（与 MENU_ITEMS 常量同数，
     // 新增菜单项时随动更新），各分组与顶层项均渲染
-    expect(wrapper.findAll('.el-menu-item')).toHaveLength(30);
+    expect(wrapper.findAll('.el-menu-item')).toHaveLength(32);
     const texts = wrapper.findAll('.el-menu-item').map((item) => item.text());
     expect(texts).toContain('首页');
     expect(texts).toContain('退费审批');

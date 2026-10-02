@@ -1,5 +1,6 @@
 // 卡墙底座单测（EX-47 拆分）：病区主加载富化与联动重载、卡墙选中回调时序（复位先于加载）、
-// 病区切换清选中并写会话记忆。api mock 承载，不打真实网络。
+// 病区切换清选中并写会话记忆。api mock 承载，不打真实网络。W-34 换源后：危/重计数已随
+// conditionTags 退役（wardCounts 仅在区总数），角标断言口径同步收敛。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SHIFT_OPTIONS, WARD_OPTIONS, wardPatients } from '@/api/nursing';
 import type { WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
@@ -8,7 +9,7 @@ import { useWardContext } from './useWardContext';
 vi.mock('@/api/nursing', () => ({
   WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
   SHIFT_OPTIONS: [{ code: 'DAY', label: '白班' }],
-  wardPatients: { register: vi.fn(), list: vi.fn(), detail: vi.fn(), remove: vi.fn() },
+  wardPatients: { list: vi.fn(), detail: vi.fn() },
 }));
 
 /** 在区患者行（床位/visit 可覆写） */
@@ -32,10 +33,7 @@ function detailMock(partial: Partial<WardPatientDetailVO> = {}): WardPatientDeta
     patientId: '1932000000000000001',
     visitId: 'I20260923000000001',
     patientName: '张三',
-    gender: '男',
-    age: 62,
     nursingLevel: 'NORMAL',
-    conditionTags: '',
     allergyFlag: false,
     riskFlags: '',
     admittedAt: '2026-09-20T08:00:00',
@@ -63,17 +61,16 @@ describe('useWardContext', () => {
         detailMock({
           visitId,
           patientName: visitId === 'I20260923000000001' ? '张三' : '李四',
-          conditionTags: visitId === 'I20260923000000001' ? 'CRITICAL' : '',
         }),
       ),
     );
     const reloads = vi.fn(() => [Promise.resolve(), Promise.resolve()]);
     const ctx = useWardContext({ getWardReloads: reloads });
     await ctx.loadWard();
-    // 床位序（spec 冻结语序断言口径）+ 详情富化 + 病情计数
+    // 床位序（spec 冻结语序断言口径）+ 详情富化 + 在区计数（危/重已随 conditionTags 退役）
     expect(ctx.sortedPatients.value.map((patient) => patient.bedNo)).toEqual(['01', '03']);
     expect(ctx.detailMap.value['I20260923000000001']?.patientName).toBe('张三');
-    expect(ctx.wardCounts.value).toEqual({ total: 2, critical: 1, severe: 0 });
+    expect(ctx.wardCounts.value).toEqual({ total: 2 });
     expect(reloads).toHaveBeenCalledTimes(1);
   });
 

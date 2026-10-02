@@ -23,11 +23,11 @@ vi.mock('@/api/nursing', () => ({
     { code: 'CRITICAL', label: '病重护理' },
     { code: 'NORMAL', label: '普通护理' },
   ],
-  CONDITION_TAG_OPTIONS: [],
   SPECIAL_EVENT_OPTIONS: [],
   WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
   SHIFT_OPTIONS: [{ code: 'DAY', label: '白班' }],
-  wardPatients: { register: vi.fn(), list: vi.fn(), detail: vi.fn(), remove: vi.fn() },
+  // W-34：register/remove 已随端点退役，mock 面同步收敛
+  wardPatients: { list: vi.fn(), detail: vi.fn() },
   assignments: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
   vitalSigns: {
     record: vi.fn(),

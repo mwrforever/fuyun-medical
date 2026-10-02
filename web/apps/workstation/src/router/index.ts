@@ -126,6 +126,21 @@ export const router = createRouter({
           meta: { permission: 'nursing:ward:view' },
         },
         {
+          // 护理执行工作台（PR-3 Task 14）：医嘱执行单四列看板+闭环追溯抽屉；权限点按
+          // iot 先例 router meta 前端门禁形态（system 无业务权限码种子，零后端触碰）
+          path: 'nursing/execution',
+          name: 'nursing-execution',
+          component: () => import('@/views/nursing/ExecutionWorkbenchView.vue'),
+          meta: { permission: 'nursing:execution:perform' },
+        },
+        {
+          // 护理不良事件上报页（PR-3 Task 14）：非惩罚通道上报表+处理/RCA 关闭/退回
+          path: 'nursing/adverse-events',
+          name: 'nursing-adverse-events',
+          component: () => import('@/views/nursing/AdverseEventView.vue'),
+          meta: { permission: 'nursing:adverse-event:report' },
+        },
+        {
           path: 'inpatient/admission',
           name: 'inpatient-admission',
           component: () => import('@/views/inpatient/AdmissionView.vue'),

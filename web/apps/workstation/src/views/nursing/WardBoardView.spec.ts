@@ -1,11 +1,11 @@
 // 护士工作站页单测（M05 前端面，设计文档 §3 八区块）：病区一览床位序渲染（spec 冻结语序
-// 断言）、入区登记显式校验零出网（visit 号 14 位格式）、体征录入非整数显式校验零出网、
-// 录入在途守卫双击零二次出网、NS-1005 超生理极限 detail 透出（4xx 口径）、待复核确认后
-// 该行移除、体温单符号类名契约（fuy-temp-x/fuy-temp-dot/fuy-temp-deficit-line/短绌起止
-// 竖线/重叠红圈同格判定，机器判据）、评估总分与高危容器类（fuy-assess-result--high）、任务
-// 逾期行类（fuy-task-overdue）与完成出网、交接班双签 DRAFT 可点 / COMPLETED 置灰与摘要
-// 特级/病重标签映射。api mock 承载，不打真实网络；会话经
-// sessionStorage 种子恢复（当班护士=登录用户）。
+// 断言）、体征录入非整数显式校验零出网、录入在途守卫双击零二次出网、NS-1005 超生理极限
+// detail 透出（4xx 口径）、待复核确认后该行移除、体温单符号类名契约（fuy-temp-x/
+// fuy-temp-dot/fuy-temp-deficit-line/短绌起止竖线/重叠红圈同格判定，机器判据）、评估总分
+// 与高危容器类（fuy-assess-result--high）、任务逾期行类（fuy-task-overdue）与完成出网、
+// 任务认领与常规模板生成（PR-3 Task 9 面）、交接班双签 DRAFT 可点 / COMPLETED 置灰与摘要
+// 特级/病重标签映射。api mock 承载，不打真实网络；会话经 sessionStorage 种子恢复
+// （当班护士=登录用户）。W-34 换源后：入区登记/出区移除端点已退役，对应用例与 mock 面删除。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -39,13 +39,6 @@ vi.mock('@/api/nursing', () => ({
     { code: 'CRITICAL', label: '病重护理' },
     { code: 'NORMAL', label: '普通护理' },
   ],
-  CONDITION_TAG_OPTIONS: [
-    { code: 'CRITICAL', label: '病危' },
-    { code: 'SEVERE', label: '病重' },
-    { code: 'NEW', label: '新入' },
-    { code: 'SURGERY', label: '手术' },
-    { code: 'DELIVERY', label: '分娩' },
-  ],
   // 特殊事件词表替身含 SURGERY（对齐 api 层真实导出值域：换患者草稿复位用例需第二类型可切）
   SPECIAL_EVENT_OPTIONS: [
     { code: 'ADMISSION', label: '入院' },
@@ -57,7 +50,8 @@ vi.mock('@/api/nursing', () => ({
     { code: 'EVENING', label: '小夜班' },
     { code: 'NIGHT', label: '大夜班' },
   ],
-  wardPatients: { register: vi.fn(), list: vi.fn(), detail: vi.fn(), remove: vi.fn() },
+  // W-34：register/remove 已随端点退役，mock 面不再提供
+  wardPatients: { list: vi.fn(), detail: vi.fn() },
   assignments: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
   vitalSigns: {
     record: vi.fn(),
@@ -70,7 +64,13 @@ vi.mock('@/api/nursing', () => ({
   ioRecords: { create: vi.fn(), list: vi.fn() },
   records: { create: vi.fn(), submit: vi.fn(), revise: vi.fn(), list: vi.fn() },
   assessments: { scales: vi.fn(), create: vi.fn(), list: vi.fn() },
-  tasks: { list: vi.fn(), complete: vi.fn(), cancel: vi.fn() },
+  tasks: {
+    list: vi.fn(),
+    complete: vi.fn(),
+    cancel: vi.fn(),
+    claim: vi.fn(),
+    generateRoutine: vi.fn(),
+  },
   handovers: { generate: vi.fn(), complete: vi.fn(), list: vi.fn() },
   pda: { patientSummary: vi.fn(), patrol: vi.fn() },
 }));
@@ -129,7 +129,8 @@ function patientMock(partial: Partial<WardPatientVO> = {}): WardPatientVO {
   };
 }
 
-/** 患者详情（与 patientMock 同上下文；角标/在途任务可覆写） */
+/** 患者详情（与 patientMock 同上下文；角标/在途任务可覆写；gender/age 恒 null 无值不渲染
+ * ——W-34 换源口径，fixture 不再携带两字段） */
 function detailMock(partial: Partial<WardPatientDetailVO> = {}): WardPatientDetailVO {
   return {
     wardId: 'W01',
@@ -137,10 +138,7 @@ function detailMock(partial: Partial<WardPatientDetailVO> = {}): WardPatientDeta
     patientId: '1932000000000000001',
     visitId: 'I20260923000000001',
     patientName: '张三',
-    gender: '男',
-    age: 62,
     nursingLevel: 'NORMAL',
-    conditionTags: '',
     allergyFlag: false,
     riskFlags: '',
     admittedAt: '2026-09-20T08:00:00',
@@ -195,14 +193,14 @@ describe('护士工作站', () => {
     pinia = createPinia();
     setActivePinia(pinia);
     for (const fn of [
-      wardPatients.register,
-      wardPatients.remove,
       vitalSigns.record,
       vitalSigns.confirm,
       vitalSigns.reject,
       assessments.create,
       tasks.complete,
       tasks.cancel,
+      tasks.claim,
+      tasks.generateRoutine,
     ]) {
       vi.mocked(fn).mockReset();
     }
@@ -269,20 +267,43 @@ describe('护士工作站', () => {
     wrapper.unmount();
   });
 
-  it('入区登记表单 visit 号格式非法时提示且零出网（I2026 非法）', async () => {
+  it('任务区薄改：待执行任务可认领（assigneeId=当班护士留痕）且成功后重拉清单', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
+    vi.mocked(tasks.list).mockResolvedValue([
+      {
+        id: '9401',
+        taskNo: 'T20260923002',
+        patientId: '1932000000000000001',
+        visitId: 'I20260923000000001',
+        wardId: 'W01',
+        bedNo: '01',
+        taskType: 'PATROL',
+        planTime: '2026-09-23 10:00:00',
+        status: 'PENDING',
+      },
+    ]);
+    vi.mocked(tasks.claim).mockResolvedValue({ taskNo: 'T20260923002', status: 'IN_PROGRESS' });
     const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
     await flushPromises();
-    await clickButton(wrapper, '入区登记');
-    await wrapper.find('input[placeholder="数字编号"]').setValue('1932000000000000002');
-    await wrapper.find('input[placeholder="I + 13 位数字"]').setValue('I2026');
-    await wrapper.find('input[placeholder="患者姓名"]').setValue('李四');
-    await wrapper.find('input[placeholder="如 03-01"]').setValue('05');
-    await clickButton(wrapper, '确认登记');
+    await clickButton(wrapper, '认领');
     await flushPromises();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
-      'visit 号应以 I 开头共 14 位（I+日期+流水），请核对入区单',
-    );
-    expect(vi.mocked(wardPatients.register)).not.toHaveBeenCalled();
+    // 认领留痕锚点=会话用户 userId（u1），成功后清单重拉
+    expect(vi.mocked(tasks.claim)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(tasks.claim)).toHaveBeenCalledWith('T20260923002', { assigneeId: 'u1' });
+    expect(vi.mocked(tasks.list).mock.calls.length).toBeGreaterThanOrEqual(2);
+    wrapper.unmount();
+  });
+
+  it('任务区薄改：生成常规任务确认后出网并回显生成条数', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
+    vi.mocked(tasks.generateRoutine).mockResolvedValue({ createdTasks: 6 });
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await clickButton(wrapper, '生成常规任务');
+    await flushPromises();
+    expect(vi.mocked(tasks.generateRoutine)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(tasks.generateRoutine).mock.calls[0]?.[0]?.wardId).toBe('W01');
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalledWith('已生成 6 条常规任务');
     wrapper.unmount();
   });
 

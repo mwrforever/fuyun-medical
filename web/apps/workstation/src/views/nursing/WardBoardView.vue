@@ -1,21 +1,21 @@
 <script setup lang="ts">
-// 护士工作站页（/nursing/ward，M05 前端面，设计文档 §3 八区块）：病区选择与入区登记 →
+// 护士工作站页（/nursing/ward，M05 前端面，设计文档 §3 八区块）：病区选择 →
 // 床位序患者卡墙（选中驱动全页患者上下文）→ 患者详情/责任护士分配 → 体征录入与待复核 →
-// 体温单渲染（§5 符号契约）与特殊事件 → 护理评估（量表打分判级）→ 护理任务与交接班双签。
+// 体温单渲染（§5 符号契约）与特殊事件 → 护理评估（量表打分判级）→ 护理任务（完成/取消/
+// 认领/生成常规任务）与交接班双签。W-34 换源：入区登记与出区移除端点已退役——床位进出归
+// inpatient 入院/出院/转科事件投影，本页不再承载两过渡通道；病情角标/危重计数已随
+// conditionTags 退役（Task 7 审查 C2/C3 口径）。
 // EX-47 巨型组件拆分（web 宪法 B.2-6）：状态与业务逻辑按作业面下沉 composables/
-// （卡墙底座/入区登记/最新体征/分配/体征/体温单/特殊事件/评估/任务/交接班/出入量），
+// （卡墙底座/最新体征/分配/体征/体温单/特殊事件/评估/任务/交接班/出入量），
 // 视图只做组装与跨面联动编排；全部写操作自带在途守卫（入口早退先于一切 await）+
 // 4xx 口径显式校验（禁裸 parse，数值字段一律文本承载经正则+范围双验）；失败弹错归响应
 // 拦截器（AxiosError 防双弹，非 AxiosError 的业务拒绝对象由 surfaceBizError 兜底展示
 // detail 原文）。体温单坐标计算在 tempChart.ts 纯函数（spec 双层断言），视图仅做 SVG
 // 映射渲染。
 import { computed, onMounted } from 'vue';
-// ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
-import 'element-plus/es/components/message/style/css';
+// ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message-box/style/css';
 import {
-  CONDITION_TAG_OPTIONS,
-  NURSING_LEVEL_OPTIONS,
   SHIFT_OPTIONS,
   SPECIAL_EVENT_OPTIONS,
   TEMP_SITE_OPTIONS,
@@ -39,7 +39,6 @@ import { useSpecialEvents } from './composables/useSpecialEvents';
 import { useTempChart } from './composables/useTempChart';
 import { useVitalSigns } from './composables/useVitalSigns';
 import { useWardContext } from './composables/useWardContext';
-import { useWardRegister } from './composables/useWardRegister';
 
 /** 护理级别 → 徽标类映射（后端 NursingLevel 三值；--l2 留全族定义防词表扩值 §2.3） */
 const NURSING_LEVEL_BADGE: Record<string, string> = {
@@ -56,7 +55,7 @@ const NURSING_LEVEL_LABELS: Record<string, string> = {
 };
 
 const auth = useAuthStore();
-/** 当班护士（交接班确认回显的交班人锚点） */
+/** 当班护士（交接班确认回显的交班人锚点；任务认领略痕取 userId） */
 const operatorName = computed(() => auth.user?.displayName ?? '—');
 
 /* ==================== 作业面组装（跨面联动编排，时序与拆分前逐字一致） ==================== */
@@ -82,7 +81,6 @@ const ward = useWardContext({
     void assessment.loadAssessmentHistory();
   },
 });
-const register = useWardRegister({ wardId: ward.wardId, reloadWard: ward.loadWard });
 const latestVitalsState = useLatestVitals({
   selectedDetail: ward.selectedDetail,
   selectedVisitId: ward.selectedVisitId,
@@ -100,7 +98,12 @@ const assessment = useNursingAssessment({
   selectedDetail: ward.selectedDetail,
   selectedVisitId: ward.selectedVisitId,
 });
-const nursingTasks = useNursingTasks({ wardId: ward.wardId, detailMap: ward.detailMap });
+// 任务面注入当班护士 userId（认领/生成常规任务的操作留痕锚点，会话惰性取值）
+const nursingTasks = useNursingTasks({
+  wardId: ward.wardId,
+  detailMap: ward.detailMap,
+  getAssigneeId: () => auth.user?.userId ?? '',
+});
 const handoverState = useHandover({
   wardId: ward.wardId,
   shiftCode: ward.shiftCode,
@@ -135,9 +138,7 @@ const {
   loadWard,
   onWardChange,
   selectPatient,
-  onRemovePatient,
 } = ward;
-const { registerVisible, registering, registerForm, onRegister } = register;
 const { latestVitals, latestVitalsLoading } = latestVitalsState;
 const {
   assignmentList,
@@ -186,6 +187,8 @@ const {
   taskPatientLabel,
   onCompleteTask,
   onCancelTask,
+  onClaimTask,
+  onGenerateRoutine,
 } = nursingTasks;
 const {
   handover,
@@ -213,7 +216,7 @@ onMounted(() => {
 
 <template>
   <div class="fuy-page ward-board fuy-stagger">
-    <!-- ① 病区选择 + 病情计数 + 待复核徽标 + 入区登记 -->
+    <!-- ① 病区选择 + 在区计数 + 待复核徽标（W-34：入区登记通道与危/重计数已退役） -->
     <header class="ward-board-toolbar fuy-toolbar" :style="{ '--fuy-stagger-index': 0 }">
       <el-select v-model="wardId" class="ward-board-ward" @change="onWardChange">
         <el-option
@@ -225,8 +228,6 @@ onMounted(() => {
       </el-select>
       <div class="ward-board-counts">
         <span class="fuy-num ward-board-count-total">在区 {{ wardCounts.total }}</span>
-        <span class="fuy-num ward-board-count-critical">危 {{ wardCounts.critical }}</span>
-        <span class="fuy-num ward-board-count-severe">重 {{ wardCounts.severe }}</span>
       </div>
       <a class="ward-board-review-anchor" href="#ward-pending-review">
         待复核
@@ -234,14 +235,6 @@ onMounted(() => {
           pendingList.length
         }}</span>
       </a>
-      <el-button
-        type="primary"
-        class="ward-board-register-btn"
-        :loading="registering"
-        :disabled="registering"
-        @click="registerVisible = true"
-        >入区登记</el-button
-      >
       <el-button class="ward-board-refresh" :loading="wardLoading" @click="loadWard"
         >刷新</el-button
       >
@@ -312,8 +305,11 @@ onMounted(() => {
             <template v-if="selectedDetail !== undefined">
               <div class="ward-detail-head">
                 <span class="ward-detail-name">{{ selectedDetail.patientName }}</span>
-                <span class="ward-detail-base"
-                  >{{ selectedDetail.gender ?? '—' }} / {{ selectedDetail.age ?? '—' }}岁</span
+                <!-- 性别/年龄经 patient api 嵌查口径维持但当前恒 null：无值不渲染（Task 7 C2） -->
+                <span
+                  v-if="selectedDetail.gender !== undefined && selectedDetail.gender !== null"
+                  class="ward-detail-base"
+                  >{{ selectedDetail.gender }} / {{ selectedDetail.age ?? '—' }}岁</span
                 >
                 <span
                   v-if="NURSING_LEVEL_BADGE[selectedDetail.nursingLevel ?? ''] !== undefined"
@@ -766,18 +762,28 @@ onMounted(() => {
           <template #header>
             <div class="ward-board-card-head">
               <span>护理任务</span>
-              <el-select
-                v-model="taskStatusFilter"
-                class="ward-board-task-filter"
-                size="small"
-                @change="loadTasks"
-              >
-                <el-option label="全部状态" value="" />
-                <el-option label="待执行" value="PENDING" />
-                <el-option label="执行中" value="IN_PROGRESS" />
-                <el-option label="已完成" value="COMPLETED" />
-                <el-option label="已取消" value="CANCELLED" />
-              </el-select>
+              <div class="ward-board-task-head">
+                <!-- 常规模板批量生成入口（Task 9 面：确认后按病区+当日生成） -->
+                <el-button
+                  size="small"
+                  :loading="actingTaskNo === '__routine__'"
+                  :disabled="actingTaskNo !== null"
+                  @click="onGenerateRoutine"
+                  >生成常规任务</el-button
+                >
+                <el-select
+                  v-model="taskStatusFilter"
+                  class="ward-board-task-filter"
+                  size="small"
+                  @change="loadTasks"
+                >
+                  <el-option label="全部状态" value="" />
+                  <el-option label="待执行" value="PENDING" />
+                  <el-option label="执行中" value="IN_PROGRESS" />
+                  <el-option label="已完成" value="COMPLETED" />
+                  <el-option label="已取消" value="CANCELLED" />
+                </el-select>
+              </div>
             </div>
           </template>
           <div v-loading="taskLoading">
@@ -832,8 +838,18 @@ onMounted(() => {
                   >
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="120" class-name="fuy-ops-8">
+              <el-table-column label="操作" width="150" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 待执行任务可认领（Task 9：PENDING → 执行中，认领人留痕） -->
+                  <el-button
+                    v-if="row.status === 'PENDING'"
+                    link
+                    type="primary"
+                    size="small"
+                    :disabled="actingTaskNo !== null"
+                    @click="onClaimTask(row)"
+                    >认领</el-button
+                  >
                   <el-button
                     link
                     type="primary"
@@ -1108,81 +1124,11 @@ onMounted(() => {
             @click="onAddSpecialEvent"
             >记录</el-button
           >
-          <el-button
-            v-if="selectedDetail !== undefined"
-            link
-            type="danger"
-            size="small"
-            class="ward-chart-exit"
-            @click="onRemovePatient(selectedDetail)"
-            >出区</el-button
-          >
+          <!-- 出区按钮已随 W-34 退役：床位移除动作归 inpatient 出院/转科事件投影 -->
         </div>
       </template>
       <el-empty v-else :image-size="72" description="从床位卡墙选择患者查看体温单" />
     </el-card>
-
-    <!-- 入区登记弹窗（520px 固定宽，§3.3） -->
-    <el-dialog
-      v-model="registerVisible"
-      title="入区登记"
-      width="520px"
-      destroy-on-close
-      class="ward-register-dialog"
-    >
-      <el-form label-width="90px">
-        <el-form-item label="患者 ID" required>
-          <el-input
-            v-model="registerForm.patientId"
-            placeholder="数字编号"
-            class="ward-register-input"
-          />
-        </el-form-item>
-        <el-form-item label="visit 号" required>
-          <el-input
-            v-model="registerForm.visitId"
-            placeholder="I + 13 位数字"
-            class="ward-register-input"
-          />
-        </el-form-item>
-        <el-form-item label="姓名" required>
-          <el-input
-            v-model="registerForm.patientName"
-            placeholder="患者姓名"
-            class="ward-register-name"
-          />
-        </el-form-item>
-        <el-form-item label="床位" required>
-          <el-input v-model="registerForm.bedNo" placeholder="如 03-01" class="ward-register-bed" />
-        </el-form-item>
-        <el-form-item label="护理级别" required>
-          <el-select v-model="registerForm.nursingLevel" class="ward-register-bed">
-            <el-option
-              v-for="level in NURSING_LEVEL_OPTIONS"
-              :key="level.code"
-              :label="level.label"
-              :value="level.code"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="病情标记">
-          <el-select v-model="registerForm.conditionTags" multiple class="ward-register-input">
-            <el-option
-              v-for="tag in CONDITION_TAG_OPTIONS"
-              :key="tag.code"
-              :label="tag.label"
-              :value="tag.code"
-            />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="registerVisible = false">取消</el-button>
-        <el-button type="primary" :loading="registering" :disabled="registering" @click="onRegister"
-          >确认登记</el-button
-        >
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -1200,16 +1146,6 @@ onMounted(() => {
   font-size: var(--fuy-font-size-3xl);
   font-weight: 700;
   line-height: 1.2;
-}
-.ward-board-count-critical {
-  color: var(--fuy-color-nursing-critical);
-  font-size: var(--fuy-font-size-sm);
-  font-weight: 600;
-}
-.ward-board-count-severe {
-  color: var(--fuy-color-nursing-serious);
-  font-size: var(--fuy-font-size-sm);
-  font-weight: 600;
 }
 .ward-board-review-anchor {
   position: relative;
@@ -1232,9 +1168,6 @@ onMounted(() => {
   color: var(--el-color-white);
   font-size: var(--fuy-font-size-xs);
   font-weight: 700;
-}
-.ward-board-register-btn {
-  width: 96px;
 }
 
 /* ② 卡墙（lg 8 列 / xl 10 列，min-height 240px CLS 锁） */
@@ -1325,6 +1258,11 @@ onMounted(() => {
 }
 .ward-board-scale {
   width: 200px;
+}
+.ward-board-task-head {
+  display: flex;
+  align-items: center;
+  gap: var(--fuy-space-2);
 }
 .ward-board-task-filter {
   width: 110px;
