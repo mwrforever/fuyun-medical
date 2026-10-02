@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]、2026-10-02 V1106–V1111 排定登记[P2 PR-3，先记再改，随 Task 2/3 落盘]）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -94,6 +94,12 @@
 | V1103 | V1103__add_fee_record_source_ref_index.sql | billing / fuyun-billing | fee_record CAS 谓词 (source_ref, trigger_point) 部分索引（OPT-01：发药事件消费 casMarkDispensed/casReleaseDispense 全表扫描→索引点查；通用段——全局最大 V1102 的下一号，满足乱序守卫） |
 | V1104 | V1104__add_refund_fee_link_fee_id_index.sql | billing / fuyun-billing | refund_fee_link fee_id 前导部分索引（OPT-02：退费聚合下推 l.fee_id IN 驱动路径索引缺失→索引点查集；V603 uk_refund_fee 前导列为 refund_id，同迁移修正 RefundRequestMapper.xml 头注释与 schema 矛盾表述） |
 | V1105 | V1105__add_clinic_order_ext_ref_index.sql | outpatient / fuyun-outpatient | clinic_order 处方引用行 ext_ref 部分索引（OPT-06：casRxRefCharged/casCancelRxRef/casMirrorDispensed/casMirrorReturned 四支 ext_ref 谓词 CAS 全表扫描→索引点查，WHERE order_type='RX_REF' AND deleted=0 与谓词常量同构） |
+| V1106 | V1106__create_order_execution.sql | nursing / fuyun-nursing | order_execution / execution_check_log / infusion_monitor_link 执行域三表（M05 医嘱执行与输液闭环基座，P2 PR-3 Task 2 落盘；通用段——全局最大 V1105 的下一号，满足乱序守卫） |
+| V1107 | V1107__create_adverse_event_and_ward_config_ext.sql | nursing / fuyun-nursing | adverse_event 不良事件表 + nursing_ward_config P2 六列（execute_time_window_minutes/override_roles/routine_task_templates/return_drug_enabled/iot_sync_interval_seconds/conflict_window_seconds，P2 PR-3 Task 2 落盘） |
+| V1108 | V1108__retire_ward_patient_channel_and_fix_record_merge.sql | nursing / fuyun-nursing | W-34 表改造（nursing_ward_patient DROP status/source 两列，表保留为纯事件投影）+ D-23 部分唯一索引（nursing_record (visit_id, record_date) 限定正常合并行形态；裁决依据=P2 PR-3 计划三项裁决 D-23 根治与 W-34 五项承责，P2 PR-3 Task 2 落盘） |
+| V1109 | V1109__seed_nursing_adverse_event_registry.sql | nursing / fuyun-nursing | event_registry id 83 种子（nursing.adverse-event.reported，producer=nursing，幂等 INSERT WHERE NOT EXISTS，P2 PR-3 Task 2 落盘） |
+| V1110 | V1110__create_dispense_plan.sql | pharmacy / fuyun-pharmacy | dispense_plan 摆药计划表 + dispense 住院扩列（ward_id/m04_order_no/visit_id 双语义/dispense_plan_no 四可空列，M06 住院摆药衔接，P2 PR-3 Task 3 落盘） |
+| V1111 | V1111__update_dispense_completed_payload.sql | pharmacy / fuyun-pharmacy | event_registry id 28 payload_desc 载荷契约 UPDATE（住院摆药行增 m04OrderNo/visitId/wardId/dispensePlanNo 四可空字段，只增不删双向评审，P2 PR-3 Task 3 落盘） |
 
 ## 冻结段速查（禁落新文件）
 

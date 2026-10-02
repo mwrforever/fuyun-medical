@@ -9,7 +9,10 @@
     <version>0.1.0-SNAPSHOT</version>
   </parent>
   <!-- 业务模块（M05 护理管理（含移动护理））：P1 PR-6 起落迁移与业务实现，依赖面照 fuyun-outpatient
-       实证清单裁剪（兄弟 api 仅三类；billing/pharmacy/inpatient/iot 禁依赖） -->
+       实证清单裁剪（兄弟 api 原仅三类；billing/pharmacy/iot 持续禁依赖）；P2 PR-3 增补
+       fuyun-inpatient api 面单向依赖（OrderExecutionConfirmPort 执行回签端口，进程内直调不走
+       HTTP 自调；inpatient 不依赖 nursing 无环，Modulith verify 把关，实况修订申报——ward pom
+       P2 PR-2 增补 fuyun-iot 先例） -->
   <artifactId>fuyun-nursing</artifactId>
   <dependencies>
     <dependency>
@@ -17,7 +20,8 @@
       <artifactId>fuyun-common</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- 兄弟模块 api 面（仅三类，禁依赖 inpatient/pharmacy/billing/iot） -->
+    <!-- 兄弟模块 api 面（system/patient/integration 三类 + P2 PR-3 增补 inpatient；禁依赖
+         pharmacy/billing/iot——nursing 对 iot 数据一律经事件与前端组合，反向依赖会与 iot→nursing 成环） -->
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-system</artifactId>
@@ -31,6 +35,15 @@
     <dependency>
       <groupId>com.fuyun</groupId>
       <artifactId>fuyun-integration</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+    <!-- P2 PR-3 增补：inpatient api 面（OrderExecutionConfirmPort 医嘱执行回签端口，执行单
+         COMPLETED 后进程内直调 IOrderPlanService.executeConfirm 逻辑）——仅 api 面单向依赖，
+         Modulith verify() 把关；inpatient 不依赖 nursing，无环（版本归父 POM 管理形态，
+         fuyun-ward pom 对 fuyun-iot 声明先例） -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-inpatient</artifactId>
       <version>${project.version}</version>
     </dependency>
     <!-- 基础设施：spring-modulith-api(provided) / springdoc-openapi-starter-webmvc-ui / starter-validation /

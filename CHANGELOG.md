@@ -2,6 +2,41 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-01 · P2 PR-3 立项：M05 护理完整 + M06 住院摆药衔接（V1106–V1111 号段 + id 83 + 错误码排定 + 依赖增量与 D-23/D-24/D-25 裁决落档）
+
+- **范围**：P2 阶段 PR-3 切片（FU-M05-04/06/07/08/09 + FU-M06-05 + W-34 退役五项 + W-60 收敛 +
+  iot 联动/输液消费骨架回接），功能口径以 05/06 模块 Spec v1.1 为准；计划文档
+  `docs/superpowers/plans/2026-10-01-p2-pr3-m05-m06.md` 随本条目入库（GC-36）。
+- ① **迁移号段登记（先记再改，随 Task 2/3 落盘）**：通用段 V1106–V1111 六件——撰写期实测全局
+  最大已应用 V1105，V1106 > V1105 乱序守卫通过（nursing 固定段 V800–V899 已被守卫封死禁用）。
+  归属：nursing 四件（V1106 执行域三表 order_execution/execution_check_log/infusion_monitor_link；
+  V1107 不良事件表 adverse_event + nursing_ward_config P2 六列；V1108 W-34 表改造
+  nursing_ward_patient DROP status/source + D-23 部分唯一索引；V1109 event_registry id 83 种子）；
+  pharmacy 两件（V1110 dispense_plan 表 + dispense 住院扩列；V1111 id 28 载荷契约 UPDATE，
+  只增不删，双向评审声明进 PR 描述）。
+- ② **事件 id 83 排定**：`nursing.adverse-event.reported`（producer=nursing，落 V1109；撰写期
+  实测 event_registry 最大 id=82）；`MessagingGovernanceIT` 总行断言 82→83（Task 2 落）；id
+  61/62/63/64 由 P1 占位转实装，登记行不改（载荷契约按 V800 冻结文本出网）。
+- ③ **错误码排定（撰写期实测 NS 段最大 NS-1019、PH 段最大 PH-1022）**：NursingErrorCode 续号
+  NS-1020~1027（EXECUTION_NOT_FOUND 404 / EXECUTION_STATE_NOT_ALLOWED 409 /
+  EXECUTION_CHECK_FAILED 409 / OVERRIDE_CHECK_INVALID 409 / INFUSION_NOT_ACTIVE 409 /
+  ADVERSE_EVENT_NOT_FOUND 404 / ADVERSE_EVENT_STATE_NOT_ALLOWED 409 / EXECUTION_TIME_WINDOW 409）；
+  pharmacy 续号 PH-1023~1026（DISPENSE_PLAN_NOT_FOUND 404 / DISPENSE_PLAN_STATE_NOT_ALLOWED 409 /
+  DISPENSE_PLAN_ORDER_INVALID 400 / WARD_RECEIVE_INVALID 409）。
+- ④ **模块依赖两处增量及无环论证**：nursing pom 增 fuyun-inpatient（仅 api 面：新增
+  `OrderExecutionConfirmPort`，执行单 COMPLETED 后进程内直调回签，不走 HTTP 自调）；iot pom 增
+  fuyun-nursing（仅 api 面：新增 `NursingTaskLinkagePort`，联动 NURSING_TASK 动作进程内直调）。
+  无环论证：inpatient 不依赖 nursing/iot，nursing 不依赖 iot——两处增量均不成环；禁
+  nursing→fuyun-iot 任何形态依赖（与 iot→nursing 成环），nursing 对 iot 数据一律经事件
+  （iot.alarm.* 载荷自带 patientId/visitId/deviceId）与前端组合（复用
+  `GET /api/v1/ward/infusion-board/{wardId}` 与 /ws/iot 主题）；`ApplicationModules.verify()`
+  随 fuyun-app 门禁自动把关。
+- ⑤ **三项裁决落定（P2 计划 §3 PR-3 在案工单条目授权「结论在 PR-3 SDD 计划拆分时落定」，随
+  计划批准即生效；以下照计划范围声明节原文逐字落）**：
+  - **D-23 根治**：走部分唯一索引 + 冲突回查合并（D-22 同款两层兜底范式）——`nursing_record` 上 `(visit_id, record_date)` 部分唯一索引限定「auto_generated=true AND abnormal_flag=false AND deleted=0」正常合并行形态，`appendObservation` 合并分支捕获 `DuplicateKeyException` 后回查重试一次；DDL 落 V1108（通用段）。理由：用户 2026-09-29 总裁决「宪法为唯一标准，偏离一律收拢」，先查后插竞态属一致性路径隐患，根治成本一段索引+一个 catch 分支。
+  - **D-24 维持现状**：量表条目维持 P1 连续闭区间取值域（Task 8 冻结用例 4/6 有效不动），不回归经典离散档位。理由：无业务方提出离散档位需求，冻结用例已按连续口径验收，维持零代码；Task 19 删 TASK.md D-24 行并在 CHANGELOG 留痕。
+  - **D-25 选①改名**：住院 DTO `com.fuyun.inpatient.dto.OrderCreateRequest` 改名 `InpatientOrderCreateRequest`（出网 schema 名随之收敛），不动 springdoc 全局命名策略。理由：单点改名影响面=inpatient 模块两处方法签名+OpenAPI 生成物+前端一处类型别名，方案②全局 NamingStrategy 影响全仓 schema 名（存量前端类型全部漂移）；Task 13 落地并同步删前端本地 `OrderCreatePayload` 回归生成物。
+
 ## 2026-10-01 · 时区纪律专项立项（P2 第一步修复前置项：34 处裸 now() 收敛北京钟面 + 红线）
 
 - **根因**：终验报告 3.5a 呈报——全仓裸 `LocalDate/LocalDateTime/LocalTime.now()` 34 处，CI（UTC JVM）在北京 00:00–08:00 取错医疗日/业务窗；BUG-03 残余三处（PR #60=6c58768）已实证缺陷模型（班次小结查空、观察行该合并不合并），属医疗业务真实缺陷。
