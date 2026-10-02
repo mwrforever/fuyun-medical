@@ -1,11 +1,13 @@
 package com.fuyun.pharmacy.config;
 
 import com.fuyun.pharmacy.cache.PharmacyMasterDataCache;
+import com.fuyun.pharmacy.cache.PharmacySeqGate;
 import com.fuyun.pharmacy.controller.DispenseController;
 import com.fuyun.pharmacy.controller.DrugController;
 import com.fuyun.pharmacy.controller.PrescriptionController;
 import com.fuyun.pharmacy.controller.ReviewTaskController;
 import com.fuyun.pharmacy.service.impl.BatchSelectServiceImpl;
+import com.fuyun.pharmacy.service.impl.DispensePlanServiceImpl;
 import com.fuyun.pharmacy.service.impl.DispenseServiceImpl;
 import com.fuyun.pharmacy.service.impl.DrugServiceImpl;
 import com.fuyun.pharmacy.service.impl.MedicationReviewServiceImpl;
@@ -21,6 +23,8 @@ import org.springframework.context.annotation.Import;
  * Task 9 追加：处方开立/作废两 api 端口实现（M03 进程内对接面，跨模块 PortImpl）。Task 10 追加
  * 注册：主数据读侧缓存（患者归一映射 + 字典版本水位，occupancy 读侧消费方）。P2 PR-1 Task 12
  * 追加注册：住院用药审方服务与工作台端点（消费 inpatient.order.created.drug 的 M06 薄切片面）。
+ * P2 PR-3 Task 8 追加注册：住院摆药计划服务与 DP/DPB 发号器（FU-M06-05 摆药计划/单剂量/
+ * PIVAS/病区签收与退药回补域底座；DispenseController 复用既有注册携新端点）。
  */
 @Configuration
 @Import({
@@ -28,6 +32,8 @@ import org.springframework.context.annotation.Import;
     PrescriptionServiceImpl.class,
     BatchSelectServiceImpl.class,
     DispenseServiceImpl.class,
+    DispensePlanServiceImpl.class,
+    PharmacySeqGate.class,
     PharmacyMasterDataCache.class,
     PrescriptionOpenPortImpl.class,
     PrescriptionCancelPortImpl.class,

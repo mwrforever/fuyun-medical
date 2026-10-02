@@ -23,6 +23,7 @@ import com.fuyun.billing.api.SettlementQueryPort;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.pharmacy.api.PharmacyErrorCode;
+import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.entity.Dispense;
 import com.fuyun.pharmacy.entity.DispenseItem;
 import com.fuyun.pharmacy.entity.Prescription;
@@ -90,6 +91,10 @@ class DispenseServiceImplTest {
     @Mock
     private SettlementQueryPort settlementQueryPort;
 
+    /** P2 PR-3 Task 8 起构造器扩十二参：住院摆药计划服务（acceptReturn 住院形态分流委托承载） */
+    @Mock
+    private com.fuyun.pharmacy.service.IDispensePlanService dispensePlanService;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Dispense.class);
@@ -123,7 +128,8 @@ class DispenseServiceImplTest {
                 events,
                 new ObjectMapper(),
                 masterDataCache,
-                settlementQueryPort);
+                settlementQueryPort,
+                dispensePlanService);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
         ReflectionTestUtils.setField(impl, "entityClass", Dispense.class);
@@ -948,5 +954,45 @@ class DispenseServiceImplTest {
         verify(prescriptionMapper).casStatus(100L, "PENDING_DISPENSE", "CANCELLED");
         verify(prescriptionMapper, never()).casStatus(eq(201L), anyString(), anyString());
         verify(dispenseMapper, never()).casStatus(anyLong(), anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("acceptReturn 住院形态分流（P2 PR-3 Task 8）：dispensePlanNo 非空整体委托摆药计划服务，门诊链路零触达")
+    void acceptReturnDelegatesInpatientFormToPlanService() {
+        DispenseServiceImpl impl = newService();
+        DispenseReturnRequest inpatientForm = new DispenseReturnRequest(
+                null,
+                null,
+                null,
+                "DP2026100200001",
+                List.of(new DispenseReturnRequest.InpatientReturnLine("1", "1", null)));
+
+        impl.acceptReturn(inpatientForm);
+
+        // 住院形态整体委托（DELIVERED 退药+回补+returned 事件归 DispensePlanServiceImpl 承载）
+        verify(dispensePlanService).acceptInpatientReturn(inpatientForm);
+        // 门诊链路（处方/调剂/批次/明细）零触达
+        verifyNoInteractions(dispenseMapper, dispenseItemMapper, prescriptionMapper, drugBatchMapper);
+    }
+
+    @Test
+    @DisplayName("acceptReturn 门诊形态入参守卫（DTO 注解应用层化）：缺单号/缺退药行 PH-1013 拒（禁 NPE 直穿）")
+    void acceptReturnRejectsIncompleteOutpatientForm() {
+        DispenseServiceImpl impl = newService();
+
+        // 缺调剂单号（dispenseNo 空）
+        assertThatThrownBy(() ->
+                        impl.acceptReturn(new DispenseReturnRequest(null, "ISSUED_RETURN", List.of(), null, null)))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED))
+                .hasMessageContaining("门诊形态缺调剂单号或退药行");
+
+        // 缺退药行（items null——原 @NotEmpty 应用层化后的空面守卫）
+        assertThatThrownBy(() -> impl.acceptReturn(
+                        new DispenseReturnRequest("D20260918000001", "ISSUED_RETURN", null, null, null)))
+                .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
+                        .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED));
+        // 守卫先行：单据查询零触达
+        verifyNoInteractions(dispenseMapper);
     }
 }

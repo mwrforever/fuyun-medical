@@ -56,6 +56,12 @@ public final class PharmacyMessagingConstants {
     /** 订阅事件：患者拆分（V105 id 12 既有；与 merged 成对，M-25） */
     public static final String EVENT_SUB_PATIENT_SPLIT = "patient.patient.split";
 
+    /** 订阅事件：医嘱停止（V800 id 44 既有，producer=inpatient；P2 PR-3 Task 8 住院摆药未摆药计划作废） */
+    public static final String EVENT_SUB_INPATIENT_ORDER_STOPPED = "inpatient.order.stopped";
+
+    /** 订阅事件：患者出院终态（V800 id 51 既有，producer=inpatient；P2 PR-3 Task 8 住院摆药终清作废+已摆未用提示） */
+    public static final String EVENT_SUB_INPATIENT_VISIT_DISCHARGED = "inpatient.visit.discharged";
+
     /**
      * 订阅绑定键：住院医嘱开立 drug 子键（生产方 inpatient）。登记名 inpatient.order.created
      * 不带子键（R3-06 口径），绑定键=登记名 + "." + order_type 子键——governance 订阅登记按
@@ -76,8 +82,9 @@ public final class PharmacyMessagingConstants {
 
     /**
      * 订阅事件全集（队列声明与监听器同源）：Task 5 补 charged/fee.created，
-     * Task 7 补 refund.approved/order.cancelled、Task 10 补 dict.published/merged/split
-     * （先登记后订阅红线）。
+     * Task 7 补 refund.approved/order.cancelled、Task 10 补 dict.published/merged/split、
+     * P2 PR-3 Task 8 补 order.stopped/visit.discharged（先登记后订阅红线——V800 id 44/51
+     * 登记面既有，governance 按登记名声明消费队列）。
      */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
         EVENT_SUB_OUTPATIENT_ORDER_CHARGED,
@@ -86,7 +93,9 @@ public final class PharmacyMessagingConstants {
         EVENT_SUB_BILLING_REFUND_APPROVED,
         EVENT_SUB_SYSTEM_DICT_PUBLISHED,
         EVENT_SUB_PATIENT_MERGED,
-        EVENT_SUB_PATIENT_SPLIT
+        EVENT_SUB_PATIENT_SPLIT,
+        EVENT_SUB_INPATIENT_ORDER_STOPPED,
+        EVENT_SUB_INPATIENT_VISIT_DISCHARGED
     };
 
     /** 私有构造器（A.2-6） */

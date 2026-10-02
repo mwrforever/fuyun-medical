@@ -67,7 +67,27 @@ public enum PharmacyErrorCode implements ErrorCode {
      * 枚举 code 值域外（400；fromCode 查询侧收到词表外 code——EX-19 BE-C3-05 裸 IAE 收口 A 类，
      * 15 枚举共用一码，禁 IllegalArgumentException 直穿 500；PH-1021 已占，本码接续顺延）
      */
-    ENUM_CODE_MALFORMED("PH-1022");
+    ENUM_CODE_MALFORMED("PH-1022"),
+    /**
+     * 摆药计划不存在（404；dispense_plan_no 无命中）——P2 PR-3 Task 8 住院摆药域立项排定
+     * （PH-1023 起），GC12 错误码排定原文承载
+     */
+    DISPENSE_PLAN_NOT_FOUND("PH-1023"),
+    /**
+     * 摆药计划状态不允许该操作（409；状态机违例：非 CREATED 摆药、非 PICKING 核对、非 PICKED
+     * 出库、非 CHECKED 配送/签收、非 PIVAS 链取贴签面等——P2 PR-3 GC12 排定原文承载）
+     */
+    DISPENSE_PLAN_STATE_NOT_ALLOWED("PH-1024"),
+    /**
+     * 摆药计划医嘱前置校验失败（400；医嘱非住院来源或未审方通过——order_medication 快照缺失
+     * 或 review_task 非 APPROVED，P2 PR-3 GC12 排定原文承载）
+     */
+    DISPENSE_PLAN_ORDER_INVALID("PH-1025"),
+    /**
+     * 病区签收前置校验失败（409；未配送不可签收——deliver 配送交接半步未发生，
+     * issued_at 时间线缺位，P2 PR-3 GC12 排定原文承载）
+     */
+    WARD_RECEIVE_INVALID("PH-1026");
 
     /** 码值（如 PH-1001），A.2-7 code↔enum 双向映射之 code 侧 */
     private final String code;

@@ -83,6 +83,10 @@ class DispenseThreeStepTest {
     @Mock
     private com.fuyun.billing.api.SettlementQueryPort settlementQueryPort;
 
+    /** P2 PR-3 Task 8 起构造器扩十二参：住院摆药计划服务补位（三段链路不触达住院分流） */
+    @Mock
+    private com.fuyun.pharmacy.service.IDispensePlanService dispensePlanService;
+
     @BeforeAll
     static void initTableInfo() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Dispense.class);
@@ -115,7 +119,8 @@ class DispenseThreeStepTest {
                 events,
                 new ObjectMapper(),
                 masterDataCache,
-                settlementQueryPort);
+                settlementQueryPort,
+                dispensePlanService);
         ReflectionTestUtils.setField(impl, "baseMapper", dispenseMapper);
         // 链式查询载体：Mockito 桩 mapper 非 MyBatis 真代理，entityClass 须直设（billing/inpatient 同款）
         ReflectionTestUtils.setField(impl, "entityClass", Dispense.class);

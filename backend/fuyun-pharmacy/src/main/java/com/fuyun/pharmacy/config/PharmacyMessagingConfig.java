@@ -7,6 +7,7 @@ import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.pharmacy.constants.PharmacyMessagingConstants;
+import com.fuyun.pharmacy.internal.InpatientTerminalEventListener;
 import com.fuyun.pharmacy.internal.MedicationOrderReviewListener;
 import com.fuyun.pharmacy.internal.PharmacyBillingSyncListener;
 import com.fuyun.pharmacy.internal.PharmacyChargedOrderListener;
@@ -30,6 +31,8 @@ import org.springframework.context.annotation.Import;
  * 交换机全集归 integration 禁私建 A.5-4）。SUBSCRIBED_EVENT_TYPES 随消费任务逐批追加，
  * 监听器类同步追加进 @Import（先登记后订阅红线）。P2 PR-1 Task 12 追加：drug 子键消费面
  * （绑定键自声明——governance 订阅登记按登记名精确匹配无法承载子键）与审方回执发布面。
+ * P2 PR-3 Task 8 追加：住院终清消费面（inpatient.order.stopped/visit.discharged 两路
+ * 作废——V800 id 44/51 登记面既有，经 SUBSCRIBED_EVENT_TYPES 治理声明消费队列）。
  */
 @Configuration
 @Import({
@@ -39,7 +42,8 @@ import org.springframework.context.annotation.Import;
     PharmacyRefundApprovedListener.class,
     PharmacyOrderCancelledListener.class,
     PharmacyMasterDataListener.class,
-    MedicationOrderReviewListener.class
+    MedicationOrderReviewListener.class,
+    InpatientTerminalEventListener.class
 })
 public class PharmacyMessagingConfig {
 

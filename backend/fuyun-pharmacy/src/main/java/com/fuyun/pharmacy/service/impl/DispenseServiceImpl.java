@@ -30,6 +30,7 @@ import com.fuyun.pharmacy.mapper.DrugBatchMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionItemMapper;
 import com.fuyun.pharmacy.mapper.PrescriptionMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
+import com.fuyun.pharmacy.service.IDispensePlanService;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispenseVO;
 import com.fuyun.pharmacy.vo.OccupancyVO;
@@ -106,9 +107,13 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     /** 结算单反查端口（verify 凭证与处方归属一致性核验唯一消费方，billing api 只读面），非空 */
     private final SettlementQueryPort settlementQueryPort;
 
+    /** 住院摆药计划服务（acceptReturn 住院形态分流委托——P2 PR-3 Task 8 接线），非空 */
+    private final IDispensePlanService dispensePlanService;
+
     /**
      * 全参构造器（装配归 PharmacyWebConfig @Import；Task 11 起扩十一参——settlementQueryPort
-     * 承载凭证核验反查；EX-37 收敛十参——流水批插改 Db 通道后 StockLedgerMapper 依赖卸除）。
+     * 承载凭证核验反查；EX-37 收敛十参——流水批插改 Db 通道后 StockLedgerMapper 依赖卸除；
+     * P2 PR-3 Task 8 扩十二参——dispensePlanService 承载退药住院形态分流委托）。
      *
      * @param dispenseMapper         调剂单 mapper（ServiceImpl 继承 baseMapper 同源），非空
      * @param dispenseItemMapper     调剂明细 mapper，非空
@@ -120,6 +125,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
      * @param objectMapper           追溯码 JSON 读写器，非空
      * @param masterDataCache        主数据读侧缓存（merged/split 订阅写、occupancy 读），非空
      * @param settlementQueryPort    结算单反查端口（billing api 只读面），非空
+     * @param dispensePlanService    住院摆药计划服务（退药住院形态分流委托），非空
      */
     public DispenseServiceImpl(
             DispenseMapper dispenseMapper,
@@ -131,7 +137,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
             ApplicationEventPublisher events,
             ObjectMapper objectMapper,
             PharmacyMasterDataCache masterDataCache,
-            SettlementQueryPort settlementQueryPort) {
+            SettlementQueryPort settlementQueryPort,
+            IDispensePlanService dispensePlanService) {
         this.dispenseMapper = dispenseMapper;
         this.dispenseItemMapper = dispenseItemMapper;
         this.drugBatchMapper = drugBatchMapper;
@@ -142,6 +149,7 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
         this.objectMapper = objectMapper;
         this.masterDataCache = masterDataCache;
         this.settlementQueryPort = settlementQueryPort;
+        this.dispensePlanService = dispensePlanService;
     }
 
     /**
@@ -524,6 +532,21 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
     @Override
     @Transactional
     public void acceptReturn(DispenseReturnRequest req) {
+        // 住院形态分流（P2 PR-3 Task 8）：dispensePlanNo 非空即住院退药（DELIVERED→PART/
+        // FULL_RETURNED+批次回补+returned 事件）——整体委托摆药计划服务承载
+        if (req.dispensePlanNo() != null && !req.dispensePlanNo().isBlank()) {
+            dispensePlanService.acceptInpatientReturn(req);
+            return;
+        }
+        // 门诊形态入参守卫（原 DTO @NotBlank/@NotEmpty 应用层化——住院形态互斥承载后静态注解
+        // 无法表达「按形态必填」；缺单号/缺退药行定性 400 禁 NPE 直穿 500）
+        if (req.dispenseNo() == null
+                || req.dispenseNo().isBlank()
+                || req.items() == null
+                || req.items().isEmpty()) {
+            throw new BizException(
+                    PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED, HttpStatus.BAD_REQUEST, "退药受理入参不完整（门诊形态缺调剂单号或退药行）");
+        }
         Dispense d = requireByNo(req.dispenseNo());
         String operator = OperatorContextHolder.get();
         if ("DISPENSING_CANCEL".equals(req.mode())) {
