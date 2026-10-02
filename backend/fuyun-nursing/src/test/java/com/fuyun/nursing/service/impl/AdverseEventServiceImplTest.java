@@ -26,10 +26,12 @@ import com.fuyun.nursing.dto.AdverseEventReportRequest;
 import com.fuyun.nursing.dto.AdverseEventReturnRequest;
 import com.fuyun.nursing.entity.AdverseEvent;
 import com.fuyun.nursing.enums.AdverseEventStatus;
+import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.AdverseEventMapper;
 import com.fuyun.nursing.vo.AdverseEventStatsVO;
 import com.fuyun.nursing.vo.AdverseEventVO;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.lang.reflect.RecordComponent;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -367,17 +369,29 @@ class AdverseEventServiceImplTest {
     }
 
     @Test
-    @DisplayName("⑤ tick 超时提醒扫描：命中返回行数且零写操作（不改状态——只读红线）")
+    @DisplayName("⑤ tick 超时提醒扫描：命中返回行数、按病区聚合发布 ADVERSE_EVENT_REMIND 帧且零写操作（不改状态——只读红线）")
     void scanRemindsOverdueWithoutAnyWrite() {
         AdverseEvent overdue = row(AdverseEventStatus.REPORTED);
         overdue.setSeverityClass("I");
         AdverseEvent overdue2 = row(AdverseEventStatus.REPORTED);
         overdue2.setSeverityClass("II");
+        overdue2.setEventNo("AE2026100200002");
         when(mapper.selectList(any())).thenReturn(List.of(overdue, overdue2));
 
         int count = service.scanAndRemindOverdue();
 
         assertThat(count).isEqualTo(2);
+        // 大屏提醒帧（Task 11 接线）：同病区聚合一帧（wardId/超时行数/样例事件号有界 5 条）
+        org.mockito.ArgumentCaptor<NurseBoardPushEvent> pushCaptor =
+                org.mockito.ArgumentCaptor.forClass(NurseBoardPushEvent.class);
+        verify(events).publishEvent(pushCaptor.capture());
+        NurseBoardPushEvent push = pushCaptor.getValue();
+        assertThat(push.wardId()).isEqualTo(WARD);
+        assertThat(push.type()).isEqualTo(NurseBoardPushFrame.TYPE_ADVERSE_EVENT_REMIND);
+        NurseBoardPushFrame.AdverseEventRemindPayload payload =
+                (NurseBoardPushFrame.AdverseEventRemindPayload) push.payload();
+        assertThat(payload.overdueCount()).isEqualTo(2);
+        assertThat(payload.sampleEventNos()).containsExactly(AE_NO, "AE2026100200002");
         // 只读红线：无任何状态迁移/写操作（非惩罚——超时仅提醒）
         verify(mapper, never()).casHandle(any(), anyLong(), any(), any(), any());
         verify(mapper, never()).casClose(any(), any(), any(), any());

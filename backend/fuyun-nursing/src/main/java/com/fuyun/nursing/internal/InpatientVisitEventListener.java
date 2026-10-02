@@ -9,6 +9,7 @@ import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
 import com.fuyun.nursing.mapper.OrderExecutionMapper;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -17,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 
 /**
@@ -32,6 +34,12 @@ import org.springframework.dao.DuplicateKeyException;
  * bed.changed 与 transferred 双向乱序终态一致（床号更新按 patientId 定位不按 ward 过滤）；
  * bed.changed(OCCUPIED) 与 admitted 同事务异队列发布、消费无顺序保证——占床帧先达时首更新
  * 0 行，短暂等待入科 upsert 落行后重试一次（仍 0 行 warn 留痕直返，宁缺勿错）。
+ *
+ * <p><b>大屏床位患者动态推送（Task 11 接线）</b>：投影四路写入成功后发布
+ * {@link NurseBoardPushEvent}（type=BED_PATIENT）——admitted 推入科病区、transferred 推
+ * 转出+转入双病区（源病区床位墙需移除行）、discharged 推出院病区（路由病区取逻辑删前
+ * 投影行）、bed.changed 推床位病区（投影行回读携 visitId 定位键）。本监听器零事务注解
+ * （MQ 消费线程），推送事件经 NurseBoardPushListener fallbackExecution 立即出站。
  *
  * <p>幂等双层：eventId 构件幂等（IdempotentConsumerSupport 三段式）+ 业务级幂等（重定向
  * fromWard 谓词 / 终清未执行态谓词 / 投影四路 CAS 谓词——重复投递 0 行自然达成；admitted
@@ -66,6 +74,9 @@ public class InpatientVisitEventListener {
 
     private final NursingWardPatientMapper wardPatientMapper;
 
+    /** 进程内事件发布器：大屏床位患者动态推送桥（事务内禁推送红线的进程内载体），非空 */
+    private final ApplicationEventPublisher events;
+
     /**
      * 全参构造器（装配归 NursingMessagingConfig @Import；消费模板 @Qualifier 定绑
      * nursingConsumerSupport——GC7 common 模板类多实例红线；单测按位置构造零改动）。
@@ -75,16 +86,19 @@ public class InpatientVisitEventListener {
      *                            与 PatientMergedListener 直驱 mapper 同款形态）
      * @param nursingTaskMapper    护理任务 mapper，非空；出院终清在途任务批量撤销写面
      * @param wardPatientMapper    病区患者投影 mapper，非空；投影写入四路（Task 7 实装写面）
+     * @param events               进程内事件发布器，非空；大屏 BED_PATIENT 帧发布（Task 11 接线）
      */
     public InpatientVisitEventListener(
             @Qualifier("nursingConsumerSupport") IdempotentConsumerSupport consumerSupport,
             OrderExecutionMapper orderExecutionMapper,
             NursingTaskMapper nursingTaskMapper,
-            NursingWardPatientMapper wardPatientMapper) {
+            NursingWardPatientMapper wardPatientMapper,
+            ApplicationEventPublisher events) {
         this.consumerSupport = consumerSupport;
         this.orderExecutionMapper = orderExecutionMapper;
         this.nursingTaskMapper = nursingTaskMapper;
         this.wardPatientMapper = wardPatientMapper;
+        this.events = events;
     }
 
     /**
@@ -163,13 +177,18 @@ public class InpatientVisitEventListener {
      */
     void handleVisitAdmitted(EventEnvelope envelope) {
         JsonNode payload = envelope.payload();
+        String visitId = requireText(envelope, payload, "visitId");
+        long patientId = requirePatientId(envelope, payload);
+        String wardId = requireText(envelope, payload, "wardId");
         upsertWardPatientProjection(
-                requireText(envelope, payload, "visitId"),
-                requirePatientId(envelope, payload),
-                requireText(envelope, payload, "wardId"),
+                visitId,
+                patientId,
+                wardId,
                 payload.path("bedId").asLong(0),
                 requireInstant(envelope, payload, "admittedAt"),
                 textOrNull(payload, "nursingLevel"));
+        // 消息发送：大屏床位动态帧（入科病区；bedNo 空占位待 bed.changed 补齐——载荷可空承载）
+        publishBedPatientEvent(wardId, visitId, patientId, null);
     }
 
     /**
@@ -210,6 +229,10 @@ public class InpatientVisitEventListener {
                 fromWardId,
                 toWardId,
                 rows);
+        // 消息发送：大屏床位动态帧双病区（转入侧新增行 + 转出侧移除行——两墙均需刷新；
+        // 载荷 wardId 承载转入归属，转出侧同帧触发整墙刷新）
+        publishBedPatientEvent(toWardId, visitId, patientId, null);
+        publishBedPatientEvent(fromWardId, visitId, patientId, null);
     }
 
     /**
@@ -239,8 +262,12 @@ public class InpatientVisitEventListener {
     void handleVisitDischarged(EventEnvelope envelope) {
         JsonNode payload = envelope.payload();
         String visitId = requireText(envelope, payload, "visitId");
-        requirePatientId(envelope, payload);
+        long patientId = requirePatientId(envelope, payload);
         requireInstant(envelope, payload, "dischargedAt");
+        // 数据库读操作：逻辑删前投影行回读（大屏推送路由病区锚——V800 id 51 载荷无 wardId；
+        // 重复投递行已删回读 null，自然跳过推送与下方 CAS 同幂等口径）
+        NursingWardPatient before = wardPatientMapper.selectOne(
+                Wrappers.<NursingWardPatient>lambdaQuery().eq(NursingWardPatient::getVisitId, visitId));
         // 数据库写操作：未执行执行单终清 CAS（未执行三态谓词，0 行=已终清幂等达成）
         int executions = orderExecutionMapper.casCancelByVisit(visitId, DISCHARGE_CLEANUP_REASON, SYSTEM_OPERATOR);
         // 数据库写操作：在途任务终清 CAS（PENDING/IN_PROGRESS 谓词，与任务域 cancel 状态面同构）
@@ -253,6 +280,10 @@ public class InpatientVisitEventListener {
                 executions,
                 tasks,
                 projectionRows);
+        // 消息发送：大屏床位动态帧（首删命中才推——出院病区墙移除行；路由病区=逻辑删前投影行归属）
+        if (before != null && projectionRows > 0) {
+            publishBedPatientEvent(before.getWardId(), visitId, patientId, before.getBedNo());
+        }
     }
 
     /**
@@ -383,6 +414,32 @@ public class InpatientVisitEventListener {
                 bedNo,
                 bedStatus,
                 patientId);
+        // 消息发送：大屏床位动态帧（床号补齐成功路径；投影行回读携 visitId 定位键——理论上
+        // 必命中（CAS 刚按 patientId 命中在册行），回读零行属并发逻辑删竞态，跳过推送留痕）
+        NursingWardPatient row = wardPatientMapper.selectOne(
+                Wrappers.<NursingWardPatient>lambdaQuery().eq(NursingWardPatient::getPatientId, patientId));
+        if (row != null) {
+            publishBedPatientEvent(wardId, row.getVisitId(), patientId, bedNo);
+        } else {
+            log.warn("床位变更大屏帧跳过（投影行回读零行——并发逻辑删竞态留痕）：patientId={}，bedNo={}", patientId, bedNo);
+        }
+    }
+
+    /**
+     * 大屏床位患者动态帧发布单点（四路共用，Task 11 接线）：type=BED_PATIENT，本监听器零事务
+     * 上下文（MQ 消费线程），NurseBoardPushListener 经 fallbackExecution 立即出站。
+     *
+     * @param wardId    路由病区（topic 尾段），非空
+     * @param visitId   住院就诊号（行定位键），非空
+     * @param patientId 患者主索引，非空
+     * @param bedNo     变更后床号文本（admitted/transferred 路未知为 null——床号待 bed.changed 补齐），可空
+     */
+    private void publishBedPatientEvent(String wardId, String visitId, long patientId, String bedNo) {
+        events.publishEvent(new NurseBoardPushEvent(
+                wardId,
+                NurseBoardPushFrame.TYPE_BED_PATIENT,
+                new NurseBoardPushFrame.BedPatientPayload(visitId, patientId, bedNo, wardId),
+                Instant.now()));
     }
 
     /**

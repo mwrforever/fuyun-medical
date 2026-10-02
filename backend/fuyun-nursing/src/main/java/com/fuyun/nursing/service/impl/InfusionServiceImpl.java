@@ -10,14 +10,20 @@ import com.fuyun.nursing.entity.InfusionMonitorLink;
 import com.fuyun.nursing.entity.OrderExecution;
 import com.fuyun.nursing.enums.ExecutionStatus;
 import com.fuyun.nursing.enums.ExecutionType;
+import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.InfusionMonitorLinkMapper;
 import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.mapper.OrderExecutionMapper;
 import com.fuyun.nursing.service.IInfusionService;
 import com.fuyun.nursing.vo.ActiveInfusionVO;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
@@ -32,11 +38,11 @@ import org.springframework.transaction.annotation.Transactional;
  * 反查 triggered 路已落挂接锚）。拔针全链归 {@link OrderExecutionOperateServiceImpl}（finish
  * 族终态操作复用双路回签编排，禁跨服务环依赖）。
  *
- * <p>WS 强提醒推送面（实测结论）：PR-2 既有 WS 基建仅 iot /ws/iot 与 outpatient /ws/queue
- * 两处（模块私有 broker），nursing 无 SimpMessagingTemplate 通道——board 主题
- * /topic/nursing/board/{wardId} 归 Task 11 NursingWebSocketConfig 建。本实现以 warn 级
- * 强提醒日志承载升级触达（wardId/patientId/alarmNo 全锚），Task 11 板推送接线点为本类
- * 升级方法（届时注入 SimpMessagingTemplate 补 INFUSION_ESCALATION 推送）。
+ * <p>WS 强提醒推送面（Task 11 已接线）：升级动作事务内发布 {@link NurseBoardPushEvent}
+ * （type=INFUSION_ESCALATION——alarmNo/患者维执行单清单/升级行数/任务上调数，Task 6 brief
+ * 载荷语义），NurseBoardPushListener 于事务提交后（AFTER_COMMIT+fallback）推送
+ * /topic/nursing/board/{wardId}（路由病区=CAS 命中执行单行归属病区去重）；warn 级强提醒
+ * 日志保留为伴随日志（推送为主面）。
  *
  * <p>线程安全：无状态 singleton；写方法 @Transactional 收口。
  */
@@ -170,7 +176,7 @@ public class InfusionServiceImpl implements IInfusionService {
                 .eq(OrderExecution::getPatientId, patientId)
                 .eq(OrderExecution::getStatus, ExecutionStatus.EXECUTING.getCode())
                 .eq(OrderExecution::getExecutionType, ExecutionType.INFUSION.getCode()));
-        List<String> monitored = monitoredExecutionNos(inflight);
+        List<OrderExecution> monitored = monitoredExecutions(inflight);
         if (monitored.isEmpty()) {
             // 无在途零副作用（brief Step 2 ②：不触任何 CAS/任务面）
             log.info("告警升级挂单零命中（无在途输注监测）：patientId={}，alarmNo={}", patientId, alarmNo);
@@ -192,8 +198,7 @@ public class InfusionServiceImpl implements IInfusionService {
             log.info("告警升级累计零命中（告警无挂接在途行）：alarmNo={}", alarmNo);
             return 0;
         }
-        return escalateMonitored(
-                inflight.stream().map(OrderExecution::getExecutionNo).toList(), alarmNo, "escalated");
+        return escalateMonitored(inflight, alarmNo, "escalated");
     }
 
     /** 告警关闭复位（closed 路）：挂接锚双复位（escalation_count 保留追溯）。 */
@@ -211,44 +216,63 @@ public class InfusionServiceImpl implements IInfusionService {
 
     /**
      * 升级动作单点（triggered/escalated 两路共用）：逐行升级 CAS + 挂接锚刷新 + 挂接任务
-     * 优先级上调（告警号维度一次）+ 强提醒日志（board WS 推送归 Task 11 接线——类注释实测结论）。
+     * 优先级上调（告警号维度一次）+ 大屏强提醒推送（事务内发布 NurseBoardPushEvent，AFTER_COMMIT
+     * 出站——Task 11 接线实况）+ warn 伴随日志。
      *
-     * @param monitored 监测中执行单号集（已过 MONITORING 过滤或反查锚定），非空
+     * @param monitored 监测中执行单行集（已过 MONITORING 过滤或反查锚定），非空
      * @param alarmNo   告警业务号，非空
      * @param route     升级路别（triggered/escalated——日志留痕），非空
      * @return 升级命中行数
      */
-    private int escalateMonitored(List<String> monitored, String alarmNo, String route) {
+    private int escalateMonitored(List<OrderExecution> monitored, String alarmNo, String route) {
         String operator = operator();
         int escalated = 0;
-        for (String executionNo : monitored) {
+        // 升级命中行归属病区去重（大屏推送路由锚——一病区一帧防重复推送）
+        Set<String> escalatedWards = new LinkedHashSet<>();
+        List<String> escalatedExecutionNos = new ArrayList<>(monitored.size());
+        for (OrderExecution row : monitored) {
+            String executionNo = row.getExecutionNo();
             // 数据库写操作：升级挂单 CAS（escalation_count+1+latest_alarm_no；0 行=并发终态幂等跳过）
             if (executionMapper.casEscalateAlarm(executionNo, alarmNo, operator) > 0) {
                 // 数据库写操作：挂接行挂接锚刷新（triggered 路双落锚；escalated 路幂等同值覆写）
                 monitorLinkMapper.casMarkAlarm(executionNo, alarmNo, operator);
                 escalated++;
+                escalatedExecutionNos.add(executionNo);
+                if (row.getWardId() != null) {
+                    escalatedWards.add(row.getWardId());
+                }
             }
         }
         // 数据库写操作：挂接任务优先级上调（source_ref=告警号；无挂接 0 行跳过——「不新建任务」纪律）
         int tasks = taskMapper.casEscalatePriorityBySourceRef(alarmNo, operator);
-        // 强提醒触达（Task 11 前以日志承载——/topic/nursing/board/{wardId} 推送接线点，类注释）
+        // 消息发送：大屏强提醒推送事件（事务内发布，提交后出站；一病区一帧，载荷=告警号/患者维
+        // 执行单清单/升级行数/任务上调数——Task 6 brief 载荷语义）
+        for (String wardId : escalatedWards) {
+            events.publishEvent(new NurseBoardPushEvent(
+                    wardId,
+                    NurseBoardPushFrame.TYPE_INFUSION_ESCALATION,
+                    new NurseBoardPushFrame.InfusionEscalationPayload(
+                            alarmNo, List.copyOf(escalatedExecutionNos), escalated, tasks),
+                    Instant.now()));
+        }
+        // 强提醒伴随日志（推送为主面；患者维执行单清单全锚）
         log.warn(
                 "输注告警升级挂单强提醒：route={}，alarmNo={}，patientDimension={}，升级行数={}，任务上调={}",
                 route,
                 alarmNo,
-                monitored,
+                escalatedExecutionNos,
                 escalated,
                 tasks);
         return escalated;
     }
 
     /**
-     * 在途行集过滤出监测中执行单号（挂接行批量装载 + MONITORING 判定）。
+     * 在途行集过滤出监测中执行单行（挂接行批量装载 + MONITORING 判定）。
      *
      * @param inflight 在途输液执行单行集，非空（可为空集）
-     * @return 监测中执行单号清单，非空（无在途/无挂接为空清单）
+     * @return 监测中执行单行清单，非空（无在途/无挂接为空清单）
      */
-    private List<String> monitoredExecutionNos(List<OrderExecution> inflight) {
+    private List<OrderExecution> monitoredExecutions(List<OrderExecution> inflight) {
         if (inflight.isEmpty()) {
             return List.of();
         }
@@ -263,9 +287,10 @@ public class InfusionServiceImpl implements IInfusionService {
                 .stream()
                 .collect(Collectors.toMap(InfusionMonitorLink::getExecutionNo, Function.identity(), (a, b) -> a));
         return inflight.stream()
-                .map(OrderExecution::getExecutionNo)
-                .filter(no -> linkByExecution.get(no) != null
-                        && LINK_STATUS_MONITORING.equals(linkByExecution.get(no).getLinkStatus()))
+                .filter(row -> {
+                    InfusionMonitorLink link = linkByExecution.get(row.getExecutionNo());
+                    return link != null && LINK_STATUS_MONITORING.equals(link.getLinkStatus());
+                })
                 .toList();
     }
 

@@ -36,6 +36,10 @@ import org.springframework.context.annotation.Import;
  * 队列声明随既有 SUBSCRIBED_EVENT_TYPES id 74–76 项）。P2 PR-3 Task 9 追加：任务逾期 tick
  * 消费链三件（TaskOverdueTickListener/TaskOverdueTickSender/TaskOverdueTickSeeder——tick
  * 消费队列自声明见 taskOverdueTickQueue，ExecutionConfirmCompensator 接线归监听器）。
+ * P2 PR-3 Task 11 追加：设备呼叫转发监听器（IotCallTriggeredListener——iot.call.triggered
+ * V1004 id 81 在册，第 14 条消费队列 q.nursing.iot.call.triggered，队列声明随
+ * SUBSCRIBED_EVENT_TYPES 扩项；大屏 WS 推送执行点归 NursingWebSocketConfig
+ * NurseBoardPushListener）。
  */
 @Configuration
 @Import({
@@ -50,7 +54,8 @@ import org.springframework.context.annotation.Import;
     IotAlarmExecutionListener.class,
     TaskOverdueTickListener.class,
     TaskOverdueTickSender.class,
-    TaskOverdueTickSeeder.class
+    TaskOverdueTickSeeder.class,
+    IotCallTriggeredListener.class
 })
 public class NursingMessagingConfig {
 
@@ -83,9 +88,10 @@ public class NursingMessagingConfig {
 
     /**
      * 声明订阅队列并绑定 fy.topic（事件未登记时构件抛异常阻断启动；V105 id 11/12/16 与 V800/V702/V1004
-     * 登记面既有）。P1 三条：健康档案变更/患者合并/患者拆分（成对口径 M-25）；P2 PR-3 扩十三条：
-     * inpatient 医嘱/就诊/床位九条（Task 4/7 消费面）+ pharmacy 摆药签收一条（Task 6）+ iot 告警三条（Task 6），
-     * 队列名由治理构件按 q.nursing.&lt;eventType&gt; 统一推导（契约锚 NursingEventContractTest）。
+     * 登记面既有）。P1 三条：健康档案变更/患者合并/患者拆分（成对口径 M-25）；P2 PR-3 扩十四条：
+     * inpatient 医嘱/就诊/床位九条（Task 4/7 消费面）+ pharmacy 摆药签收一条（Task 6）+ iot 告警三条
+     * （Task 6）+ iot 呼叫转发一条（Task 11——V1004 id 81 在册），队列名由治理构件按
+     * q.nursing.&lt;eventType&gt; 统一推导（契约锚 NursingEventContractTest）。
      *
      * @param governance 消息治理构件，非空
      * @return 声明集合（quorum 队列 + 绑定）；RabbitAdmin 幂等声明

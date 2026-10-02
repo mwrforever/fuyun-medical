@@ -104,9 +104,9 @@ public interface IAdverseEventService {
 
     /**
      * tick 超时提醒扫描段（TaskOverdueTickListener 挂接，只读不改状态）：扫描 REPORTED
-     * 且 report_deadline&lt;now 的 I/II 级行→WS 提醒推送（nursing 无 WS 通道——warn 级
-     * 日志降级承载，/topic/nursing/board/{wardId} 推送归 Task 11 NursingWebSocketConfig
-     * 接线，禁建骨架）。非惩罚原则：超时仅提醒留痕，不迁移状态不拦截处置。
+     * 且 report_deadline&lt;now 的 I/II 级行→WS 提醒推送（Task 11 已接线：按病区聚合发布
+     * ADVERSE_EVENT_REMIND 帧，无事务上下文经 fallback 立即出站）。非惩罚原则：超时仅
+     * 提醒留痕，不迁移状态不拦截处置。
      *
      * @return 本轮超时行数（零=空扫描零副作用；有界扫描 500 行上限，越界行后续 tick 轮转）
      */

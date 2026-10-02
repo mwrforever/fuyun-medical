@@ -3,8 +3,10 @@ package com.fuyun.nursing.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.fuyun.nursing.entity.NursingWardPatient;
 import java.time.OffsetDateTime;
+import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 /**
@@ -19,6 +21,26 @@ import org.apache.ibatis.annotations.Update;
  */
 @Mapper
 public interface NursingWardPatientMapper extends BaseMapper<NursingWardPatient> {
+
+    /**
+     * 近时窗出院行查询（护士站大屏出入院动态段，Task 11）：注解 SQL 显式 {@code deleted = 1}
+     * 绕过 @TableLogic 自动过滤（链式查询只出在册行，逻辑删行必须经本注解 SQL 读取）。
+     * 出院时点以 updated_at 近似承载——投影表无出院时点列，casDischarge 逻辑删 UPDATE 经
+     * fuyun_set_updated_at 触发器刷新该值，且逻辑删行此后无任何写入面（各写面均带
+     * deleted=0 谓词），故 updated_at 即出院收敛时点（派发上下文 §3 注记口径）。
+     * 有界查询（LIMIT 50，updated_at 降序——大屏时间线只取最近动态）。
+     *
+     * @param wardId 病区编码，非空；来源：大屏快照聚合
+     * @param since  时窗下界（近 24h），非空；来源：聚合基准时钟
+     * @return 出院行清单（至多 50 行），非空（无行返回空清单）
+     */
+    @Select("SELECT id, ward_id, bed_no, patient_id, visit_id, patient_name, gender, age, nursing_level, "
+            + "condition_tags, allergy_flag, risk_flags, admitted_at, created_at, updated_at, created_by, "
+            + "updated_by, deleted FROM nursing.nursing_ward_patient "
+            + "WHERE ward_id = #{wardId} AND deleted = 1 AND updated_at >= #{since} "
+            + "ORDER BY updated_at DESC LIMIT 50")
+    List<NursingWardPatient> selectDischargedSince(
+            @Param("wardId") String wardId, @Param("since") OffsetDateTime since);
 
     /**
      * 入科属性刷新 CAS（visit.admitted 消费体——upsert 既有行分支与 uk 冲突回查合并分支共用）：

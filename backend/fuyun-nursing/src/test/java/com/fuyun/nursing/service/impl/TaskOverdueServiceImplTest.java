@@ -17,9 +17,11 @@ import com.fuyun.nursing.api.TaskOverduePayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskStatus;
+import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.properties.NursingProperties;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -68,6 +70,10 @@ class TaskOverdueServiceImplTest {
     @Captor
     private ArgumentCaptor<NursingDomainEvent> eventCaptor;
 
+    /** 大屏推送事件捕手（Task 11 接线后段①② CAS 命中行同步发布 TASK_OVERDUE 帧） */
+    @Captor
+    private ArgumentCaptor<NurseBoardPushEvent> boardEventCaptor;
+
     private TaskOverdueServiceImpl service;
 
     @BeforeAll
@@ -93,7 +99,7 @@ class TaskOverdueServiceImplTest {
     }
 
     @Test
-    @DisplayName("段①首逾标记：越阈值在途未标记行 casMarkOverdue 命中 → 事务内发布逾期事件（escalationCount=1）")
+    @DisplayName("段①首逾标记：越阈值在途未标记行 casMarkOverdue 命中 → 事务内发布逾期事件（escalationCount=1）+大屏 TASK_OVERDUE 帧")
     void firstOverdueMarkingPublishesEventWithTierOne() {
         OffsetDateTime planTime = OffsetDateTime.now().minusMinutes(45);
         NursingTask row = candidate(TASK_NO, ROW_ID, TaskStatus.PENDING, false, 0, planTime);
@@ -111,10 +117,20 @@ class TaskOverdueServiceImplTest {
         assertThat(payload.taskNo()).isEqualTo(TASK_NO);
         assertThat(payload.planTime()).isEqualTo(planTime.toInstant());
         assertThat(payload.escalationCount()).isEqualTo(1);
+        // 大屏任务逾期帧（Task 11 接线）：taskNo/wardId 维度（派发上下文 §1.2 口径）+首标档位 1
+        verify(events, org.mockito.Mockito.times(1)).publishEvent(boardEventCaptor.capture());
+        NurseBoardPushEvent boardEvent = boardEventCaptor.getValue();
+        assertThat(boardEvent.wardId()).isEqualTo("W01");
+        assertThat(boardEvent.type()).isEqualTo(NurseBoardPushFrame.TYPE_TASK_OVERDUE);
+        NurseBoardPushFrame.OverdueTaskPayload boardPayload =
+                (NurseBoardPushFrame.OverdueTaskPayload) boardEvent.payload();
+        assertThat(boardPayload.taskNo()).isEqualTo(TASK_NO);
+        assertThat(boardPayload.escalationCount()).isEqualTo(1);
+        assertThat(boardPayload.wardId()).isEqualTo("W01");
     }
 
     @Test
-    @DisplayName("段②升级档：elapsed=90 分钟目标档 min(floor(90/30),2)=2 → CAS 递增再发布（escalationCount=2 护士长档）")
+    @DisplayName("段②升级档：elapsed=90 分钟目标档 min(floor(90/30),2)=2 → CAS 递增再发布（escalationCount=2 护士长档）+大屏帧同步")
     void escalationTierIncrementsAndPublishesTierTwo() {
         NursingTask row = candidate(
                 TASK_NO,
@@ -135,6 +151,12 @@ class TaskOverdueServiceImplTest {
         TaskOverduePayload payload = (TaskOverduePayload) eventCaptor.getValue().payload();
         assertThat(payload.taskNo()).isEqualTo(TASK_NO);
         assertThat(payload.escalationCount()).isEqualTo(2);
+        // 大屏任务逾期帧：递增后档位 2 承载（升级链与首标统一 type）
+        verify(events, org.mockito.Mockito.times(1)).publishEvent(boardEventCaptor.capture());
+        assertThat(((NurseBoardPushFrame.OverdueTaskPayload)
+                                boardEventCaptor.getValue().payload())
+                        .escalationCount())
+                .isEqualTo(2);
     }
 
     @Test
@@ -205,6 +227,27 @@ class TaskOverdueServiceImplTest {
 
         verify(taskMapper, never()).casMarkOverdue(anyLong());
         verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("大屏帧病区缺失防御：任务行无 wardId 跳过推送不阻断动作（id 61 事件照常发布）")
+    void boardEventSkippedWhenWardIdMissing() {
+        NursingTask row = candidate(
+                TASK_NO,
+                ROW_ID,
+                TaskStatus.PENDING,
+                false,
+                0,
+                OffsetDateTime.now().minusMinutes(45));
+        row.setWardId(null);
+        when(taskMapper.selectList(any())).thenReturn(List.of(row), List.of());
+        when(taskMapper.casMarkOverdue(ROW_ID)).thenReturn(1);
+
+        assertThat(service.scanAndEscalate()).isEqualTo(1);
+
+        // id 61 事件照常（MQ 事件面不依赖 wardId），大屏帧零发布（数据异常留痕跳过）
+        verify(events, org.mockito.Mockito.times(1)).publishEvent(eventCaptor.capture());
+        verify(events, org.mockito.Mockito.never()).publishEvent(boardEventCaptor.capture());
     }
 
     /**

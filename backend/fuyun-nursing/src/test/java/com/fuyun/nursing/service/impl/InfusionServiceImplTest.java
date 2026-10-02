@@ -21,11 +21,13 @@ import com.fuyun.nursing.entity.InfusionMonitorLink;
 import com.fuyun.nursing.entity.OrderExecution;
 import com.fuyun.nursing.enums.ExecutionStatus;
 import com.fuyun.nursing.enums.ExecutionType;
+import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.InfusionMonitorLinkMapper;
 import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.mapper.OrderExecutionMapper;
 import com.fuyun.nursing.vo.ActiveInfusionVO;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -218,7 +220,7 @@ class InfusionServiceImplTest {
     }
 
     @Test
-    @DisplayName("②b告警 triggered 无在途/无监测挂接：零副作用（零 CAS 零任务面）")
+    @DisplayName("②b 告警 triggered 无在途/无监测挂接：零副作用（零 CAS 零任务面）")
     void escalateOnAlarmTriggeredNoInflightZeroSideEffects() {
         // 无在途输液行：直出零命中
         when(executionMapper.selectList(any())).thenReturn(List.of());
@@ -233,6 +235,31 @@ class InfusionServiceImplTest {
         assertThat(service.escalateOnAlarmTriggered(PATIENT, ALARM_NO)).isZero();
         verify(executionMapper, never()).casEscalateAlarm(any(), any(), any());
         verifyNoInteractions(taskMapper);
+    }
+
+    @Test
+    @DisplayName("②c 升级大屏推送（Task 11 接线）：INFUSION_ESCALATION 帧路由命中行病区，载荷=alarmNo/患者维/升级行数/任务上调数")
+    void escalateMonitoredPushesInfusionEscalationBoardEvent() {
+        when(executionMapper.selectList(any())).thenReturn(List.of(executingInfusion()));
+        when(monitorLinkMapper.selectList(any())).thenReturn(List.of(monitoringLink()));
+        when(executionMapper.casEscalateAlarm(eq(EXEC), eq(ALARM_NO), any())).thenReturn(1);
+        when(taskMapper.casEscalatePriorityBySourceRef(eq(ALARM_NO), any())).thenReturn(1);
+
+        assertThat(service.escalateOnAlarmTriggered(PATIENT, ALARM_NO)).isEqualTo(1);
+
+        // 大屏强提醒帧：事务内发布 AFTER_COMMIT 出站；一病区一帧（命中行归属去重）
+        org.mockito.ArgumentCaptor<NurseBoardPushEvent> pushCaptor =
+                org.mockito.ArgumentCaptor.forClass(NurseBoardPushEvent.class);
+        verify(events).publishEvent(pushCaptor.capture());
+        NurseBoardPushEvent push = pushCaptor.getValue();
+        assertThat(push.wardId()).isEqualTo(WARD);
+        assertThat(push.type()).isEqualTo(NurseBoardPushFrame.TYPE_INFUSION_ESCALATION);
+        NurseBoardPushFrame.InfusionEscalationPayload payload =
+                (NurseBoardPushFrame.InfusionEscalationPayload) push.payload();
+        assertThat(payload.alarmNo()).isEqualTo(ALARM_NO);
+        assertThat(payload.executionNos()).containsExactly(EXEC);
+        assertThat(payload.escalatedCount()).isEqualTo(1);
+        assertThat(payload.taskEscalatedCount()).isEqualTo(1);
     }
 
     @Test

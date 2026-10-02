@@ -208,18 +208,18 @@ class NursingEventContractTest {
     }
 
     @Test
-    @DisplayName("P2 消费订阅全集：13 条新增事件派生队列名 q.nursing.<event_type> 与列全口径一致（tick 键豁免）")
-    void subscribedEventTypesDeriveThirteenP2ConsumerQueues() {
+    @DisplayName("P2 消费订阅全集：14 条新增事件派生队列名 q.nursing.<event_type> 与列全口径一致（tick 键豁免）")
+    void subscribedEventTypesDeriveFourteenP2ConsumerQueues() {
         String[] subscribed = NursingMessagingConstants.SUBSCRIBED_EVENT_TYPES;
-        // 订阅全集 = P1 三条（patient 域）+ P2 十三条（inpatient 九/pharmacy 一/iot 三），无多登漏登
-        assertThat(subscribed).as("订阅全集项数（P1 三 + P2 十三）").hasSize(16);
+        // 订阅全集 = P1 三条（patient 域）+ P2 十四条（inpatient 九/pharmacy 一/iot 告警三/iot 呼叫一），无多登漏登
+        assertThat(subscribed).as("订阅全集项数（P1 三 + P2 十四）").hasSize(17);
         List<String> p2Queues = Arrays.stream(subscribed)
                 .filter(type -> !type.startsWith("patient."))
                 .map(type -> NursingMessagingConstants.QUEUE_PREFIX + type)
                 .toList();
-        // 派生队列名逐字等于治理构件命名（QueueGovernorImpl：q.<消费者>.<事件>），brief 列全口径 13 条
+        // 派生队列名逐字等于治理构件命名（QueueGovernorImpl：q.<消费者>.<事件>），brief 列全口径 14 条
         assertThat(p2Queues)
-                .as("P2 消费队列列全面（inpatient 九 + dispense 一 + iot 告警三）")
+                .as("P2 消费队列列全面（inpatient 九 + dispense 一 + iot 告警三 + iot 呼叫一）")
                 .containsExactlyInAnyOrder(
                         "q.nursing.inpatient.order.transferred",
                         "q.nursing.inpatient.order-plan.generated",
@@ -233,7 +233,8 @@ class NursingEventContractTest {
                         "q.nursing.pharmacy.dispense.completed",
                         "q.nursing.iot.alarm.triggered",
                         "q.nursing.iot.alarm.escalated",
-                        "q.nursing.iot.alarm.closed");
+                        "q.nursing.iot.alarm.closed",
+                        "q.nursing.iot.call.triggered");
         // 命名规范：事件类型小写点分 ≥3 段（与 QueueGovernorImpl.EVENT_TYPE_PATTERN 同口径），队列名形如 q.nursing.<event_type>
         for (String type : subscribed) {
             assertThat(type).as("订阅事件类型命名违规：%s", type).matches("^[a-z][a-z0-9-]*(\\.[a-z0-9-]+){2,}$");

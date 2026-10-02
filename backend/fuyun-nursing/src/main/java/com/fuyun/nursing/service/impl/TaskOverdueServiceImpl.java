@@ -6,11 +6,14 @@ import com.fuyun.nursing.api.TaskOverduePayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskStatus;
+import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.properties.NursingProperties;
 import com.fuyun.nursing.service.ITaskOverdueService;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import lombok.extern.slf4j.Slf4j;
@@ -23,9 +26,10 @@ import org.springframework.transaction.support.TransactionTemplate;
  * TransactionTemplate 独立事务承载（置位/递增与 nursing.task.overdue 事件事务内发布，
  * AFTER_COMMIT 出站 GC8）。升级链「责任护士→护士长」动作式：escalationCount 1=责任护士档
  * （首逾标记即达）、2=护士长档（封顶）；并发双计防线=casEscalateOverdue 期望值 CAS
- * （多实例同刻扫描仅一方命中）。WS board 推送面（实测结论：nursing 无 WS 通道）以 warn 级
- * 日志承载触达，/topic/nursing/board/{wardId} 推送归 Task 11 NursingWebSocketConfig 接线
- * （InfusionServiceImpl 同款降级先例）。
+ * （多实例同刻扫描仅一方命中）。WS board 推送面（Task 11 已接线）：段①② CAS 命中行事务内
+ * 发布 {@link NurseBoardPushEvent}（type=TASK_OVERDUE，载荷含 taskNo/wardId 维度——派发上下文
+ * §1.2 口径），NurseBoardPushListener 于独立事务提交后（AFTER_COMMIT+fallback）推送
+ * /topic/nursing/board/{wardId}；warn 级触达日志保留为伴随日志（推送为主面）。
  * 业务时间服务器时间（GC25）。线程安全：无状态 singleton。
  */
 @Slf4j
@@ -102,12 +106,9 @@ public class TaskOverdueServiceImpl implements ITaskOverdueService {
         }
         int marked = markFirstOverdue(firstMarkCandidates);
         int escalated = escalateOverdueTiers(escalateCandidates, now);
-        // WS board 推送降级承载（Task 11 接线点——nursing 无 WS 通道实测结论，InfusionServiceImpl 同款先例）
+        // WS 触达伴随日志（推送为主面——段①② 内逐行发布 TASK_OVERDUE 帧，Task 11 接线实况）
         if (marked > 0) {
-            log.warn(
-                    "任务逾期首标触达（WS board 推送归 Task 11 接线——/topic/nursing/board/{wardId}）：首标={}/{}",
-                    marked,
-                    firstMarkCandidates.size());
+            log.warn("任务逾期首标触达（大屏 TASK_OVERDUE 帧已随独立事务发布）：首标={}/{}", marked, firstMarkCandidates.size());
         }
         if (escalated > 0) {
             log.warn(
@@ -143,6 +144,8 @@ public class TaskOverdueServiceImpl implements ITaskOverdueService {
                             NursingMessagingConstants.EVENT_TASK_OVERDUE,
                             new TaskOverduePayload(
                                     row.getTaskNo(), row.getPlanTime().toInstant(), FIRST_OVERDUE_TIER)));
+                    // 消息发送：大屏任务逾期帧（taskNo/wardId 维度，事务内发布提交后出站——Task 11 接线）
+                    publishOverdueBoardEvent(row, FIRST_OVERDUE_TIER);
                     marked++;
                 }
             }
@@ -186,11 +189,34 @@ public class TaskOverdueServiceImpl implements ITaskOverdueService {
                             NursingMessagingConstants.EVENT_TASK_OVERDUE,
                             new TaskOverduePayload(
                                     row.getTaskNo(), row.getPlanTime().toInstant(), row.getEscalationCount() + 1)));
+                    // 消息发送：大屏任务逾期帧（递增后档位承载，事务内发布提交后出站——Task 11 接线）
+                    publishOverdueBoardEvent(row, row.getEscalationCount() + 1);
                     escalated++;
                 }
             }
             return escalated;
         });
+    }
+
+    /**
+     * 大屏任务逾期帧发布（段①②共用单点）：type=TASK_OVERDUE，载荷含 taskNo/taskType/planTime/
+     * escalationCount/wardId——派发上下文 §1.2「载荷含 taskNo/wardId 维度」口径；wardId 缺失
+     * （数据异常防御）跳过发布留痕，不阻断动作批次。
+     *
+     * @param row             任务行（CAS 命中快照），非空
+     * @param escalationCount 出网档位（首标=1；递增路=递增后值）
+     */
+    private void publishOverdueBoardEvent(NursingTask row, int escalationCount) {
+        if (row.getWardId() == null || row.getWardId().isBlank()) {
+            log.warn("任务逾期大屏帧跳过（任务行无病区归属，数据异常留痕）：taskNo={}", row.getTaskNo());
+            return;
+        }
+        events.publishEvent(new NurseBoardPushEvent(
+                row.getWardId(),
+                NurseBoardPushFrame.TYPE_TASK_OVERDUE,
+                new NurseBoardPushFrame.OverdueTaskPayload(
+                        row.getTaskNo(), row.getTaskType(), row.getPlanTime(), escalationCount, row.getWardId()),
+                Instant.now()));
     }
 
     /**

@@ -2,6 +2,7 @@ package com.fuyun.nursing.config;
 
 import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.controller.AdverseEventController;
+import com.fuyun.nursing.controller.BoardController;
 import com.fuyun.nursing.controller.InfusionController;
 import com.fuyun.nursing.controller.IoController;
 import com.fuyun.nursing.controller.NursingAssessmentController;
@@ -17,6 +18,7 @@ import com.fuyun.nursing.properties.NursingProperties;
 import com.fuyun.nursing.service.impl.AdverseEventServiceImpl;
 import com.fuyun.nursing.service.impl.InfusionServiceImpl;
 import com.fuyun.nursing.service.impl.IoRecordServiceImpl;
+import com.fuyun.nursing.service.impl.NurseBoardServiceImpl;
 import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
@@ -52,7 +54,9 @@ import org.springframework.context.annotation.Import;
  * 域服务（start 的 INFUSION 分支挂接/告警升级挂单三路）与输液控制器（拔针+在途输注清单）。
  * P2 PR-3 Task 9 追加：任务逾期扫描升级服务（tick 段①②动作体）与常规模板批量生成器。
  * P2 PR-3 Task 10 追加：不良事件域服务（上报匿名通道/处置关闭退回状态机/分类统计/tick
- * 超时提醒扫描段）与不良事件控制器。
+ * 超时提醒扫描段）与不良事件控制器。P2 PR-3 Task 11 追加：护士站大屏快照服务
+ * （board 四段聚合+Redis TTL 5s read-through）与大屏快照端点（WS 装配面归
+ * NursingWebSocketConfig）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -75,6 +79,7 @@ import org.springframework.context.annotation.Import;
     TaskOverdueServiceImpl.class,
     RoutineTaskGeneratorImpl.class,
     AdverseEventServiceImpl.class,
+    NurseBoardServiceImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,
@@ -85,6 +90,7 @@ import org.springframework.context.annotation.Import;
     PdaController.class,
     OrderExecutionController.class,
     InfusionController.class,
-    AdverseEventController.class
+    AdverseEventController.class,
+    BoardController.class
 })
 public class NursingWebConfig {}

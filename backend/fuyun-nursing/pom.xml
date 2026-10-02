@@ -79,6 +79,13 @@
       <groupId>com.baomidou</groupId>
       <artifactId>mybatis-plus-jsqlparser</artifactId>
     </dependency>
+    <!-- /ws/nursing STOMP 端点（P2 PR-3 Task 11 / FU-M05-08）：@EnableWebSocketMessageBroker +
+         内存 SimpleBroker(/topic)，无 SockJS（客户端仅 bigscreen 原生 WebSocket——iot/outpatient
+         先例同款）；版本 BOM 托管零声明 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-websocket</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.projectlombok</groupId>
       <artifactId>lombok</artifactId>

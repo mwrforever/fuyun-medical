@@ -5,7 +5,9 @@ package com.fuyun.nursing.constants;
  * 组件名三方一致（GC4 红线，契约锚 NursingEventContractTest），任何一侧变更属 CF-6 契约变更（双向评审）。
  * 另含消费事件字面量（先登记后订阅红线）：M02 段 V105 id 11/12/16（Task 3 三订阅，成对口径 M-25）、
  * CF-6 冻结载体段（id 41–55；P2 PR-3 起消费 inpatient 九条，其余按彼时契约追加，禁虚构登记外字面量）、
- * P2 PR-3 执行域十三订阅（inpatient 九 + pharmacy 摆药签收一 + iot 告警三，Task 4–7 消费面）。
+ * P2 PR-3 执行域十三订阅（inpatient 九 + pharmacy 摆药签收一 + iot 告警三，Task 4–7 消费面）
+ * 与 Task 11 呼叫转发一订阅（iot.call.triggered——V1004 id 81 在册，第 14 条消费队列，
+ * 计划内层进关系：Task 2 十三条以列全为准、本条随 Task 11 大屏呼叫转发面追加）。
  * tick 豁免口径：ROUTING_TASK_OVERDUE_TICK 为延迟档位到期转发路由键而非事件——不入 event_registry、
  * 不入 SUBSCRIBED_EVENT_TYPES（declareDelayQueue 无先登记校验，A.5-7 延迟档位语义）。
  */
@@ -104,7 +106,10 @@ public final class NursingMessagingConstants {
     /** 消费事件：IoT 告警关闭（V1004 id 76，Task 6 订阅——监测链路收口） */
     public static final String EVENT_SUB_IOT_ALARM_CLOSED = "iot.alarm.closed";
 
-    /** 订阅事件全集（队列声明唯一来源；先登记后订阅红线，消费任务逐批追加；P2 PR-3 扩至十六项） */
+    /** 消费事件：设备呼叫触发（V1004 id 81，Task 11 订阅——大屏呼叫转发面：转推 board 触发通知，非全状态同步 M16 降级注记） */
+    public static final String EVENT_SUB_IOT_CALL_TRIGGERED = "iot.call.triggered";
+
+    /** 订阅事件全集（队列声明唯一来源；先登记后订阅红线，消费任务逐批追加；P2 PR-3 扩至十七项） */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
         EVENT_SUB_PATIENT_HEALTH_SUMMARY_UPDATED,
         EVENT_SUB_PATIENT_PATIENT_MERGED,
@@ -121,7 +126,8 @@ public final class NursingMessagingConstants {
         EVENT_SUB_PHARMACY_DISPENSE_COMPLETED,
         EVENT_SUB_IOT_ALARM_TRIGGERED,
         EVENT_SUB_IOT_ALARM_ESCALATED,
-        EVENT_SUB_IOT_ALARM_CLOSED
+        EVENT_SUB_IOT_ALARM_CLOSED,
+        EVENT_SUB_IOT_CALL_TRIGGERED
     };
 
     /** 私有构造器（A.2-6） */

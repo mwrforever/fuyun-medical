@@ -20,6 +20,7 @@ import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.mapper.NursingTaskMapper;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
 import com.fuyun.nursing.mapper.OrderExecutionMapper;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -33,6 +34,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 
 /**
@@ -75,6 +77,9 @@ class InpatientVisitEventListenerTest {
 
     @Mock
     private NursingWardPatientMapper wardPatientMapper;
+
+    @Mock
+    private ApplicationEventPublisher events;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -352,6 +357,113 @@ class InpatientVisitEventListenerTest {
         verifyNoInteractions(orderExecutionMapper, nursingTaskMapper, wardPatientMapper);
     }
 
+    @Test
+    @DisplayName("⑫ 入科路大屏推送（Task 11 接线）：BED_PATIENT 帧路由入科病区、bedNo 未知为 null")
+    void admittedPushesBedPatientFrameToAdmissionWard() throws Exception {
+        when(wardPatientMapper.selectOne(any())).thenReturn(null);
+        when(wardPatientMapper.insert(any(NursingWardPatient.class))).thenReturn(1);
+
+        listener().handleVisitAdmitted(envelope(payload("""
+                        {"visitId":"I2026100200001","patientId":"700101","wardId":"W01",
+                         "bedId":"501","admittedAt":"2026-10-02T00:00:00Z"}
+                        """)));
+
+        ArgumentCaptor<NurseBoardPushEvent> pushCaptor = ArgumentCaptor.forClass(NurseBoardPushEvent.class);
+        verify(events).publishEvent(pushCaptor.capture());
+        NurseBoardPushEvent push = pushCaptor.getValue();
+        assertThat(push.wardId()).isEqualTo("W01");
+        assertThat(push.type()).isEqualTo(NurseBoardPushFrame.TYPE_BED_PATIENT);
+        NurseBoardPushFrame.BedPatientPayload frame = (NurseBoardPushFrame.BedPatientPayload) push.payload();
+        assertThat(frame.visitId()).isEqualTo(VISIT);
+        assertThat(frame.patientId()).isEqualTo(700101L);
+        assertThat(frame.bedNo()).as("入科载荷无床号——bedNo 空占位待 bed.changed 补齐").isNull();
+    }
+
+    @Test
+    @DisplayName("⑬ 转科路大屏推送：转入+转出双病区各一帧（两墙均需刷新——源墙移除行/目标墙新增行）")
+    void transferredPushesBedPatientFrameToBothWards() throws Exception {
+        when(orderExecutionMapper.casRedirectWard(any(), any(), any(), any(), any()))
+                .thenReturn(0);
+        when(wardPatientMapper.casTransferWard(any(), any(), any(), any())).thenReturn(0);
+
+        listener().handleVisitTransferred(envelope(payload("""
+                        {"visitId":"I2026100200001","patientId":"700101","fromWardId":"W01",
+                         "fromBedId":"500","toWardId":"W02","toBedId":"501",
+                         "transferredAt":"2026-10-02T03:00:00Z"}
+                        """)));
+
+        ArgumentCaptor<NurseBoardPushEvent> pushCaptor = ArgumentCaptor.forClass(NurseBoardPushEvent.class);
+        verify(events, org.mockito.Mockito.times(2)).publishEvent(pushCaptor.capture());
+        assertThat(pushCaptor.getAllValues())
+                .extracting(NurseBoardPushEvent::wardId)
+                .containsExactlyInAnyOrder("W02", "W01");
+        assertThat(pushCaptor.getAllValues()).allSatisfy(push -> {
+            assertThat(push.type()).isEqualTo(NurseBoardPushFrame.TYPE_BED_PATIENT);
+            assertThat(((NurseBoardPushFrame.BedPatientPayload) push.payload()).visitId())
+                    .isEqualTo(VISIT);
+        });
+    }
+
+    @Test
+    @DisplayName("⑭ 出院路大屏推送：首删命中推出院病区（路由=逻辑删前投影行归属）；重复投递行已删零推送")
+    void dischargedPushesOnceOnFirstLogicalDelete() throws Exception {
+        // 逻辑删前投影行回读（V800 id 51 载荷无 wardId——路由锚）
+        when(wardPatientMapper.selectOne(any())).thenReturn(projectionRow());
+        when(orderExecutionMapper.casCancelByVisit(any(), any(), any())).thenReturn(0);
+        when(nursingTaskMapper.casCancelByVisit(any(), any(), any())).thenReturn(0);
+        when(wardPatientMapper.casDischarge(VISIT, "system")).thenReturn(1);
+
+        listener().handleVisitDischarged(envelope(payload("""
+                        {"visitId":"I2026100200001","patientId":"700101",
+                         "dischargedAt":"2026-10-02T05:00:00Z"}
+                        """)));
+
+        ArgumentCaptor<NurseBoardPushEvent> pushCaptor = ArgumentCaptor.forClass(NurseBoardPushEvent.class);
+        verify(events).publishEvent(pushCaptor.capture());
+        NurseBoardPushEvent push = pushCaptor.getValue();
+        assertThat(push.wardId()).isEqualTo(FROM_WARD);
+        NurseBoardPushFrame.BedPatientPayload frame = (NurseBoardPushFrame.BedPatientPayload) push.payload();
+        assertThat(frame.bedNo()).isEqualTo("08");
+
+        // 重复投递：行已逻辑删（回读 null）→ CAS 零行 → 零推送（幂等重放零副作用）
+        org.mockito.Mockito.clearInvocations(events);
+        when(wardPatientMapper.selectOne(any())).thenReturn(null);
+        listener().handleVisitDischarged(envelope(payload("""
+                        {"visitId":"I2026100200001","patientId":"700101",
+                         "dischargedAt":"2026-10-02T05:00:00Z"}
+                        """)));
+        verify(events, never()).publishEvent(any(NurseBoardPushEvent.class));
+    }
+
+    @Test
+    @DisplayName("⑮ 床位变更路大屏推送：床号补齐成功回读投影行携 visitId 定位键；回读零行竞态跳过留痕")
+    void bedChangedPushesWithProjectionReadBack() throws Exception {
+        when(wardPatientMapper.casUpdateBedNoByPatient(700101L, "12", "system")).thenReturn(1);
+        NursingWardPatient row = projectionRow();
+        when(wardPatientMapper.selectOne(any())).thenReturn(row);
+
+        listener().handleBedChanged(envelope(payload("""
+                {"wardId":"W02","bedId":"501","bedNo":"12","bedStatus":"OCCUPIED","patientId":"700101"}
+                """)));
+
+        ArgumentCaptor<NurseBoardPushEvent> pushCaptor = ArgumentCaptor.forClass(NurseBoardPushEvent.class);
+        verify(events).publishEvent(pushCaptor.capture());
+        NurseBoardPushEvent push = pushCaptor.getValue();
+        assertThat(push.wardId()).isEqualTo("W02");
+        NurseBoardPushFrame.BedPatientPayload frame = (NurseBoardPushFrame.BedPatientPayload) push.payload();
+        assertThat(frame.visitId()).isEqualTo(VISIT);
+        assertThat(frame.bedNo()).isEqualTo("12");
+
+        // 回读零行（CAS 命中后瞬间并发逻辑删竞态）：warn 留痕跳过推送
+        org.mockito.Mockito.clearInvocations(events);
+        when(wardPatientMapper.casUpdateBedNoByPatient(700101L, "13", "system")).thenReturn(1);
+        when(wardPatientMapper.selectOne(any())).thenReturn(null);
+        listener().handleBedChanged(envelope(payload("""
+                {"wardId":"W02","bedId":"501","bedNo":"13","bedStatus":"OCCUPIED","patientId":"700101"}
+                """)));
+        verify(events, never()).publishEvent(any(NurseBoardPushEvent.class));
+    }
+
     // ===================== 测试数据与断言辅助 =====================
 
     /** 在册投影行替身（W01/NORMAL，幂等重放与冲突回查用例载体）。 */
@@ -368,10 +480,10 @@ class InpatientVisitEventListenerTest {
         return row;
     }
 
-    /** 受测监听器（构造器注入四 mock——投影 mapper 为 Task 7 实装新增写面）。 */
+    /** 受测监听器（构造器注入五 mock——投影 mapper 为 Task 7 实装写面、events 为 Task 11 大屏推送桥）。 */
     private InpatientVisitEventListener listener() {
         return new InpatientVisitEventListener(
-                consumerSupport, orderExecutionMapper, nursingTaskMapper, wardPatientMapper);
+                consumerSupport, orderExecutionMapper, nursingTaskMapper, wardPatientMapper, events);
     }
 
     /** 信封手工构造（ eventType=登记名，producer=inpatient；五路共用定位键 visitId）。 */

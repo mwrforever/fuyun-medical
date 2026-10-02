@@ -19,12 +19,15 @@ import com.fuyun.nursing.enums.AdverseEventCategory;
 import com.fuyun.nursing.enums.AdverseEventStatus;
 import com.fuyun.nursing.enums.SeverityClass;
 import com.fuyun.nursing.enums.SeverityGrade;
+import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.AdverseEventMapper;
 import com.fuyun.nursing.service.IAdverseEventService;
 import com.fuyun.nursing.vo.AdverseEventStatsVO;
 import com.fuyun.nursing.vo.AdverseEventVO;
+import com.fuyun.nursing.vo.NurseBoardPushFrame;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -32,6 +35,7 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -51,10 +55,10 @@ import org.springframework.transaction.annotation.Transactional;
  * ——载荷五字段（eventNo/category/severityClass/wardId/occurredAt）契约冻结，匿名行
  * 天然合规（载荷无 reporter 字段）。
  *
- * <p>tick 超时提醒扫描段（scanAndRemindOverdue）：只读不改状态；WS 推送降级=warn 日志
- * 承载（nursing 无 WS 通道实测结论，InfusionServiceImpl/TaskOverdueServiceImpl 同款
- * 先例），/topic/nursing/board/{wardId} 推送归 Task 11 接线（届时注入
- * SimpMessagingTemplate 补提醒推送，禁建骨架）。
+ * <p>tick 超时提醒扫描段（scanAndRemindOverdue）：只读不改状态；WS 提醒推送（Task 11 已
+ * 接线）——超时行按病区聚合发布 {@link NurseBoardPushEvent}（type=ADVERSE_EVENT_REMIND，
+ * 样例事件号有界 5 条防刷屏），NurseBoardPushListener 推送 /topic/nursing/board/{wardId}
+ * （本扫描段无事务上下文，经 fallbackExecution 立即出站）；warn 级日志保留为伴随日志。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
@@ -73,6 +77,9 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
 
     /** 单轮超时提醒扫描行数上界（有界扫描纪律，TaskOverdueServiceImpl 同族；越界行后续 tick 轮转） */
     private static final int SCAN_LIMIT = 500;
+
+    /** 超时提醒帧样例事件号上界（防大结果集刷屏——与伴随日志同源口径） */
+    private static final int REMIND_SAMPLE_LIMIT = 5;
 
     /** 白班窗口起点（班次映射与执行工作台同源：08:00–16:00 DAY / 16:00–24:00 EVENING / 00:00–08:00 NIGHT） */
     private static final LocalTime SHIFT_DAY_START = LocalTime.of(8, 0);
@@ -393,12 +400,31 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
             log.debug("不良事件 I/II 级超时提醒扫描零命中（空 tick 幂等忽略）");
             return 0;
         }
-        // WS 提醒推送降级承载（Task 11 接线点——nursing 无 WS 通道实测结论，warn 日志先例；
-        // 样例事件号有界 5 条防大结果集刷屏）
+        // 消息发送：大屏超时提醒帧按病区聚合发布（本扫描段只读无事务上下文，fallback 立即出站；
+        // 病区缺失行归「未知病区」聚合面承载——wardId NOT NULL 列防御，理论不触达）
+        Map<String, List<AdverseEvent>> byWard =
+                rows.stream().collect(Collectors.groupingBy(row -> row.getWardId() == null ? "" : row.getWardId()));
+        for (Map.Entry<String, List<AdverseEvent>> entry : byWard.entrySet()) {
+            events.publishEvent(new NurseBoardPushEvent(
+                    entry.getKey(),
+                    NurseBoardPushFrame.TYPE_ADVERSE_EVENT_REMIND,
+                    new NurseBoardPushFrame.AdverseEventRemindPayload(
+                            entry.getKey(),
+                            entry.getValue().size(),
+                            entry.getValue().stream()
+                                    .map(AdverseEvent::getEventNo)
+                                    .limit(REMIND_SAMPLE_LIMIT)
+                                    .toList()),
+                    Instant.now()));
+        }
+        // WS 提醒伴随日志（推送为主面；样例事件号有界 5 条防大结果集刷屏）
         log.warn(
-                "不良事件 I/II 级上报时限超时提醒（不改状态，非惩罚只提醒；WS board 推送归 Task 11 接线——/topic/nursing/board/{wardId}）：超时行数={}，样例={}",
+                "不良事件 I/II 级上报时限超时提醒（不改状态，非惩罚只提醒；大屏 ADVERSE_EVENT_REMIND 帧已发布）：超时行数={}，样例={}",
                 rows.size(),
-                rows.stream().map(AdverseEvent::getEventNo).limit(5).toList());
+                rows.stream()
+                        .map(AdverseEvent::getEventNo)
+                        .limit(REMIND_SAMPLE_LIMIT)
+                        .toList());
         return rows.size();
     }
 
