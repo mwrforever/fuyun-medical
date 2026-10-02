@@ -19,7 +19,6 @@ import com.fuyun.nursing.enums.TaskPriority;
 import com.fuyun.nursing.enums.TaskSource;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.enums.TaskType;
-import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
 import com.fuyun.nursing.service.INursingTaskService;
 import com.fuyun.nursing.service.IVitalSignService;
@@ -464,7 +463,6 @@ class PdaServiceImplTest {
         row.setVisitId(visitId);
         row.setPatientName("张三");
         row.setNursingLevel("NORMAL");
-        row.setStatus(WardPatientStatus.IN_WARD.getCode());
         row.setAdmittedAt(OffsetDateTime.now().minusDays(1));
         return row;
     }
@@ -481,7 +479,6 @@ class PdaServiceImplTest {
                 "M",
                 45,
                 nursingLevel,
-                "",
                 false,
                 "",
                 OffsetDateTime.now().minusDays(1),

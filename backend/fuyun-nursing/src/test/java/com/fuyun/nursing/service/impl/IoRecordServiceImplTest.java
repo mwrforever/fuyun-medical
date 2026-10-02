@@ -717,7 +717,6 @@ class IoRecordServiceImplTest {
                 null,
                 null,
                 "NORMAL",
-                "",
                 false,
                 "",
                 OffsetDateTime.now(),

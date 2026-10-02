@@ -539,8 +539,7 @@ class NursingAssessmentServiceImplTest {
     /** 在区详情卡替身（patientId/wardId 归一与 admitted_at 业务时间下界的数据源）。 */
     private WardPatientDetailVO detailVO() {
         return new WardPatientDetailVO(
-                WARD, "01", 7L, VISIT, "张三", "M", 56, "NORMAL", "", false, "", ADMISSION, List.of(), List.of(),
-                List.of());
+                WARD, "01", 7L, VISIT, "张三", "M", 56, "NORMAL", false, "", ADMISSION, List.of(), List.of(), List.of());
     }
 
     /** 评估创建请求替身（assessedAt 缺省取服务器当前时间前一分钟，落在合法业务时间窗内）。 */

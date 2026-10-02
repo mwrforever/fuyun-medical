@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import lombok.Getter;
 import lombok.Setter;
@@ -40,6 +41,13 @@ public class NursingRecord {
 
     /** 记录时间（服务器时间，GC25 护理文书红线） */
     private OffsetDateTime recordTime;
+
+    /**
+     * 记录归属业务日（北京钟面日界，V1108 补列）：插入路径一律按 record_time 北京当日落值
+     * ——D-23 正常合并行唯一索引 uk_nursing_record_auto_normal_daily (visit_id, record_date)
+     * 的维度前提，不落值的新行不受约束（归集竞态守卫失效）。
+     */
+    private LocalDate recordDate;
 
     /** 病情观察（结构化段；自动归集观察行经 appendObservation 追加） */
     private String observation;

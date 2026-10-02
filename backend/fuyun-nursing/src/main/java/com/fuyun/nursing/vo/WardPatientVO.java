@@ -5,8 +5,13 @@ import java.time.OffsetDateTime;
 
 /**
  * 病区患者一览行出参（GC39 字段命名逐字对齐 V800 id48 desc：visitId/patientId/wardId/bedNo/
- * nursingLevel/admittedAt，禁改名）。病区一览与登记/移出确认共用（remove 零回读语义下仅携
- * visitId 定位锚，其余组件为 null）。
+ * nursingLevel/admittedAt，禁改名；W-34 退役核验断言③的 record 组件清单 equals 冻结面）。
+ * <b>六字段与四事件载荷可推导性逐字段锚定（GC39 结构等价判据，W-34 退役核验）</b>：
+ * visitId ← admitted/transferred/discharged 载荷定位键；patientId ← admitted.patientId；
+ * wardId ← admitted.wardId（转科随 transferred.toWardId 刷新）；bedNo ← bed.changed.bedNo
+ * （admitted/transferred 载荷仅携床位 id 无床号，床号文本唯一写入面=bed.changed 补齐）；
+ * nursingLevel ← admitted.nursingLevel；admittedAt ← admitted.admittedAt——六字段全部可由
+ * 四事件载荷推导，读面结构等价成立。
  *
  * @param visitId      住院就诊号（I 型 14 位）
  * @param patientId    患者主索引（MERGED 收敛主档口径）

@@ -2,8 +2,6 @@ package com.fuyun.nursing.service;
 
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.NurseAssignmentRequest;
-import com.fuyun.nursing.dto.WardPatientRegisterRequest;
-import com.fuyun.nursing.dto.WardPatientRemoveRequest;
 import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.vo.NurseAssignmentVO;
 import com.fuyun.nursing.vo.WardConfigVO;
@@ -13,14 +11,17 @@ import java.util.List;
 
 /**
  * 病区元数据域服务（V801 三表业务面；Task 5/7/8 消费的冻结接口——在区校验/appendRiskFlag/
- * 详情卡聚合均挂本面）。端点面冻结（2026-09-22 批复「禁写路径下渗」）：ward 面仅 register/remove/
- * listByWard/detail 四能力 + 责任分配三能力，禁补录入院时间、独立转床端点、护理级别权威变更、
- * 床位主数据维护、出院业务状态变更等任何 ADT 写能力（M05 对住院业务状态零权威）。
+ * 详情卡聚合均挂本面）。<b>W-34 退役（2026-10）</b>：register/remove 过渡通道两能力随
+ * POST /ward-patients 端点族整体退役——nursing_ward_patient 为纯事件投影（单一写入面=
+ * InpatientVisitEventListener 四路消费），本面只余读面与责任分配/风险标识回写。端点面冻结
+ * （2026-09-22 批复「禁写路径下渗」）：ward 面仅 listByWard/detail 两读能力 + 责任分配三能力，
+ * 禁补录入院时间、独立转床端点、护理级别权威变更、床位主数据维护、出院业务状态变更等任何
+ * ADT 写能力（M05 对住院业务状态零权威）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
  *
- * <p>配对纪律（宪法 A.4.3-20）：主表 nursing_ward_patient（在区视图行，register/remove/
- * 风险标识回写的唯一写落点）与实现侧 {@code ServiceImpl<NursingWardPatientMapper,
+ * <p>配对纪律（宪法 A.4.3-20）：主表 nursing_ward_patient（在册投影行，风险标识回写与
+ * 订阅面消费的写落点）与实现侧 {@code ServiceImpl<NursingWardPatientMapper,
  * NursingWardPatient>} 配对，接口侧收拢 {@code extends IService<NursingWardPatient>}——
  * 主表通用 CRUD 直接复用 IService 契约面；责任分配（nurse_assignment）与配置读取
  * （nursing_ward_config）为同域相邻表，各写方法仍经带守卫链的自有方法承载（床位占用/
@@ -29,48 +30,23 @@ import java.util.List;
 public interface IWardMetaService extends IService<NursingWardPatient> {
 
     /**
-     * 入区登记（P1 过渡通道，幂等 upsert）：VisitIdValidator 结构校验（NS-1003）→
-     * PatientContextResolver 拦截（FROZEN NS-1004；MERGED 按 resolvedPatientId 收敛主档）→
-     * 床位占用检查（NS-1002）→ insert（双唯一约束冲突兜底转 NS-1002）。同 visit_id 已在区时
-     * 语义为视图属性更新：视图属性全等零写入直接返回；有差异更新既有行并按新床位校验占用。
-     *
-     * @param req 登记入参，非空；来源：操作者工作站表单
-     * @return 登记行出参，非空
-     * @throws BizException NS-1003（400 visitId 结构不合法）/ NS-1004（409 档案冻结）/
-     *                      NS-1002（409 床位占用或唯一约束冲突）/ NS-1019（400 护理级别 code 非法）
-     */
-    WardPatientVO register(WardPatientRegisterRequest req);
-
-    /**
-     * 移出病区一览（GC38 四护栏）：仅置本地视图行 status=REMOVED 的单表单语句 CAS——
-     * <b>零外发</b>（不发事件/不登记/不可订阅）、<b>触达最小</b>（无级联、reason 仅入留痕不落库）、
-     * <b>无任何住院业务状态变更</b>（出院/转科语义归 M04）。移出后床位占用谓词自然解除（可再登记）。
-     * 零回读语义：不回读行数据，返回仅携 visitId 的确认出参（其余组件 null）。
-     *
-     * @param visitId 住院就诊号，非空；来源：路径参数
-     * @param req     移出入参（reason 留痕），非空；来源：操作者录入
-     * @return 确认出参（仅 visitId 有值），非空
-     * @throws BizException NS-1001（404 在区行不存在或已移出）
-     */
-    WardPatientVO remove(String visitId, WardPatientRemoveRequest req);
-
-    /**
-     * 病区在区患者一览（床位序）：仅 IN_WARD 行，排除 REMOVED；按 bed_no、admitted_at 升序
-     * （DB 侧排序，一览床位序展示依据）。
+     * 病区在册患者一览（床位序，W-34 退役后读面契约逐字不动）：仅 deleted=0 在册行
+     * （在册语义由逻辑删单独承载）；按 bed_no、admitted_at 升序（DB 侧排序，一览床位序展示依据）。
      *
      * @param wardId 病区编码，非空；来源：查询参数
-     * @return 在区行出参清单（无行返回空清单，非 null）；按床位序
+     * @return 在册行出参清单（无行返回空清单，非 null）；按床位序
      */
     List<WardPatientVO> listByWard(String wardId);
 
     /**
-     * 患者详情卡聚合：在区行 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士 + 在途任务段
-     * （INursingTaskService#inFlightByVisit 实时填充，Task 7 补入；读路径含惰性逾期写，禁 readOnly）。
-     * 不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
+     * 患者详情卡聚合：在册投影行 + 患者展示名（patient api 嵌查，W-34 后事件载荷脱敏不携姓名）
+     * + 过敏实时嵌查（AllergyChecker）+ 当班责任护士 + 在途任务段（INursingTaskService#
+     * inFlightByVisit 实时填充，读路径含惰性逾期写，禁 readOnly）。不含体征摘要（前端另调
+     * 体征查询组装，防服务间循环依赖）。
      *
      * @param visitId 住院就诊号，非空；来源：路径参数
      * @return 详情卡出参，非空
-     * @throws BizException NS-1001（404 在区行不存在）
+     * @throws BizException NS-1001（404 在册投影行不存在）
      */
     WardPatientDetailVO detail(String visitId);
 

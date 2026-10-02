@@ -1,8 +1,6 @@
 package com.fuyun.nursing.controller;
 
 import com.fuyun.nursing.dto.NurseAssignmentRequest;
-import com.fuyun.nursing.dto.WardPatientRegisterRequest;
-import com.fuyun.nursing.dto.WardPatientRemoveRequest;
 import com.fuyun.nursing.service.IWardMetaService;
 import com.fuyun.nursing.vo.NurseAssignmentVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
@@ -23,12 +21,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 病区元数据端点（/api/v1/nursing/ward-patients + /api/v1/nursing/assignments）。
- * <b>端点面冻结</b>（2026-09-22 批复「禁写路径下渗」的可执行锚，WardMetaServiceImplTest
- * noAdtWriteEndpointExposed 结构断言钉死）：ward 面仅四端点 + 责任分配三端点，公开端点集合
- * 逐字等于冻结清单；任何新增/扩展（含独立 PUT/PATCH 视图属性变更端点）须先回决策点重新上报
- * ——视图属性变更 P1 期间只能经 register 幂等 upsert 承载，「移出 + 重新登记」模拟变更，
- * 禁为便利恢复独立写端点。wardConfig 为服务面能力（Task 5/9 模块内消费），不在公开端点清单。
+ * 病区元数据读面端点（/api/v1/nursing/ward-patients 两 GET + /api/v1/nursing/assignments 三端点）。
+ * <b>W-34 退役声明（2026-10）</b>：P1 过渡通道 POST /ward-patients（入区登记）与
+ * POST /ward-patients/{visitId}/remove（移出病区一览）两端点连同 DTO/枚举/服务面整体退役——
+ * nursing_ward_patient 自此为<b>纯事件投影</b>，单一写入面=InpatientVisitEventListener 四路消费
+ * （inpatient.visit.admitted upsert / visit.transferred 归属更新 / visit.discharged 逻辑删 /
+ * bed.changed 补床号），本控制器只余读面（一览/详情卡）与责任分配。端点面冻结（2026-09-22 批复
+ * 「禁写路径下渗」的可执行锚，WardMetaServiceImplTest.noAdtWriteEndpointExposed 结构断言钉死）：
+ * 公开端点集合逐字等于冻结清单；任何新增/扩展须先回决策点重新上报（禁为便利恢复任何 ADT 写
+ * 端点——住院业务状态零权威红线）。wardConfig 为服务面能力（模块内消费），不在公开端点清单。
  * 类级 @RequestMapping 不承载（端点集合结构断言需方法级全路径，DispenseController 同款）。
  */
 @Tag(name = "病区元数据")
@@ -37,34 +38,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class WardController {
 
     private final IWardMetaService wardMetaService;
-
-    /**
-     * 入区登记（P1 过渡通道，幂等 upsert；Mermaid 结构断言锚端点）。
-     *
-     * @param req 登记入参，非空
-     * @return 登记行出参
-     */
-    @Operation(summary = "入区登记（P1 过渡通道，幂等 upsert）")
-    @PostMapping("/api/v1/nursing/ward-patients")
-    @AuditLog(actionType = AuditActionType.WRITE)
-    public WardPatientVO register(@Valid @RequestBody WardPatientRegisterRequest req) {
-        return wardMetaService.register(req);
-    }
-
-    /**
-     * 移出病区一览（GC38 四护栏：仅本地视图行置 REMOVED，零外发、无住院业务状态变更）。
-     *
-     * @param visitId 住院就诊号（路径参数）
-     * @param req     移出入参（reason 留痕），非空
-     * @return 确认出参（仅 visitId 有值）
-     */
-    @Operation(summary = "移出病区一览")
-    @PostMapping("/api/v1/nursing/ward-patients/{visitId}/remove")
-    @AuditLog(actionType = AuditActionType.WRITE)
-    public WardPatientVO remove(
-            @PathVariable("visitId") String visitId, @Valid @RequestBody WardPatientRemoveRequest req) {
-        return wardMetaService.remove(visitId, req);
-    }
 
     /**
      * 病区在区患者一览（床位序）。

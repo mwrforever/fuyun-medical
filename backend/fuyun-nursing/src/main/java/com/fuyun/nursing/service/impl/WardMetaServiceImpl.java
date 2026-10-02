@@ -11,15 +11,10 @@ import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.dto.NurseAssignmentRequest;
-import com.fuyun.nursing.dto.WardPatientRegisterRequest;
-import com.fuyun.nursing.dto.WardPatientRemoveRequest;
 import com.fuyun.nursing.entity.NurseAssignment;
 import com.fuyun.nursing.entity.NursingWardConfig;
 import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.enums.AssignmentType;
-import com.fuyun.nursing.enums.NursingLevel;
-import com.fuyun.nursing.enums.WardPatientSource;
-import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.mapper.NurseAssignmentMapper;
 import com.fuyun.nursing.mapper.NursingWardConfigMapper;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
@@ -33,30 +28,30 @@ import com.fuyun.nursing.vo.WardPatientDetailVO;
 import com.fuyun.nursing.vo.WardPatientVO;
 import com.fuyun.patient.api.AllergyChecker;
 import com.fuyun.patient.api.AllergyItem;
-import com.fuyun.patient.api.PatientContextResolver;
-import com.fuyun.patient.api.PatientContextView;
-import com.fuyun.patient.api.VisitIdValidator;
+import com.fuyun.patient.api.PatientDisplayName;
+import com.fuyun.patient.api.PatientNameQuery;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 病区元数据域服务实现（V801 三表业务面）。入区登记守卫链（GC16 过渡通道强制）：
- * VisitIdValidator 结构校验 → PatientContextResolver 拦截（FROZEN 拒 / MERGED 收敛主档）→
- * 床位占用前置检查 → insert（双唯一约束兜底转 NS-1002）。移出走单表单语句 CAS（GC38 四护栏），
- * 订阅面（合并/拆分/过敏刷新）归 internal 监听器直驱 mapper 条件更新。详情卡聚合在途任务段
- * 委托 INursingTaskService#inFlightByVisit（Task 7 补入；单向依赖——任务服务不回依赖本服务）。
- * 线程安全：无状态 singleton；写操作 @Transactional 收口。
+ * 病区元数据域服务实现（V801 三表业务面；W-34 退役后读面+责任分配+风险标识回写）。
+ * <b>W-34 退役声明</b>：P1 过渡通道 register/remove（入区登记/移出病区一览）随 POST
+ * /ward-patients 端点族整体退役——nursing_ward_patient 为纯事件投影（单一写入面=
+ * InpatientVisitEventListener 四路消费：admitted upsert / transferred 归属 / discharged
+ * 逻辑删 / bed.changed 补床号），本实现不再触达投影写入；在册语义由逻辑删 deleted=0 单独
+ * 承载（V1108 列退役）。详情卡 patientName 经 patient api 嵌查（PatientNameQuery 脱敏
+ * 展示名——事件载荷脱敏红线不携姓名）；订阅面（合并/拆分/过敏刷新）归 internal 监听器直驱
+ * mapper 条件更新。详情卡聚合在途任务段委托 INursingTaskService#inFlightByVisit（单向依赖
+ * ——任务服务不回依赖本服务）。线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
 public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, NursingWardPatient>
@@ -69,7 +64,7 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
 
     private final NursingWardConfigMapper wardConfigMapper;
 
-    private final PatientContextResolver patientContextResolver;
+    private final PatientNameQuery patientNameQuery;
 
     private final AllergyChecker allergyChecker;
 
@@ -80,175 +75,44 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
     /**
      * 全参构造器（装配归 NursingWebConfig @Import）。
      *
-     * @param wardPatientMapper      病区患者视图 mapper，非空；ServiceImpl 基座 mapper
-     * @param assignmentMapper       责任护士分配 mapper，非空
-     * @param wardConfigMapper       病区护理配置 mapper，非空
-     * @param patientContextResolver 患者上下文解析（patient api），非空；入区归一/拦截
-     * @param allergyChecker         过敏项嵌查（patient api），非空；详情卡实时过敏面
-     * @param taskService            护理任务服务，非空；详情卡在途任务段填充（Task 7 补入）
-     * @param objectMapper           JSON 解析器（Boot 自动装配），非空；JSONB 列结构化
+     * @param wardPatientMapper 病区患者投影 mapper，非空；ServiceImpl 基座 mapper
+     * @param assignmentMapper  责任护士分配 mapper，非空
+     * @param wardConfigMapper  病区护理配置 mapper，非空
+     * @param patientNameQuery  患者脱敏展示名嵌查（patient api），非空；详情卡 patientName 来源
+     *                          （W-34 后事件载荷脱敏不携姓名，展示名读时嵌查不落投影行）
+     * @param allergyChecker    过敏项嵌查（patient api），非空；详情卡实时过敏面
+     * @param taskService       护理任务服务，非空；详情卡在途任务段填充
+     * @param objectMapper      JSON 解析器（Boot 自动装配），非空；JSONB 列结构化
      */
     public WardMetaServiceImpl(
             NursingWardPatientMapper wardPatientMapper,
             NurseAssignmentMapper assignmentMapper,
             NursingWardConfigMapper wardConfigMapper,
-            PatientContextResolver patientContextResolver,
+            PatientNameQuery patientNameQuery,
             AllergyChecker allergyChecker,
             INursingTaskService taskService,
             ObjectMapper objectMapper) {
         this.assignmentMapper = assignmentMapper;
         this.wardConfigMapper = wardConfigMapper;
-        this.patientContextResolver = patientContextResolver;
+        this.patientNameQuery = patientNameQuery;
         this.allergyChecker = allergyChecker;
         this.taskService = taskService;
         this.objectMapper = objectMapper;
     }
 
     /**
-     * 入区登记（P1 过渡通道，幂等 upsert）：守卫链见类注。同 visit_id 已在区时视图属性全等
-     * 直接返回（零写入）；有差异更新既有行并按新床位校验占用（床位未变不复查）。
-     *
-     * @param req 登记入参，非空；来源：操作者工作站表单
-     * @return 登记行出参，非空
-     * @throws BizException NS-1003（400 visitId 结构不合法）/ NS-1004（409 档案冻结）/
-     *                      NS-1002（409 床位占用或唯一约束冲突）/ NS-1019（400 护理级别 code 非法）
-     */
-    @Override
-    @Transactional
-    public WardPatientVO register(WardPatientRegisterRequest req) {
-        // 守卫链①：visit_id 结构校验（I 型 14 位；M05 仅结构校验，签发权威在 M04）
-        if (!VisitIdValidator.isValid(req.visitId())) {
-            throw new BizException(
-                    NursingErrorCode.VISIT_ID_INVALID, HttpStatus.BAD_REQUEST, "住院就诊号结构不合法：" + req.visitId());
-        }
-        // 守卫链①′：护理级别 code 显式格式校验（缺省 NORMAL，与 V801 列默认一致）
-        NursingLevel level =
-                req.nursingLevel() == null ? NursingLevel.NORMAL : NursingLevel.fromCode(req.nursingLevel());
-        if (level == null) {
-            throw new BizException(
-                    NursingErrorCode.PARAM_FORMAT_INVALID,
-                    HttpStatus.BAD_REQUEST,
-                    "护理级别 code 非法：" + req.nursingLevel());
-        }
-        // 守卫链②：档案归一/拦截（FROZEN 拒新就诊；MERGED 按 resolvedPatientId 收敛主档，CF-3）
-        PatientContextView ctx = patientContextResolver.resolve(req.patientId());
-        if (ctx.blocked()) {
-            throw new BizException(
-                    NursingErrorCode.PATIENT_BLOCKED,
-                    HttpStatus.CONFLICT,
-                    "患者档案已冻结，禁止入区登记：visitId=" + req.visitId() + "，原因：" + ctx.blockReason());
-        }
-        NursingWardPatient existing = requireInWardByVisit(req.visitId());
-        String operator = operator();
-        if (existing != null) {
-            // 幂等 upsert 分支：视图属性全等零写入直接返回；有差异更新既有行（insert 禁触）
-            if (viewAttrsEqual(existing, req, level.getCode())) {
-                log.info(
-                        "入区登记幂等命中（零写入）：visitId={}，wardId={}，bedNo={}",
-                        req.visitId(),
-                        req.wardId(),
-                        existing.getBedNo());
-                return WardPatientVO.from(existing);
-            }
-            // 床位变更时按新床位校验占用（未变更不复查；uk_ward_patient_bed 兜底并发）
-            if (!Objects.equals(existing.getBedNo(), req.bedNo())) {
-                assertBedFree(req.wardId(), req.bedNo());
-            }
-            existing.setBedNo(req.bedNo());
-            existing.setPatientName(req.patientName());
-            existing.setGender(req.gender());
-            existing.setAge(req.age());
-            existing.setNursingLevel(level.getCode());
-            existing.setConditionTags(orEmpty(req.conditionTags()));
-            existing.setUpdatedBy(operator);
-            // 数据库写操作：视图属性更新既有行（幂等 upsert 写面，唯一行不新建）
-            baseMapper.updateById(existing);
-            log.info(
-                    "入区登记视图属性更新：visitId={}，wardId={}，bedNo={}，nursingLevel={}",
-                    req.visitId(),
-                    req.wardId(),
-                    req.bedNo(),
-                    level.getCode());
-            return WardPatientVO.from(existing);
-        }
-        // 守卫链③：床位占用前置检查（双唯一约束之一的业务侧前置，禁裸插吞异常）
-        assertBedFree(req.wardId(), req.bedNo());
-        NursingWardPatient row = new NursingWardPatient();
-        row.setWardId(req.wardId());
-        row.setBedNo(req.bedNo());
-        row.setPatientId(ctx.resolvedPatientId());
-        row.setVisitId(req.visitId());
-        row.setPatientName(req.patientName());
-        row.setGender(req.gender());
-        row.setAge(req.age());
-        row.setNursingLevel(level.getCode());
-        row.setConditionTags(orEmpty(req.conditionTags()));
-        row.setAllergyFlag(false);
-        row.setRiskFlags("");
-        // 入区时间取登记时点服务器时间（补录入院时间属 ADT 写能力，端点冻结清单禁项）
-        row.setAdmittedAt(OffsetDateTime.now());
-        row.setStatus(WardPatientStatus.IN_WARD.getCode());
-        row.setSource(WardPatientSource.MANUAL.getCode());
-        row.setCreatedBy(operator);
-        row.setUpdatedBy(operator);
-        try {
-            // 数据库写操作：入区登记落库（uk_ward_patient_visit/uk_ward_patient_bed 双唯一约束兜底）
-            baseMapper.insert(row);
-        } catch (DuplicateKeyException e) {
-            // 唯一约束冲突兜底转业务拒绝（并发登记同 visit_id/同床位场景）
-            throw new BizException(
-                    NursingErrorCode.BED_OCCUPIED,
-                    HttpStatus.CONFLICT,
-                    "入区登记唯一性冲突（就诊号或床位已占用）：visitId=" + req.visitId() + "，wardId=" + req.wardId() + "，bedNo="
-                            + req.bedNo());
-        }
-        log.info(
-                "入区登记完成：visitId={}，wardId={}，bedNo={}，patientId={}，nursingLevel={}",
-                req.visitId(),
-                req.wardId(),
-                req.bedNo(),
-                row.getPatientId(),
-                level.getCode());
-        return WardPatientVO.from(row);
-    }
-
-    /**
-     * 移出病区一览（GC38 四护栏）：单表单语句 CAS（IN_WARD→REMOVED + 操作者审计列），零外发、
-     * 无级联、reason 仅入日志留痕不落库；影响 0 行定性 NS-1001。零回读：返回仅携 visitId 的确认出参。
-     *
-     * @param visitId 住院就诊号，非空；来源：路径参数
-     * @param req     移出入参（reason 留痕），非空；来源：操作者录入
-     * @return 确认出参（仅 visitId 有值），非空
-     * @throws BizException NS-1001（404 在区行不存在或已移出）
-     */
-    @Override
-    @Transactional
-    public WardPatientVO remove(String visitId, WardPatientRemoveRequest req) {
-        String operator = operator();
-        // 数据库写操作：单表单语句 CAS（触达最小护栏；updated_at 由库触发器维护）
-        int rows = baseMapper.casRemove(visitId, operator);
-        if (rows == 0) {
-            throw new BizException(
-                    NursingErrorCode.WARD_PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "病区在区患者不存在：" + visitId);
-        }
-        // 零外发护栏：仅日志留痕（reason 不落库、不发事件、无任何跨模块调用）
-        log.info("移出病区一览：visitId={}，operator={}，reason={}", visitId, operator, req.reason());
-        return new WardPatientVO(visitId, null, null, null, null, null);
-    }
-
-    /**
-     * 病区在区患者一览（床位序）：仅 IN_WARD 行，DB 侧按 bed_no、admitted_at 升序。
+     * 病区在册患者一览（床位序，读面不变契约——GC39 六字段逐字不动）：仅本病区 deleted=0
+     * 在册投影行（逻辑删由 @TableLogic 自动过滤），DB 侧按 bed_no、admitted_at 升序。
      *
      * @param wardId 病区编码，非空；来源：查询参数
-     * @return 在区行出参清单（无行返回空清单，非 null）
+     * @return 在册行出参清单（无行返回空清单，非 null）
      */
     @Override
     @Transactional(readOnly = true)
     public List<WardPatientVO> listByWard(String wardId) {
-        // 数据库读操作：在区行一览（床位序；REMOVED 与他病区行由条件排除）
+        // 数据库读操作：在册投影行一览（床位序；逻辑删行与他病区行由条件排除）
         List<NursingWardPatient> rows = this.lambdaQuery()
                 .eq(NursingWardPatient::getWardId, wardId)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
                 .orderByAsc(NursingWardPatient::getBedNo)
                 .orderByAsc(NursingWardPatient::getAdmittedAt)
                 .list();
@@ -256,13 +120,14 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
     }
 
     /**
-     * 患者详情卡聚合：在区行 + 过敏实时嵌查（AllergyChecker）+ 当班责任护士（配置班次按时钟判定）
-     * + 在途任务（INursingTaskService#inFlightByVisit，Task 7 补入；仅 PENDING/IN_PROGRESS 行，
-     * 先查后标再返回的惰性逾期 CAS 随查询同步）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
+     * 患者详情卡聚合：在册投影行 + 患者展示名（PatientNameQuery 脱敏展示名嵌查——W-34 后事件
+     * 载荷脱敏不携姓名）+ 过敏实时嵌查（AllergyChecker）+ 当班责任护士（配置班次按时钟判定）
+     * + 在途任务（INursingTaskService#inFlightByVisit，仅 PENDING/IN_PROGRESS 行，先查后标
+     * 再返回的惰性逾期 CAS 随查询同步）。不含体征摘要（前端另调体征查询组装，防服务间循环依赖）。
      *
      * @param visitId 住院就诊号，非空；来源：路径参数
      * @return 详情卡出参，非空
-     * @throws BizException NS-1001（404 在区行不存在）
+     * @throws BizException NS-1001（404 在册投影行不存在）
      */
     @Override
     @Transactional
@@ -293,7 +158,13 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         List<NurseAssignment> assignments = assignmentMapper.selectList(wrapper);
         // 第三方接口调用：patient 过敏项实时嵌查（详情卡过敏明细，allergy_flag 为订阅缓存镜像）
         List<AllergyItem> allergies = allergyChecker.listActiveAllergies(row.getPatientId());
-        // 数据库读操作：在途任务清单（护理任务域读时惰性逾期判定随查询同步，Task 7 补入）
+        // 第三方接口调用：patient 脱敏展示名嵌查（W-34 后事件载荷脱敏不携姓名，展示名读时嵌查；
+        // 无命中返回 null 交出参承载——患者行缺失属上游数据异常，不阻断详情卡其余面）
+        String displayName = patientNameQuery.displayNamesOf(List.of(row.getPatientId())).stream()
+                .findFirst()
+                .map(PatientDisplayName::displayName)
+                .orElse(null);
+        // 数据库读操作：在途任务清单（护理任务域读时惰性逾期判定随查询同步）
         List<NursingTaskVO> inFlightTasks = taskService.inFlightByVisit(visitId);
         log.info(
                 "患者详情卡聚合：visitId={}，wardId={}，bedNo={}，shiftCode={}，allergies={}，assignments={}，inFlightTasks={}",
@@ -309,11 +180,10 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
                 row.getBedNo(),
                 row.getPatientId(),
                 row.getVisitId(),
-                row.getPatientName(),
+                displayName,
                 row.getGender(),
                 row.getAge(),
                 row.getNursingLevel(),
-                row.getConditionTags(),
                 row.getAllergyFlag(),
                 row.getRiskFlags(),
                 row.getAdmittedAt(),
@@ -554,37 +424,9 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
         log.info("风险标识原子移除：visitId={}，flag={}", visitId, flag);
     }
 
-    /** 按 visit_id 定位在区行（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */
+    /** 按 visit_id 定位在册投影行（逻辑删由 @TableLogic 自动过滤；未命中返回 null 交调用方定性）。 */
     private NursingWardPatient requireInWardByVisit(String visitId) {
-        return this.lambdaQuery()
-                .eq(NursingWardPatient::getVisitId, visitId)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
-                .one();
-    }
-
-    /** 床位占用前置检查：同病区同床位在区行存在即 NS-1002（uk_ward_patient_bed 前置）。 */
-    private void assertBedFree(String wardId, String bedNo) {
-        Long occupied = this.lambdaQuery()
-                .eq(NursingWardPatient::getWardId, wardId)
-                .eq(NursingWardPatient::getBedNo, bedNo)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
-                .count();
-        if (occupied != null && occupied > 0) {
-            throw new BizException(
-                    NursingErrorCode.BED_OCCUPIED,
-                    HttpStatus.CONFLICT,
-                    "床位已有在区患者：wardId=" + wardId + "，bedNo=" + bedNo);
-        }
-    }
-
-    /** 幂等 upsert 全等判定：床位/展示名/性别/年龄/护理级别/病情标记全等即零写入。 */
-    private boolean viewAttrsEqual(NursingWardPatient existing, WardPatientRegisterRequest req, String levelCode) {
-        return Objects.equals(existing.getBedNo(), req.bedNo())
-                && Objects.equals(existing.getPatientName(), req.patientName())
-                && Objects.equals(existing.getGender(), req.gender())
-                && Objects.equals(existing.getAge(), req.age())
-                && Objects.equals(existing.getNursingLevel(), levelCode)
-                && Objects.equals(existing.getConditionTags(), orEmpty(req.conditionTags()));
+        return this.lambdaQuery().eq(NursingWardPatient::getVisitId, visitId).one();
     }
 
     /**

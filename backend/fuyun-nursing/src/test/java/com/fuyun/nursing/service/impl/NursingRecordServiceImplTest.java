@@ -7,6 +7,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -46,10 +48,15 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.SimpleTransactionStatus;
 
 /**
  * 护理记录单域服务单测（Task 4 七用例冻结集）：护理记录创建（发号 + 在区校验 NS-1004）、
@@ -82,6 +89,9 @@ class NursingRecordServiceImplTest {
     @Mock
     private IWardMetaService wardMetaService;
 
+    @Mock
+    private PlatformTransactionManager txManager;
+
     @Captor
     private ArgumentCaptor<Wrapper<NursingRecord>> queryCaptor;
 
@@ -98,7 +108,10 @@ class NursingRecordServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new NursingRecordServiceImpl(recordMapper, seqGate, wardMetaService);
+        // D-23 管道件：冲突回查合并走 REQUIRES_NEW 事务模板，getTransaction 桩仅 catch 分支
+        // 用例触达（故 lenient）；commit/rollback 为 mock 免桩空操作，回调内联执行
+        lenient().when(txManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+        service = new NursingRecordServiceImpl(recordMapper, seqGate, wardMetaService, txManager);
         ReflectionTestUtils.setField(service, "baseMapper", recordMapper);
         // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
         ReflectionTestUtils.setField(service, "entityClass", NursingRecord.class);
@@ -410,6 +423,107 @@ class NursingRecordServiceImplTest {
     }
 
     @Test
+    @DisplayName("观察行归集（D-23 根治·两层兜底第二层）：并发双 insert 撞部分唯一索引 → 按索引维度回查命中 → 条件更新合并重试一次")
+    void appendObservationMergesOnDuplicateKeyConflictWithRequery() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(seqGate.nextNo("NR")).thenReturn(RECORD_NO);
+        // 竞态模拟：合并快查未命中（对方尚未落行）→ insert 撞 uk（对方先落）→ 回查命中当日正常合并行
+        when(recordMapper.selectOne(any())).thenReturn(null, autoObservationRow());
+        when(recordMapper.insert(any(NursingRecord.class)))
+                .thenThrow(new DuplicateKeyException("uk_nursing_record_auto_normal_daily"));
+        when(recordMapper.appendObservation(eq(9L), eq("脉搏 76 次/分 正常"), eq("nurse-01")))
+                .thenReturn(1);
+
+        service.appendObservation(VISIT, "脉搏 76 次/分 正常", false, "nurse-01");
+
+        // 冲突收敛：insert 恰一次（不盲重试），回查命中行改走条件更新合并重试一次
+        verify(recordMapper).insert(rowCaptor.capture());
+        verify(recordMapper).appendObservation(eq(9L), eq("脉搏 76 次/分 正常"), eq("nurse-01"));
+        // D-23 索引咬合前提（V1108 派发义务）：插入路径 record_date 按记录时刻北京钟面派生非空
+        assertThat(rowCaptor.getValue().getRecordDate())
+                .isEqualTo(rowCaptor
+                        .getValue()
+                        .getRecordTime()
+                        .atZoneSameInstant(java.time.ZoneId.of("Asia/Shanghai"))
+                        .toLocalDate());
+        // P-1 独立事务承载锚（D-22 replayLookupTx 形态对齐）：insert 冲突后原事务已 aborted
+        // （25P02），回查+合并必须整体发生在 REQUIRES_NEW 新事务边界内——时序钉死
+        // getTransaction → 回查 selectOne → 合并 appendObservation → commit，不再触达原事务
+        InOrder txOrder = inOrder(txManager, recordMapper);
+        ArgumentCaptor<TransactionDefinition> txDefCaptor = ArgumentCaptor.forClass(TransactionDefinition.class);
+        txOrder.verify(txManager).getTransaction(txDefCaptor.capture());
+        txOrder.verify(recordMapper).selectOne(any());
+        txOrder.verify(recordMapper).appendObservation(eq(9L), anyString(), anyString());
+        txOrder.verify(txManager).commit(any());
+        assertThat(txDefCaptor.getValue().getPropagationBehavior())
+                .isEqualTo(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // 模板承载含合并 UPDATE，禁只读（与 D-22 只读回查模板的差异点）
+        assertThat(txDefCaptor.getValue().isReadOnly()).isFalse();
+    }
+
+    @Test
+    @DisplayName("观察行归集（D-23 数据异常防御）：冲突回查无行（冲突键非正常合并行形态）→ ISE 显式抛出禁静默丢失")
+    void appendObservationThrowsWhenConflictRequeryMisses() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(seqGate.nextNo("NR")).thenReturn(RECORD_NO);
+        // 回查仍无行：冲突键与本 visit 无关（数据异常），显式失败交上层定性
+        when(recordMapper.selectOne(any())).thenReturn(null, (NursingRecord) null);
+        when(recordMapper.insert(any(NursingRecord.class)))
+                .thenThrow(new DuplicateKeyException("uk_nursing_record_auto_normal_daily"));
+
+        assertThatThrownBy(() -> service.appendObservation(VISIT, "脉搏 76 次/分 正常", false, "nurse-01"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("回查合并失败");
+        // P-1 独立事务承载锚：回查发生在 REQUIRES_NEW 新事务内（未命中空事务回滚后异常外传）
+        verify(txManager).getTransaction(any());
+        verify(txManager).rollback(any());
+    }
+
+    @Test
+    @DisplayName("观察行归集（D-23 数据异常防御）：回查命中但条件更新重试 0 行（行随即被并发删改）→ ISE 显式抛出")
+    void appendObservationThrowsWhenConflictMergeRetryHitsZeroRows() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(seqGate.nextNo("NR")).thenReturn(RECORD_NO);
+        when(recordMapper.selectOne(any())).thenReturn(null, autoObservationRow());
+        when(recordMapper.insert(any(NursingRecord.class)))
+                .thenThrow(new DuplicateKeyException("uk_nursing_record_auto_normal_daily"));
+        when(recordMapper.appendObservation(eq(9L), eq("脉搏 76 次/分 正常"), eq("nurse-01")))
+                .thenReturn(0);
+
+        assertThatThrownBy(() -> service.appendObservation(VISIT, "脉搏 76 次/分 正常", false, "nurse-01"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("回查合并失败");
+        // 重试恰一次：不无限重试、不静默吞掉
+        verify(recordMapper, times(1)).appendObservation(eq(9L), anyString(), anyString());
+        // P-1 独立事务承载锚：回查+合并重试均在 REQUIRES_NEW 新事务内发生（0 行随异常回滚）
+        verify(txManager).getTransaction(any());
+        verify(txManager).rollback(any());
+    }
+
+    @Test
+    @DisplayName("创建护理记录：record_date 按记录时刻北京钟面派生（D-23 索引维度落值，V1108 列契约）")
+    void createStampsRecordDateFromRecordTimeBeijing() {
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO());
+        when(seqGate.nextNo("NR")).thenReturn(RECORD_NO);
+        when(recordMapper.insert(any(NursingRecord.class))).thenAnswer(inv -> {
+            inv.getArgument(0, NursingRecord.class).setId(1L);
+            return 1;
+        });
+
+        service.create(new NursingRecordCreateRequest(VISIT, null, "病情平稳", null, null, null));
+
+        verify(recordMapper).insert(rowCaptor.capture());
+        // 落值口径锚：与 V1108 存量回填 (record_time AT TIME ZONE 'Asia/Shanghai')::date 同义，
+        // 从捕获的记录时刻确定性推导（禁裸 LocalDate.now() 期望——北京日界窗内会瞬移错日）
+        assertThat(rowCaptor.getValue().getRecordDate())
+                .isEqualTo(rowCaptor
+                        .getValue()
+                        .getRecordTime()
+                        .atZoneSameInstant(java.time.ZoneId.of("Asia/Shanghai"))
+                        .toLocalDate());
+    }
+
+    @Test
     @DisplayName("创建护理记录：病区服务其他业务异常原样透传（仅在区缺失才翻译为 NS-1004）")
     void createPropagatesUnrelatedWardBizException() {
         when(wardMetaService.detail(VISIT))
@@ -444,7 +558,6 @@ class NursingRecordServiceImplTest {
                 null,
                 null,
                 "NORMAL",
-                "",
                 false,
                 "",
                 OffsetDateTime.now(),
