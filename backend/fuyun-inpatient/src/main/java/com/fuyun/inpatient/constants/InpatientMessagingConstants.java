@@ -3,8 +3,9 @@ package com.fuyun.inpatient.constants;
 /**
  * M04 住院域消息治理常量：20 个发布事件字面量（V800 既有 id 41–52 十二条 + V901 新增 id 65–72
  * 八条）与 inpatient/api/payload 载荷 record 组件名三方一致（契约锚 InpatientMessagingContractTest），
- * 任何一侧变更属 CF-6 契约变更（双向评审）。另含五条消费事件字面量（先登记后订阅红线：
- * pharmacy 段 V800 id 53/54 回执两条 + billing 段 V605 id 19/21 两条与 V1002 id 73 欠费审批放行一条）。
+ * 任何一侧变更属 CF-6 契约变更（双向评审）。另含六条消费事件字面量（先登记后订阅红线：
+ * pharmacy 段 V800 id 53/54 回执两条 + billing 段 V605 id 19/21 两条与 V1002 id 73 欠费审批放行一条
+ * + nursing 段 V800 id 64 执行回执对账一条，P2 PR-3 Task 5）。
  */
 public final class InpatientMessagingConstants {
 
@@ -91,13 +92,17 @@ public final class InpatientMessagingConstants {
     /** 消费事件：欠费挂账审批放行（V1002 id 73；挂账审批通过解除费用拦截） */
     public static final String EVENT_SUB_BILLING_ARREARS_APPROVED = "billing.arrears.approved";
 
+    /** 消费事件：护理执行回执（V800 id 64，P2 PR-3 Task 5 订阅——M04 执行回签对账：按 m04PlanNo 比对计划 EXECUTED 态，差异 warn 留痕） */
+    public static final String EVENT_SUB_NURSING_ORDER_EXECUTION_COMPLETED = "nursing.order-execution.completed";
+
     /** 订阅事件全集（队列声明唯一来源；先登记后订阅红线，消费任务逐批追加） */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
         EVENT_SUB_PHARMACY_MEDICATION_ORDER_AUDIT_COMPLETED,
         EVENT_SUB_PHARMACY_MEDICATION_ORDER_AUDIT_REJECTED,
         EVENT_SUB_BILLING_DEPOSIT_CHANGED,
         EVENT_SUB_BILLING_SETTLEMENT_COMPLETED,
-        EVENT_SUB_BILLING_ARREARS_APPROVED
+        EVENT_SUB_BILLING_ARREARS_APPROVED,
+        EVENT_SUB_NURSING_ORDER_EXECUTION_COMPLETED
     };
 
     /**

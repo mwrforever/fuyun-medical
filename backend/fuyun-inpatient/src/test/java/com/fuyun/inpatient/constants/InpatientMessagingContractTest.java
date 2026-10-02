@@ -183,33 +183,38 @@ class InpatientMessagingContractTest {
     }
 
     @Test
-    @DisplayName("死订阅禁令反向：五订阅事件不在发布面，且订阅常量与 V605/V1002 登记名逐字一致")
+    @DisplayName("死订阅禁令反向：六订阅事件不在发布面，且订阅常量与登记名逐字一致（含 nursing 段对账订阅）")
     void subscribedEventsStayOutOfPublishFace() {
         List<String> subscribed = Arrays.asList(InpatientMessagingConstants.SUBSCRIBED_EVENT_TYPES);
-        assertThat(subscribed).as("订阅事件全集须为五条").hasSize(5);
+        assertThat(subscribed).as("订阅事件全集须为六条").hasSize(6);
         for (String event : subscribed) {
             assertThat(PUBLISHED_EVENT_CONSTANTS)
                     .as("死订阅禁令反向：%s 禁入发布面常量", event)
                     .doesNotContain(event);
         }
-        // 订阅字面量冻结（pharmacy 回执 2 + billing 3；先登记后订阅红线的消费侧锚）
+        // 订阅字面量冻结（pharmacy 回执 2 + billing 3 + nursing 对账 1；先登记后订阅红线的消费侧锚）
         assertThat(subscribed)
                 .containsExactly(
                         "pharmacy.medication-order.audit-completed",
                         "pharmacy.medication-order.audit-rejected",
                         "billing.deposit.changed",
                         "billing.settlement.completed",
-                        "billing.arrears.approved");
+                        "billing.arrears.approved",
+                        "nursing.order-execution.completed");
         // 订阅登记原文锚（Task 2 minor 回接）：billing 两条（id 19/21）逐字在 V605 种子原文、
         // pharmacy 两条（id 53/54）逐字在 V800 种子原文——消费声明面与登记面单侧漂移即红灯；
         // billing.arrears.approved 的登记文件 V1002 归 billing 侧任务（Task 13）落地后补锚，
-        // 当前以字面量冻结面承载
+        // 当前以字面量冻结面承载；nursing.order-execution.completed（id 64，P2 PR-3 Task 5
+        // 对账订阅）逐字在 V800 种子原文
         assertThat(seedRows(V605_SQL).stream().map(SeedRow::eventType))
                 .as("V605 登记行须含 billing 段两条订阅事件原文")
                 .contains("billing.settlement.completed", "billing.deposit.changed");
         assertThat(V800_SQL)
                 .as("V800 登记文件须含 pharmacy 段两条回执订阅事件原文")
                 .contains("'pharmacy.medication-order.audit-completed'", "'pharmacy.medication-order.audit-rejected'");
+        assertThat(V800_SQL)
+                .as("V800 登记文件须含 nursing 执行回执订阅事件原文（id 64）")
+                .contains("'nursing.order-execution.completed'");
     }
 
     @Test

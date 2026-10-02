@@ -18,12 +18,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
+import com.fuyun.inpatient.api.ExecuteConfirmRequest;
+import com.fuyun.inpatient.api.ExecuteConfirmVO;
 import com.fuyun.inpatient.api.InpatientErrorCode;
 import com.fuyun.inpatient.api.payload.OrderExecutedPayload;
 import com.fuyun.inpatient.api.payload.OrderPlanGeneratedPayload;
 import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.dto.ExecuteConfirmRequest;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.entity.MedicalOrder;
 import com.fuyun.inpatient.entity.MedicalOrderItem;
@@ -49,7 +50,6 @@ import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
 import com.fuyun.inpatient.service.IOrderAuditService;
 import com.fuyun.inpatient.service.IOrderStateMachineService;
-import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import com.fuyun.patient.api.AllergyChecker;
 import com.fuyun.system.api.PracticeCheckPort;
@@ -870,6 +870,51 @@ class OrderPlanServiceImplTest {
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.VISIT_NOT_FOUND));
         verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("SYSTEM 白名单①放行：MQ/tick 系统链路（GC15 桥接）回签不受 IP-1022 拦截，审计列落 SYSTEM 文本")
+    void executeConfirmAllowsSystemWhitelistedOperator() {
+        MedicalOrder order = orderRow(OrderStatus.TRANSFERRED, "STAT", false, null);
+        // 状态机 mock 同步内存态（null 操作者承载——SYSTEM 无数字员工位，anyLong 不匹配须 any）
+        doAnswer(invocation -> {
+                    invocation
+                            .getArgument(0, MedicalOrder.class)
+                            .setStatus(
+                                    invocation.getArgument(1, OrderStatus.class).getCode());
+                    return null;
+                })
+                .when(stateMachine)
+                .transition(any(), any(), any(), any());
+        when(planMapper.selectOne(any())).thenReturn(pendingPlanRow());
+        ArgumentCaptor<String> operatorCaptor = ArgumentCaptor.forClass(String.class);
+        when(planMapper.casExecuteConfirm(eq(PLAN_NO), any(), any(), any(), operatorCaptor.capture()))
+                .thenReturn(1);
+        when(orderMapper.selectById(ORDER_PK)).thenReturn(order);
+        when(visitMapper.selectById(VISIT_PK)).thenReturn(visitRow());
+        OperatorContextHolder.set("SYSTEM");
+
+        ExecuteConfirmVO vo = service.executeConfirm(PLAN_NO, new ExecuteConfirmRequest(EXECUTOR_NURSE, null, null));
+
+        assertThat(vo.planStatus()).isEqualTo("EXECUTED");
+        // 审计列落 SYSTEM 文本（系统触发面豁免数字校验——白名单核心断言锚）
+        assertThat(operatorCaptor.getValue()).isEqualTo("SYSTEM");
+        // 状态机操作者以 null 员工位承载（审计面按 null→SYSTEM 渲染）
+        verify(stateMachine).transition(order, OrderStatus.COMPLETED, "临时医嘱单次执行回签", null);
+        verify(events, times(1)).publishEvent(any(InpatientDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("SYSTEM 白名单②边界：非精确字面量（小写 system）仍按非数字 IP-1022 拒绝")
+    void executeConfirmRejectsNonLiteralSystemOperator() {
+        OperatorContextHolder.set("system");
+        when(planMapper.selectOne(any())).thenReturn(pendingPlanRow());
+
+        assertThatThrownBy(() -> service.executeConfirm(PLAN_NO, new ExecuteConfirmRequest(EXECUTOR_NURSE, null, null)))
+                .isInstanceOf(BizException.class)
+                .satisfies(e -> assertThat(((BizException) e).getErrorCode())
+                        .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
+        verifyNoInteractions(stateMachine);
     }
 
     @Test

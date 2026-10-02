@@ -45,7 +45,8 @@ public class OrderStateMachineServiceImpl implements IOrderStateMachineService {
      * @param order    迁移目标医嘱行，非空
      * @param to       目标态，非空
      * @param reason   迁移原因（留痕面），非空
-     * @param operator 操作者员工 ID，非空
+     * @param operator 操作者员工 ID；null=系统触发面（M05 回签补偿链路 SYSTEM 白名单——
+     *                 审计列落 SYSTEM 文本，P2 PR-3 Task 5），可空
      * @throws BizException IP-1010（409）迁移表外路径或 CAS 零行（并发迁移窗口）时触发
      */
     @Override
@@ -65,8 +66,8 @@ public class OrderStateMachineServiceImpl implements IOrderStateMachineService {
                     "医嘱状态不允许该迁移：orderNo=" + order.getOrderNo() + "，" + order.getStatus() + "→" + to.getCode());
         }
         // 数据库写操作：状态 CAS（from 态限定更新；0 行=并发迁移窗口 he 方先迁，from 失配）
-        int rows = orderMapper.casTransferStatus(
-                order.getOrderNo(), from.getCode(), to.getCode(), String.valueOf(operator));
+        int rows =
+                orderMapper.casTransferStatus(order.getOrderNo(), from.getCode(), to.getCode(), operatorText(operator));
         if (rows == 0) {
             log.warn(
                     "医嘱状态迁移 CAS 零行（并发迁移窗口）：orderNo={}，期望 from={}，operator={}",
@@ -93,19 +94,19 @@ public class OrderStateMachineServiceImpl implements IOrderStateMachineService {
      * @param from     迁移前状态，非空
      * @param to       迁移后状态，非空
      * @param reason   迁移原因，非空
-     * @param operator 操作者员工 ID，非空
+     * @param operator 操作者员工 ID；null=系统触发面（审计落 SYSTEM 文本），可空
      */
     protected void appendStatusLog(MedicalOrder order, OrderStatus from, OrderStatus to, String reason, Long operator) {
-        String operatorText = String.valueOf(operator);
+        String auditText = operatorText(operator);
         OrderStatusLog row = new OrderStatusLog();
         row.setOrderId(order.getId());
         row.setFromStatus(from.getCode());
         row.setToStatus(to.getCode());
         row.setReason(reason);
-        row.setOperator(operatorText);
+        row.setOperator(auditText);
         row.setOccurredAt(OffsetDateTime.now());
-        row.setCreatedBy(operatorText);
-        row.setUpdatedBy(operatorText);
+        row.setCreatedBy(auditText);
+        row.setUpdatedBy(auditText);
         // 数据库写操作：迁移留痕只增落库（V905 order_status_log）
         statusLogMapper.insert(row);
         log.info(
@@ -114,6 +115,18 @@ public class OrderStateMachineServiceImpl implements IOrderStateMachineService {
                 from.getCode(),
                 to.getCode(),
                 reason,
-                operator);
+                auditText);
+    }
+
+    /**
+     * 状态机审计面操作者文本渲染：数字员工位原样；null=系统触发面落 SYSTEM 文本
+     * （P2 PR-3 Task 5——M05 回签补偿链路 SYSTEM 白名单经 OrderPlanServiceImpl 以 null
+     * 员工位进入状态机，禁 "null" 字面量污染审计列）。
+     *
+     * @param operator 操作者员工 ID，可空（null=系统触发面）
+     * @return 审计列文本（数字位或 SYSTEM），非空
+     */
+    private static String operatorText(Long operator) {
+        return operator == null ? "SYSTEM" : String.valueOf(operator);
     }
 }

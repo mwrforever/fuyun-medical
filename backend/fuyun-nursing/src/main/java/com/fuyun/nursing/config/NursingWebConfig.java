@@ -5,6 +5,7 @@ import com.fuyun.nursing.controller.IoController;
 import com.fuyun.nursing.controller.NursingAssessmentController;
 import com.fuyun.nursing.controller.NursingRecordController;
 import com.fuyun.nursing.controller.NursingTaskController;
+import com.fuyun.nursing.controller.OrderExecutionController;
 import com.fuyun.nursing.controller.PdaController;
 import com.fuyun.nursing.controller.ShiftHandoverController;
 import com.fuyun.nursing.controller.TemperatureChartController;
@@ -17,6 +18,7 @@ import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
 import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
 import com.fuyun.nursing.service.impl.OrderExecutionGenerateServiceImpl;
+import com.fuyun.nursing.service.impl.OrderExecutionOperateServiceImpl;
 import com.fuyun.nursing.service.impl.PdaServiceImpl;
 import com.fuyun.nursing.service.impl.ShiftHandoverServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
@@ -38,7 +40,9 @@ import org.springframework.context.annotation.Import;
  * Task 8 追加：护理评估服务（五量表引擎 + 高危联动）与评估控制器。Task 9 追加：交接班服务
  * （SBAR 自动汇总/双签/事件发布）与交接班控制器。Task 10 追加：PDA 护理面服务
  * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。P2 PR-3 Task 4 追加：执行单生成域服务
- * （inpatient 医嘱事件族消费落单，IOrderExecutionService 三方法）。
+ * （inpatient 医嘱事件族消费落单，IOrderExecutionService 三方法）。P2 PR-3 Task 5 追加：
+ * 执行单操作域服务（五环节状态链+工作台/占用/追溯+双路回签，回签端口经构造器注入解析
+ * inpatient OrderExecutionConfirmPort Bean）与执行单控制器。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -56,6 +60,7 @@ import org.springframework.context.annotation.Import;
     NursingAssessmentServiceImpl.class,
     ShiftHandoverServiceImpl.class,
     PdaServiceImpl.class,
+    OrderExecutionOperateServiceImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,
@@ -63,6 +68,7 @@ import org.springframework.context.annotation.Import;
     NursingTaskController.class,
     NursingAssessmentController.class,
     ShiftHandoverController.class,
-    PdaController.class
+    PdaController.class,
+    OrderExecutionController.class
 })
 public class NursingWebConfig {}

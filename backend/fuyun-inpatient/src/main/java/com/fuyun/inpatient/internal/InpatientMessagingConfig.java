@@ -27,14 +27,17 @@ import org.springframework.context.annotation.Import;
  * arrears.approved 两回执的出院放行业务体 + deposit.changed 队列承载面[消费逻辑归 Task 10]；
  * 三队列声明复用 Task 2 既有 SUBSCRIBED_EVENT_TYPES 声明，绑定零新增）。
  * Task 10 补全 deposit.changed 消费业务体（押金变动→欠费标识刷新，委托 IAdmissionService——
- * 构造追加 IAdmissionService 依赖，队列声明面仍零新增）。
+ * 构造追加 IAdmissionService 依赖，队列声明面仍零新增）。 P2 PR-3 Task 5 追加护理执行回执对账消费监听器
+ * @Import（NursingExecutionReconcileListener——nursing.order-execution.completed 订阅首消费者，
+ * 队列 q.inpatient.nursing.order-execution.completed 随 SUBSCRIBED_EVENT_TYPES 扩入声明）。
  */
 @Configuration
 @Import({
     InpatientEventPublisher.class,
     PharmacyAuditReplyListener.class,
     OrderPlanDecomposeJob.class,
-    BillingEventListener.class
+    BillingEventListener.class,
+    NursingExecutionReconcileListener.class
 })
 public class InpatientMessagingConfig {
 

@@ -1,7 +1,7 @@
 package com.fuyun.inpatient.service;
 
-import com.fuyun.inpatient.dto.ExecuteConfirmRequest;
-import com.fuyun.inpatient.vo.ExecuteConfirmVO;
+import com.fuyun.inpatient.api.ExecuteConfirmRequest;
+import com.fuyun.inpatient.api.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import java.time.LocalDate;
 

@@ -24,7 +24,10 @@ import org.springframework.context.annotation.Import;
  * 监听器类同步追加进 @Import；发布面经 NursingEventPublisher 于业务事务提交后出 MQ。
  * P2 PR-3 Task 4 追加：inpatient 医嘱事件族（order.transferred/order-plan.generated/
  * stopped/cancelled 四路合一）与就诊事件族（visit.admitted/transferred/discharge-requested/
- * discharged/bed.changed 五路）两监听器。
+ * discharged/bed.changed 五路）两监听器。 P2 PR-3 Task 5 追加：摆药签收衔接监听器
+ * （DispenseSignoffListener——pharmacy.dispense.completed 首消费者，队列声明随既有
+ * SUBSCRIBED_EVENT_TYPES id 28 项）与回签补偿扫描组件（ExecutionConfirmCompensator——
+ * tick 接线归 Task 9，本任务仅注册 Bean 供调用）。
  */
 @Configuration
 @Import({
@@ -33,7 +36,9 @@ import org.springframework.context.annotation.Import;
     PatientMergedListener.class,
     PatientSplitListener.class,
     InpatientOrderEventListener.class,
-    InpatientVisitEventListener.class
+    InpatientVisitEventListener.class,
+    DispenseSignoffListener.class,
+    ExecutionConfirmCompensator.class
 })
 public class NursingMessagingConfig {
 
