@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
@@ -101,9 +102,13 @@ class InpatientOrderFlowIT extends FuyunStackITBase {
     /** V704 演示医师（sys_user id=3 持 PRESCRIPTION 执业授权——开单操作者与开立校验 L1 主体） */
     private static final String DOCTOR_LOGIN_NAME = "doctordemo";
 
-    /** CF-3 当日首位 I 型 visit_id 冻结形态（容器独占 Redis 流水键自 1 起签发） */
+    /**
+     * CF-3 当日首位 I 型 visit_id 冻结形态（容器独占 Redis 流水键自 1 起签发）。日期段按北京钟面
+     * 推导：与生成器 InpatientSeqGate 日桶（时区纪律专项 B 类已收敛 HEALTHCARE_TZ）同源——裸
+     * {@code LocalDate.now()} 在 CI UTC 深夜窗（北京 00:00-08:00）与生成器错日分叉致假红。
+     */
     private static final String EXPECTED_VISIT_ID =
-            "I" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
+            "I" + LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
 
     /** MQ 链路与消费面等待上限（回执驱动迁移/计费行为异步收敛，10s 量级与既有 IT 同款） */
     private static final Duration LINK_TIMEOUT = Duration.ofSeconds(10);
@@ -357,7 +362,9 @@ class InpatientOrderFlowIT extends FuyunStackITBase {
         ObjectNode schedule = objectMapper.createObjectNode();
         schedule.put("targetWardId", WARD_ID)
                 .put("targetBedId", BED_ID)
-                .put("expectDate", LocalDate.now().toString());
+                // 期望入住日按北京钟面取当日（时区纪律专项 A 类先例 InpatientDailyDecomposeIT 同款；
+                // 裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
         postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", adminToken, schedule);
         visitId = postJson(
                         "/api/v1/inpatient/admissions/" + admissionNo + "/register",

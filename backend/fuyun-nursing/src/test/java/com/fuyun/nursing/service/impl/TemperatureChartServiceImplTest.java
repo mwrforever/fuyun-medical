@@ -3,6 +3,7 @@ package com.fuyun.nursing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.fail;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -27,7 +28,9 @@ import java.time.OffsetDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 import java.util.List;
+import java.util.SimpleTimeZone;
 import java.util.TimeZone;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -183,6 +186,54 @@ class TemperatureChartServiceImplTest {
                     .isEqualTo(Instant.parse("2026-09-30T17:00:00Z")
                             .atZone(beijing)
                             .toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
+    @DisplayName("特殊事件月页分歧时区锚（时区纪律专项 A 类）：默认时区与北京不同月时，月页归属仍按北京当月")
+    void addSpecialEventFilesBeijingMonthPageUnderDivergedDefaultZone() {
+        // YearMonth 粒度的月分歧窗口引理：固定偏移与北京的月份分歧仅出现在北京月初 [00:00,20:00)
+        // （-12h 侧仍在前月）或北京月末 [18:00,24:00)（+14h 侧已进次月）——月中任何合法偏移
+        // （±18h 内，与北京差值不足 26h）均不跨月界，属月粒度数学性质，无法仿日期族任意时刻构造；
+        // 窗口外显式跳过（assumeTrue），本域任意时刻确定性红锚由班次族锚承担（WardMetaServiceImplTest）
+        Instant now = Instant.now();
+        ZoneId beijing = ZoneId.of("Asia/Shanghai");
+        int[] candidates = {-12 * 3600_000, 14 * 3600_000};
+        int divergeMillis = 0;
+        for (int candidate : candidates) {
+            ZonedDateTime diverged = now.atZone(ZoneOffset.ofTotalSeconds(candidate / 1000));
+            if (!YearMonth.from(diverged).equals(YearMonth.from(now.atZone(beijing)))) {
+                divergeMillis = candidate;
+                break;
+            }
+        }
+        assumeTrue(divergeMillis != 0, "当前北京钟面不在可造月分歧窗口（月初 00:00-20:00 / 月末 18:00-24:00）");
+        TimeZone original = TimeZone.getDefault();
+        try {
+            when(pageMapper.selectOne(any())).thenReturn(null);
+            when(pageMapper.insert(any(TemperatureChartPage.class))).thenAnswer(inv -> {
+                inv.getArgument(0, TemperatureChartPage.class).setId(79L);
+                return 1;
+            });
+            when(entryMapper.insert(any(TemperatureChartEntry.class))).thenAnswer(inv -> {
+                inv.getArgument(0, TemperatureChartEntry.class).setId(602L);
+                return 1;
+            });
+            // setDefault 窗口最小化（锚定模式）：stub 先行 → setDefault → 调用捕获 → finally 恢复；
+            // 时区 ID 取偏移字面量（如 -12:00），自定义 ID 会使 YearMonth.now() 抛 ZoneRulesException
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            service.addSpecialEvent(VISIT, new SpecialEventRequest("PHYSICAL_COOLING", "分歧时区下月页归属锚"));
+
+            // 断言对象=服务端计算的月页归属月（pageMapper.insert captor 捕获，期望按北京钟面推导禁裸
+            // now()）；缺陷实现（裸 YearMonth.now()）在分歧默认时区下取容器月，整页错归前/次月——即红
+            verify(pageMapper).insert(pageCaptor.capture());
+            assertThat(pageCaptor.getValue().getChartMonth())
+                    .isEqualTo(YearMonth.now(beijing).toString());
         } finally {
             TimeZone.setDefault(original);
         }

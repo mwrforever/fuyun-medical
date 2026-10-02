@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import com.fuyun.patient.api.VisitIdValidator;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +34,9 @@ class VisitIdIssuerImplTest {
     /** 签发日期段格式（yyyyMMdd，与 VisitIdValidator 日期段同源） */
     private static final DateTimeFormatter SEQ_DATE = DateTimeFormatter.BASIC_ISO_DATE;
 
+    /** 北京钟面（时区纪律专项 B 类）：号段日期期望与生产技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
+
     @Mock
     private StringRedisTemplate redisTemplate;
 
@@ -49,7 +53,7 @@ class VisitIdIssuerImplTest {
     @Test
     @DisplayName("issue：INCR 返回 7 签发 O 型 14 位 visit_id（O+当日+00007）且 VisitIdValidator 自检为真")
     void issueProducesOTypeFourteenCharId() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:outpatient:visit-seq:" + today)).thenReturn(7L);
 
@@ -63,7 +67,7 @@ class VisitIdIssuerImplTest {
     @Test
     @DisplayName("issue：当日首签（seq=1）续期 48h TTL；seq=2 不再续期（禁无过期键，TTL 仅首签设置一次）")
     void issueSeqOneSetsTtlFortyEightHours() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         String seqKey = "fy:outpatient:visit-seq:" + today;
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         // 同日两次签发：INCR 依次返回 1、2（AtomicLong 模拟当日流水计数器）
@@ -79,7 +83,7 @@ class VisitIdIssuerImplTest {
     @Test
     @DisplayName("issue：流水超 5 位日上限（100000）签发自检 fail-fast 抛 IllegalStateException，且不触碰 TTL")
     void issueFailsFastWhenSeqExceedsDailyCap() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:outpatient:visit-seq:" + today)).thenReturn(100000L);
 
@@ -90,7 +94,7 @@ class VisitIdIssuerImplTest {
     @Test
     @DisplayName("issue：Redis 流水返回空（连接异常面）fail-fast 抛 IllegalStateException，且不触碰 TTL")
     void issueFailsFastWhenRedisSeqMissing() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:outpatient:visit-seq:" + today)).thenReturn(null);
 
@@ -101,7 +105,7 @@ class VisitIdIssuerImplTest {
     @Test
     @DisplayName("issue：结构自检防线（畸形流水致形态违例）fail-fast 抛 IllegalStateException——违例值禁落库")
     void issueFailsFastWhenStructureSelfCheckViolated() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         // 负数流水使 %05d 产出畸形段（-0001），VisitIdValidator 结构自检必败——防御 CF-3 契约漂移的兜底分支
         when(valueOperations.increment("fy:outpatient:visit-seq:" + today)).thenReturn(-1L);

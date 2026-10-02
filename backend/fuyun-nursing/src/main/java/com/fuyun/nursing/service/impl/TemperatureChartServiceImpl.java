@@ -2,6 +2,7 @@ package com.fuyun.nursing.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
@@ -125,7 +126,9 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
         }
         String operator = operator();
         TemperatureChartEntry entry = new TemperatureChartEntry();
-        entry.setPageId(ensurePage(visitId, YearMonth.now()));
+        // 月页归属取北京钟面当月（时区纪律专项 A 类）：北京月初 00:00-08:00 的非北京时区 JVM
+        // 禁把事件整页错归前月（NursingTimeConstants javadoc 冻结口径）
+        entry.setPageId(ensurePage(visitId, YearMonth.now(TimeConstants.HEALTHCARE_TZ)));
         entry.setEntryTime(OffsetDateTime.now());
         entry.setEntryType(ChartEntryType.SPECIAL_EVENT.getCode());
         entry.setSpecialEventType(eventType.getCode());
@@ -187,7 +190,8 @@ public class TemperatureChartServiceImpl extends ServiceImpl<TemperatureChartPag
                     "日行值类型与文本不能为空：visitId=" + visitId + "，dailyValueType=" + dailyValueType);
         }
         TemperatureChartEntry entry = new TemperatureChartEntry();
-        entry.setPageId(ensurePage(visitId, YearMonth.now()));
+        // 月页归属取北京钟面当月（时区纪律专项 A 类，同 addSpecialEvent 冻结口径）
+        entry.setPageId(ensurePage(visitId, YearMonth.now(TimeConstants.HEALTHCARE_TZ)));
         entry.setEntryTime(OffsetDateTime.now());
         entry.setEntryType(ChartEntryType.DAILY_VALUE.getCode());
         entry.setDailyValueType(dailyValueType);

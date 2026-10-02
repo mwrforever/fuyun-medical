@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,13 +25,16 @@ import org.springframework.data.redis.core.ValueOperations;
  * 护理业务单号发号器单测：前缀/日期/五位序号格式冻结、逐次 48h TTL 续期、未知类型拒绝发号。
  *
  * <p>StringRedisTemplate 以 Mockito mock 承载（不起真实 Redis，PatientCacheServiceTest 同款）；
- * 日期断言取服务器当日 {@code LocalDate.now()} 拼期望值（跨零点窗口的抖动概率可忽略）。
+ * 日期断言取北京钟面当日拼期望值（与生产技术日切同源口径，跨零点窗口的抖动概率可忽略）。
  */
 @ExtendWith(MockitoExtension.class)
 class NursingSeqGateTest {
 
     /** 与实现的键命名契约冻结：fy:nursing:seq:{type}:{yyyyMMdd}（A.5-1 命名法） */
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
+
+    /** 北京钟面（时区纪律专项 B 类）：号段日期期望与生产技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private StringRedisTemplate redisTemplate;
@@ -41,7 +45,7 @@ class NursingSeqGateTest {
     @Test
     @DisplayName("NR 类型发号：返回 前缀+当日 yyyyMMdd+五位序号（INCR=1 → 00001）")
     void nextNoFormatsPrefixDateAndFiveDigitSeq() {
-        String today = LocalDate.now().format(DAY);
+        String today = LocalDate.now(BEIJING_TZ).format(DAY);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:nursing:seq:NR:" + today)).thenReturn(1L);
 
@@ -52,7 +56,7 @@ class NursingSeqGateTest {
     @Test
     @DisplayName("发号后对当日键续 48h TTL（键与 TTL 经 ArgumentCaptor 全量精确断言）")
     void nextNoAppliesTtlEachCall() {
-        String today = LocalDate.now().format(DAY);
+        String today = LocalDate.now(BEIJING_TZ).format(DAY);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:nursing:seq:NR:" + today)).thenReturn(1L);
 
@@ -80,7 +84,7 @@ class NursingSeqGateTest {
     @Test
     @DisplayName("序号位数：12345 恰五位不补零、100000 溢出进位不截断（防 %05d 丢位回归）")
     void nextNoPadsSeqToFiveDigits() {
-        String today = LocalDate.now().format(DAY);
+        String today = LocalDate.now(BEIJING_TZ).format(DAY);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:nursing:seq:NR:" + today)).thenReturn(12345L, 100000L);
 

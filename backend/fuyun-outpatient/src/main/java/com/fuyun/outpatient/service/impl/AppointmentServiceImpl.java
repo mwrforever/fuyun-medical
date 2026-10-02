@@ -5,6 +5,7 @@ import com.fuyun.billing.api.OutpatientBillingPort;
 import com.fuyun.billing.api.RefundApprovedPayload;
 import com.fuyun.billing.api.VisitFeeView;
 import com.fuyun.billing.api.VisitRefundCommand;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.outpatient.api.AppointmentBookedPayload;
@@ -284,8 +285,10 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 .eq(ApptCreditRecord::getAction, ApptCreditRecord.ACTION_NO_SHOW)
                 .ge(ApptCreditRecord::getOccurredAt, OffsetDateTime.now().minusDays(properties.noShowWindowDays())));
         boolean overThreshold = credits.size() >= properties.noShowThreshold();
+        // 限约生效判定取北京钟面（时区纪律专项 A 类）：业务日基准不随容器时区漂移
         boolean restrictActive = credits.stream()
-                .anyMatch(c -> c.getRestrictTo() != null && !c.getRestrictTo().isBefore(LocalDate.now()));
+                .anyMatch(c -> c.getRestrictTo() != null
+                        && !c.getRestrictTo().isBefore(LocalDate.now(TimeConstants.HEALTHCARE_TZ)));
         if (overThreshold && restrictActive) {
             log.warn(
                     "挂号拦截：爽约限约期内，patientId={}，窗口内 NO_SHOW 计数={}，阈值={}",
@@ -558,12 +561,13 @@ public class AppointmentServiceImpl implements IAppointmentService {
                     "预约单状态不允许退号（当前态 " + status.getCode() + "）：apptNo=" + apptNo);
         }
         // 线上退号时限校验（窗口/自助渠道不受限——逾窗转窗口口径，Spec :137）：截止日=就诊日往前推
-        // onlineCancelBeforeDays 天，当日（不足提前天数）线上退号关闭（北京/杭州调研依据 4 同款口径）
+        // onlineCancelBeforeDays 天，当日（不足提前天数）线上退号关闭（北京/杭州调研依据 4 同款口径）；
+        // 当日判定取北京钟面（时区纪律专项 A 类），业务日基准不随容器时区漂移
         if (ONLINE_CHANNELS.contains(appointment.getChannel())
                 && appointment
                         .getSchedDate()
                         .minusDays(properties.onlineCancelBeforeDays())
-                        .isBefore(LocalDate.now())) {
+                        .isBefore(LocalDate.now(TimeConstants.HEALTHCARE_TZ))) {
             log.warn(
                     "线上退号时限外拒绝：apptNo={}，schedDate={}，onlineCancelBeforeDays={}",
                     apptNo,
@@ -831,14 +835,17 @@ public class AppointmentServiceImpl implements IAppointmentService {
             throw new BizException(
                     OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED, HttpStatus.NOT_FOUND, "信用记录不存在：id=" + id);
         }
-        if (record.getRestrictTo() == null || record.getRestrictTo().isBefore(LocalDate.now())) {
+        // 在效限约判定取北京钟面（时区纪律专项 A 类）：业务日基准不随容器时区漂移
+        if (record.getRestrictTo() == null
+                || record.getRestrictTo().isBefore(LocalDate.now(TimeConstants.HEALTHCARE_TZ))) {
             throw new BizException(
                     OutpatientErrorCode.APPOINTMENT_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
                     "无限约区间或限约已失效，无需解除：id=" + id);
         }
-        // 数据库写操作：提前解除（restrict_to 拨至今日-1 即时失效）+解除理由留痕
-        record.setRestrictTo(LocalDate.now().minusDays(1));
+        // 数据库写操作：提前解除（restrict_to 拨至今日-1 即时失效）+解除理由留痕；
+        // 解除落库取北京钟面（时区纪律专项 A 类）
+        record.setRestrictTo(LocalDate.now(TimeConstants.HEALTHCARE_TZ).minusDays(1));
         record.setReleaseReason(reason);
         record.setUpdatedBy(OperatorContextHolder.get());
         apptCreditRecordMapper.updateById(record);
@@ -1048,8 +1055,9 @@ public class AppointmentServiceImpl implements IAppointmentService {
         credit.setOccurredAt(OffsetDateTime.now());
         credit.setWindowDays(properties.noShowWindowDays());
         if (restrictHit) {
-            credit.setRestrictFrom(LocalDate.now());
-            credit.setRestrictTo(LocalDate.now().plusDays(properties.restrictDays()));
+            // 限约区间落库取北京钟面（时区纪律专项 A 类）：医疗日基准不随容器时区漂移
+            credit.setRestrictFrom(LocalDate.now(TimeConstants.HEALTHCARE_TZ));
+            credit.setRestrictTo(LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(properties.restrictDays()));
         }
         credit.setCreatedBy(SYSTEM_OPERATOR);
         credit.setUpdatedBy(SYSTEM_OPERATOR);
@@ -1083,7 +1091,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
      * @throws IllegalStateException Redis 流水返回空（连接异常由底层异常上抛），预约无法落号
      */
     private String issueApptNo() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        // 技术日切取北京钟面（时区纪律专项 B 类）：号段日期与当日键不随容器时区漂移
+        String today = LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(SEQ_DATE);
         String seqKey = APPT_SEQ_KEY_PREFIX + today;
         // 缓存写操作：Redis INCR 取当日流水（原子计数，跨实例并发安全）
         Long seq = redisTemplate.opsForValue().increment(seqKey);
@@ -1169,7 +1178,10 @@ public class AppointmentServiceImpl implements IAppointmentService {
      * @return 距锚点时刻的时长（预约面向未来排班，恒为正）
      */
     private Duration poolKeyTtl(LocalDate schedDate) {
-        return Duration.between(LocalDateTime.now(), schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
+        // TTL 锚起算取北京钟面（时区纪律专项 B 类）：排班日次日 02:00 对账锚不随容器时区漂移
+        return Duration.between(
+                LocalDateTime.now(TimeConstants.HEALTHCARE_TZ),
+                schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
     }
 
     /**

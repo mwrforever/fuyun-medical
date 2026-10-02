@@ -38,6 +38,7 @@ import com.fuyun.pharmacy.mapper.PrescriptionMapper;
 import com.fuyun.pharmacy.vo.PrescriptionVO;
 import com.fuyun.system.api.PracticeCheckPort;
 import com.fuyun.system.api.PracticeCheckResult;
+import java.time.ZoneId;
 import java.util.List;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -64,6 +65,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 class PrescriptionServiceImplTest {
 
     private static final String VISIT = "O2026091800001";
+
+    /** 北京钟面（时区纪律专项 B 类）：处方号日期段期望与生产技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private PrescriptionMapper prescriptionMapper;
@@ -159,8 +163,10 @@ class PrescriptionServiceImplTest {
         }
 
         assertThat(vo.rxNo())
+                // 日期段按北京钟面推导（时区纪律专项 B 类，与生产技术日切同源口径，禁裸 now()）
                 .startsWith("R"
-                        + java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")))
+                        + java.time.LocalDate.now(BEIJING_TZ)
+                                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd")))
                 .hasSize(1 + 8 + 6); // R+8 位日期+6 位流水（动态年份，禁硬编码）
         assertThat(vo.reviewLevel()).isEqualTo("PASS"); // 预检恒通过级（占位级，P3 接引擎）
         assertThat(vo.status()).isEqualTo("APPROVED"); // CREATED→APPROVED 同事务

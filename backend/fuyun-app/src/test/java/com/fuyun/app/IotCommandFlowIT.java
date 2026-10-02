@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.api.ConsumerQueueSpec;
@@ -258,7 +259,11 @@ class IotCommandFlowIT extends FuyunStackITBase {
         assertThat(challengeId).as("签发返回凭证 id").isNotBlank();
         assertThat(challenge.path("commandNo").asText())
                 .as("预占命令号冻结形态 CMD+yyyyMMdd+5 位流水")
-                .matches("CMD" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "\\d{5}");
+                // 命令号日期段按北京钟面推导（与生产 IotSeqGate 日桶同源；裸 now() 在 CI UTC
+                // 深夜窗与签发器错日分叉致假红）
+                .matches("CMD"
+                        + LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DateTimeFormatter.BASIC_ISO_DATE)
+                        + "\\d{5}");
 
         ResponseEntity<String> resp =
                 postForEntity(token, "/api/v1/iot/commands", dispatchBody(challengeId, DEVICE_ID, ALLOWED_COMMAND));

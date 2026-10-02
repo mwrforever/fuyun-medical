@@ -42,10 +42,16 @@ import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -162,6 +168,61 @@ class PricingEngineServiceImplTest {
         assertThat(published.eventType()).isEqualTo("billing.fee.created");
         assertThat(published.payload()).isInstanceOf(FeeCreatedPayload.class);
         assertThat(feeId).isEqualTo(123L); // insert 回填 id 原样返回（ASSIGN_ID 语义）
+    }
+
+    // ===== 时区纪律专项 A 类：计费日落库北京钟面锚 =====
+
+    @Test
+    @DisplayName("计费日时区锚：默认时区与北京日期分歧时，落库计费日仍取北京钟面（billing_key 防重段同源）")
+    void generateBindsBillingDateToBeijingClockUnderDivergedDefaultZone() {
+        when(itemService.requireActiveByCode("C001")).thenReturn(item(100L, "C001"));
+        when(priceService.snapshot("C001", 100L)).thenReturn(snap(100L, 2000L, 2));
+        // 模拟 MP ASSIGN_ID 回填：insert 时给实体置 id（否则 save 后 fee.getId() 为 null，long 拆箱 NPE）
+        when(feeRecordMapper.insert(any(FeeRecord.class))).thenAnswer(inv -> {
+            inv.getArgument(0, FeeRecord.class).setId(123L);
+            return 1;
+        });
+
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日期必然分歧的默认时区：-12h/+14h 二选一（两分歧窗北京钟面 [00:00,20:00)
+            // 与 [18:00,24:00) 并集覆盖全天）——BUG-03 先例 setDefault(UTC) 每日 16h 重合窗内对缺陷
+            // 代码也绿，本构造任意时刻可复现「非北京时区 JVM 取错医疗日」。时区 ID 必须取偏移字面量
+            // （如 -12:00）：java.time 解析不了任意自定义 ID，否则 LocalDate.now() 抛 ZoneRulesException
+            Instant now = Instant.now();
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(beijing)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            engine.generateFromSource(new FeeGenerateCommand(
+                    7L,
+                    "O2026091700001",
+                    ChargeSource.ORDER_LINKED,
+                    "ORD-01",
+                    TriggerType.ORDER_CONFIRMED,
+                    "C001",
+                    BigDecimal.ONE,
+                    VisitType.OUT,
+                    null,
+                    null));
+
+            // 断言对象=服务端计算并落库的计费日（mapper captor 捕获，期望按北京钟面推导禁裸 now()）；
+            // 缺陷实现（裸 LocalDate.now()）在分歧默认时区下取容器日期，billing_date 与防重键第五段
+            // 同漂移——对北京今日断言即红
+            ArgumentCaptor<FeeRecord> captor = ArgumentCaptor.forClass(FeeRecord.class);
+            verify(feeRecordMapper).insert(captor.capture());
+            assertThat(captor.getValue().getBillingDate()).isEqualTo(LocalDate.now(beijing));
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

@@ -2,6 +2,14 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-01 · 时区纪律专项立项（P2 第一步修复前置项：34 处裸 now() 收敛北京钟面 + 红线）
+
+- **根因**：终验报告 3.5a 呈报——全仓裸 `LocalDate/LocalDateTime/LocalTime.now()` 34 处，CI（UTC JVM）在北京 00:00–08:00 取错医疗日/业务窗；BUG-03 残余三处（PR #60=6c58768）已实证缺陷模型（班次小结查空、观察行该合并不合并），属医疗业务真实缺陷。
+- **任务面**：A 类 21 处医疗日界/业务窗口语义改 `now(HEALTHCARE_TZ)`（billing 2/inpatient 2/nursing 8/outpatient 8/system 1，TDD 先红后绿+各域 UTC 锚定用例）；B 类 13 处号段/TTL 锚技术日切同款显式化（序号门 4/号段 5/TTL 锚 4，生产 TZ=Asia/Shanghai 下逐字等价零行为变）；`TimeConstants.HEALTHCARE_TZ` 下沉 fuyun-common、`NursingTimeConstants` 改委托。
+- **红线（随专项立，持续生效）**：业务日期/医疗日界一律 `now(HEALTHCARE_TZ)`，号段/TTL 锚同款显式化；禁新增裸 `now()`；Windows 本地时区验证一律 `JAVA_TOOL_OPTIONS=-Duser.timezone=UTC`（JVM 不读 TZ 环境变量），生效凭证=日志 `Picked up`。
+- **验证**：双时区全量 verify 双 BUILD SUCCESS + A 类各域窗口边界锚定用例 + PR CI 六 job 全绿。
+- **终局回填（2026-10-02）**：站点终局 44（A 类 31=billing 2/inpatient 7/nursing 11/outpatient 8/system 3，含 broaden 增补 10 处；B 类 13=序号门 4/号段 5/TTL 锚 4）；必然同步终局 106=A/B 期 71+双时区终验分歧窗暴露三批修复环 35（InpatientDailyDecomposeIT 15、fuyun-app 八 IT 15+池定位配套 1、OrderPlanServiceImplTest 4——日切分歧窗北京 00:00–08:00 内期望/造数面与生产北京钟面号段/业务日错位显形，第一轮 15:40Z 贴窗缘未显形、第二轮 16:1xZ 入窗八例红）；确定性分歧时区锚 9；即时时刻/instant 窗口/纯回显三类出界不动（anchor-pattern 裁定）。红线重申：禁新增裸 now()，业务日期/医疗日界一律 now(HEALTHCARE_TZ)。验证终局：默认时区全量 verify BUILD SUCCESS（16:49 min）+UTC 全量 verify BUILD SUCCESS（16:13 min，Picked up 凭证，Finished 17:12:02Z=北京 10-02 01:12 分歧窗内）+Etc/GMT-14 整仓 test BUILD SUCCESS（01:57 min 零失败，+14h 反方向实证）+三批修复后 UTC/缺省/GMT-14 定向全绿。
+
 ## 2026-09-30 · 批次 G 前端压轴组总收口（EX-42~49：重复族下沉/通用范式沉淀/巨型组件拆分/健壮性与数据丢失防护，波 1 三路+波 2 核证收口+余项统筹）
 
 - **根因**：FE-Q1 重复族（surfaceBizError ×16/formatTime ×15/STOMP ×3）+FE-Q1-06 与 FE-A4-05 样板复制（41 处 loading 骨架/16 处三段式分页）+FE-A4-03/04 巨型组件（WardBoardView 2760 行/AppointmentView 916 行）+FE-A1 运行错误五点+FE-A2 数据丢失四点+BE-Q1-02 访问器副本。

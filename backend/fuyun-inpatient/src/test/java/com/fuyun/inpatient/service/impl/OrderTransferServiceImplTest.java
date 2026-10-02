@@ -46,9 +46,14 @@ import com.fuyun.inpatient.service.IOrderStateMachineService;
 import com.fuyun.inpatient.vo.OrderPlanVO;
 import com.fuyun.inpatient.vo.TransferWorklistVO;
 import java.lang.reflect.Method;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import org.apache.ibatis.annotations.Update;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
@@ -95,6 +100,9 @@ class OrderTransferServiceImplTest {
 
     /** 在院病区（计划落值与 worklist 过滤键） */
     private static final String WARD = "W01";
+
+    /** 北京钟面（时区纪律专项 A 类）：班次窗内造数与锚定期望的统一推导口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private MedicalOrderMapper orderMapper;
@@ -361,8 +369,10 @@ class OrderTransferServiceImplTest {
         // 病区聚合：在院就诊的 AUDITED 医嘱（开立时间倒序由 orderByDesc 承载）+就诊号映射
         when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
         MedicalOrder audited = orderRow("MO2026092500007", 9007L, OrderStatus.AUDITED, "STAT", "DRUG", false);
+        // 开立时点造数必然同步北京钟面（时区纪律专项 A 类修复环）：班次窗基准日/偏移源均已
+        // 收敛北京钟面，容器时区推导的 10:00 在非北京时区 JVM 深夜窗会漂出白班窗语义
         audited.setOrderedAt(
-                LocalDate.now().atTime(10, 0).atOffset(OffsetDateTime.now().getOffset()));
+                LocalDate.now(BEIJING_TZ).atTime(10, 0).atZone(BEIJING_TZ).toOffsetDateTime());
         Page<MedicalOrder> page = new Page<>(1, 20);
         page.setRecords(List.of(audited));
         page.setTotal(1);
@@ -381,14 +391,69 @@ class OrderTransferServiceImplTest {
 
         // 输血类医嘱 highRisk=true（双人核对强制面提示）
         MedicalOrder blood = orderRow("MO2026092500008", 9008L, OrderStatus.AUDITED, "STAT", "BLOOD", false);
+        // 开立时点造数必然同步北京钟面（同上：17:00 落小夜班窗——日期与偏移同源北京钟面）
         blood.setOrderedAt(
-                LocalDate.now().atTime(17, 0).atOffset(OffsetDateTime.now().getOffset()));
+                LocalDate.now(BEIJING_TZ).atTime(17, 0).atZone(BEIJING_TZ).toOffsetDateTime());
         Page<MedicalOrder> bloodPage = new Page<>(1, 20);
         bloodPage.setRecords(List.of(blood));
         bloodPage.setTotal(1);
         when(orderMapper.selectPage(any(), any())).thenReturn(bloodPage);
         assertThat(service.worklist(WARD, "EVENING", 0, 20).content().get(0).highRisk())
                 .isTrue();
+    }
+
+    // ===== 时区纪律专项 A 类：转抄班次窗基准日北京钟面锚 =====
+
+    @Test
+    @DisplayName("班次窗时区锚：默认时区与北京日期分歧时，待转抄小夜班窗基准日仍取北京今日（跨零点收口次日 00:00）")
+    void worklistBindsShiftWindowBaseDayToBeijingClockUnderDivergedDefaultZone() {
+        // 桩面先行（setDefault 窗口最小化）：病区在院就诊 + 待转抄分页空集（本用例仅锚窗口谓词）
+        when(visitMapper.selectList(any())).thenReturn(List.of(visitRow()));
+        Page<MedicalOrder> page = new Page<>(1, 20);
+        page.setRecords(List.of());
+        page.setTotal(0);
+        when(orderMapper.selectPage(any(), any())).thenReturn(page);
+
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日期必然分歧的默认时区：-12h/+14h 二选一（两分歧窗北京钟面 [00:00,20:00)
+            // 与 [18:00,24:00) 并集覆盖全天）——BUG-03 先例 setDefault(UTC) 每日 16h 重合窗内对缺陷
+            // 代码也绿，本构造任意时刻可复现「非北京时区 JVM 取错医疗日」。时区 ID 必须取偏移字面量
+            // （如 -12:00）：java.time 解析不了任意自定义 ID，否则 LocalDate.now() 抛 ZoneRulesException
+            Instant now = Instant.now();
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(beijing)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            service.worklist(WARD, "EVENING", 0, 20);
+
+            // 断言面=服务端计算并挂上分页查询的班次开立窗（ge/lt 谓词参数，期望日期按北京钟面推导
+            // 禁裸 now()；窗偏移随断言值钉死 +08:00——修复环：shiftWindowOf 偏移源已收敛北京钟面，
+            // 班次窗偏移恒北京 +08:00，不再镜像分歧默认时区偏移）。缺陷实现（裸 LocalDate.now()
+            // 或镜像容器偏移）在分歧默认时区下取容器日期/偏移为窗口面，对北京今日 +08:00 小夜窗
+            // 断言即红
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<Wrapper<MedicalOrder>> queryCaptor = ArgumentCaptor.forClass(Wrapper.class);
+            verify(orderMapper).selectPage(any(), queryCaptor.capture());
+            LambdaQueryWrapper<MedicalOrder> wrapper = (LambdaQueryWrapper<MedicalOrder>) queryCaptor.getValue();
+            // 先物化 WHERE 段再断言参数（MP 条件参数惰性求值——EX-39 同款口径）
+            assertThat(wrapper.getSqlSegment()).contains("ordered_at");
+            LocalDate beijingToday = LocalDate.now(beijing);
+            assertThat(wrapper.getParamNameValuePairs().values())
+                    .contains(
+                            beijingToday.atTime(16, 0).atZone(beijing).toOffsetDateTime(),
+                            beijingToday.plusDays(1).atStartOfDay(beijing).toOffsetDateTime());
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test

@@ -62,12 +62,17 @@ import com.fuyun.patient.api.PatientContextResolver;
 import com.fuyun.patient.api.PatientContextView;
 import com.fuyun.patient.api.VisitIdValidator;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -102,6 +107,9 @@ class AppointmentServiceImplTest {
 
     /** 签发日期段格式（yyyyMMdd） */
     private static final DateTimeFormatter SEQ_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+
+    /** 北京钟面（时区纪律专项 A/B 类）：限约区间与号段日期期望与生产医疗日/技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private PatientContextResolver patientContextResolver;
@@ -276,7 +284,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("book：WINDOW 渠道当日挂号——appointment TAKEN+visit REGISTERED+visit_id O 型形态+visit.registered 发布（五组件）")
     void windowRegistrationIssuesVisitAndMarksTaken() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
         when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
         when(scheduleMapper.selectById(11L)).thenReturn(schedule());
@@ -355,7 +363,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
@@ -449,7 +457,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("book：Redis 连接异常降级直连 DB 条件更新——casOccupy 成功路径照常落库（功能不中断）")
     void bookingDegradesToDbCasWhenRedisDown() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
         when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
         when(scheduleMapper.selectById(11L)).thenReturn(schedule());
@@ -486,7 +494,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         when(apptNumberPoolMapper.casOccupy(eq(31L), anyInt())).thenReturn(0);
@@ -558,7 +566,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("take：支付时限内 casTake 1 行——visit 签发+占位键删除+visit.registered 发布")
     void takeIssuesVisitWithinPayDeadline() {
-        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00002";
+        String visitId = "O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00002";
         Appointment held =
                 reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().plusMinutes(5), null);
         when(appointmentMapper.selectOne(any())).thenReturn(held);
@@ -592,7 +600,7 @@ class AppointmentServiceImplTest {
         Appointment expired =
                 reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(1), null);
         when(appointmentMapper.selectOne(any())).thenReturn(expired);
-        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now().format(SEQ_DATE) + "00009");
+        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00009");
         when(appointmentMapper.casTake(eq(101L), anyString())).thenReturn(0);
         when(appointmentMapper.selectById(101L)).thenReturn(expired);
 
@@ -634,8 +642,60 @@ class AppointmentServiceImplTest {
         assertThat(credit.getPatientId()).isEqualTo(9L);
         assertThat(credit.getAction()).isEqualTo("NO_SHOW");
         assertThat(credit.getWindowDays()).isEqualTo(90);
-        assertThat(credit.getRestrictFrom()).isEqualTo(LocalDate.now());
-        assertThat(credit.getRestrictTo()).isEqualTo(LocalDate.now().plusDays(90));
+        // 期望面必然同步北京钟面（时区纪律专项 A 类）：限约区间落库已收敛北京钟面医疗日，
+        // 裸 now() 期望在非北京时区 JVM 深夜窗（北京 00:00-08:00）日期分歧即碎
+        assertThat(credit.getRestrictFrom()).isEqualTo(LocalDate.now(BEIJING_TZ));
+        assertThat(credit.getRestrictTo()).isEqualTo(LocalDate.now(BEIJING_TZ).plusDays(90));
+    }
+
+    @Test
+    @DisplayName("爽约限约落库分歧时区锚（时区纪律专项 A 类）：默认时区钟面与北京不同日时，限约区间仍按北京钟面写入")
+    void markTimeoutWritesCreditRestrictionWindowByBeijingClockUnderDivergedDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日历日期必然分歧的默认时区：-12h/+14h 固定偏移二选一（两偏移对北京
+            // 的日期分歧窗并集覆盖全天，引理见锚定模式）——任意时刻可复现「非北京时区 JVM 按
+            // 容器日期写错限约区间」；时区 ID 必须取偏移字面量（自定义 ID 使 LocalDate.now()
+            // 抛 ZoneRulesException）
+            Instant now = Instant.now();
+            ZoneId beijing = ZoneId.of("Asia/Shanghai");
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(beijing)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            // 期望按北京钟面锁定推导（禁裸 now() 当期望源）：restrictDays 缺省 90（setUp 同源）
+            LocalDate expectedFrom = LocalDate.now(beijing);
+            LocalDate expectedTo = expectedFrom.plusDays(90);
+            Appointment held = reservedAppointment(
+                    ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(20), null);
+            when(appointmentMapper.selectOne(any())).thenReturn(held);
+            when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(1);
+            ApptNumberPool pool = activePool(PoolStatus.ACTIVE);
+            pool.setVersion(7);
+            when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool);
+            when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+            when(apptNumberPoolMapper.casRelease(31L, 7)).thenReturn(1);
+            // 窗口内既有 2 次+本次 1 次命中阈值 3 → 写限约区间（restrictFrom/restrictTo 落库值受检）
+            when(apptCreditRecordMapper.selectCount(any())).thenReturn(2L);
+            // setDefault 窗口最小化（锚定模式）：stub 先行 → setDefault → 调用捕获 → finally 恢复
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            service.markTimeout(new AppointmentTimeoutPayload("AP20260920000001", 9L, 31L));
+
+            // 断言对象=服务端计算并落库的限约区间（captor 捕获 credit 行）：缺陷实现（裸
+            // LocalDate.now()）在分歧默认时区下落容器日期，北京钟面断言即红
+            ArgumentCaptor<ApptCreditRecord> creditCaptor = ArgumentCaptor.forClass(ApptCreditRecord.class);
+            verify(apptCreditRecordMapper).insert(creditCaptor.capture());
+            assertThat(creditCaptor.getValue().getRestrictFrom()).isEqualTo(expectedFrom);
+            assertThat(creditCaptor.getValue().getRestrictTo()).isEqualTo(expectedTo);
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test
@@ -708,7 +768,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         when(appointmentMapper.insert(any(Appointment.class)))
@@ -733,7 +793,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
@@ -760,7 +820,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
@@ -809,7 +869,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("R1 take：TAKEN 态重复取号幂等返回既有 visit——零重复签发零 CAS")
     void takeIdempotentReturnsExistingVisitWhenTaken() {
-        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00001";
+        String visitId = "O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00001";
         Appointment taken =
                 reservedAppointment(ApptStatus.TAKEN, OffsetDateTime.now().minusMinutes(20), visitId);
         when(appointmentMapper.selectOne(any())).thenReturn(taken);
@@ -854,7 +914,7 @@ class AppointmentServiceImplTest {
         Appointment cancelled =
                 reservedAppointment(ApptStatus.CANCELLED, OffsetDateTime.now().minusMinutes(20), null);
         when(appointmentMapper.selectOne(any())).thenReturn(cancelled);
-        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now().format(SEQ_DATE) + "00009");
+        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00009");
         when(appointmentMapper.casTake(eq(101L), anyString())).thenReturn(0);
         when(appointmentMapper.selectById(101L)).thenReturn(cancelled);
 
@@ -876,14 +936,14 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         // 键缺失降级（-2）：无 Redis 持有，失败路径零回补面
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(-2);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
         when(apptNumberPoolMapper.casOccupy(31L, 0)).thenReturn(1);
-        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now().format(SEQ_DATE) + "00007");
-        when(appointmentMapper.casTake(101L, "O" + LocalDate.now().format(SEQ_DATE) + "00007"))
+        when(visitIdIssuer.issue()).thenReturn("O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00007");
+        when(appointmentMapper.casTake(101L, "O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00007"))
                 .thenReturn(0);
 
         assertThatThrownBy(() -> service.book(request("WINDOW"))).isInstanceOf(IllegalStateException.class);
@@ -901,7 +961,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         doThrow(new RedisConnectionFailureException("connection refused"))
                 .when(valueOperations)
@@ -930,7 +990,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(null);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(-2);
 
@@ -951,7 +1011,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
@@ -980,7 +1040,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
@@ -1005,7 +1065,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         when(apptNumberPoolMapper.casOccupy(eq(31L), anyInt())).thenReturn(0);
@@ -1097,7 +1157,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("R1 take：占位键删除自身异常（Redis 异常）不阻断取号——visit.registered 照常发布")
     void takeToleratesHoldKeyDeleteFailure() {
-        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00002";
+        String visitId = "O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00002";
         Appointment held =
                 reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().plusMinutes(5), null);
         when(appointmentMapper.selectOne(any())).thenReturn(held);
@@ -1170,7 +1230,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("R1 take：casTake 成功后关联池行缺失（数据异常）fail-fast——visit 零落库")
     void takeFailsFastWhenAssociationsMissing() {
-        String visitId = "O" + LocalDate.now().format(SEQ_DATE) + "00005";
+        String visitId = "O" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE) + "00005";
         Appointment held =
                 reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().plusMinutes(5), null);
         when(appointmentMapper.selectOne(any())).thenReturn(held);
@@ -1193,7 +1253,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenReturn(0L);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         // 键缺失降级（-2）：无第一道闸持有，失败路径回补面短路（redisHeld=false）
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(-2);
@@ -1254,7 +1314,7 @@ class AppointmentServiceImplTest {
         when(appointmentMapper.selectCount(any())).thenAnswer(selectCountByWrapper(2L, 0L));
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(
-                        "fy:outpatient:appt-seq:" + LocalDate.now().format(SEQ_DATE)))
+                        "fy:outpatient:appt-seq:" + LocalDate.now(BEIJING_TZ).format(SEQ_DATE)))
                 .thenReturn(1L);
         when(poolRedisGate.deduct(eq(31L), eq(4L), any(Duration.class))).thenReturn(3);
         doAnswer(this::stubInsertId).when(appointmentMapper).insert(any(Appointment.class));
@@ -1272,7 +1332,7 @@ class AppointmentServiceImplTest {
     @Test
     @DisplayName("EX-29 缓解①：WINDOW 已鉴权渠道不受匿名上限约束——活跃 3 单照常当日挂号 TAKEN（缓解仅收口免登录面）")
     void windowBookingUnaffectedByPortalActiveLimit() {
-        String today = LocalDate.now().format(SEQ_DATE);
+        String today = LocalDate.now(BEIJING_TZ).format(SEQ_DATE);
         when(patientContextResolver.resolve(9L)).thenReturn(normalPatient());
         when(apptNumberPoolMapper.selectById(31L)).thenReturn(activePool(PoolStatus.ACTIVE));
         when(scheduleMapper.selectById(11L)).thenReturn(schedule());

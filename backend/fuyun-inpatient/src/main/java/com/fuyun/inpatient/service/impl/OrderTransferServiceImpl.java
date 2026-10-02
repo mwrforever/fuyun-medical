@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -178,8 +179,10 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
         }
         Map<Long, InpatientVisit> visitIndex =
                 visits.stream().collect(Collectors.toMap(InpatientVisit::getId, Function.identity()));
-        // 班次开立窗口（可空=全班次；窗口左闭右开，EVENING 跨零点收口于次日 00:00）
-        OffsetDateTime[] window = shift == null ? null : shiftWindowOf(LocalDate.now(), shift);
+        // 班次开立窗口（可空=全班次；窗口左闭右开，EVENING 跨零点收口于次日 00:00）；基准日与
+        // 窗口构造偏移源均统一北京钟面（时区纪律专项 A 类）
+        OffsetDateTime[] window =
+                shift == null ? null : shiftWindowOf(LocalDate.now(TimeConstants.HEALTHCARE_TZ), shift);
         // 数据库读操作：待转抄医嘱分页（visit_id IN 就诊集 + AUDITED + 开立时点班次窗口；
         // 班次条件缺席时不挂 ge/lt 段——避免条件布尔重载的实参预取空数组下标）
         LambdaQueryWrapper<MedicalOrder> query = Wrappers.<MedicalOrder>lambdaQuery()
@@ -292,8 +295,9 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
             // 日期必填（计划视图以日为轴；Web 层 required=true 兜底，服务面覆盖模块内直调场景）
             throw new BizException(InpatientErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "执行计划查询日期必填（date）");
         }
-        // 当日窗口 [00:00, 次日 00:00)（服务器时区口径，与计划落库 OffsetDateTime.now() 同源）
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        // 当日窗口 [00:00, 次日 00:00)（北京钟面口径——时区纪律专项 A 类；偏移源与计划落库侧
+        // OrderPlanServiceImpl.generatePlans 偏移源同源，写读一致，禁镜像容器时区偏移）
+        ZoneOffset offset = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset();
         OffsetDateTime start = date.atStartOfDay().atOffset(offset);
         OffsetDateTime end = date.plusDays(1).atStartOfDay().atOffset(offset);
         // 数据库读操作：计划分页（0 基请求转 MP 1 基 current）
@@ -549,7 +553,9 @@ public class OrderTransferServiceImpl implements IOrderTransferService {
      * @return [窗口起点, 窗口终点) 二元素数组，非空
      */
     private static OffsetDateTime[] shiftWindowOf(LocalDate day, String shift) {
-        ZoneOffset offset = OffsetDateTime.now().getOffset();
+        // 窗口偏移源取北京钟面（时区纪律专项 A 类）：与基准日取值同源，非北京时区 JVM 不再
+        // 把班次窗边界镜像成容器偏移（UTC 容器深夜窗窗整体漂移 8 小时）
+        ZoneOffset offset = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset();
         if (SHIFT_EVENING.equals(shift)) {
             // 小夜班跨零点：终点收口于次日 00:00（24:00 不存在时刻形态）
             return new OffsetDateTime[] {

@@ -1,5 +1,6 @@
 package com.fuyun.nursing.cache;
 
+import com.fuyun.common.constants.TimeConstants;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -53,7 +54,8 @@ public class NursingSeqGate {
             // EX-19 C 类收口留痕：内部断言（生产调用点全部传 NR/AS/TK/HO 字面量，编程错误 fail-fast，非用户输入路径），保留 IAE
             throw new IllegalArgumentException("未知业务号类型：" + type);
         }
-        String day = LocalDate.now().format(DAY);
+        // 技术日切取北京钟面（时区纪律专项 B 类）：键与单号日期段不随容器时区漂移
+        String day = LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DAY);
         String key = KEY_PREFIX + type + ":" + day;
         // Redis INCR 原子自增取号：多实例并发不重号（单命令原子，禁 Lua/额外锁——计划 GC15）
         Long seq = redisTemplate.opsForValue().increment(key);

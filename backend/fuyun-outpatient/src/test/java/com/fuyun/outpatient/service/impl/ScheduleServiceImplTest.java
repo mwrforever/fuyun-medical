@@ -48,6 +48,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -81,6 +82,9 @@ class ScheduleServiceImplTest {
 
     /** 与主类 DEFAULT_CHANNEL_QUOTA 同源（渠道配额 JSON 缺省值；私有常量不外引，字面量双锚防漂移） */
     private static final String DEFAULT_CHANNEL_QUOTA_JSON = "{\"PORTAL\":60,\"WINDOW\":30,\"KIOSK\":5,\"RESERVED\":5}";
+
+    /** 北京钟面（时区纪律专项 A/B 类）：恢复时效造数与池键 TTL 锚期望同生产业务日/技术日切口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private ScheduleTemplateMapper scheduleTemplateMapper;
@@ -260,11 +264,12 @@ class ScheduleServiceImplTest {
             verify(poolRedisGate, times(2)).prime(poolIdCaptor.capture(), totalCaptor.capture(), ttlCaptor.capture());
             assertThat(poolIdCaptor.getAllValues()).containsExactly(201L, 202L);
             assertThat(totalCaptor.getAllValues()).containsExactly(4L, 4L);
-            // TTL 与「各自排班日次日 02:00」同刻（时钟取样误差放宽到 60s）：周一/周二两池键分别锚定
+            // TTL 与「各自排班日次日 02:00」同刻（时钟取样误差放宽到 60s）：周一/周二两池键分别锚定；
+            // 期望起算取北京钟面（时区纪律专项 B 类），与生产 TTL 锚同源口径
             Duration expectedMonday = Duration.between(
-                    LocalDateTime.now(), LocalDate.of(2026, 9, 22).atTime(2, 0));
+                    LocalDateTime.now(BEIJING_TZ), LocalDate.of(2026, 9, 22).atTime(2, 0));
             Duration expectedTuesday = Duration.between(
-                    LocalDateTime.now(), LocalDate.of(2026, 9, 23).atTime(2, 0));
+                    LocalDateTime.now(BEIJING_TZ), LocalDate.of(2026, 9, 23).atTime(2, 0));
             assertThat(Math.abs(ttlCaptor
                             .getAllValues()
                             .get(0)
@@ -433,8 +438,11 @@ class ScheduleServiceImplTest {
     @Test
     @DisplayName("resume：sched_date=明日恢复 NORMAL+池 ACTIVE 且不发事件；sched_date=昨日过期排班拒 OP-1004")
     void resumeRestoresPoolsOnlyWhenDateInFuture() {
-        Schedule future = schedule(21L, LocalDate.now().plusDays(1), ScheduleStatus.STOPPED);
-        Schedule past = schedule(22L, LocalDate.now().minusDays(1), ScheduleStatus.STOPPED);
+        // 造数必然同步北京钟面（时区纪律专项 A 类）：恢复的过期判定已收敛北京钟面业务日，
+        // 按容器日期造「明日/昨日」在非北京时区 JVM 下漂移（JVM 日期晚于北京侧时昨日单误判
+        // 当日放行，OP-1004 断言即碎）
+        Schedule future = schedule(21L, LocalDate.now(BEIJING_TZ).plusDays(1), ScheduleStatus.STOPPED);
+        Schedule past = schedule(22L, LocalDate.now(BEIJING_TZ).minusDays(1), ScheduleStatus.STOPPED);
         when(scheduleMapper.selectById(21L)).thenReturn(future);
         when(scheduleMapper.selectById(22L)).thenReturn(past);
         when(scheduleMapper.casStatus(eq(21L), eq("STOPPED"), eq("NORMAL"), eq("admin001")))
@@ -459,8 +467,10 @@ class ScheduleServiceImplTest {
     @Test
     @DisplayName("resume：CAS 0 行（排班非 STOPPED 态）抛 OP-1004——池行恢复零触达")
     void resumeRejectsWhenScheduleNotStopped() {
+        // 造数同步北京钟面（时区纪律专项 A 类，同 resumeRestoresPoolsOnlyWhenDateInFuture——
+        // 过期判定基准随业务日收敛，非 STOPPED 态用例的「未来排班」同口径构造）
         when(scheduleMapper.selectById(23L))
-                .thenReturn(schedule(23L, LocalDate.now().plusDays(1), ScheduleStatus.NORMAL));
+                .thenReturn(schedule(23L, LocalDate.now(BEIJING_TZ).plusDays(1), ScheduleStatus.NORMAL));
         when(scheduleMapper.casStatus(eq(23L), eq("STOPPED"), eq("NORMAL"), eq("admin001")))
                 .thenReturn(0);
 
@@ -486,8 +496,9 @@ class ScheduleServiceImplTest {
         // R1 快路径同步：池键 INCRBY 5、封顶锚=新总量 9、TTL 续期至排班次日 02:00
         ArgumentCaptor<Duration> refreshTtlCaptor = ArgumentCaptor.forClass(Duration.class);
         verify(poolRedisGate).increase(eq(31L), eq(5L), eq(9L), refreshTtlCaptor.capture());
-        Duration expectedTtl =
-                Duration.between(LocalDateTime.now(), LocalDate.of(2026, 9, 24).atTime(2, 0));
+        // 期望起算取北京钟面（时区纪律专项 B 类），与生产 TTL 锚同源口径
+        Duration expectedTtl = Duration.between(
+                LocalDateTime.now(BEIJING_TZ), LocalDate.of(2026, 9, 24).atTime(2, 0));
         assertThat(Math.abs(refreshTtlCaptor.getValue().minus(expectedTtl).toSeconds()))
                 .isLessThan(60);
         // 上限外（count=51）与零数量（count=0）：入参显式格式校验拒绝，池行与池键零触达

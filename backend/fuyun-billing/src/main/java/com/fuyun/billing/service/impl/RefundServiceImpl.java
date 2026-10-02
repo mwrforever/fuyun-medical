@@ -29,6 +29,7 @@ import com.fuyun.billing.mapper.SettlementMapper;
 import com.fuyun.billing.properties.BillingRefundProperties;
 import com.fuyun.billing.record.FeeRefundedFenRow;
 import com.fuyun.billing.service.IRefundService;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -232,8 +233,9 @@ public class RefundServiceImpl extends ServiceImpl<RefundRequestMapper, RefundRe
             //   lineAmounts 与请求行序一一对应，供 link 负向台账逐行落 refund_amount 明细）
             lineAmounts.add(lineAmount);
             amount += lineAmount;
-            // 跨日判定：任一费用行计费日早于今日 → 全单按跨日分级（保守须审批）
-            if (!LocalDate.now().equals(fee.getBillingDate())) {
+            // 跨日判定：任一费用行计费日早于北京今日 → 全单按跨日分级（保守须审批）；
+            // 今日取北京钟面（时区纪律专项 A 类），禁依赖容器默认时区
+            if (!LocalDate.now(TimeConstants.HEALTHCARE_TZ).equals(fee.getBillingDate())) {
                 crossDay = true;
             }
         }

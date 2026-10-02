@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.billing.constants.BillingMessagingConstants;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.api.ConsumerQueueSpec;
@@ -467,23 +468,29 @@ class OutpatientRefundRollbackIT extends FuyunStackITBase {
                 TEMPLATE_ID,
                 DEPT_CODE);
         ObjectNode generate = objectMapper.createObjectNode();
-        generate.put("endDate", LocalDate.now().plusDays(1).toString()).put("days", 2);
+        // 两日放号窗口按北京钟面推导（裸 now() 在 CI UTC 深夜窗整体前移一日：明日池错位成
+        // 北京「当日」，portal 免登录退号撞当日时限 OP-1010 假红——生产当日判定已收敛 HEALTHCARE_TZ）
+        generate.put(
+                        "endDate",
+                        LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1).toString())
+                .put("days", 2);
         assertThat(postJson("/api/v1/outpatient/schedules/generate", adminToken, generate)
                         .asInt())
                 .as("两日窗口×单模板应生成两行排班")
                 .isEqualTo(2);
+        // 当日/明日池定位同按北京钟面（与放号窗口同源；测试库会话时区为 UTC，禁 CURRENT_DATE/裸 now()）
         todayPoolId = jdbcTemplate.queryForObject(
                 "SELECT p.id FROM outpatient.appt_number_pool p"
                         + " JOIN outpatient.schedule s ON s.id = p.schedule_id"
                         + " WHERE s.sched_date = ? AND p.deleted = 0 AND s.deleted = 0 ORDER BY p.id LIMIT 1",
                 Long.class,
-                LocalDate.now());
+                LocalDate.now(TimeConstants.HEALTHCARE_TZ));
         tomorrowPoolId = jdbcTemplate.queryForObject(
                 "SELECT p.id FROM outpatient.appt_number_pool p"
                         + " JOIN outpatient.schedule s ON s.id = p.schedule_id"
                         + " WHERE s.sched_date = ? AND p.deleted = 0 AND s.deleted = 0 ORDER BY p.id LIMIT 1",
                 Long.class,
-                LocalDate.now().plusDays(1));
+                LocalDate.now(TimeConstants.HEALTHCARE_TZ).plusDays(1));
         jdbcTemplate.update(
                 "INSERT INTO patient.patient (patient_id, name, sex, status, register_channel)"
                         + " VALUES (?, ?, '1', 'NORMAL', 'WINDOW')",

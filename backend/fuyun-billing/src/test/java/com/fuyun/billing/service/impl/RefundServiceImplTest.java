@@ -48,9 +48,14 @@ import com.fuyun.patient.api.CardAccountLedger;
 import com.fuyun.patient.api.CardTxnRecord;
 import com.fuyun.patient.api.CardTxnType;
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -98,6 +103,9 @@ class RefundServiceImplTest {
 
     /** 二级审批人（连批守卫另一人：与申请人/一级审批人三方互异，财务/医保办侧） */
     private static final String SECOND_APPROVER = "finance-1";
+
+    /** 北京钟面（时区纪律专项 A 类）：当日退造数与跨日判定站点（北京今日）同源的推导口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private RefundRequestMapper refundRequestMapper;
@@ -220,7 +228,10 @@ class RefundServiceImplTest {
     void sameDaySmallUnoccupiedRefundAutoApproves() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
-        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        // 当日退造数必然同步北京钟面（90c88f5 先例、anchor-pattern 必然同步条款）：跨日判定站点已取
+        // 北京今日，裸 now() 在非北京时区 JVM 深夜窗（北京 00:00–08:00）取容器昨日 → 当日更正误判
+        // 跨日，本用例 DAY_CORRECTION/免审直退断言面即碎（CI UTC 下显形，本地上海全绿掩盖）
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(BEIJING_TZ), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
         // A.4.3-16：link 负向台账一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐行 insert 通道已下线
@@ -291,6 +302,53 @@ class RefundServiceImplTest {
         assertThat(row.getAutoApproved()).isFalse();
         assertThat(row.getRefundType()).isEqualTo(RefundType.CROSS_DAY);
         verifyNoInteractions(events); // 非免审直退不发 refund.approved（事件归 approve 发布点）
+    }
+
+    // ===== 时区纪律专项 A 类：退费跨日判定北京钟面锚 =====
+
+    @Test
+    @DisplayName("跨日判定时区锚：默认时区与北京日期分歧时，北京当日费用行仍判当日更正（DAY_CORRECTION 免审直退）")
+    void applyJudgesCrossDayByBeijingClockUnderDivergedDefaultZone() {
+        OperatorContextHolder.set(APPLICANT);
+        // 期望按北京钟面推导（禁裸 now()）：费用行计费日=北京今日 → 业务语义为「当日更正」退费
+        ZoneId beijing = ZoneId.of("Asia/Shanghai");
+        when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 3000L));
+        stubLockByIdsReturning(fee(1L, 3000L, 3000L, LocalDate.now(beijing), ExecOccupyStatus.NONE));
+        stubInsertWithId100AndNoHistory();
+
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日期必然分歧的默认时区：-12h/+14h 二选一（两分歧窗北京钟面 [00:00,20:00)
+            // 与 [18:00,24:00) 并集覆盖全天）——BUG-03 先例 setDefault(UTC) 每日 16h 重合窗内对缺陷
+            // 代码也绿，本构造任意时刻可复现「非北京时区 JVM 取错医疗日」。时区 ID 必须取偏移字面量
+            // （如 -12:00）：java.time 解析不了任意自定义 ID，否则 LocalDate.now() 抛 ZoneRulesException
+            Instant now = Instant.now();
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(beijing)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+                service.apply(new RefundApplyRequest(900L, List.of(new RefundLine(1L, BigDecimal.ONE)), "当日多收费更正"));
+            }
+
+            // 断言面=服务端跨日判定的业务可见结果：北京当日 → DAY_CORRECTION（≤ 免审阈值）落库即
+            // APPROVED；缺陷实现（裸 LocalDate.now()）在分歧默认时区下取错「今日」误判跨日 →
+            // CROSS_DAY 进待审批，分级与状态断言即红
+            ArgumentCaptor<RefundRequest> anchorCaptor = ArgumentCaptor.forClass(RefundRequest.class);
+            verify(refundRequestMapper).insert(anchorCaptor.capture());
+            assertThat(anchorCaptor.getValue().getRefundType()).isEqualTo(RefundType.DAY_CORRECTION);
+            assertThat(anchorCaptor.getValue().getStatus()).isEqualTo(RefundStatus.APPROVED);
+            assertThat(anchorCaptor.getValue().getAutoApproved()).isTrue();
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test
@@ -519,7 +577,9 @@ class RefundServiceImplTest {
     void sameDayAmountAtExemptThresholdStillAutoApproves() {
         OperatorContextHolder.set(APPLICANT);
         when(settlementMapper.selectById(900L)).thenReturn(settlement(900L, 50000L));
-        stubLockByIdsReturning(fee(1L, 50000L, 50000L, LocalDate.now(), ExecOccupyStatus.NONE));
+        // 免审边界造数同款必然同步北京钟面（同 sameDaySmallUnoccupiedRefundAutoApproves）：
+        // EXEMPT 仅当 DAY_CORRECTION，裸 now() 深夜窗误判跨日 → 免审边界断言面即碎
+        stubLockByIdsReturning(fee(1L, 50000L, 50000L, LocalDate.now(BEIJING_TZ), ExecOccupyStatus.NONE));
         stubInsertWithId100AndNoHistory();
 
         try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {

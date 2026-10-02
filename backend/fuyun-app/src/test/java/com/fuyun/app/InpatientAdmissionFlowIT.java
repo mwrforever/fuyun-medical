@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
@@ -94,9 +95,13 @@ class InpatientAdmissionFlowIT extends FuyunStackITBase {
 
     private static final String BED_NO = "IT9-01";
 
-    /** CF-3 当日首位 I 型 visit_id 冻结形态（容器独占 Redis 流水键自 1 起签发；与生成器同取默认时区日期） */
+    /**
+     * CF-3 当日首位 I 型 visit_id 冻结形态（容器独占 Redis 流水键自 1 起签发）。日期段按北京钟面
+     * 推导：与生成器 InpatientSeqGate 日桶（时区纪律专项 B 类已收敛 HEALTHCARE_TZ）同源——裸
+     * {@code LocalDate.now()} 在 CI UTC 深夜窗（北京 00:00-08:00）与生成器错日分叉致假红。
+     */
     private static final String EXPECTED_VISIT_ID =
-            "I" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
+            "I" + LocalDate.now(TimeConstants.HEALTHCARE_TZ).format(DateTimeFormatter.BASIC_ISO_DATE) + "00001";
 
     /** MQ 链路等待上限：覆盖 AFTER_COMMIT 发布与捕获队列投递（既有 IT 同款 10s 量级） */
     private static final Duration LINK_TIMEOUT = Duration.ofSeconds(10);
@@ -275,7 +280,9 @@ class InpatientAdmissionFlowIT extends FuyunStackITBase {
         ObjectNode schedule = objectMapper.createObjectNode();
         schedule.put("targetWardId", WARD_ID)
                 .put("targetBedId", BED_ID)
-                .put("expectDate", LocalDate.now().toString());
+                // 期望入住日按北京钟面取当日（时区纪律专项 A 类先例 InpatientDailyDecomposeIT 同款；
+                // 裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
         JsonNode vo =
                 toNode(postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", adminToken, schedule)
                         .getBody());

@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -24,6 +25,9 @@ import org.springframework.data.redis.core.ValueOperations;
 @ExtendWith(MockitoExtension.class)
 class WardSeqGateTest {
 
+    /** 北京钟面（时区纪律专项 B 类）：号段日期期望与生产技术日切同源口径，禁裸 now() */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
+
     @Mock
     private StringRedisTemplate redisTemplate;
 
@@ -40,7 +44,7 @@ class WardSeqGateTest {
     @Test
     @DisplayName("nextCallNo：fy:ward:seq:CALL:{yyyyMMdd} INCR 取号 → CALL+日期+五位序号，并续 48h TTL")
     void nextCallNoIncrementsDailyKeyAndFormatsCallNo() {
-        String day = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        String day = LocalDate.now(BEIJING_TZ).format(DateTimeFormatter.BASIC_ISO_DATE);
         String key = "fy:ward:seq:CALL:" + day;
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(key)).thenReturn(7L);
@@ -55,7 +59,7 @@ class WardSeqGateTest {
     @Test
     @DisplayName("nextArchiveNo/nextRecordNo：ARCH/CCR 同形态独立通道（ward 域键空间隔离）")
     void archiveAndRecordChannelsUseOwnKeys() {
-        String day = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
+        String day = LocalDate.now(BEIJING_TZ).format(DateTimeFormatter.BASIC_ISO_DATE);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment("fy:ward:seq:ARCH:" + day)).thenReturn(1L);
         when(valueOperations.increment("fy:ward:seq:CCR:" + day)).thenReturn(99999L);

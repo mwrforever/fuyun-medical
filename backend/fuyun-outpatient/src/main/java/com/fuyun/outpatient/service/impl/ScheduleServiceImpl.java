@@ -3,6 +3,7 @@ package com.fuyun.outpatient.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.toolkit.Db;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
@@ -402,8 +403,9 @@ public class ScheduleServiceImpl implements IScheduleService {
     @Transactional
     public void resume(long scheduleId) {
         Schedule schedule = scheduleMapper.selectById(scheduleId);
-        // 过期排班不可恢复（sched_date 早于当日）：号源已无业务价值，恢复面仅对未来排班开放
-        if (schedule == null || schedule.getSchedDate().isBefore(LocalDate.now())) {
+        // 过期排班不可恢复（sched_date 早于当日）：号源已无业务价值，恢复面仅对未来排班开放；
+        // 当日判定取北京钟面（时区纪律专项 A 类），业务日基准不随容器时区漂移
+        if (schedule == null || schedule.getSchedDate().isBefore(LocalDate.now(TimeConstants.HEALTHCARE_TZ))) {
             throw new BizException(
                     OutpatientErrorCode.SCHEDULE_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
@@ -590,6 +592,9 @@ public class ScheduleServiceImpl implements IScheduleService {
      * @return 距锚点时刻的时长（放号窗口面向未来，恒为正）
      */
     private Duration poolKeyTtl(LocalDate schedDate) {
-        return Duration.between(LocalDateTime.now(), schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
+        // TTL 锚起算取北京钟面（时区纪律专项 B 类）：排班日次日 02:00 对账锚不随容器时区漂移
+        return Duration.between(
+                LocalDateTime.now(TimeConstants.HEALTHCARE_TZ),
+                schedDate.plusDays(1).atTime(POOL_KEY_TTL_ANCHOR));
     }
 }

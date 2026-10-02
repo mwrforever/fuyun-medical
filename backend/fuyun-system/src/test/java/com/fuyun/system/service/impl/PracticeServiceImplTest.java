@@ -21,9 +21,14 @@ import com.fuyun.system.internal.PracticeChangedEvent;
 import com.fuyun.system.mapper.PracticeGrantMapper;
 import com.fuyun.system.vo.PracticeCheckResponse;
 import com.fuyun.system.vo.PracticeGrantVO;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
+import java.util.SimpleTimeZone;
+import java.util.TimeZone;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -42,7 +47,8 @@ import org.springframework.http.HttpStatus;
 /**
  * 执业授权校验与管理服务单测（M01 FU-M01-04，V704 practice_grant 真实化）：check 三态语义
  * （生效放行/过期/无记录，读侧派生无定时任务）、授权登记（唯一索引冲突 409 + practice.changed
- * 事务内发布）、停权 CAS（0 行 SYS-1021 + SUSPENDED 事件）、清单读侧派生 EXPIRED 不回写。
+ * 事务内发布）、停权 CAS（0 行 SYS-1021 + SUSPENDED 事件）、清单读侧派生 EXPIRED 不回写、
+ * check 缺省时钟分歧时区锚（时区纪律专项 A 类，锚定模式确定性红/绿）。
  * AFTER_COMMIT 的 MQ 发送时机归 SystemEventPublisherTest 与集成测试验证。
  */
 @ExtendWith(MockitoExtension.class)
@@ -54,6 +60,9 @@ class PracticeServiceImplTest {
     private static final String GRANT_TYPE = "PRESCRIPTION";
 
     private static final String OPERATOR = "admin001";
+
+    /** 北京钟面（医疗日界权威时区）：分歧时区锚与必然同步期望面的推导源（三域先例形态） */
+    private static final ZoneId BEIJING_TZ = ZoneId.of("Asia/Shanghai");
 
     @Mock
     private PracticeGrantMapper practiceGrantMapper;
@@ -174,9 +183,53 @@ class PracticeServiceImplTest {
 
         service.check(new PracticeCheckRequest(EMPLOYEE_ID, GRANT_TYPE, null));
 
-        // 查询日期取服务端当日（有效期含当日语义：valid_from <= 今日 <= valid_to）
+        // 查询日期取服务端北京钟面当日（有效期含当日语义：valid_from <= 今日 <= valid_to）：
+        // 服务端医疗日来源已收敛 HEALTHCARE_TZ，期望面同源推导（必然同步——反证实证：保留裸
+        // now() 期望在 -12h 分歧钟面下对修复后实现必红）
         verify(practiceGrantMapper).selectEffective(eq(EMPLOYEE_ID), eq(GRANT_TYPE), checkDateCaptor.capture());
-        assertThat(checkDateCaptor.getValue()).isEqualTo(LocalDate.now());
+        assertThat(checkDateCaptor.getValue()).isEqualTo(LocalDate.now(BEIJING_TZ));
+    }
+
+    @Test
+    @DisplayName("check 缺省时点分歧时区锚（时区纪律专项 A 类）：默认时区钟面与北京不同日时，缺省校验日期与回显时刻按北京钟面取值")
+    void checkDefaultsCheckClockToBeijingUnderDivergedDefaultZone() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            // 构造与北京当前日历日期必然分歧的默认时区：-12h/+14h 固定偏移二选一（两偏移对北京
+            // 的日期分歧窗并集覆盖全天，引理见锚定模式）——任意时刻可复现「非北京时区 JVM 按
+            // 容器日期取错医疗日」；时区 ID 必须取偏移字面量（自定义 ID 使 LocalDate.now()
+            // 抛 ZoneRulesException，Task 2 实证）
+            Instant now = Instant.now();
+            int divergeMillis = -12 * 3600_000;
+            if (now.atZone(BEIJING_TZ)
+                    .toLocalDate()
+                    .equals(now.atZone(ZoneOffset.ofTotalSeconds(divergeMillis / 1000))
+                            .toLocalDate())) {
+                divergeMillis = 14 * 3600_000; // -12h 与北京同日时改用 +14h（引理保证必分歧）
+            }
+            // 期望按北京钟面锁定推导（禁裸 now() 当期望源）
+            LocalDate expectedToday = LocalDate.now(BEIJING_TZ);
+            when(practiceGrantMapper.selectEffective(eq(EMPLOYEE_ID), eq(GRANT_TYPE), any()))
+                    .thenReturn(grant(null));
+            // setDefault 窗口最小化（锚定模式）：stub 先行 → setDefault → 调用捕获 → finally 恢复
+            TimeZone.setDefault(new SimpleTimeZone(
+                    divergeMillis,
+                    ZoneOffset.ofTotalSeconds(divergeMillis / 1000).getId()));
+
+            PracticeCheckResponse response = service.check(new PracticeCheckRequest(EMPLOYEE_ID, GRANT_TYPE, null));
+
+            // 服务端计算的校验日期（selectEffective 入参）按北京钟面取当日：缺陷实现（裸 now()
+            // 取容器日期）在分歧时区下必红；若走 reason 二态断言，-12h 窗容器昨日仍命中
+            // valid_from<=d<=valid_to 有效窗（PracticeGrantMapper SQL），对缺陷代码不红，故锚
+            // 服务端日期本体（确定性红/绿，锚定模式第 1 条）
+            verify(practiceGrantMapper).selectEffective(eq(EMPLOYEE_ID), eq(GRANT_TYPE), checkDateCaptor.capture());
+            assertThat(checkDateCaptor.getValue()).isEqualTo(expectedToday);
+            // 缺省回显时刻同源北京钟面：偏移随断言值钉死 +08:00（缺陷实现取容器偏移
+            // -12:00/+14:00 必红，照 BUG-03 先例偏移钉死口径）
+            assertThat(response.checkTime().getOffset()).isEqualTo(ZoneOffset.ofHours(8));
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 
     @Test
@@ -247,7 +300,10 @@ class PracticeServiceImplTest {
     @Test
     @DisplayName("员工授权清单：过期生效行读侧派生 EXPIRED 展示、停权行原态直出，均不回写库")
     void listByEmployeeDerivesExpiredDisplayWithoutWriteback() {
-        PracticeGrant expired = grant(LocalDate.now().minusDays(1));
+        // 过期造数按北京钟面推导（必然同步）：valid_to 与服务端展示基准日（HEALTHCARE_TZ 当日）
+        // 经 isBefore 耦合——裸 now() 造数在容器日期=北京次日的分歧钟面下 valid_to=北京今日会被
+        // 新基准日判未过期（EFFECTIVE），期望 EXPIRED 即红（反证实证：+18h 模拟该分歧向必红）
+        PracticeGrant expired = grant(LocalDate.now(BEIJING_TZ).minusDays(1));
         PracticeGrant longTerm = grant(null);
         PracticeGrant suspended = grant(null);
         suspended.setStatus(PracticeGrantStatus.SUSPENDED);
