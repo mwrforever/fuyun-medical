@@ -29,5 +29,13 @@ export const router = createRouter({
       // 大屏现场展示面：病区经 query.wardId 书签化（wardId 路由 query 可直接部署到病区大屏）
       meta: { public: true },
     },
+    {
+      path: '/nurse-board',
+      name: 'nurse-board',
+      // 路由组件全懒加载（web B.3-2 红线），禁静态导入
+      component: () => import('@/views/nurse/NurseBoardView.vue'),
+      // 大屏现场展示面：病区经 query.wardId 书签化（病区大屏零交互直部署，/dashboard 同惯例）
+      meta: { public: true },
+    },
   ],
 });
