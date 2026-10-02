@@ -22,7 +22,9 @@ import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
 import com.fuyun.nursing.service.impl.OrderExecutionGenerateServiceImpl;
 import com.fuyun.nursing.service.impl.OrderExecutionOperateServiceImpl;
 import com.fuyun.nursing.service.impl.PdaServiceImpl;
+import com.fuyun.nursing.service.impl.RoutineTaskGeneratorImpl;
 import com.fuyun.nursing.service.impl.ShiftHandoverServiceImpl;
+import com.fuyun.nursing.service.impl.TaskOverdueServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
 import com.fuyun.nursing.service.impl.VitalSignServiceImpl;
 import com.fuyun.nursing.service.impl.WardMetaServiceImpl;
@@ -46,6 +48,7 @@ import org.springframework.context.annotation.Import;
  * 执行单操作域服务（五环节状态链+工作台/占用/追溯+双路回签，回签端口经构造器注入解析
  * inpatient OrderExecutionConfirmPort Bean）与执行单控制器。P2 PR-3 Task 6 追加：输液闭环
  * 域服务（start 的 INFUSION 分支挂接/告警升级挂单三路）与输液控制器（拔针+在途输注清单）。
+ * P2 PR-3 Task 9 追加：任务逾期扫描升级服务（tick 段①②动作体）与常规模板批量生成器。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -65,6 +68,8 @@ import org.springframework.context.annotation.Import;
     PdaServiceImpl.class,
     OrderExecutionOperateServiceImpl.class,
     InfusionServiceImpl.class,
+    TaskOverdueServiceImpl.class,
+    RoutineTaskGeneratorImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,

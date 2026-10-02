@@ -50,6 +50,9 @@ public final class NursingMessagingConstants {
     /** 延迟档位到期转发路由键（delay.task-overdue 到期经 DLX 回投 fy.topic 的目标键；非事件不入 event_registry，豁免注记见类注释） */
     public static final String ROUTING_TASK_OVERDUE_TICK = "nursing.task-overdue.tick";
 
+    /** 任务逾期延迟档位队列名（delay.task-overdue；Task 9 自续期投递目标，与 NursingMessagingConfig 档位声明同源） */
+    public static final String DELAY_QUEUE_TASK_OVERDUE = "delay.task-overdue";
+
     /** 逾期 tick 消费队列名（Task 9 tick 监听器绑定 fy.topic 路由键 nursing.task-overdue.tick 的消费队列） */
     public static final String QUEUE_TASK_OVERDUE_TICK = "q.nursing.task-overdue.tick";
 

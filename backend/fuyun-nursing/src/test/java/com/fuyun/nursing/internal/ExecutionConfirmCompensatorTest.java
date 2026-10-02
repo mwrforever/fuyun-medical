@@ -22,6 +22,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -74,14 +75,20 @@ class ExecutionConfirmCompensatorTest {
     @DisplayName("补偿成功：回签端口调用+COMPENSATING→CONFIRMED 置位（SYSTEM 操作者审计）")
     void successfulCompensationConfirmsStatus() {
         compensator = new ExecutionConfirmCompensator(executionMapper, confirmPort, txTemplate());
-        when(executionMapper.selectList(any())).thenReturn(List.of(compensatingRow()));
+        OrderExecution candidate = compensatingRow();
+        when(executionMapper.selectList(any())).thenReturn(List.of(candidate));
         when(executionMapper.casMarkConfirmStatus(eq(EXEC), eq("COMPENSATING"), eq("CONFIRMED"), eq(SYSTEM)))
                 .thenReturn(1);
 
         assertThat(compensator.compensate()).isEqualTo(1);
 
         // 回签请求自执行单行回读：executorId/executedAt 承载、routeCheckResult null 透传（不可复原降级）
-        verify(confirmPort).executeConfirm(eq(PLAN_NO), any(ExecuteConfirmRequest.class));
+        // ——captor 精确断言（Task 5 minor-1 回补：三字段逐位钉死，null 透传不再仅靠 any() 放行）
+        ArgumentCaptor<ExecuteConfirmRequest> confirmCaptor = ArgumentCaptor.forClass(ExecuteConfirmRequest.class);
+        verify(confirmPort).executeConfirm(eq(PLAN_NO), confirmCaptor.capture());
+        assertThat(confirmCaptor.getValue().executorId()).isEqualTo(9L);
+        assertThat(confirmCaptor.getValue().executedAt()).isEqualTo(candidate.getFinishedAt());
+        assertThat(confirmCaptor.getValue().routeCheckResult()).isNull();
         verify(executionMapper).casMarkConfirmStatus(eq(EXEC), eq("COMPENSATING"), eq("CONFIRMED"), eq(SYSTEM));
     }
 

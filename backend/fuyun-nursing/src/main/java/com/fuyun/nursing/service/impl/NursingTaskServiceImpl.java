@@ -10,6 +10,7 @@ import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.NursingTaskCancelRequest;
 import com.fuyun.nursing.dto.NursingTaskCreateRequest;
+import com.fuyun.nursing.dto.TaskClaimRequest;
 import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskPriority;
 import com.fuyun.nursing.enums.TaskSource;
@@ -42,7 +43,8 @@ import org.springframework.transaction.annotation.Transactional;
  * （Spec :127 动作式逾期 + 偏差 3）：list/inFlightByVisit 逐行 casMarkOverdue、inFlightByVisits
  * 批量 casMarkOverdueBatch（overdue_flag=false 谓词仅首次递增，批量形态逐行等价），
  * P1 不发布 nursing.task.overdue。
- * 业务时间服务器时间（GC25）；IN_PROGRESS 为 P1 声明态（无迁移入口，P2 任务工作台）。
+ * 业务时间服务器时间（GC25）；P2 PR-3 Task 9 落认领迁移入口（PENDING → IN_PROGRESS）与
+ * 完成扩参关联执行单回写（source_ref 定格，空值零覆盖）。
  * 线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
@@ -161,19 +163,24 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
 
     /**
      * 护理任务完成（PENDING/IN_PROGRESS → COMPLETED）：@Update CAS 单语句（GC26，0 行 →
-     * NS-1011）→ 回读行数据 → 发布 nursing.task.completed（status=COMPLETED）。
+     * NS-1011）→ relatedExecutionNo 非空随 CAS 定格 source_ref（关联执行单引用回写，空值
+     * CASE 分支保持原引用零覆盖）→ 回读行数据 → 发布 nursing.task.completed（status=COMPLETED）。
      *
-     * @param taskNo 任务业务号，非空；来源：路径参数
+     * @param taskNo             任务业务号，非空；来源：路径参数
+     * @param relatedExecutionNo 关联执行单号（完成时回写 source_ref 的单据引用），可空；来源：
+     *                           工作站/PDA 完成表单（执行单驱动的任务完成时携带）
      * @return 完成后任务出参，非空
      * @throws BizException NS-1011（409 任务不存在或已终态，禁止完成）/
      *                      NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
      */
     @Override
     @Transactional
-    public NursingTaskVO complete(String taskNo) {
+    public NursingTaskVO complete(String taskNo, String relatedExecutionNo) {
+        // 空白归一为 null（CASE 分支以 IS NULL 判定——空白串不做覆盖语义）
+        String executionRef = relatedExecutionNo == null || relatedExecutionNo.isBlank() ? null : relatedExecutionNo;
         String operator = operator();
-        // 数据库写操作：完成 CAS（在途两态可完成；并发重复完成由行数判定兜底）
-        if (baseMapper.casComplete(taskNo, operator) == 0) {
+        // 数据库写操作：完成 CAS（在途两态可完成；并发重复完成由行数判定兜底；关联执行单引用随 CAS 定格）
+        if (baseMapper.casComplete(taskNo, executionRef, operator) == 0) {
             throw new BizException(
                     NursingErrorCode.TASK_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "护理任务不存在或已终态，禁止完成：taskNo=" + taskNo);
         }
@@ -182,7 +189,49 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
         events.publishEvent(new NursingDomainEvent(
                 NursingMessagingConstants.EVENT_TASK_COMPLETED,
                 new TaskCompletedPayload(taskNo, TaskStatus.COMPLETED.getCode())));
-        log.info("护理任务完成：taskNo={}，visitId={}，operator={}", taskNo, row.getVisitId(), operator);
+        log.info(
+                "护理任务完成：taskNo={}，visitId={}，relatedExecutionNo={}，operator={}",
+                taskNo,
+                row.getVisitId(),
+                executionRef,
+                operator);
+        return NursingTaskVO.from(row);
+    }
+
+    /**
+     * 护理任务认领（PENDING → IN_PROGRESS，P2 PR-3 Task 9）：assigneeId 强制非空（NS-1019）
+     * → @Update CAS 单语句（仅 PENDING 可认领，0 行 → NS-1011；IN_PROGRESS/终态重复认领均拒）
+     * → 回读行数据。在途态内部迁移非终态——不发任务事件。
+     *
+     * @param taskNo 任务业务号，非空；来源：路径参数
+     * @param req    认领入参（assigneeId 必填），非空；来源：任务工作台认领动作
+     * @return 认领后任务出参（IN_PROGRESS 态），非空
+     * @throws BizException NS-1019（400 assigneeId 为空）/ NS-1011（409 任务不存在、非 PENDING
+     *                      或已被逻辑删，禁止认领）/ NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
+     */
+    @Override
+    @Transactional
+    public NursingTaskVO claim(String taskNo, TaskClaimRequest req) {
+        // 守卫链①：认领人强制非空（服务面校验覆盖模块内直调场景，Web 层由 @NotNull 兜底）
+        if (req.assigneeId() == null) {
+            throw new BizException(
+                    NursingErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "认领护士员工ID不能为空：taskNo=" + taskNo);
+        }
+        String operator = operator();
+        // 数据库写操作：认领 CAS（仅 PENDING 可认领；assignee 以文本落 assigned_nurse；并发重复认领由行数判定兜底）
+        if (baseMapper.casClaim(taskNo, req.assigneeId().toString(), operator) == 0) {
+            throw new BizException(
+                    NursingErrorCode.TASK_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "护理任务不存在或非待执行态，禁止认领：taskNo=" + taskNo);
+        }
+        NursingTask row = requireByTaskNo(taskNo);
+        log.info(
+                "护理任务认领：taskNo={}，visitId={}，assigneeId={}，operator={}",
+                taskNo,
+                row.getVisitId(),
+                req.assigneeId(),
+                operator);
         return NursingTaskVO.from(row);
     }
 

@@ -7,10 +7,14 @@ import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
 import com.fuyun.integration.api.DelayQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
+import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import java.time.Duration;
 import java.util.Arrays;
+import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.Declarables;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,7 +33,9 @@ import org.springframework.context.annotation.Import;
  * SUBSCRIBED_EVENT_TYPES id 28 项）与回签补偿扫描组件（ExecutionConfirmCompensator——
  * tick 接线归 Task 9，本任务仅注册 Bean 供调用）。P2 PR-3 Task 6 追加：IoT 告警执行单
  * 挂接监听器（IotAlarmExecutionListener——iot.alarm.triggered/escalated/closed 三路，
- * 队列声明随既有 SUBSCRIBED_EVENT_TYPES id 74–76 项）。
+ * 队列声明随既有 SUBSCRIBED_EVENT_TYPES id 74–76 项）。P2 PR-3 Task 9 追加：任务逾期 tick
+ * 消费链三件（TaskOverdueTickListener/TaskOverdueTickSender/TaskOverdueTickSeeder——tick
+ * 消费队列自声明见 taskOverdueTickQueue，ExecutionConfirmCompensator 接线归监听器）。
  */
 @Configuration
 @Import({
@@ -41,7 +47,10 @@ import org.springframework.context.annotation.Import;
     InpatientVisitEventListener.class,
     DispenseSignoffListener.class,
     ExecutionConfirmCompensator.class,
-    IotAlarmExecutionListener.class
+    IotAlarmExecutionListener.class,
+    TaskOverdueTickListener.class,
+    TaskOverdueTickSender.class,
+    TaskOverdueTickSeeder.class
 })
 public class NursingMessagingConfig {
 
@@ -94,7 +103,9 @@ public class NursingMessagingConfig {
      * 任务逾期延迟档位（05-nursing Spec §4 / V805 头注：delay.task-overdue；单档位、TTL=60 秒）：
      * 到期经 DLX 以 nursing.task-overdue.tick 路由键回 fy.topic，由 Task 9 tick 监听器消费驱动
      * 逾期扫描与升级广播（nursing.task.overdue）。tick 键非事件不入 event_registry（先登记后订阅
-     * 红线豁免口径见 NursingMessagingConstants 类注释）；声明幂等（RabbitAdmin）。
+     * 红线豁免口径见 NursingMessagingConstants 类注释）；declareDelayQueue 无先登记校验
+     * （A.5-7 延迟档位语义——QueueGovernorImpl 实测：仅命名与 TTL 参数校验，不触 event_registry）；
+     * 声明幂等（RabbitAdmin）。
      *
      * @param governance 消息治理构件，非空
      * @return 声明集合（延迟队列 + 绑定）
@@ -102,6 +113,34 @@ public class NursingMessagingConfig {
     @Bean
     public Declarables taskOverdueDelayQueue(MessagingGovernance governance) {
         return governance.declareDelayQueue(new DelayQueueSpec(
-                "task-overdue", Duration.ofSeconds(60), NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK));
+                NursingMessagingConstants.DELAY_QUEUE_TASK_OVERDUE,
+                Duration.ofSeconds(60),
+                NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK));
+    }
+
+    /**
+     * 任务逾期 tick 消费队列自声明（P2 PR-3 Task 9——ledger 派发义务：tick 键无 event_registry
+     * 登记面，QueueGovernorImpl.declareConsumerQueue 会经 registerSubscriber 对未登记键抛
+     * IllegalStateException 阻断启动，故治理构件无可用声明入口；W-27 同族先例
+     * outpatient.appointment.timeout 为 V204 id 39 在册事件走 declareConsumerQueue，不适用
+     * 本键）。自声明姿态逐字镜像 QueueGovernorImpl 消费队列形态：durable + 显式 quorum +
+     * 死信指向 fy.dlx 且不设死信路由键（死信保留原始路由键可溯源）+ fy.topic 绑定
+     * （key=tick 路由键）；RabbitAdmin 幂等声明。
+     *
+     * @return 声明集合（tick 消费队列 + 绑定）
+     */
+    @Bean
+    public Declarables taskOverdueTickQueue() {
+        Queue tickQueue = QueueBuilder.durable(NursingMessagingConstants.QUEUE_TASK_OVERDUE_TICK)
+                .quorum()
+                .deadLetterExchange(MessagingConstants.EXCHANGE_DLX)
+                .build();
+        Binding tickBinding = new Binding(
+                NursingMessagingConstants.QUEUE_TASK_OVERDUE_TICK,
+                Binding.DestinationType.QUEUE,
+                MessagingConstants.EXCHANGE_TOPIC,
+                NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK,
+                null);
+        return new Declarables(tickQueue, tickBinding);
     }
 }

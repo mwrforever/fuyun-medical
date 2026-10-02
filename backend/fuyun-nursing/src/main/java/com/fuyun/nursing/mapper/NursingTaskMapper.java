@@ -19,15 +19,39 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
 
     /**
      * 完成 CAS（在途两态 PENDING/IN_PROGRESS 可完成，0 行 → NS-1011）：置 COMPLETED 并盖章
-     * completed_at（DB now()，与审计列同源时钟）；并发重复完成由行数判定兜底。
+     * completed_at（DB now()，与审计列同源时钟）；relatedExecutionNo 非空时随完成定格 source_ref
+     * （关联执行单引用回写——CASE 分支空值保持原引用零覆盖，V805 列注释既有执行单号语义承载）。
+     * 并发重复完成由行数判定兜底。
      *
-     * @param taskNo   任务业务号，非空
-     * @param operator 操作者（OperatorContextHolder 当前操作者），非空
+     * @param taskNo             任务业务号，非空
+     * @param relatedExecutionNo 关联执行单号（完成时回写 source_ref），可空（空=保持原引用）
+     * @param operator           操作者（OperatorContextHolder 当前操作者），非空
      * @return 影响行数（0=任务不存在、已终态或已被逻辑删，调用方定性 NS-1011）
      */
-    @Update("UPDATE nursing.nursing_task SET status = 'COMPLETED', completed_at = now(), updated_by = #{operator} "
+    @Update("UPDATE nursing.nursing_task SET status = 'COMPLETED', completed_at = now(), "
+            + "source_ref = CASE WHEN #{relatedExecutionNo,jdbcType=VARCHAR} IS NULL THEN source_ref "
+            + "ELSE #{relatedExecutionNo} END, updated_by = #{operator} "
             + "WHERE task_no = #{taskNo} AND status IN ('PENDING', 'IN_PROGRESS') AND deleted = 0")
-    int casComplete(@Param("taskNo") String taskNo, @Param("operator") String operator);
+    int casComplete(
+            @Param("taskNo") String taskNo,
+            @Param("relatedExecutionNo") String relatedExecutionNo,
+            @Param("operator") String operator);
+
+    /**
+     * 认领 CAS（P2 PR-3 Task 9 任务工作台认领面）：PENDING → IN_PROGRESS 并落 assignee 到
+     * assigned_nurse（assigned_nurse 为 VARCHAR 承载，员工 ID 以文本落库）；仅 PENDING 可认领
+     * （IN_PROGRESS/终态 0 行 → NS-1011——重复认领与终态均拒绝）。
+     *
+     * @param taskNo   任务业务号，非空
+     * @param assignee 认领护士员工 ID 文本，非空
+     * @param operator 操作者（OperatorContextHolder 当前操作者），非空
+     * @return 影响行数（0=任务不存在、非 PENDING 或已被逻辑删，调用方定性 NS-1011）
+     */
+    @Update(
+            "UPDATE nursing.nursing_task SET status = 'IN_PROGRESS', assigned_nurse = #{assignee}, updated_by = #{operator} "
+                    + "WHERE task_no = #{taskNo} AND status = 'PENDING' AND deleted = 0")
+    int casClaim(
+            @Param("taskNo") String taskNo, @Param("assignee") String assignee, @Param("operator") String operator);
 
     /**
      * 取消 CAS（在途两态 PENDING/IN_PROGRESS 可取消，0 行 → NS-1011）：置 CANCELLED 并强制
@@ -53,6 +77,23 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
     @Update("UPDATE nursing.nursing_task SET overdue_flag = true, escalation_count = escalation_count + 1 "
             + "WHERE id = #{id} AND overdue_flag = false AND deleted = 0")
     int casMarkOverdue(@Param("id") long id);
+
+    /**
+     * 逾期升级档 CAS 递增（P2 PR-3 Task 9 tick 段②，0 行=并发先递增或行已终态）：在途已标记行
+     * escalation_count 期望值比对递增——expectedCount 谓词为并发双计防线（多实例 tick 同刻扫描
+     * 仅一方命中，另一方零行不重复发布升级事件）；封顶语义由调用侧目标档位判定承载（本语句
+     * 只保证单步原子递增，max escalation_count 由扫描侧 floor(elapsed/interval) 封顶 2 约束）。
+     *
+     * @param id            任务行 id，非空
+     * @param expectedCount 期望当前升级次数（扫描快照值，CAS 比对基准），非负
+     * @param operator      操作者（tick 链路 SYSTEM 桥接），非空
+     * @return 影响行数（0=并发已递增、行已终态/逻辑删或已标记谓词不满足，调用方不发布事件）
+     */
+    @Update("UPDATE nursing.nursing_task SET escalation_count = escalation_count + 1, updated_by = #{operator} "
+            + "WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS') AND overdue_flag = true "
+            + "AND escalation_count = #{expectedCount} AND deleted = 0")
+    int casEscalateOverdue(
+            @Param("id") long id, @Param("expectedCount") int expectedCount, @Param("operator") String operator);
 
     /**
      * 逾期标记批量 CAS（批量在途查询读时惰性判定落点，A.4.3-14 写放大收敛）：单条语句按 id 集

@@ -26,6 +26,7 @@ import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.NursingTaskCancelRequest;
 import com.fuyun.nursing.dto.NursingTaskCreateRequest;
+import com.fuyun.nursing.dto.TaskClaimRequest;
 import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskPriority;
 import com.fuyun.nursing.enums.TaskSource;
@@ -118,7 +119,11 @@ class NursingTaskServiceImplTest {
     @BeforeEach
     void setUp() {
         // 阈值固定 30 分钟（NursingProperties 默认值，用例 6 惰性逾期判定基准）
-        service = new NursingTaskServiceImpl(taskMapper, seqGate, events, new NursingProperties(30));
+        service = new NursingTaskServiceImpl(
+                taskMapper,
+                seqGate,
+                events,
+                new NursingProperties(30, new NursingProperties.TaskOverdue(30, 60, 30, true)));
         ReflectionTestUtils.setField(service, "baseMapper", taskMapper);
         // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
         ReflectionTestUtils.setField(service, "entityClass", NursingTask.class);
@@ -198,10 +203,10 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("任务完成：CAS 1 行置 COMPLETED 并盖章 completedAt、发布完成事件；重复完成拒 NS-1011")
     void completeTransitionsAndStampsCompletedAt() {
-        when(taskMapper.casComplete(TASK_NO, "nurse-01")).thenReturn(1, 0);
+        when(taskMapper.casComplete(TASK_NO, null, "nurse-01")).thenReturn(1, 0);
         when(taskMapper.selectOne(any())).thenReturn(completedRow());
 
-        NursingTaskVO vo = service.complete(TASK_NO);
+        NursingTaskVO vo = service.complete(TASK_NO, null);
 
         assertThat(vo.status()).isEqualTo(TaskStatus.COMPLETED.getCode());
         assertThat(vo.completedAt()).isNotNull();
@@ -214,14 +219,14 @@ class NursingTaskServiceImplTest {
         assertThat(payload.status()).isEqualTo(TaskStatus.COMPLETED.getCode());
 
         // 重复完成：CAS 0 行（已终态）→ NS-1011，事件不重复发布
-        assertThatThrownBy(() -> service.complete(TASK_NO)).isInstanceOfSatisfying(BizException.class, e -> {
+        assertThatThrownBy(() -> service.complete(TASK_NO, null)).isInstanceOfSatisfying(BizException.class, e -> {
             assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.TASK_STATE_NOT_ALLOWED);
             assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1011");
             assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
         });
         verify(events, times(1)).publishEvent(any(NursingDomainEvent.class));
         // GC26 可执行锚：完成必须为 @Update 注解 SQL 条件更新（在途两态 + deleted=0）
-        String sql = recordSql("casComplete", String.class, String.class);
+        String sql = recordSql("casComplete", String.class, String.class, String.class);
         assertThat(sql)
                 .contains("status = 'COMPLETED'")
                 .contains("completed_at = now()")
@@ -512,10 +517,10 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("完成回读缺失：CAS 命中后行被并发逻辑删（selectOne 空）拒 NS-1016，不发事件")
     void completeFailsWhenRowVanishesAfterCas() {
-        when(taskMapper.casComplete(TASK_NO, "nurse-01")).thenReturn(1);
+        when(taskMapper.casComplete(TASK_NO, null, "nurse-01")).thenReturn(1);
         when(taskMapper.selectOne(any())).thenReturn(null);
 
-        assertThatThrownBy(() -> service.complete(TASK_NO)).isInstanceOfSatisfying(BizException.class, e -> {
+        assertThatThrownBy(() -> service.complete(TASK_NO, null)).isInstanceOfSatisfying(BizException.class, e -> {
             assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.CONFLICT);
             assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1016");
         });
@@ -569,6 +574,74 @@ class NursingTaskServiceImplTest {
         assertThat(rows.get(1).getSourceRef()).isEqualTo("****123X");
         // ≤4 位短标识：全星回退（identifierTail 口径，与 PdaServiceImpl 同源）
         assertThat(rows.get(2).getSourceRef()).isEqualTo("****");
+    }
+
+    @Test
+    @DisplayName("任务认领：PENDING→IN_PROGRESS CAS 迁移、assignee 落 assigned_nurse、零事件发布（非终态无广播）")
+    void claimTransitionsPendingToInProgressWithAssignee() {
+        when(taskMapper.casClaim(TASK_NO, "9001", "nurse-01")).thenReturn(1);
+        NursingTask claimed =
+                taskRow(TASK_NO, TaskStatus.IN_PROGRESS, OffsetDateTime.now().plusHours(1));
+        claimed.setAssignedNurse("9001");
+        when(taskMapper.selectOne(any())).thenReturn(claimed);
+
+        NursingTaskVO vo = service.claim(TASK_NO, new TaskClaimRequest(9001L));
+
+        assertThat(vo.status()).isEqualTo(TaskStatus.IN_PROGRESS.getCode());
+        assertThat(vo.assignedNurse()).isEqualTo("9001");
+        // 认领为在途态内部迁移（非终态）：不发任务事件（终态广播语义归 complete/cancel）
+        verifyNoInteractions(events);
+        // GC26 可执行锚：认领必须为 @Update 注解 SQL 条件更新（仅 PENDING 可认领 + deleted=0）
+        String sql = recordSql("casClaim", String.class, String.class, String.class);
+        assertThat(sql)
+                .contains("status = 'IN_PROGRESS'")
+                .contains("assigned_nurse = #{assignee}")
+                .contains("WHERE task_no = #{taskNo}")
+                .contains("status = 'PENDING'")
+                .contains("deleted = 0");
+    }
+
+    @Test
+    @DisplayName("任务认领违例：assigneeId 空拒 NS-1019；CAS 0 行（非 PENDING 或不存在）拒 NS-1011")
+    void claimRejectsBlankAssigneeAndNonPendingState() {
+        // assigneeId 空：服务面强制校验（Web 层 @NotNull 兜底），零副作用
+        assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(null)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(taskMapper, never()).casClaim(any(), any(), any());
+
+        // CAS 0 行：任务不存在或已非 PENDING（IN_PROGRESS/终态均不可重复认领）
+        when(taskMapper.casClaim(TASK_NO, "9001", "nurse-01")).thenReturn(0);
+        assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(9001L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.TASK_STATE_NOT_ALLOWED);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1011");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        verify(taskMapper, never()).selectOne(any());
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("完成扩参回写关联单据：relatedExecutionNo 非空随 CAS 落 source_ref（空值保持原引用零覆盖）")
+    void completeWritesRelatedExecutionNoIntoSourceRef() {
+        when(taskMapper.casComplete(TASK_NO, "EX2026100200001", "nurse-01")).thenReturn(1);
+        NursingTask completed = completedRow();
+        completed.setSourceRef("EX2026100200001");
+        when(taskMapper.selectOne(any())).thenReturn(completed);
+
+        NursingTaskVO vo = service.complete(TASK_NO, "EX2026100200001");
+
+        assertThat(vo.sourceRef()).isEqualTo("EX2026100200001");
+        // 完成事件照常发布（扩参不影响完成语义）；空白入参归一为 null（保持原引用的 CASE 分支）
+        verify(events, times(1)).publishEvent(any(NursingDomainEvent.class));
+        String sql = recordSql("casComplete", String.class, String.class, String.class);
+        assertThat(sql)
+                .contains(
+                        "CASE WHEN #{relatedExecutionNo,jdbcType=VARCHAR} IS NULL THEN source_ref ELSE #{relatedExecutionNo} END");
     }
 
     // ===================== 测试数据与断言辅助 =====================
