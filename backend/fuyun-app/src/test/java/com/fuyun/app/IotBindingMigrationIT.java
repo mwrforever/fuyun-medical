@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.api.ConsumerQueueSpec;
@@ -17,6 +18,7 @@ import com.fuyun.iot.enums.DeviceStatus;
 import com.fuyun.iot.mapper.IotDeviceMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -60,7 +62,8 @@ import org.testcontainers.utility.MountableFile;
  *
  * <p>四步断言按 @Order 串联（绑定行状态跨步累积属业务链路语义）：①迁移形态实查（两表列类型 +
  * V1006 重插夹具行存在）；②bind 负路径四连（设备不存在 404 IOT-1006 / 停用设备 409 IOT-1007 /
- * 冻结患者 409 IOT-1011 / 无在途就诊 409 IOT-1011）；③正路径绑定（真实入区登记制造在途就诊 →
+ * 冻结患者 409 IOT-1011 / 无在途就诊 409 IOT-1011）；③正路径绑定（真实入院链（W-34 后入区
+ * 唯一写入面：inpatient 四步→admitted/bed.changed 事件投影在区行）制造在途就诊 →
  * bind 200 BOUND、visit_id 14 位字符串落库回读 → 重复绑定 409 IOT-1010 → BIND 帧捕获）；
  * ④解绑链（空白原因 400 IOT-1010 → 合法解绑双 CAS 至 UNBOUND → UNBIND 帧捕获（患者/就诊置
  * null）→ 重复解绑 409 IOT-1010 → 解绑后可再绑（uk BOUND 部分索引释放））。
@@ -111,11 +114,22 @@ class IotBindingMigrationIT extends FuyunStackITBase {
     /** 冻结患者主索引（resolve blocked 负样本） */
     private static final long FROZEN_PATIENT_ID = 950002L;
 
-    /** 正常患者入区就诊号（在途就诊制造载体，CF-3 I 型 14 位） */
-    private static final String NORMAL_VISIT_ID = "I2026092500011";
+    /** 负路径占位就诊号（bind 校验链第四环负样本请求体载体，不校验实存；真实就诊号由步骤③入院链签发） */
+    private static final String PLACEHOLDER_VISIT_ID = "I2026092500011";
 
     /** 病区 ID（绑定落行归属，与护理入区 "W01" 编码列分域不互查） */
     private static final long WARD_ID = 1001L;
+
+    /** 入院链病区编码（护理投影归属；W-34 后入区在途由 admitted 事件投影在册行承载） */
+    private static final String NURSING_WARD_CODE = "W-IT-9501";
+
+    /** 入院链床位（inpatient.bed 零种子，IT 自备主数据；NursingPatientContextIT 同型） */
+    private static final long CHAIN_BED_ID = 950101L;
+
+    private static final String CHAIN_BED_NO = "IT50-01";
+
+    /** 正路径绑定就诊号（步骤③入院链登记确认签发 I 型 14 位；断言锚经 static 跨用例传递） */
+    private static String boundVisitId = "";
 
     /** 捕获队列名（治理声明的 "it" 消费者模块队列：q.it.iot.binding.changed） */
     private static final String Q_BINDING_CHANGED =
@@ -237,31 +251,32 @@ class IotBindingMigrationIT extends FuyunStackITBase {
 
         // 第一环：设备不存在 → 404 IOT-1006
         ResponseEntity<String> noDevice = postForEntity(
-                token, "/api/v1/iot/bindings", bindBody("it-v10-unknown", NORMAL_PATIENT_ID, NORMAL_VISIT_ID));
+                token, "/api/v1/iot/bindings", bindBody("it-v10-unknown", NORMAL_PATIENT_ID, PLACEHOLDER_VISIT_ID));
         assertThat(noDevice.getStatusCode().value()).as("设备不存在应 404").isEqualTo(404);
         assertThat(toNode(noDevice.getBody()).path("errorCode").asText()).isEqualTo("IOT-1006");
 
         // 第二环：停用设备 → 409 IOT-1007
         ResponseEntity<String> disabled = postForEntity(
-                token, "/api/v1/iot/bindings", bindBody(DISABLED_DEVICE_ID, NORMAL_PATIENT_ID, NORMAL_VISIT_ID));
+                token, "/api/v1/iot/bindings", bindBody(DISABLED_DEVICE_ID, NORMAL_PATIENT_ID, PLACEHOLDER_VISIT_ID));
         assertThat(disabled.getStatusCode().value()).as("停用设备应 409").isEqualTo(409);
         assertThat(toNode(disabled.getBody()).path("errorCode").asText()).isEqualTo("IOT-1007");
 
         // 第三环：冻结患者 → 409 IOT-1011（resolve blocked）
-        ResponseEntity<String> frozen =
-                postForEntity(token, "/api/v1/iot/bindings", bindBody(DEVICE_ID, FROZEN_PATIENT_ID, NORMAL_VISIT_ID));
+        ResponseEntity<String> frozen = postForEntity(
+                token, "/api/v1/iot/bindings", bindBody(DEVICE_ID, FROZEN_PATIENT_ID, PLACEHOLDER_VISIT_ID));
         assertThat(frozen.getStatusCode().value()).as("冻结患者应 409").isEqualTo(409);
         assertThat(toNode(frozen.getBody()).path("errorCode").asText()).isEqualTo("IOT-1011");
 
         // 第四环：正常患者但无在途就诊 → 409 IOT-1011（各注册模块 hasOngoingVisit 全无命中）
-        ResponseEntity<String> noVisit =
-                postForEntity(token, "/api/v1/iot/bindings", bindBody(DEVICE_ID, NORMAL_PATIENT_ID, NORMAL_VISIT_ID));
+        ResponseEntity<String> noVisit = postForEntity(
+                token, "/api/v1/iot/bindings", bindBody(DEVICE_ID, NORMAL_PATIENT_ID, PLACEHOLDER_VISIT_ID));
         assertThat(noVisit.getStatusCode().value()).as("无在途就诊应 409").isEqualTo(409);
         assertThat(toNode(noVisit.getBody()).path("errorCode").asText()).isEqualTo("IOT-1011");
     }
 
     /**
-     * 步骤③：正路径绑定全链——真实护理入区登记制造在途就诊 → bind 200（BindingVO BOUND、visitId
+     * 步骤③：正路径绑定全链——真实入院链（W-34 后入区唯一写入面：inpatient 四步→admitted/
+     * bed.changed 事件投影在区行）制造在途就诊 → bind 200（BindingVO BOUND、visitId
      * 14 位字符串原样承载）→ 库态回读类型断言 → 重复绑定 409 IOT-1010（第二环前置拒绝）→
      * q.it.iot.binding.changed 真实收 BIND 帧（载荷八组件锚定，patientId/visitId 在位）。
      */
@@ -271,25 +286,57 @@ class IotBindingMigrationIT extends FuyunStackITBase {
     void bindHappyPathPersistsCf3VisitIdAndPublishesEvent() {
         String token = loginToken(ADMIN_LOGIN_NAME);
 
-        // 在途就诊制造（真实 API 面）：患者入区登记 → NursingOngoingVisitQuery IN_WARD 命中
-        ObjectNode register = objectMapper.createObjectNode();
-        register.put("visitId", NORMAL_VISIT_ID)
-                .put("patientId", NORMAL_PATIENT_ID)
-                .put("wardId", "W01")
-                .put("bedNo", "91")
-                .put("patientName", "IT W-10 正常患者")
-                .put("nursingLevel", "NORMAL");
-        ResponseEntity<String> registered = postForEntity(token, "/api/v1/nursing/ward-patients", register);
-        assertThat(registered.getStatusCode().is2xxSuccessful())
-                .as("入区登记夹具应 2xx，实况：%s", registered.getBody())
+        // 在途就诊制造（W-34 后入区唯一写入面）：inpatient 入院四步真链 → admitted/bed.changed
+        // 事件驱动护理投影在册行 → NursingOngoingVisitQuery（deleted=0 计数）命中
+        jdbcTemplate.update(
+                "INSERT INTO inpatient.bed (id, bed_no, ward_id, bed_attr, allow_gender, visit_id, status)"
+                        + " VALUES (?, ?, ?, 'NORMAL', NULL, NULL, 'FREE')",
+                CHAIN_BED_ID,
+                CHAIN_BED_NO,
+                NURSING_WARD_CODE);
+        ObjectNode create = objectMapper.createObjectNode();
+        create.put("patientId", NORMAL_PATIENT_ID)
+                .put("sourceType", "OTHER")
+                .put("admissionType", "NORMAL")
+                .put("targetWardId", NURSING_WARD_CODE)
+                .put("issuedDoctorId", "3");
+        String admissionNo = toNode(postForEntity(token, "/api/v1/inpatient/admissions", create)
+                        .getBody())
+                .path("admissionNo")
+                .asText();
+        ObjectNode schedule = objectMapper.createObjectNode();
+        schedule.put("targetWardId", NURSING_WARD_CODE)
+                .put("targetBedId", CHAIN_BED_ID)
+                // 期望入住日按北京钟面取当日（时区红线：裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
+        ResponseEntity<String> scheduled =
+                postForEntity(token, "/api/v1/inpatient/admissions/" + admissionNo + "/schedule", schedule);
+        assertThat(scheduled.getStatusCode().is2xxSuccessful())
+                .as("预约入院应 2xx，实况：%s", scheduled.getBody())
                 .isTrue();
+        boundVisitId = toNode(postForEntity(
+                                token,
+                                "/api/v1/inpatient/admissions/" + admissionNo + "/register",
+                                objectMapper.createObjectNode().put("insuranceType", "IT-YIBAO"))
+                        .getBody())
+                .path("visitId")
+                .asText();
+        assertThat(boundVisitId).as("登记确认应签发 I 型 14 位 visit_id").hasSize(14);
+        ObjectNode admit = objectMapper.createObjectNode();
+        admit.put("wardId", NURSING_WARD_CODE).put("bedId", CHAIN_BED_ID).put("nursingLevel", "NORMAL");
+        ResponseEntity<String> admitted =
+                postForEntity(token, "/api/v1/inpatient/visits/" + boundVisitId + "/admit-ward", admit);
+        assertThat(admitted.getStatusCode().is2xxSuccessful())
+                .as("入科确认应 2xx（admitted/bed.changed 发布），实况：%s", admitted.getBody())
+                .isTrue();
+        awaitWardPatientRow();
 
-        JsonNode bound = postJson(
-                "/api/v1/iot/bindings", bearer(token), bindBody(DEVICE_ID, NORMAL_PATIENT_ID, NORMAL_VISIT_ID));
+        JsonNode bound =
+                postJson("/api/v1/iot/bindings", bearer(token), bindBody(DEVICE_ID, NORMAL_PATIENT_ID, boundVisitId));
         assertThat(bound.path("status").asText()).as("绑定后状态 BOUND").isEqualTo("BOUND");
         assertThat(bound.path("visitId").asText())
                 .as("出网 visit_id = CF-3 14 位字符串原样承载")
-                .isEqualTo(NORMAL_VISIT_ID);
+                .isEqualTo(boundVisitId);
         assertThat(bound.path("patientId").asLong()).as("落行患者 = resolve 归一主档").isEqualTo(NORMAL_PATIENT_ID);
 
         // 数据库读操作：库态回读——visit_id 文本列精确等值（非数值隐式转换形态）
@@ -297,11 +344,11 @@ class IotBindingMigrationIT extends FuyunStackITBase {
                 "SELECT visit_id FROM iot.iot_binding WHERE device_id = ? AND status = 'BOUND'",
                 String.class,
                 DEVICE_ID);
-        assertThat(persisted).as("BOUND 行 visit_id 字符串落库").isEqualTo(NORMAL_VISIT_ID);
+        assertThat(persisted).as("BOUND 行 visit_id 字符串落库").isEqualTo(boundVisitId);
 
         // 第二环重复绑定拒绝：同设备再指一个患者 → 409 IOT-1010
         ResponseEntity<String> dup =
-                postForEntity(token, "/api/v1/iot/bindings", bindBody(DEVICE_ID, NORMAL_PATIENT_ID, NORMAL_VISIT_ID));
+                postForEntity(token, "/api/v1/iot/bindings", bindBody(DEVICE_ID, NORMAL_PATIENT_ID, boundVisitId));
         assertThat(dup.getStatusCode().value()).as("重复绑定应 409").isEqualTo(409);
         assertThat(toNode(dup.getBody()).path("errorCode").asText()).isEqualTo("IOT-1010");
 
@@ -310,7 +357,7 @@ class IotBindingMigrationIT extends FuyunStackITBase {
         assertThat(payload.path("changeType").asText()).as("事件语义 = BIND").isEqualTo("BIND");
         assertThat(payload.path("deviceId").asText()).isEqualTo(DEVICE_ID);
         assertThat(payload.path("patientId").asLong()).isEqualTo(NORMAL_PATIENT_ID);
-        assertThat(payload.path("visitId").asText()).isEqualTo(NORMAL_VISIT_ID);
+        assertThat(payload.path("visitId").asText()).isEqualTo(boundVisitId);
         assertThat(payload.path("wardId").asLong()).isEqualTo(WARD_ID);
         assertThat(payload.path("bindType").asText()).isEqualTo("FIXED");
     }
@@ -372,13 +419,38 @@ class IotBindingMigrationIT extends FuyunStackITBase {
         assertThat(toNode(reUnbind.getBody()).path("errorCode").asText()).isEqualTo("IOT-1010");
 
         // 解绑后可再绑：BOUND 部分唯一索引释放，同患者再绑成功（双 CAS 闭环的业务出口）
-        JsonNode rebound = postJson(
-                "/api/v1/iot/bindings", bearer(token), bindBody(DEVICE_ID, NORMAL_PATIENT_ID, NORMAL_VISIT_ID));
+        JsonNode rebound =
+                postJson("/api/v1/iot/bindings", bearer(token), bindBody(DEVICE_ID, NORMAL_PATIENT_ID, boundVisitId));
         assertThat(rebound.path("status").asText()).as("解绑后再绑 BOUND").isEqualTo("BOUND");
-        assertThat(rebound.path("visitId").asText()).isEqualTo(NORMAL_VISIT_ID);
+        assertThat(rebound.path("visitId").asText()).isEqualTo(boundVisitId);
     }
 
     // ---------------------------------------------------------------- 种子与断言助手
+
+    /**
+     * 轮询等待护理投影在册行落库且床号补齐（admitted/bed.changed 两路消费收敛）——bind 校验链
+     * 第四环在途就诊判定的直接前提，超时即失败（事件链断裂显式暴露，禁静默降级断言）。
+     */
+    private void awaitWardPatientRow() {
+        long deadline = System.currentTimeMillis() + CONSUME_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            Integer ready = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM nursing.nursing_ward_patient"
+                            + " WHERE visit_id = ? AND deleted = 0 AND bed_no IS NOT NULL AND bed_no <> ''",
+                    Integer.class,
+                    boundVisitId);
+            if (ready != null && ready > 0) {
+                return;
+            }
+            try {
+                Thread.sleep(POLL_INTERVAL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new IllegalStateException("护理投影在册行未落库（visitId=" + boundVisitId + "）");
+    }
 
     /** 设备种子直插（audit 列走库端默认值）。 */
     private void insertDevice(String deviceId, DeviceStatus status) {

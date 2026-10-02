@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.api.ConsumerQueueSpec;
@@ -14,6 +15,8 @@ import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.constants.NursingTimeConstants;
 import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -47,7 +50,8 @@ import org.testcontainers.utility.MountableFile;
 
 /**
  * PR-6 M05 验收锚点②：文书链 + 评估链 + 交接班链真栈 IT（FU-M05-03 等，零 mock）。链路：
- * 入区登记夹具 → 护理记录创建/提交锁定（DRAFT→SUBMITTED 签名盖章）→ 修订留痕（原行零改动、
+ * 入区夹具（W-34 后入区唯一写入面：inpatient 入院四步→admitted/bed.changed 事件投影在区行）
+ * → 护理记录创建/提交锁定（DRAFT→SUBMITTED 签名盖章）→ 修订留痕（原行零改动、
  * 新行 REVISED 链）→ 草稿修订拒（NS-1008）→ 出入量明细×4 与班次小结（聚合勾稽 + 体温单
  * DAILY_VALUE 条目 + 同周期幂等）→ MORSE 高危评估（自动判级 HIGH + 防范任务生成 + 床旁
  * FALL 风险标识）→ 交接班生成（SBAR 汇总 + 待续事项含防范任务）与完成（双签 + 事件发布）→
@@ -86,8 +90,19 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
     /** 文书链患者主索引（patient.patient SQL 直插主数据夹具） */
     private static final long PATIENT_ID = 921051L;
 
-    /** 文书链住院就诊号（I 型 14 位） */
-    private static final String VISIT_ID = "I2026092200011";
+    /** 文书链住院就诊号（step1 入院链登记确认签发 I 型 14 位；断言锚经 static 跨用例传递） */
+    private static String visitId = "";
+
+    /** 文书链病区床位（W01 内 IT 自备床——inpatient.bed 零种子，事件链入区载体） */
+    private static final long BED_ID = 921071L;
+
+    private static final String BED_NO = "IT21-01";
+
+    /** 投影收敛轮询上限（覆盖 MQ 真实投递与乱序自愈 500ms 重试窗口） */
+    private static final Duration PROJECTION_TIMEOUT = Duration.ofSeconds(10);
+
+    /** 轮询步长 */
+    private static final long POLL_INTERVAL_MILLIS = 200L;
 
     /** 逾期任务夹具行 id（状态机边界夹具：逾期任务行经 jdbcTemplate 构造，批复口径允许项） */
     private static final long OVERDUE_TASK_ID = 921061L;
@@ -189,25 +204,82 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
         return restTemplate.postForEntity(path, new HttpEntity<>(headers), String.class);
     }
 
-    /** 入区登记夹具（真实流转：POST /ward-patients；一览相关验收不走直插）。 */
-    private void registerWardPatient() {
-        ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID)
-                .put("patientId", PATIENT_ID)
-                .put("wardId", "W01")
-                .put("bedNo", "01")
-                .put("patientName", "IT 文书患者")
-                .put("nursingLevel", "NORMAL");
-        ResponseEntity<String> resp = postForEntity("/api/v1/nursing/ward-patients", token, req);
-        assertThat(resp.getStatusCode().is2xxSuccessful())
-                .as("入区登记夹具应 2xx，实况：%s", resp.getBody())
+    /**
+     * 入区夹具（W-34 后入区唯一写入面）：W01 自备床 + inpatient 入院四步真链（住院证登记 →
+     * 预约入院 → 登记确认签发 I 型 visit_id → 入科确认发布 admitted/bed.changed）→ 轮询等待
+     * 护理投影在册行落库（床号补齐）。后续文书/小结/评估/交接班断言面均以该在区行为前提。
+     */
+    private void registerWardPatientViaAdmissionChain() {
+        jdbcTemplate.update(
+                "INSERT INTO inpatient.bed (id, bed_no, ward_id, bed_attr, allow_gender, visit_id, status)"
+                        + " VALUES (?, ?, 'W01', 'NORMAL', NULL, NULL, 'FREE')",
+                BED_ID,
+                BED_NO);
+        ObjectNode create = objectMapper.createObjectNode();
+        create.put("patientId", PATIENT_ID)
+                .put("sourceType", "OTHER")
+                .put("admissionType", "NORMAL")
+                .put("targetWardId", "W01")
+                .put("issuedDoctorId", "3");
+        String admissionNo = toNode(postForEntity("/api/v1/inpatient/admissions", token, create)
+                        .getBody())
+                .path("admissionNo")
+                .asText();
+        assertThat(admissionNo).as("住院证号应签发").isNotBlank();
+        ObjectNode schedule = objectMapper.createObjectNode();
+        schedule.put("targetWardId", "W01")
+                .put("targetBedId", BED_ID)
+                // 期望入住日按北京钟面取当日（时区红线：裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
+        assertThat(postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", token, schedule)
+                        .getStatusCode()
+                        .is2xxSuccessful())
+                .as("预约入院应 2xx")
                 .isTrue();
+        visitId = toNode(postForEntity(
+                                "/api/v1/inpatient/admissions/" + admissionNo + "/register",
+                                token,
+                                objectMapper.createObjectNode().put("insuranceType", "IT-YIBAO"))
+                        .getBody())
+                .path("visitId")
+                .asText();
+        assertThat(visitId).as("登记确认应签发 I 型 14 位 visit_id").hasSize(14);
+        ObjectNode admit = objectMapper.createObjectNode();
+        admit.put("wardId", "W01").put("bedId", BED_ID).put("nursingLevel", "NORMAL");
+        assertThat(postForEntity("/api/v1/inpatient/visits/" + visitId + "/admit-ward", token, admit)
+                        .getStatusCode()
+                        .is2xxSuccessful())
+                .as("入科确认应 2xx（admitted/bed.changed 发布）")
+                .isTrue();
+        awaitWardPatientRow();
+    }
+
+    /** 轮询等待护理投影在册行落库且床号补齐（admitted/bed.changed 消费收敛；超时即失败禁静默降级）。 */
+    private void awaitWardPatientRow() {
+        long deadline = System.currentTimeMillis() + PROJECTION_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            Integer ready = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM nursing.nursing_ward_patient"
+                            + " WHERE visit_id = ? AND deleted = 0 AND bed_no IS NOT NULL AND bed_no <> ''",
+                    Integer.class,
+                    visitId);
+            if (ready != null && ready > 0) {
+                return;
+            }
+            try {
+                Thread.sleep(POLL_INTERVAL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new IllegalStateException("护理投影在册行未落库（visitId=" + visitId + "）");
     }
 
     /** 出入量明细录入（visitId + 类型/项目/数量三参）。 */
     private void postIoRecord(String ioType, String itemCode, String quantity) {
         ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID)
+        req.put("visitId", visitId)
                 .put("ioType", ioType)
                 .put("itemCode", itemCode)
                 .put("quantity", quantity);
@@ -224,7 +296,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
      */
     private String shiftCodeOfLastIoRecord() {
         Timestamp lastOccurAt = jdbcTemplate.queryForObject(
-                "SELECT max(occur_at) FROM nursing.io_record WHERE visit_id = ?", Timestamp.class, VISIT_ID);
+                "SELECT max(occur_at) FROM nursing.io_record WHERE visit_id = ?", Timestamp.class, visitId);
         // 班次判定与汇总服务同口径（北京时区钟面，IoRecordServiceImpl#resolveShiftPeriod 医疗日界）：
         // JDBC 裸挂钟数按写入侧同一 systemDefault 还原真实时刻，再转北京钟面——直接取裸 toLocalTime()
         // 在非北京时区 JVM（CI UTC）上与北京口径窗口错位，DAY 码查 EVENING 窗零命中汇总归零
@@ -250,9 +322,9 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
                         + " VALUES (?, ?, '1', 'NORMAL', 'WINDOW')",
                 PATIENT_ID,
                 "IT 文书患者");
-        registerWardPatient();
+        registerWardPatientViaAdmissionChain();
         ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID)
+        req.put("visitId", visitId)
                 .put("recordClass", "CRITICAL")
                 .put("observation", "病情观察：神志清楚，精神可")
                 .put("measures", "护理措施：心电监护，每小时巡视")
@@ -303,7 +375,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
     @DisplayName("草稿修订拒：DRAFT 行 revise 409 NS-1008（仅 SUBMITTED 可发起修订）")
     void step3_reviseDraftRejected() {
         ObjectNode draft = objectMapper.createObjectNode();
-        draft.put("visitId", VISIT_ID).put("recordClass", "GENERAL").put("observation", "草稿观察");
+        draft.put("visitId", visitId).put("recordClass", "GENERAL").put("observation", "草稿观察");
         JsonNode draftVo = toNode(
                 postForEntity("/api/v1/nursing/nursing-records", token, draft).getBody());
         String draftNo = draftVo.path("recordNo").asText();
@@ -324,7 +396,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
         postIoRecord("OUTPUT", "URINE", "800");
         postIoRecord("OUTPUT", "STOOL", "300");
         ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID).put("summaryType", "SHIFT").put("shiftCode", shiftCodeOfLastIoRecord());
+        req.put("visitId", visitId).put("summaryType", "SHIFT").put("shiftCode", shiftCodeOfLastIoRecord());
         ResponseEntity<String> resp = postForEntity("/api/v1/nursing/io-summaries", token, req);
         assertThat(resp.getStatusCode().value())
                 .as("班次小结应 200，实况：%s", resp.getBody())
@@ -340,7 +412,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
                         + " WHERE p.visit_id = ? AND e.entry_type = 'DAILY_VALUE'"
                         + " AND e.daily_value_type = 'IO_SUMMARY_SHIFT'",
                 Integer.class,
-                VISIT_ID);
+                visitId);
         assertThat(dailyEntries).as("班次小结应写恰一条 IO_SUMMARY_SHIFT 日行值").isEqualTo(1);
     }
 
@@ -349,32 +421,32 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
     @DisplayName("小结幂等：同周期再次 POST 返回既有行（id 相同），io_summary 行数与条目数不变")
     void step5_ioSummaryIdempotent() {
         Integer summaryBefore = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM nursing.io_summary WHERE visit_id = ?", Integer.class, VISIT_ID);
+                "SELECT count(*) FROM nursing.io_summary WHERE visit_id = ?", Integer.class, visitId);
         Integer entryBefore = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM nursing.temperature_chart_entry e"
                         + " JOIN nursing.temperature_chart_page p ON p.id = e.page_id"
                         + " WHERE p.visit_id = ? AND e.entry_type = 'DAILY_VALUE'",
                 Integer.class,
-                VISIT_ID);
+                visitId);
         ObjectNode first = objectMapper.createObjectNode();
-        first.put("visitId", VISIT_ID).put("summaryType", "SHIFT").put("shiftCode", shiftCodeOfLastIoRecord());
+        first.put("visitId", visitId).put("summaryType", "SHIFT").put("shiftCode", shiftCodeOfLastIoRecord());
         JsonNode firstVo = toNode(
                 postForEntity("/api/v1/nursing/io-summaries", token, first).getBody());
         ObjectNode second = objectMapper.createObjectNode();
-        second.put("visitId", VISIT_ID).put("summaryType", "SHIFT").put("shiftCode", shiftCodeOfLastIoRecord());
+        second.put("visitId", visitId).put("summaryType", "SHIFT").put("shiftCode", shiftCodeOfLastIoRecord());
         JsonNode secondVo = toNode(
                 postForEntity("/api/v1/nursing/io-summaries", token, second).getBody());
         assertThat(secondVo.path("id").asLong())
                 .as("同周期重复小结应幂等返回既有行")
                 .isEqualTo(firstVo.path("id").asLong());
         Integer summaryAfter = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM nursing.io_summary WHERE visit_id = ?", Integer.class, VISIT_ID);
+                "SELECT count(*) FROM nursing.io_summary WHERE visit_id = ?", Integer.class, visitId);
         Integer entryAfter = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM nursing.temperature_chart_entry e"
                         + " JOIN nursing.temperature_chart_page p ON p.id = e.page_id"
                         + " WHERE p.visit_id = ? AND e.entry_type = 'DAILY_VALUE'",
                 Integer.class,
-                VISIT_ID);
+                visitId);
         assertThat(summaryAfter).as("幂等命中不得新增小结行").isEqualTo(summaryBefore);
         assertThat(entryAfter).as("幂等命中不得新增日行值条目").isEqualTo(entryBefore);
     }
@@ -384,7 +456,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
     @DisplayName("MORSE 高危评估：总分 50 判级 HIGH，自动生成 PREVENTION 防范任务（PENDING）并回写 FALL 风险标识")
     void step6_highRiskAssessmentGeneratesPreventionTask() {
         ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID).put("scaleType", "MORSE");
+        req.put("visitId", visitId).put("scaleType", "MORSE");
         req.put("assessedAt", OffsetDateTime.now().toString());
         ObjectNode answers = req.putObject("answers");
         answers.put("FALL_HISTORY", 25).put("SECOND_DIAGNOSIS", 15).put("AMBULATORY_AID", 0);
@@ -410,7 +482,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
                 .isEqualTo(vo.path("assessNo").asText());
         // 床旁风险标识：MORSE 高危回写 FALL
         String riskFlags = jdbcTemplate.queryForObject(
-                "SELECT risk_flags FROM nursing.nursing_ward_patient WHERE visit_id = ?", String.class, VISIT_ID);
+                "SELECT risk_flags FROM nursing.nursing_ward_patient WHERE visit_id = ?", String.class, visitId);
         assertThat(riskFlags).as("MORSE 高危应回写跌倒风险标识").contains("FALL");
     }
 
@@ -480,7 +552,7 @@ class NursingDocumentFlowIT extends FuyunStackITBase {
                 OVERDUE_TASK_ID,
                 OVERDUE_TASK_NO,
                 PATIENT_ID,
-                VISIT_ID);
+                visitId);
         JsonNode first = getJson("/api/v1/nursing/tasks?wardId=W01&status=PENDING", token);
         JsonNode firstRow = findByTaskNo(first);
         assertThat(firstRow).as("病区在途清单应命中逾期夹具行").isNotNull();
