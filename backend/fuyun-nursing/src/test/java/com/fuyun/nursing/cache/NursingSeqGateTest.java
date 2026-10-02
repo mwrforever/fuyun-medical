@@ -103,4 +103,15 @@ class NursingSeqGateTest {
         NursingSeqGate gate = new NursingSeqGate(redisTemplate);
         assertThat(gate.nextNo("EX")).isEqualTo("EX" + today + "00001");
     }
+
+    @Test
+    @DisplayName("AE 不良事件号段发号（Task 10 不良事件域扩类型键）：键 fy:nursing:seq:AE:{yyyyMMdd} 同一命名法")
+    void nextNoIssuesAdverseEventNoOnAeSegment() {
+        String today = LocalDate.now(BEIJING_TZ).format(DAY);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment("fy:nursing:seq:AE:" + today)).thenReturn(1L);
+
+        NursingSeqGate gate = new NursingSeqGate(redisTemplate);
+        assertThat(gate.nextNo("AE")).isEqualTo("AE" + today + "00001");
+    }
 }

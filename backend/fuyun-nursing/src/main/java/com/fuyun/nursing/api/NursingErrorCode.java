@@ -9,7 +9,8 @@ import com.fuyun.common.exception.ErrorCode;
  * 全项目编码唯一（NS- 前缀 2026-09-22 全仓 grep 核验无其他占用），NS-1001 起连续无重号
  * （NS-1017/NS-1018 预留不分配；NS-1019 承接入参格式语义位，形态照 OutpatientErrorCode 先例）。
  * P2 PR-3 执行域续号 NS-1020 起（CHANGELOG 2026-10-01 立项③排定全集 NS-1020~1027；Task 5
- * 落执行单操作面五码，Task 6 落 NS-1024 输液面，NS-1025~1026 不良事件面随 Task 10 追加）。
+ * 落执行单操作面五码，Task 6 落 NS-1024 输液面，Task 10 落 NS-1025/1026 不良事件面
+ * ——立项排定全集 NS-1020~1027 至此在位）。
  * 业务异常抛 {@code BizException(NursingErrorCode.XXX, HttpStatus, message)}，由全局渲染器
  * 输出 RFC 9457 ProblemDetail（properties.errorCode/traceId），禁止「全 200 + 错误码」。
  */
@@ -80,6 +81,12 @@ public enum NursingErrorCode implements ErrorCode {
 
     /** 无在途输注监测（409；输液闭环面——开始输注/拔针时 infusion_monitor_link 无 MONITORING 挂接） */
     INFUSION_NOT_ACTIVE("NS-1024"),
+
+    /** 不良事件不存在（404；eventNo 定位失败） */
+    ADVERSE_EVENT_NOT_FOUND("NS-1025"),
+
+    /** 不良事件状态不允许该操作（409；REPORTED→HANDLING→CLOSED 状态链与退回侧支前置不满足） */
+    ADVERSE_EVENT_STATE_NOT_ALLOWED("NS-1026"),
 
     /** 计划时间窗外执行（409；±execute_time_window_minutes 窗外且未经破码放行） */
     EXECUTION_TIME_WINDOW("NS-1027");

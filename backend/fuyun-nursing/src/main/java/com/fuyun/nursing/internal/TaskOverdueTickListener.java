@@ -3,6 +3,7 @@ package com.fuyun.nursing.internal;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.properties.NursingProperties;
+import com.fuyun.nursing.service.IAdverseEventService;
 import com.fuyun.nursing.service.ITaskOverdueService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -12,7 +13,9 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
  * 任务逾期 tick 消费侧（P2 PR-3 Task 9，M05 FU-M05-07 tick 三段式编排）：消费
  * q.nursing.task-overdue.tick（delay.task-overdue 60 秒档位到期经 DLX 回投 fy.topic 本路由键）
  * ——①②扫表升级动作委托 {@link ITaskOverdueService}（扫表在事务外、动作批次独立事务承载，
- * 事件 AFTER_COMMIT 出站）；Task 5 遗留接线：同流程挂接 {@link ExecutionConfirmCompensator}
+ * 事件 AFTER_COMMIT 出站）；不良事件 I/II 级超时提醒扫描段（Task 10 搭载：REPORTED 且
+ * report_deadline&lt;now 的 I/II 级行提醒推送，只读不改状态——非惩罚原则）委托
+ * {@link IAdverseEventService}；Task 5 遗留接线：同流程挂接 {@link ExecutionConfirmCompensator}
  * 补偿扫描（COMPENSATING 行重试回签，事务边界照其 javadoc——单行独立事务）；③自续期：
  * 扫描与补偿各事务提交后发布下一条 tick 心跳帧（空扫描零命中也续期——进程存活即有心跳，
  * brief 冻结语义；本监听器自身无 @Transactional——消费事务外红线）。
@@ -37,6 +40,8 @@ public class TaskOverdueTickListener {
 
     private final ITaskOverdueService taskOverdueService;
 
+    private final IAdverseEventService adverseEventService;
+
     private final ExecutionConfirmCompensator compensator;
 
     private final TaskOverdueTickSender tickSender;
@@ -46,17 +51,20 @@ public class TaskOverdueTickListener {
     /**
      * 全参构造器（装配归 NursingMessagingConfig @Import）。
      *
-     * @param taskOverdueService 逾期扫描升级服务（tick 段①②动作体），非空
-     * @param compensator        执行回签补偿扫描组件（Task 5 遗留接线——tick 驱动补偿面），非空
-     * @param tickSender         tick 心跳帧发送器（段③自续期发布面），非空
-     * @param properties         护理域参数，非空；taskOverdue.tickSelfRearm 为自续期开关
+     * @param taskOverdueService  逾期扫描升级服务（tick 段①②动作体），非空
+     * @param adverseEventService 不良事件域服务（Task 10 搭载的 I/II 级超时提醒扫描段——只读），非空
+     * @param compensator         执行回签补偿扫描组件（Task 5 遗留接线——tick 驱动补偿面），非空
+     * @param tickSender          tick 心跳帧发送器（段③自续期发布面），非空
+     * @param properties          护理域参数，非空；taskOverdue.tickSelfRearm 为自续期开关
      */
     public TaskOverdueTickListener(
             ITaskOverdueService taskOverdueService,
+            IAdverseEventService adverseEventService,
             ExecutionConfirmCompensator compensator,
             TaskOverdueTickSender tickSender,
             NursingProperties properties) {
         this.taskOverdueService = taskOverdueService;
+        this.adverseEventService = adverseEventService;
         this.compensator = compensator;
         this.tickSender = tickSender;
         this.properties = properties;
@@ -64,8 +72,10 @@ public class TaskOverdueTickListener {
 
     /**
      * tick 消费入口（q.nursing.task-overdue.tick，事务外——无 @Transactional 红线）：
-     * 扫描升级（段①②）→ 回签补偿扫描（Task 5 接线）→ 自续期发布（段③——两路事务提交后）。
-     * 异常上抛由容器有界重试承载（重投同一 tick 帧——幂等收敛）。
+     * 扫描升级（段①②）→ 不良事件 I/II 级超时提醒扫描（Task 10 搭载段——只读不改状态，
+     * 挂接点照 Task 9 报告 c6：scanAndEscalate 后 compensate 前）→ 回签补偿扫描（Task 5
+     * 接线）→ 自续期发布（段③——各路事务提交后）。异常上抛由容器有界重试承载（重投同一
+     * tick 帧——幂等收敛）。
      *
      * @param message 原始消息帧（空载荷 ping），非空
      */
@@ -75,8 +85,9 @@ public class TaskOverdueTickListener {
         OperatorContextHolder.set(SYSTEM_OPERATOR_TEXT);
         try {
             int actions = taskOverdueService.scanAndEscalate();
+            int overdueAe = adverseEventService.scanAndRemindOverdue();
             int confirmed = compensator.compensate();
-            rearmAfterCommit(actions, confirmed);
+            rearmAfterCommit(actions, confirmed, overdueAe);
         } finally {
             OperatorContextHolder.clear();
         }
@@ -89,14 +100,15 @@ public class TaskOverdueTickListener {
      *
      * @param actions   本轮逾期动作数（日志观测口径）
      * @param confirmed 本轮回签补偿置位数（日志观测口径）
+     * @param overdueAe 本轮不良事件 I/II 级超时提醒行数（日志观测口径——Task 10 搭载段）
      */
-    private void rearmAfterCommit(int actions, int confirmed) {
+    private void rearmAfterCommit(int actions, int confirmed, int overdueAe) {
         if (!properties.taskOverdue().tickSelfRearm()) {
             log.info("任务逾期 tick 自续期已关闭（tickSelfRearm=false），本轮心跳终止：actions={}，confirmed={}", actions, confirmed);
             return;
         }
         // 心跳语义：空扫描零命中也续期（进程存活即有心跳——brief 冻结语义）
         tickSender.sendTick();
-        log.info("任务逾期 tick 完成：逾期动作={}，回签补偿置位={}，下一条心跳已续期", actions, confirmed);
+        log.info("任务逾期 tick 完成：逾期动作={}，不良事件超时提醒={}，回签补偿置位={}，下一条心跳已续期", actions, overdueAe, confirmed);
     }
 }
