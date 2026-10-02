@@ -19,6 +19,9 @@ import com.fuyun.iot.mapper.IotDeviceMapper;
 import com.fuyun.iot.mapper.IotLinkageLogMapper;
 import com.fuyun.iot.mapper.IotLinkageRuleMapper;
 import com.fuyun.iot.service.ITelemetryPushService;
+import com.fuyun.nursing.api.NursingTaskLinkagePort;
+import com.fuyun.nursing.api.NursingTaskLinkageRequest;
+import com.fuyun.nursing.api.NursingTaskLinkageResult;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -44,15 +47,18 @@ import org.springframework.transaction.support.TransactionTemplate;
  * STOMP 头携带作联动标记）+留痕；M01_NOTIFY=M01 通知中心缺位降级为留痕+warn（GC17①）；
  * CALL_TRANSFER=发布 iot.call.triggered 扇出至 ward 呼叫域落 ward_call 行（Task 12 审查
  * Important-1 回接闭合——动作=事件已发布，回执 SUCCESS；Task 9 联调债正式闭合）；
- * NURSING_TASK=M05 护理任务创建（PR-3 回接，暂存 PENDING）；WARD_BROADCAST=M16 病区播报
- * （域缺位暂存 PENDING）。
+ * NURSING_TASK=M05 护理任务创建（PR-3 Task 12 回接闭合：经 nursing api 端口进程内直调幂等
+ * 创建 IOT_LINKAGE 任务，成功/幂等重放均回执 SUCCESS，port 抛 BizException 走重试——回接前
+ * 的 NursingUnavailable 暂存注记随本回接消除）；WARD_BROADCAST=M16 病区播报（域缺位暂存
+ * PENDING，唯一暂存承接项）。
  *
  * <p><b>重试形态（实测申报）</b>：P2 全部动作皆本地快操作（NOTIFY=内存 SimpleBroker 进程内
- * 分发；其余为本地留痕/暂存），无慢外呼依赖——按 brief 允许形态采用<b>同步三次内快速重试</b>
- * （首试+至多 3 次重试，重试间零等待）；brief 的 1s/2s/4s 指数退避为慢外呼恢复等待设计，对
- * 进程内 broker 无恢复意义且禁 Thread.sleep 阻塞消费线程（Task 9 控制面裁决），故不引入退避
- * 等待；CALL_TRANSFER 已随 Task 12 回接为事件扇出（发布失败仍走重试），WARD_BROADCAST/NURSING_TASK
- * 回接（PR-3）时一并引入异步重试形态。耗尽落 FAILED 终态，
+ * 分发；NURSING_TASK=进程内端口直调；其余为本地留痕/暂存），无慢外呼依赖——按 brief 允许
+ * 形态采用<b>同步三次内快速重试</b>（首试+至多 3 次重试，重试间零等待）；brief 的 1s/2s/4s
+ * 指数退避为慢外呼恢复等待设计，对进程内快操作无恢复意义且禁 Thread.sleep 阻塞消费线程
+ * （Task 9 控制面裁决），故不引入退避等待；CALL_TRANSFER/NURSING_TASK 已分别随 PR-2 Task 12
+ * 与 PR-3 Task 12 回接（快操作形态，同步快速重试适用），WARD_BROADCAST 回接时一并引入异步
+ * 重试形态。耗尽落 FAILED 终态，
  * 人工重推走 POST /linkage-logs/{no}/retry（服务层 CAS 承载）。
  *
  * <p><b>事务边界</b>：动作执行在事务外（推送禁入事务，宪法 A.4.2-7）；「日志落行+事件发布」经
@@ -76,6 +82,12 @@ public class LinkageExecutor {
      */
     private static final String CALL_TRANSFER_CALL_TYPE = "EMERGENCY";
 
+    /**
+     * NURSING_TASK 动作配置缺席时的任务类型回退值：IOT_LINKAGE（nursing 域 TaskType 词表值，
+     * 专为设备联动任务预留——iot 侧以字面量承载防跨模块 enum 耦合，B.2-2 同 CALL_TRANSFER 先例）。
+     */
+    private static final String DEFAULT_NURSING_TASK_TYPE = "IOT_LINKAGE";
+
     /** 错误消息截断上限：error_msg 列宽 VARCHAR(500)（列宽防线，防摘要超长致落库失败） */
     private static final int ERROR_MSG_MAX_LENGTH = 500;
 
@@ -86,6 +98,8 @@ public class LinkageExecutor {
     private final IotDeviceMapper deviceMapper;
 
     private final IotAlarmMapper alarmMapper;
+
+    private final NursingTaskLinkagePort nursingTaskPort;
 
     private final IotSeqGate seqGate;
 
@@ -100,21 +114,24 @@ public class LinkageExecutor {
     /**
      * 全参构造器（装配归 IotConfig @Import，backend 宪法 B.1；注入接口类型 B.2-2）。
      *
-     * @param ruleMapper   联动规则 mapper，非空；启用规则装载通道
-     * @param logMapper    联动日志 mapper，非空；执行留痕落行通道
-     * @param deviceMapper 设备档案 mapper，非空；device_type 条件解析通道
-     * @param alarmMapper  告警行 mapper，非空；NOTIFY 动作按告警号定位通道
-     * @param seqGate      业务号发号器，非空；联动号 LG 取号出口
-     * @param pushService  STOMP 推送服务，非空；NOTIFY 动作 WS 推送出口
-     * @param events       Spring 事件发布器，非空；executed 事件事务内发布入口（AFTER_COMMIT 出 MQ）
-     * @param transactions 事务模板，非空；日志落行+事件发布同事务承载
-     * @param objectMapper JSON 转换器，非空；触发条件 JSONB 解析
+     * @param ruleMapper      联动规则 mapper，非空；启用规则装载通道
+     * @param logMapper       联动日志 mapper，非空；执行留痕落行通道
+     * @param deviceMapper    设备档案 mapper，非空；device_type 条件解析通道
+     * @param alarmMapper     告警行 mapper，非空；NOTIFY/CALL_TRANSFER/NURSING_TASK 动作按告警号定位通道
+     * @param nursingTaskPort 护理任务联动端口（nursing api），非空；NURSING_TASK 动作进程内直调
+     *                        出口（实现 Bean 由 fuyun-app NursingWebConfig 装配，PR-3 Task 12 回接）
+     * @param seqGate         业务号发号器，非空；联动号 LG 取号出口
+     * @param pushService     STOMP 推送服务，非空；NOTIFY 动作 WS 推送出口
+     * @param events          Spring 事件发布器，非空；executed 事件事务内发布入口（AFTER_COMMIT 出 MQ）
+     * @param transactions    事务模板，非空；日志落行+事件发布同事务承载
+     * @param objectMapper    JSON 转换器，非空；触发条件/动作配置 JSONB 解析
      */
     public LinkageExecutor(
             IotLinkageRuleMapper ruleMapper,
             IotLinkageLogMapper logMapper,
             IotDeviceMapper deviceMapper,
             IotAlarmMapper alarmMapper,
+            NursingTaskLinkagePort nursingTaskPort,
             IotSeqGate seqGate,
             ITelemetryPushService pushService,
             ApplicationEventPublisher events,
@@ -124,6 +141,7 @@ public class LinkageExecutor {
         this.logMapper = logMapper;
         this.deviceMapper = deviceMapper;
         this.alarmMapper = alarmMapper;
+        this.nursingTaskPort = nursingTaskPort;
         this.seqGate = seqGate;
         this.pushService = pushService;
         this.events = events;
@@ -254,8 +272,8 @@ public class LinkageExecutor {
     }
 
     /**
-     * 五类动作分派（brief 冻结语义的单一裁决点）：NOTIFY 推送 / M01_NOTIFY 降级 / 其余三类
-     * 目标域缺位暂存。
+     * 五类动作分派（brief 冻结语义的单一裁决点）：NOTIFY 推送 / M01_NOTIFY 降级 / CALL_TRANSFER
+     * 与 NURSING_TASK 已回接（事件扇出/端口直调）/ WARD_BROADCAST 目标域缺位暂存。
      *
      * @param rule       命中联动规则，非空
      * @param triggerRef 触发来源引用（告警号等），非空
@@ -279,10 +297,12 @@ public class LinkageExecutor {
                         triggerRef);
                 yield succeeded(attempt);
             }
-            // ward 病区播报与 M05 护理任务域缺位：暂存 PENDING（回接点见 deferToTargetDomain）；
-            // CALL_TRANSFER 已回接（Task 12）：发布 iot.call.triggered 扇出至 ward 呼叫域
+            // 已回接双动作：CALL_TRANSFER 发布 iot.call.triggered 扇出至 ward 呼叫域（PR-2 Task 12）；
+            // NURSING_TASK 经 nursing api 端口幂等创建护理任务（PR-3 Task 12 回接）
             case CALL_TRANSFER -> transferCall(rule, triggerRef, linkageNo, attempt);
-            case WARD_BROADCAST, NURSING_TASK -> deferToTargetDomain(rule, linkageNo, attempt);
+            case NURSING_TASK -> createNursingTask(rule, triggerRef, linkageNo, attempt);
+            // M16 病区播报域缺位：唯一暂存承接项（回接点见 deferToTargetDomain）
+            case WARD_BROADCAST -> deferToTargetDomain(rule, linkageNo, attempt);
         };
     }
 
@@ -306,34 +326,23 @@ public class LinkageExecutor {
     }
 
     /**
-     * 【回接点】目标业务域未上线动作的暂存承接（P2 面，联调债登记）：
-     *
-     * <ul>
-     *   <li><b>WARD_BROADCAST → M16 病区播报域回接</b>：播报通道落地后同款改写（暂存注记
-     *       WardBroadcastUnavailable）；</li>
-     *   <li><b>NURSING_TASK → PR-3 回接</b>：M05 护理任务创建端口落地后同款改写（暂存注记
-     *       NursingUnavailable）。</li>
-     * </ul>
+     * 【回接点】目标业务域未上线动作的暂存承接（P2 面，联调债登记）：<b>唯一承接项
+     * WARD_BROADCAST → M16 病区播报域回接</b>——播报通道落地后同款改写（暂存注记
+     * WardBroadcastUnavailable）。CALL_TRANSFER 已随 PR-2 Task 12 审查 Important-1 回接
+     * （{@link #transferCall}），NURSING_TASK 已随 PR-3 Task 12 回接
+     * （{@link #createNursingTask}），暂存注记 WardUnavailable/NursingUnavailable 均消除。
      *
      * <p>回接前本方法确定性返回 PENDING + 域缺位注记（error_msg 承载，日志行为暂存行）；
      * PENDING 行不入自动重试面（非失败语义），人工重推亦被服务层以「仅 FAILED 可重推」拒绝，
-     * 收口唯一路径为回接方落域行。CALL_TRANSFER 原为本方法承接项，Task 12 审查 Important-1
-     * 已回接（{@link #transferCall}），暂存注记 WardUnavailable 消除。
+     * 收口唯一路径为回接方落域行。
      *
-     * @param rule      命中联动规则，非空
+     * @param rule      命中联动规则（WARD_BROADCAST 型），非空
      * @param linkageNo 联动执行业务号，非空
      * @param attempt   当前为第几次执行（0=首试），非负
      * @return PENDING 暂存结果（注记承载域缺位原因），非空
      */
     private ActionExecution deferToTargetDomain(IotLinkageRuleEntity rule, String linkageNo, int attempt) {
-        String note =
-                switch (rule.getActionType()) {
-                    case WARD_BROADCAST -> "WardBroadcastUnavailable：M16 病区播报域未上线（回接方收口）";
-                    case NURSING_TASK -> "NursingUnavailable：M05 护理任务创建未上线（PR-3 回接）";
-                    // 内部断言：上游 switch 已承接 NOTIFY/M01_NOTIFY/CALL_TRANSFER 三分支，此处仅
-                    // WARD_BROADCAST/NURSING_TASK 可达，default 属穷尽性防御（非用户输入路径）
-                    default -> throw new IllegalStateException("暂存分派不承接的动作类型：" + rule.getActionType());
-                };
+        String note = "WardBroadcastUnavailable：M16 病区播报域未上线（回接方收口）";
         log.info(
                 "联动动作暂存（目标域未上线）：linkageNo={}，ruleId={}，actionType={}，note={}",
                 linkageNo,
@@ -341,6 +350,99 @@ public class LinkageExecutor {
                 rule.getActionType(),
                 note);
         return new ActionExecution(LinkageActionResult.PENDING, attempt, note, Instant.now());
+    }
+
+    /**
+     * NURSING_TASK 动作执行（PR-3 Task 12 回接，NursingUnavailable 暂存注记消除）：按触发引用
+     * （告警号）定位告警行取绑定快照（patientId/visitId/wardId），组装端口请求经
+     * {@link NursingTaskLinkagePort} 进程内直调幂等创建 IOT_LINKAGE 护理任务（source_ref 落
+     * linkageNo，同号重放由 nursing 侧回查原任务）。
+     *
+     * <p>三路回执语义（brief 冻结）：创建成功与幂等重放（created=false）均回执 SUCCESS
+     * （error_msg 空——回接前的 NursingUnavailable 暂存注记自此不再产生）；port 抛
+     * BizException 直接上抛进 {@link #execute} 同步快速重试路径，耗尽落 FAILED 终态（可人工
+     * 重推——幂等键保证重推不重复建任务）。
+     *
+     * <p><b>载荷组件语义申报</b>：wardId=iot 域病区 id 数字串（rule.targetWardId 优先，空=告警
+     * 行触发源病区——与护理域病区编码分属两标识空间，Task 11 申报同款，nursing 侧无 id→code
+     * 映射 api）；taskType/title 取规则 actionConfig（action_config JSONB 透传），taskType
+     * 缺席回退 IOT_LINKAGE 字面量（nursing 词表不跨模块引用，B.2-2）；planTime=执行时刻
+     * （即联即办确认类任务，服务器时间 GC25）；title 为契约承载字段（nursing_task 无标题列）。
+     *
+     * @param rule       命中联动规则，非空
+     * @param triggerRef 触发来源引用（告警号），非空
+     * @param linkageNo  联动执行业务号（幂等键），非空
+     * @param attempt    当前为第几次执行（0=首试），非负
+     * @return SUCCESS（成功/幂等重放统一），非空
+     * @throws IllegalStateException 告警行定位失败（trigger_ref 无命中——重试耗尽后落 FAILED 留痕）
+     */
+    private ActionExecution createNursingTask(
+            IotLinkageRuleEntity rule, String triggerRef, String linkageNo, int attempt) {
+        // 数据库读操作：自然键 alarm_no 单查（@TableLogic 自动携带 deleted=0）——绑定快照字段来源
+        IotAlarmEntity alarm = alarmMapper.selectOne(
+                Wrappers.<IotAlarmEntity>lambdaQuery().eq(IotAlarmEntity::getAlarmNo, triggerRef));
+        if (alarm == null) {
+            // 内部断言：告警行由本模块告警引擎先落库后发事件（同源），无命中属数据不一致防御，
+            // 非用户输入路径；保留 ISE 走重试→FAILED 留痕收口（NOTIFY/CALL_TRANSFER 同款）
+            throw new IllegalStateException("联动 NURSING_TASK 动作定位告警行失败（trigger_ref 无命中）：" + triggerRef);
+        }
+        // 目标病区优先规则指定，空=跟随触发源病区（iot 域 id 数字串，语义申报见方法注）
+        Long wardSource = rule.getTargetWardId() != null ? rule.getTargetWardId() : alarm.getWardId();
+        NursingTaskLinkageResult outcome = nursingTaskPort.createTask(new NursingTaskLinkageRequest(
+                linkageNo,
+                wardSource == null ? null : String.valueOf(wardSource),
+                alarm.getPatientId(),
+                alarm.getVisitId(),
+                actionConfigText(rule, "taskType", DEFAULT_NURSING_TASK_TYPE),
+                actionConfigText(rule, "title", null),
+                OffsetDateTime.now()));
+        if (outcome.created()) {
+            log.info(
+                    "联动 NURSING_TASK 已创建护理任务：linkageNo={}，taskNo={}，ruleId={}，alarmNo={}，visitId={}，wardId={}",
+                    linkageNo,
+                    outcome.taskNo(),
+                    rule.getId(),
+                    triggerRef,
+                    alarm.getVisitId(),
+                    wardSource);
+        } else {
+            // 幂等重放视为成功：PENDING 行人工重推/链路重投由 nursing 侧同号回查原任务承载
+            log.info(
+                    "联动 NURSING_TASK 幂等重放（回查原任务）：linkageNo={}，taskNo={}，ruleId={}，alarmNo={}",
+                    linkageNo,
+                    outcome.taskNo(),
+                    rule.getId(),
+                    triggerRef);
+        }
+        return succeeded(attempt);
+    }
+
+    /**
+     * 规则动作配置取值（action_config JSONB 键值读取，NURSING_TASK 动作参数通道）：配置缺席/
+     * 原文损坏按缺省值承载并 warn 留痕（损坏不阻断动作——任务类型回退默认值仍可创建）。
+     *
+     * @param rule         命中联动规则，非空
+     * @param key          动作配置键名（taskType/title），非空
+     * @param defaultValue 配置缺席时的缺省值（null=允许缺席无缺省），可空
+     * @return 配置文本值或缺省值，可空
+     */
+    private String actionConfigText(IotLinkageRuleEntity rule, String key, String defaultValue) {
+        String configJson = rule.getActionConfig();
+        if (configJson == null || configJson.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            JsonNode value = objectMapper.readTree(configJson).path(key);
+            return value.isMissingNode() || value.isNull() || value.asText().isBlank() ? defaultValue : value.asText();
+        } catch (Exception e) {
+            log.warn(
+                    "联动动作配置原文损坏，按缺省值承载：ruleId={}，key={}，config={}，原因={}",
+                    rule.getId(),
+                    key,
+                    configJson,
+                    e.getMessage());
+            return defaultValue;
+        }
     }
 
     /**

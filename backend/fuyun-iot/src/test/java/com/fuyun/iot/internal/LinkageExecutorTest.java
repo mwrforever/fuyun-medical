@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.common.exception.BizException;
 import com.fuyun.iot.api.payload.AlarmTriggeredPayload;
 import com.fuyun.iot.api.payload.CallTriggeredPayload;
 import com.fuyun.iot.api.payload.LinkageExecutedPayload;
@@ -32,6 +33,10 @@ import com.fuyun.iot.mapper.IotDeviceMapper;
 import com.fuyun.iot.mapper.IotLinkageLogMapper;
 import com.fuyun.iot.mapper.IotLinkageRuleMapper;
 import com.fuyun.iot.service.ITelemetryPushService;
+import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.api.NursingTaskLinkagePort;
+import com.fuyun.nursing.api.NursingTaskLinkageRequest;
+import com.fuyun.nursing.api.NursingTaskLinkageResult;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -53,10 +58,11 @@ import org.springframework.transaction.support.DefaultTransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 联动执行器单测（P2 PR-2 Task 9 Step 2 TDD）：触发条件匹配（三键词表/空对象全命中）、五类动作
- * 分派逐项语义（NOTIFY 推送/M01_NOTIFY 降级/CALL_TRANSFER 回接发布 iot.call.triggered[Task 12
- * 回接]/WARD_BROADCAST·NURSING_TASK 暂存 PENDING）、失败同步快速重试（恢复/耗尽 FAILED）、
- * error_msg 列宽防线、人工重推路径复用既有联动号、iot.linkage.executed 事件发布（载荷契约逐字段）。
+ * 联动执行器单测（P2 PR-2 Task 9 Step 2 TDD + PR-3 Task 12 回接扩）：触发条件匹配（三键词表/
+ * 空对象全命中）、五类动作分派逐项语义（NOTIFY 推送/M01_NOTIFY 降级/CALL_TRANSFER 回接发布
+ * iot.call.triggered[PR-2 Task 12 回接]/NURSING_TASK 回接三路[PR-3 Task 12：成功/幂等重放/
+ * 失败重试]/WARD_BROADCAST 暂存 PENDING）、失败同步快速重试（恢复/耗尽 FAILED）、error_msg
+ * 列宽防线、人工重推路径复用既有联动号、iot.linkage.executed 事件发布（载荷契约逐字段）。
  *
  * <p>真实 SQL 行为归 IT 回归；事务模板以无资源事务管理器最小实现承载（真实事务同步链语义，
  * TelemetryIngestServiceImplTest 同款形态）。
@@ -94,6 +100,9 @@ class LinkageExecutorTest {
 
     @Mock
     private IotAlarmMapper alarmMapper;
+
+    @Mock
+    private NursingTaskLinkagePort nursingTaskPort;
 
     @Mock
     private IotSeqGate seqGate;
@@ -154,6 +163,7 @@ class LinkageExecutorTest {
                 logMapper,
                 deviceMapper,
                 alarmMapper,
+                nursingTaskPort,
                 seqGate,
                 pushService,
                 events,
@@ -337,18 +347,112 @@ class LinkageExecutorTest {
     }
 
     @Test
-    @DisplayName("动作分派 NURSING_TASK：M05 护理任务创建未上线暂存 PENDING（NursingUnavailable 注记，PR-3 回接）")
-    void nursingTaskDefersAsPendingWithNursingUnavailableNote() {
-        when(ruleMapper.selectList(any()))
-                .thenReturn(List.of(rule(900017L, LinkageActionType.NURSING_TASK, CONDITION_INFUSION)));
+    @DisplayName("动作分派 NURSING_TASK（PR-3 回接）：端口直调创建护理任务回执 SUCCESS（告警快照+规则配置透传断言）")
+    void nursingTaskCreatesViaPortAndSucceeds() {
+        IotLinkageRuleEntity nursingRule = rule(900017L, LinkageActionType.NURSING_TASK, CONDITION_INFUSION);
+        // 动作配置快照透传：taskType/title 由规则 actionConfig 承载（缺省回退见下例）
+        nursingRule.setActionConfig("{\"taskType\": \"TURN\", \"title\": \"离床确认巡视\"}");
+        when(ruleMapper.selectList(any())).thenReturn(List.of(nursingRule));
         when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        when(alarmMapper.selectOne(any())).thenReturn(alarm());
+        when(nursingTaskPort.createTask(any())).thenReturn(new NursingTaskLinkageResult("TK2026100200001", true));
 
         executor.onAlarmTriggered(PAYLOAD);
 
+        // 端口请求逐字段断言：幂等键=linkageNo、患者锚=告警行绑定快照、动作配置 taskType/title 透传
+        ArgumentCaptor<NursingTaskLinkageRequest> portCaptor = ArgumentCaptor.forClass(NursingTaskLinkageRequest.class);
+        verify(nursingTaskPort).createTask(portCaptor.capture());
+        NursingTaskLinkageRequest request = portCaptor.getValue();
+        assertThat(request.linkageNo()).isEqualTo(LINKAGE_NO);
+        assertThat(request.patientId()).isEqualTo(5L);
+        assertThat(request.visitId()).isEqualTo("20260901000001");
+        assertThat(request.wardId()).as("病区=iot 域 id 数字串（Task 11 标识空间申报同款）").isEqualTo("5");
+        assertThat(request.taskType()).isEqualTo("TURN");
+        assertThat(request.title()).isEqualTo("离床确认巡视");
+        assertThat(request.planTime()).isNotNull();
+        // 留痕断言：回执 SUCCESS 且 error_msg 为空（清除既有 NursingUnavailable 暂存注记语义）
         verify(logMapper).insert(logCaptor.capture());
-        IotLinkageLogEntity inserted = logCaptor.getValue();
-        assertThat(inserted.getActionResult()).isEqualTo(LinkageActionResult.PENDING);
-        assertThat(inserted.getErrorMsg()).contains("NursingUnavailable");
+        assertThat(logCaptor.getValue().getActionResult()).isEqualTo(LinkageActionResult.SUCCESS);
+        assertThat(logCaptor.getValue().getErrorMsg()).isNull();
+        assertThat(logCaptor.getValue().getRetryCount()).isZero();
+        verifyNoInteractions(pushService);
+    }
+
+    @Test
+    @DisplayName("动作分派 NURSING_TASK：actionConfig 缺席 taskType 回退 IOT_LINKAGE、targetWardId 优先于触发源病区")
+    void nursingTaskDefaultsTaskTypeAndPrefersTargetWard() {
+        IotLinkageRuleEntity nursingRule = rule(900017L, LinkageActionType.NURSING_TASK, CONDITION_INFUSION);
+        nursingRule.setTargetWardId(9L);
+        when(ruleMapper.selectList(any())).thenReturn(List.of(nursingRule));
+        when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        when(alarmMapper.selectOne(any())).thenReturn(alarm());
+        when(nursingTaskPort.createTask(any())).thenReturn(new NursingTaskLinkageResult("TK2026100200002", true));
+
+        executor.onAlarmTriggered(PAYLOAD);
+
+        ArgumentCaptor<NursingTaskLinkageRequest> portCaptor = ArgumentCaptor.forClass(NursingTaskLinkageRequest.class);
+        verify(nursingTaskPort).createTask(portCaptor.capture());
+        NursingTaskLinkageRequest request = portCaptor.getValue();
+        // 动作配置缺席：taskType 回退 IOT_LINKAGE 字面量（nursing 词表不跨模块引用，B.2-2）、title 空
+        assertThat(request.taskType()).isEqualTo("IOT_LINKAGE");
+        assertThat(request.title()).isNull();
+        // 规则指定目标病区优先（空=跟随触发源病区路由语义）
+        assertThat(request.wardId()).isEqualTo("9");
+    }
+
+    @Test
+    @DisplayName("动作分派 NURSING_TASK 幂等重放：created=false 视为成功回执 SUCCESS（不重复建任务）")
+    void nursingTaskIdempotentReplaySucceeds() {
+        when(ruleMapper.selectList(any()))
+                .thenReturn(List.of(rule(900017L, LinkageActionType.NURSING_TASK, CONDITION_INFUSION)));
+        when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        when(alarmMapper.selectOne(any())).thenReturn(alarm());
+        when(nursingTaskPort.createTask(any())).thenReturn(new NursingTaskLinkageResult("TK2026093000007", false));
+
+        executor.onAlarmTriggered(PAYLOAD);
+
+        // 幂等重放=成功（PENDING 行人工重推/链路重投由 nursing 侧回查原任务承载）
+        verify(logMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getActionResult()).isEqualTo(LinkageActionResult.SUCCESS);
+        assertThat(logCaptor.getValue().getErrorMsg()).isNull();
+    }
+
+    @Test
+    @DisplayName("动作分派 NURSING_TASK 失败路：端口 BizException 进自动重试，耗尽落 FAILED（可人工重推）")
+    void nursingTaskRetriesOnPortBizExceptionThenFails() {
+        when(ruleMapper.selectList(any()))
+                .thenReturn(List.of(rule(900017L, LinkageActionType.NURSING_TASK, CONDITION_INFUSION)));
+        when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        when(alarmMapper.selectOne(any())).thenReturn(alarm());
+        when(nursingTaskPort.createTask(any()))
+                .thenThrow(new BizException(
+                        NursingErrorCode.CONFLICT, org.springframework.http.HttpStatus.CONFLICT, "护理任务创建被拒（测试桩）"));
+
+        executor.onAlarmTriggered(PAYLOAD);
+
+        // 首试+三次重试=四次端口触达，耗尽落 FAILED 单行留痕（error_msg 承载业务拒绝原因）
+        verify(nursingTaskPort, times(4)).createTask(any());
+        verify(logMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getActionResult()).isEqualTo(LinkageActionResult.FAILED);
+        assertThat(logCaptor.getValue().getRetryCount()).isEqualTo(3);
+        assertThat(logCaptor.getValue().getErrorMsg()).contains("护理任务创建被拒");
+    }
+
+    @Test
+    @DisplayName("动作分派 NURSING_TASK 告警行定位失败：进重试耗尽落 FAILED（绑定快照来源缺失防御）")
+    void nursingTaskFailsWhenAlarmRowMissing() {
+        when(ruleMapper.selectList(any()))
+                .thenReturn(List.of(rule(900017L, LinkageActionType.NURSING_TASK, CONDITION_INFUSION)));
+        when(seqGate.nextLinkageNo()).thenReturn(LINKAGE_NO);
+        when(alarmMapper.selectOne(any())).thenReturn(null);
+
+        executor.onAlarmTriggered(PAYLOAD);
+
+        // 告警行缺失属数据不一致防御（NOTIFY/CALL_TRANSFER 同款 ISE），端口零触达
+        verifyNoInteractions(nursingTaskPort);
+        verify(logMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getActionResult()).isEqualTo(LinkageActionResult.FAILED);
+        assertThat(logCaptor.getValue().getErrorMsg()).contains("定位告警行失败");
     }
 
     @Test

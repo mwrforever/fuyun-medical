@@ -298,12 +298,14 @@ class NursingTaskServiceImplTest {
         assertThat(second.get(0).escalationCount()).isEqualTo(1);
         verify(taskMapper, times(1)).casMarkOverdue(ROW_ID);
 
-        // GC26 可执行锚：逾期标记必须为 @Update 注解 SQL 条件更新（overdue_flag=false 谓词仅首次递增）
+        // GC26 可执行锚：逾期标记必须为 @Update 注解 SQL 条件更新（overdue_flag=false 谓词仅首次
+        // 递增 + 在途谓词滤完成窗口行——Task 9 minor① 补齐，与 casEscalateOverdue 对齐）
         String sql = recordSql("casMarkOverdue", long.class);
         assertThat(sql)
                 .contains("overdue_flag = true")
                 .contains("escalation_count = escalation_count + 1")
                 .contains("WHERE id = #{id}")
+                .contains("status IN ('PENDING', 'IN_PROGRESS')")
                 .contains("overdue_flag = false")
                 .contains("deleted = 0");
     }
@@ -444,12 +446,13 @@ class NursingTaskServiceImplTest {
         assertThat(result.get(VISIT)).extracting(NursingTaskVO::overdueFlag).containsExactly(true, true, true, false);
         assertThat(result.get(VISIT)).extracting(NursingTaskVO::escalationCount).containsExactly(1, 1, 1, 0);
         // GC26 可执行锚：批量逾期标记必须为 @Update 注解 SQL 条件更新（per-row overdue_flag=false
-        // 谓词仅首次递增 + 显式 deleted=0，与逐行 casMarkOverdue 语义逐行等价）
+        // 谓词仅首次递增 + 在途谓词 + 显式 deleted=0，与逐行 casMarkOverdue 语义逐行等价）
         String sql = recordSql("casMarkOverdueBatch", Collection.class);
         assertThat(sql)
                 .contains("overdue_flag = true")
                 .contains("escalation_count = escalation_count + 1")
                 .contains("WHERE id IN")
+                .contains("status IN ('PENDING', 'IN_PROGRESS')")
                 .contains("overdue_flag = false")
                 .contains("deleted = 0");
     }

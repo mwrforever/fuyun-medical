@@ -22,6 +22,7 @@ import com.fuyun.nursing.service.impl.NurseBoardServiceImpl;
 import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
+import com.fuyun.nursing.service.impl.NursingTaskLinkagePortImpl;
 import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
 import com.fuyun.nursing.service.impl.OrderExecutionGenerateServiceImpl;
 import com.fuyun.nursing.service.impl.OrderExecutionOperateServiceImpl;
@@ -56,7 +57,9 @@ import org.springframework.context.annotation.Import;
  * P2 PR-3 Task 10 追加：不良事件域服务（上报匿名通道/处置关闭退回状态机/分类统计/tick
  * 超时提醒扫描段）与不良事件控制器。P2 PR-3 Task 11 追加：护士站大屏快照服务
  * （board 四段聚合+Redis TTL 5s read-through）与大屏快照端点（WS 装配面归
- * NursingWebSocketConfig）。
+ * NursingWebSocketConfig）。P2 PR-3 Task 12 追加：联动任务创建端口实现（M14→M05 联动
+ * 回接面，IOT_LINKAGE 幂等创建复用护理任务服务；消费方 iot LinkageExecutor 经构造器
+ * 注入本 PortImpl Bean）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -80,6 +83,8 @@ import org.springframework.context.annotation.Import;
     RoutineTaskGeneratorImpl.class,
     AdverseEventServiceImpl.class,
     NurseBoardServiceImpl.class,
+    // P2 PR-3 Task 12 联动任务创建端口实现（M14→M05 联动回接）：IOT_LINKAGE 幂等创建单点
+    NursingTaskLinkagePortImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,

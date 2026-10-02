@@ -67,15 +67,17 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
     int casCancel(@Param("taskNo") String taskNo, @Param("reason") String reason, @Param("operator") String operator);
 
     /**
-     * 逾期标记 CAS（读时惰性判定落点，0 行=已标记过或行不可达）：overdue_flag 置 true 且
-     * escalation_count 仅在 overdue_flag=false 谓词命中时递增一次——读路径并发重复判定与
-     * 重复查询均不重复递增（Spec :127 动作式逾期，仅首次升级计数）。
+     * 逾期标记 CAS（读时惰性判定落点，0 行=已标记过、任务不在途或已被逻辑删）：overdue_flag
+     * 置 true 且 escalation_count 仅在谓词命中时递增一次——读路径并发重复判定与重复查询均不
+     * 重复递增（Spec :127 动作式逾期，仅首次升级计数）。status 在途谓词（P1 遗留补齐，P2
+     * PR-3 Task 9 minor① 裁量落地）：扫描快照后任务被完成/取消的「完成窗口」行不再置位——
+     * 终态任务无逾期动作语义，与 casEscalateOverdue 在途谓词对齐。
      *
      * @param id 任务行 id，非空
      * @return 影响行数（0=已标记过、任务不在途或已被逻辑删，调用方不回写内存行）
      */
     @Update("UPDATE nursing.nursing_task SET overdue_flag = true, escalation_count = escalation_count + 1 "
-            + "WHERE id = #{id} AND overdue_flag = false AND deleted = 0")
+            + "WHERE id = #{id} AND status IN ('PENDING', 'IN_PROGRESS') AND overdue_flag = false AND deleted = 0")
     int casMarkOverdue(@Param("id") long id);
 
     /**
@@ -98,16 +100,17 @@ public interface NursingTaskMapper extends BaseMapper<NursingTask> {
     /**
      * 逾期标记批量 CAS（批量在途查询读时惰性判定落点，A.4.3-14 写放大收敛）：单条语句按 id 集
      * 一次触达，谓词与逐行 {@link #casMarkOverdue} 逐行同构——overdue_flag=false 的行各递增
-     * 恰一次，已标记/已逻辑删行被谓词逐行滤除，并发先行标记行不重复递增（批量形态不改变
-     * per-row 仅首次递增语义，script foreach 承载与 OrderExecutePlanMapper 同款先例）。
+     * 恰一次，已标记/已终态（在途谓词，完成窗口补齐同 {@link #casMarkOverdue}）/已逻辑删行被
+     * 谓词逐行滤除，并发先行标记行不重复递增（批量形态不改变 per-row 仅首次递增语义，
+     * script foreach 承载与 OrderExecutePlanMapper 同款先例）。
      *
      * @param ids 待标记任务行 id 集（守卫判定后的受染键集），非空
-     * @return 影响行数（实际首次标记行数；并发先行标记/不可达行不计入）
+     * @return 影响行数（实际首次标记行数；并发先行标记/不可达/终态行不计入）
      */
     @Update("<script>UPDATE nursing.nursing_task SET overdue_flag = true, escalation_count = escalation_count + 1 "
             + "WHERE id IN "
             + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach> "
-            + "AND overdue_flag = false AND deleted = 0</script>")
+            + "AND status IN ('PENDING', 'IN_PROGRESS') AND overdue_flag = false AND deleted = 0</script>")
     int casMarkOverdueBatch(@Param("ids") Collection<Long> ids);
 
     /**

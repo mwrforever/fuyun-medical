@@ -480,8 +480,11 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
      * ①per-row overdue_flag=false 谓词在 IN 批量语句中逐行独立生效，每行仅首次递增；
      * ②escalation_count 生命周期内至多递增一次（overdue_flag 单向置位无复位路径），故守卫行
      * 无条件回写 true/计数+1——无论由本语句或并发先行者标记，回写值与库态恒一致（逐行路径
-     * 对并发先行标记行保留快照旧值，本路径回写更贴库态）。P1 不发布 nursing.task.overdue
-     * （V800 占位登记，发布随 P2 延迟队列实装，禁在本方法私发）。
+     * 对并发先行标记行保留快照旧值，本路径回写更贴库态）。瞬态偏差申报：守卫行在 CAS 时刻被
+     * 并发完成/取消的极端窗口，CAS 在途谓词（Task 9 minor① 补齐）使该行零写触达而内存仍回写
+     * true/计数+1——终态任务的逾期标记无业务消费（完成面出参以 status 终态为准），下次查询
+     * 自然回真；批级单语句写收敛收益保留该毫秒级瞬态（逐行路径同窗口不回写，仅快照口径差异）。
+     * P1 不发布 nursing.task.overdue（V800 占位登记，发布随 P2 延迟队列实装，禁在本方法私发）。
      *
      * @param rows 批查返回的全部任务行（跨患者），非空；守卫命中行按批量 CAS 结果原位回写
      */
