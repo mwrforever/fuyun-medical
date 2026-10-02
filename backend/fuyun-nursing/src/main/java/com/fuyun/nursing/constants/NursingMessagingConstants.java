@@ -55,6 +55,14 @@ public final class NursingMessagingConstants {
     /** 任务逾期延迟档位队列名（delay.task-overdue；Task 9 自续期投递目标，与 NursingMessagingConfig 档位声明同源） */
     public static final String DELAY_QUEUE_TASK_OVERDUE = "delay.task-overdue";
 
+    /**
+     * 任务逾期延迟档位业务段（declareDelayQueue 的 business 入参段）：治理构件按
+     * {@code delay. + business} 拼最终队列名，本段不含前缀、不含点（命名审查规则
+     * ^[a-z][a-z0-9-]*$ 拒绝带点值——曾以整队列名入参导致启动阻断，回归测试
+     * NursingMessagingConfigTest 把守）。与 DELAY_QUEUE_TASK_OVERDUE 拼接同源。
+     */
+    public static final String DELAY_BUSINESS_TASK_OVERDUE = "task-overdue";
+
     /** 逾期 tick 消费队列名（Task 9 tick 监听器绑定 fy.topic 路由键 nursing.task-overdue.tick 的消费队列） */
     public static final String QUEUE_TASK_OVERDUE_TICK = "q.nursing.task-overdue.tick";
 

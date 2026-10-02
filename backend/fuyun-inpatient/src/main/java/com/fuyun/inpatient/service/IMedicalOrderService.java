@@ -1,7 +1,7 @@
 package com.fuyun.inpatient.service;
 
 import com.fuyun.common.web.PageResult;
-import com.fuyun.inpatient.dto.OrderCreateRequest;
+import com.fuyun.inpatient.dto.InpatientOrderCreateRequest;
 import com.fuyun.inpatient.enums.OrderClass;
 import com.fuyun.inpatient.vo.MedicalOrderVO;
 import com.fuyun.inpatient.vo.OrderDetailVO;
@@ -28,7 +28,7 @@ public interface IMedicalOrderService {
      *                 IP-1011（400 药品行剂量/途径缺失或长期缺频次）/IP-1021（404 频次不存在）/
      *                 IP-1022（400 嘱托仅长期可用/操作者标识非数字）/IP-1023（409 医嘱号唯一冲突）
      */
-    MedicalOrderVO create(String visitId, OrderCreateRequest req);
+    MedicalOrderVO create(String visitId, InpatientOrderCreateRequest req);
 
     /**
      * 医嘱分页查询（GET /orders?visitId=&class=&page=&size=）：按就诊号过滤（必填——
@@ -82,7 +82,7 @@ public interface IMedicalOrderService {
      *                 IP-1013（409 过敏强阳性）/IP-1011（400 明细校验不过）/IP-1021（404 频次
      *                 不存在）/IP-1022（400 词表外/操作者标识非数字）/IP-1023（409 头值面落写零行）
      */
-    MedicalOrderVO resubmit(String orderNo, OrderCreateRequest req);
+    MedicalOrderVO resubmit(String orderNo, InpatientOrderCreateRequest req);
 
     /**
      * 转科自动停嘱（转科编排阶段①，调用方 ITransferService.transfer 编排事务内）：转出病区

@@ -7,7 +7,7 @@ import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 
 /**
- * 医嘱开立明细行入参（OrderCreateRequest.items 元素）：药品行（itemType=DRUG）参与过敏
+ * 医嘱开立明细行入参（InpatientOrderCreateRequest.items 元素）：药品行（itemType=DRUG）参与过敏
  * 拦截（itemCode 命中过敏项药物 code 拒 IP-1013）与剂量/单位/途径必填校验（缺任一拒
  * IP-1011）；行序号（item_seq）与延续标志缺省值由服务层统一生成/回填。
  *
@@ -24,7 +24,7 @@ import java.math.BigDecimal;
  * @param oralFlag     抢救口头医嘱补录标记，可空缺省 false——Task 6 oral-confirm 补录确认面消费；来源：抢救场景勾选
  * @param continueFlag 延续标志（成组医嘱组内延续执行标记），可空缺省 false；来源：成组开单勾选
  */
-public record OrderItemRequest(
+public record InpatientOrderItemRequest(
         @NotBlank(message = "itemType 不能为空")
         @Pattern(regexp = "DRUG|LAB|EXAM|SURGERY|BLOOD|NURSING|DIET|CONSULT|DISCHARGE_MED", message = "itemType 词表外")
         String itemType,

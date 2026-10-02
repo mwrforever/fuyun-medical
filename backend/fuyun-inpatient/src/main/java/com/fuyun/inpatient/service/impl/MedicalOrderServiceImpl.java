@@ -12,8 +12,8 @@ import com.fuyun.inpatient.api.payload.OrderCreatedPayload;
 import com.fuyun.inpatient.api.payload.OrderStoppedPayload;
 import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.dto.OrderCreateRequest;
-import com.fuyun.inpatient.dto.OrderItemRequest;
+import com.fuyun.inpatient.dto.InpatientOrderCreateRequest;
+import com.fuyun.inpatient.dto.InpatientOrderItemRequest;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.entity.MedicalOrder;
 import com.fuyun.inpatient.entity.MedicalOrderItem;
@@ -154,7 +154,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      */
     @Override
     @Transactional
-    public MedicalOrderVO create(String visitId, OrderCreateRequest req) {
+    public MedicalOrderVO create(String visitId, InpatientOrderCreateRequest req) {
         // 守卫链⓪：就诊定位与在院态校验（出院/作废就诊禁开立；load+check 经共享访问器——EX-44）
         InpatientVisit visit = visitAccessor.requireByVisitId(visitId);
         if (!VisitStatus.ADMITTED.getCode().equals(visit.getStatus())) {
@@ -346,7 +346,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      */
     @Override
     @Transactional
-    public MedicalOrderVO resubmit(String orderNo, OrderCreateRequest req) {
+    public MedicalOrderVO resubmit(String orderNo, InpatientOrderCreateRequest req) {
         MedicalOrder order = requireOrder(orderNo);
         // 医嘱类型/分类词表校验（与开立同面——修改后医嘱体过同一校验链）
         OrderType orderType = OrderType.fromCode(req.orderType());
@@ -502,7 +502,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      * @param items     开立明细行，非空
      * @throws BizException IP-1013 药品行命中过敏物 code 时触发
      */
-    private void checkAllergyConflicts(long patientId, List<OrderItemRequest> items) {
+    private void checkAllergyConflicts(long patientId, List<InpatientOrderItemRequest> items) {
         // 第三方接口调用：patient 有效过敏项清单（无过敏为空清单）
         List<AllergyItem> allergies = allergyChecker.listActiveAllergies(patientId);
         if (allergies.isEmpty()) {
@@ -513,7 +513,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
                 .map(AllergyItem::itemCode)
                 .filter(code -> code != null && !code.isBlank())
                 .collect(Collectors.toSet());
-        for (OrderItemRequest item : items) {
+        for (InpatientOrderItemRequest item : items) {
             if (ITEM_TYPE_DRUG.equals(item.itemType()) && allergyCodes.contains(item.itemCode())) {
                 log.warn(
                         "医嘱开立被拒（过敏强阳性）：patientId={}，itemCode={}，itemName={}",
@@ -536,8 +536,8 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      * @param orderClass 医嘱分类（已过词表校验），非空
      * @throws BizException IP-1011 药品行剂量/途径缺失或长期缺频次；IP-1021 频次字典无命中
      */
-    private void checkItemsAndFrequency(OrderCreateRequest req, OrderClass orderClass) {
-        for (OrderItemRequest item : req.items()) {
+    private void checkItemsAndFrequency(InpatientOrderCreateRequest req, OrderClass orderClass) {
+        for (InpatientOrderItemRequest item : req.items()) {
             // 行项目类型词表校验（与 OrderType 同词表；Web 层 @Pattern 兜底）
             if (OrderType.fromCode(item.itemType()) == null) {
                 throw paramInvalid("itemType", item.itemType());
@@ -581,7 +581,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      * @param orderClass 医嘱分类（已过词表校验），非空
      * @throws BizException IP-1022 STAT+standby 结构矛盾时触发
      */
-    private void checkStandbyOnlyForLong(OrderCreateRequest req, OrderClass orderClass) {
+    private void checkStandbyOnlyForLong(InpatientOrderCreateRequest req, OrderClass orderClass) {
         if (Boolean.TRUE.equals(req.standbyFlag()) && orderClass != OrderClass.LONG) {
             throw new BizException(
                     InpatientErrorCode.PARAM_FORMAT_INVALID,
@@ -601,10 +601,11 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
      * @param operator 操作者（审计留痕），非空
      * @return 落库明细行全集（载荷构造复用），非空
      */
-    private List<MedicalOrderItem> saveItems(MedicalOrder order, List<OrderItemRequest> items, String operator) {
+    private List<MedicalOrderItem> saveItems(
+            MedicalOrder order, List<InpatientOrderItemRequest> items, String operator) {
         List<MedicalOrderItem> saved = new ArrayList<>(items.size());
         for (int i = 0; i < items.size(); i++) {
-            OrderItemRequest req = items.get(i);
+            InpatientOrderItemRequest req = items.get(i);
             MedicalOrderItem row = new MedicalOrderItem();
             row.setOrderId(order.getId());
             // 行序号：列表序 1 起递增（成组医嘱组内序号同源；下标驱动——record 值相等场景
@@ -652,7 +653,7 @@ public class MedicalOrderServiceImpl implements IMedicalOrderService {
             String visitNo,
             OrderType orderType,
             OrderClass orderClass,
-            OrderCreateRequest req,
+            InpatientOrderCreateRequest req,
             List<MedicalOrderItem> savedItems) {
         events.publishEvent(new InpatientDomainEvent(
                 InpatientMessagingConstants.withTypeKey(

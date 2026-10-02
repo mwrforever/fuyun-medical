@@ -19,7 +19,7 @@ import java.util.List;
  * @param freqCode    频次编码（order_frequency 七值种子 qd/bid/tid/qid/qn/prn/st），LONG 必填服务层拒 IP-1011、无命中拒 IP-1021；来源：医生站频次字典选择
  * @param items       医嘱明细行列表（至少一行），必填；来源：医生站项目录入
  */
-public record OrderCreateRequest(
+public record InpatientOrderCreateRequest(
         @NotBlank(message = "orderType 不能为空")
         @Pattern(regexp = "DRUG|LAB|EXAM|SURGERY|BLOOD|NURSING|DIET|CONSULT|DISCHARGE_MED", message = "orderType 词表外")
         String orderType,
@@ -34,4 +34,4 @@ public record OrderCreateRequest(
         @Pattern(regexp = "^[a-zA-Z0-9]{1,16}$", message = "freqCode 须为频次编码（字母/数字 ≤16）")
         String freqCode,
 
-        @NotEmpty(message = "items 不能为空") @Valid List<OrderItemRequest> items) {}
+        @NotEmpty(message = "items 不能为空") @Valid List<InpatientOrderItemRequest> items) {}

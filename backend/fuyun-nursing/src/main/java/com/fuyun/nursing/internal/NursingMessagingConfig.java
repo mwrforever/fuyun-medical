@@ -119,7 +119,7 @@ public class NursingMessagingConfig {
     @Bean
     public Declarables taskOverdueDelayQueue(MessagingGovernance governance) {
         return governance.declareDelayQueue(new DelayQueueSpec(
-                NursingMessagingConstants.DELAY_QUEUE_TASK_OVERDUE,
+                NursingMessagingConstants.DELAY_BUSINESS_TASK_OVERDUE,
                 Duration.ofSeconds(60),
                 NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK));
     }
