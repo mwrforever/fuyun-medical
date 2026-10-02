@@ -480,6 +480,8 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                     "处方状态不允许发药收敛：" + d.getRxNo());
         }
         // 事务内发应用事件（AFTER_COMMIT 出线）：批次摘要携 M03/billing 消费面
+        // 住院衔接三可空字段（m04OrderNo/wardId/dispensePlanNo）门诊发布面传 null——住院链随
+        // M06 摆药计划实装接线（V1111 契约演进，门诊既有消费方按原子集取用不受影响）
         events.publishEvent(new PharmacyDomainEvent(
                 PharmacyMessagingConstants.EVENT_DISPENSE_COMPLETED,
                 new DispenseCompletedPayload(
@@ -489,7 +491,10 @@ public class DispenseServiceImpl extends ServiceImpl<DispenseMapper, Dispense> i
                         d.getPatientId(),
                         d.getVisitId(),
                         d.getDispenseType(),
-                        summary)));
+                        summary,
+                        null,
+                        null,
+                        null)));
         log.info("发药签名完成：dispenseNo={}，issuer={}，rxNo={}，行数={}", dispenseNo, operator, d.getRxNo(), items.size());
     }
 

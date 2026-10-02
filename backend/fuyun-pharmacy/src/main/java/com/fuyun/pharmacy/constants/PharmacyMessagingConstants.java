@@ -18,7 +18,8 @@ public final class PharmacyMessagingConstants {
     /** 登记事件：审方驳回（id 27——P3 引擎接入前无发布点，禁引用于任何发布点） */
     public static final String EVENT_PRESCRIPTION_REJECTED = "pharmacy.prescription.rejected";
 
-    /** 发布事件：门诊发药完成（id 28） */
+    /** 发布事件：门诊发药完成（id 28；载荷 desc 自 V1111 起为「V702 冻结原文+住院四可空字段追加句」
+     *  合并面——契约演进只增不删，desc 权威载体 V702 文件禁改，追加面见 V1111） */
     public static final String EVENT_DISPENSE_COMPLETED = "pharmacy.dispense.completed";
 
     /** 发布事件：退药受理完成（id 29） */
