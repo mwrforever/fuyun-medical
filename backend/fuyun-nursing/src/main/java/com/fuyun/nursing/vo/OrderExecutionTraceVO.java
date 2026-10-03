@@ -70,7 +70,7 @@ public record OrderExecutionTraceVO(
             OffsetDateTime occurredAt) {
 
         /**
-         * 实体→出参静态工厂（手写映射，禁 MapStruct——A.1-8 先例）。
+         * 实体→出参静态工厂（手写映射，禁 MapStruct——A.7-4 先例）。
          *
          * @param entity 核对流水行，非空
          * @return 流水条目出参，非空
