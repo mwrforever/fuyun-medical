@@ -14,5 +14,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.spec.ts'],
+    // W-70②：全局 setup——enableAutoUnmount 防用例失败中止于 unmount 前的泄漏级联
+    setupFiles: ['./src/test-setup.ts'],
   },
 });
