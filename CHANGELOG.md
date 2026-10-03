@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-03 · CI 门禁补丁：backend job 超时线 40→55 分钟（runner 波动撞线两连杀）
+
+- **范围**：`.github/workflows/ci.yml` backend job `timeout-minutes` 40 → 55。
+- **理由**：PR #63 修复环三笔（dc43bfb/809e71f/d2a6a92）推送后 CI run 37105473638 两次
+  尝试均在 **40 分 16/18 秒被超时线击杀**（非测试失败：commitlint/changes/hygiene/frontend
+  四 job 全绿，Maven 步骤无任何报错输出）；同代码基线 c91db7b 当日早上 backend 仅
+  23m28s（run 37095628097），修复环后端增量仅 pharmacy 一 Mapper 方法+单测（本地模块
+  verify BUILD SUCCESS），不足以解释 +17m——判定为 GitHub 托管 runner 环境波动
+  （Testcontainers 镜像拉取/磁盘 IO 时段性变慢）。
+- **裁决**：40m 线本就偏紧——PR #62 backend 实测 35m4s，余量仅 13%；上调至 55m
+  （对最差观测值 40m 留 37% 余量）。若 55m 仍撞线则排除环境波动假设，转入本地
+  复现七验收 IT 排查挂死（修复环 dc43bfb 改动 DispensePlanMapper 幂等插入形态，
+  全链 IT 本地未跑过——`-DskipITs` 门禁盲区，届时按 IT 复现流程处置）。
+
 ## 2026-10-03 · PR #63 合并前修复环：/code-review 门槛项三点收口 + W-72 登记
 
 - **范围**：C-1 摆药 generate 事务毒化修复（dc43bfb，DispensePlanMapper 新增

@@ -45,7 +45,8 @@ jobs:
   backend:
     name: backend / verify
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # 超时线 55m：PR #62 实测 35m+runner 波动观测 40m+（2026-10-03 两连撞 40m 线击杀，CHANGELOG 留痕），留 37% 余量
+    timeout-minutes: 55
     needs: changes
     # 触发条件：后端路径有变更即跑全量门禁（仅改 java/资源文件不触碰 pom.xml 亦必须过门禁）
     if: needs.changes.outputs.backend == 'true'
