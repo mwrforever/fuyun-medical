@@ -2,6 +2,25 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-03 · PR #63 合并前修复环：/code-review 门槛项三点收口 + W-72 登记
+
+- **范围**：C-1 摆药 generate 事务毒化修复（dc43bfb，DispensePlanMapper 新增
+  `insertIgnoreOrderTimeConflict` ON CONFLICT DO NOTHING 与 V1110 部分唯一索引谓词
+  逐字咬合，净除毒化 catch）；D-1 不良事件上报 occurredAt 出网线改 `toISOString()`
+  带偏移形态（809e71f，修复后端 OffsetDateTime 反序列化必败致 UI 上报链路不可用）；
+  D-2 大屏 metricText 补 nullish 双判（809e71f，「余量 null ml」渲染瑕疵）；TASK.md
+  登记 W-72（临床留痕操作人身份客户端供给——门槛项 A-3 工单化归 PR-4 待产品裁决）。
+- **理由**：PR #63 /code-review 五路评审（A 安全/B 架构/C 数据/D 前端/E 测试，40 候选
+  →合并去重 36 条）终评门槛项 3 条——C-1（85，并发兜底在其设计场景整体失败）/D-1
+  （80，功能链路不可用）随修复环合并前收口（scoped 复审 APPROVED：谓词逐字咬合、
+  D-21 八条断言迁移无放宽、零越界 7 文件）；A-3（85，修复策略三选一涉产品语义）超主控
+  裁量，工单化随 PR-4 与 W-37/W-39 操作人可信面系统收敛。
+- **裁决留痕**：A-1（匿名令牌过 401 门）经主控取证归并 W-39 已知工单族（机制在案
+  逐字重合），真实增量=本 PR 使暴露面扩大至临床写面，作 PR-4 优先级佐证；C-2（同日
+  重入漏判）经取证下调——compose+Dockerfile 双源钉 TZ=Asia/Shanghai，真栈读回 +08:00
+  表示 contains 命中，非确定性失败；评审证据链留档 `.superpowers/code-review-pr63/`
+  （findings-A~E/merged/scores-final/brief-fixround/fixround-report/review-fixround.diff）。
+
 ## 2026-10-03 · CI 门禁补丁：前端 audit 点名豁免 braces 无补丁 advisory（GHSA-vfj7-8cjw-p6xm）
 
 - **范围**：`.github/workflows/ci.yml` frontend job audit 步骤增补 `--ignore=GHSA-vfj7-8cjw-p6xm`
