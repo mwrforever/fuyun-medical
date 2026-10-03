@@ -293,3 +293,22 @@
 16. **前端 OrderCreatePayload 本地类型偏差（Task 15，GC30 登记）**：住院开单请求 DTO 与门诊 `OrderCreateRequest` Springdoc schema 同名覆盖，住院契约在生成物失真——前端以本地 `OrderCreatePayload`（必需字段对齐出网）承载；根治（后端 DTO 改名或 springdoc 命名策略）已登记 TASK.md D-25 待决策，修复后删本地别名回归生成物。
 17. **api.d.ts 键序重排噪声（Task 14，PR 描述登记义务）**：openapi-typescript 重生成引入 745 旧 schema 零丢失 + 202 新增面的同时伴随既有键序重排噪声，本地 `git diff` 人工核对承载，CI 生成物新鲜度校验缺口见 TASK.md W-30。
 18. **W-34 触发就位（退役执行仍留 PR-3）**：`inpatient.visit.registered/admitted` + `inpatient.bed.changed` 事件链上线并经 `InpatientAdmissionFlowIT` 真栈验收通过，P1 过渡通道（`POST /api/v1/nursing/ward-patients` + `nursing_ward_patient`）退役触发条件达成；退役五项执行（端点/DTO、状态值与视图表、审计留痕、VO 字段面回归、一览 IT 重跑）归 P2 PR-3 M05 完整化。
+
+## 14. P2 PR-3 落地注记（2026-10-03，feat/p2-pr3-m05-m06）
+
+> 本节为 P2 PR-3（M05 完整 + M06 住院摆药衔接）对 M04 侧既有降级条款的闭合与衔接面声明，
+> 执行依据 `docs/superpowers/plans/2026-10-01-p2-pr3-m05-m06.md`（GC28 收口硬门槛）；
+> P2 PR-3 口径以本节为准，Spec 正文不回改。
+
+1. **`/ws/inpatient/ward/{wardId}` 归属落定（§13 第 1 条降级①闭合）**：护士站实时提醒面由
+   P2 PR-3 的 `/ws/nursing`（SimpleBroker `/topic/nursing/board/{wardId}`，统一推送信封五值
+   词表）承接——inpatient 不自建 WS 端点，M04 状态变化经 nursing 大屏帧与 REST 面可见。
+2. **取药完成回执闭环落定（§13 第 3 条降级③闭合）**：住院摆药签收经
+   `pharmacy.dispense.completed`（id 28 + V1111 住院四字段扩展）驱动——nursing 执行单批量
+   SIGNED + PIVAS 升格与监测建链（dispensePlanNo 引用经日志承载，V1106 无承载列）；出院
+   带药维持「放行即确认 + `audited.discharge-med` 子键驱动 M06 摆药」形态，取药完成对
+   离院确认的强阻断不落（归 P3 出院流程完整化再裁）。
+3. **SYSTEM 操作者白名单（GC15 桥扩展）**：MQ 消费/tick 系统链路无登录上下文——
+   `OperatorContextHolder.set("SYSTEM")` + try/finally clear 桥接为审计列落 SYSTEM 文本；
+   `OrderPlanServiceImpl` 操作者解析白名单增 SYSTEM 字面量（nursing 执行单完成主路径回签
+   进程内直调的审计口径），与 nursing/ward 三侧白名单字面量同源。

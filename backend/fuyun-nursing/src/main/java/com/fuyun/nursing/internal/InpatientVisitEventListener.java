@@ -247,7 +247,7 @@ public class InpatientVisitEventListener {
         String visitId = requireText(envelope, payload, "visitId");
         long patientId = requirePatientId(envelope, payload);
         Instant requestedAt = requireInstant(envelope, payload, "requestedAt");
-        // TODO(P2-PR3): WS board 推送与在途任务 remark 追加实装（不改状态红线保持——本任务仅清退提示占位）
+        // TODO(P3): WS board 推送与在途任务 remark 追加实装（不改状态红线保持——本任务仅清退提示占位）
         log.info("出院申请清退提示：visitId={}，patientId={}，requestedAt={}（在途任务与执行单清退提示，不改状态）", visitId, patientId, requestedAt);
     }
 

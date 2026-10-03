@@ -282,3 +282,48 @@
 14. **P1 最小脱敏口径**：`GET /pda/patient-summary` 不返回证件号/手机号类字段（Task 10 已实装，PDA 页零超敏字段渲染），完整脱敏体系随 M02 隐私中心演进。
 15. **体温单符号契约类名**：S7 重叠红圈 `fuy-temp-overlap-ring`（体温/脉搏坐标同格判定才渲染，防不同格假阳性）、脉搏短绌起止红竖线 `fuy-event-line--deficit-start`/`--end`（照 §5.6 时段事件修饰符惯例扩展）、S10 填充线 `fuy-temp-deficit-line` 等符号类名为前后端共享契约；**符号权威 = UI 设计文档 `docs/plans/2026-09-23-p1-pr6-m05-nursing-ui-design.md`**（§5.3 符号规范总表冻结类名 + §5.6 特殊事件竖线规则）。
 16. **判级联动降级向补齐与巡视留痕脱敏（2026-09-24 修复环 R1）**：①评估判级联动补齐降级向——复评（再次创建评估单，第 5 条周期注记的消费面）判级脱离高危时同事务移除对应床旁风险标识（`IWardMetaService#removeRiskFlag`，映射与高危追加同源 `NursingScaleConstants#riskFlagOf`，不含该标识幂等零写），床旁风险标识权威 = 最新评估判级（FU-M05-01「风险标识来自评估单高危结果」的完整语义）；②巡视打卡 `nursing_task.source_ref` 按标识形态分流——I 型腕带就诊编码（`VisitIdValidator` 口径，非敏感）原值留痕，证件号/就诊卡号形态落尾四位掩码（V805 列注释口径 + 等保「敏感字段脱敏落库」红线），日志同步走 `identifierTail` 摘要口径（对齐 PdaServiceImpl）。
+
+## 14. P2 PR-3 落地注记（2026-10-03，feat/p2-pr3-m05-m06）
+
+> 本节为 P2 PR-3（M05 完整 + M06 住院摆药衔接）交付面相对本 Spec 的界定、降级与裁决声明，
+> 执行依据 `docs/superpowers/plans/2026-10-01-p2-pr3-m05-m06.md`（GC28 收口硬门槛）；
+> P2 PR-3 口径以本节为准，Spec 正文不回改。
+
+1. **W-34 退役完成形态与 conditionTags 降级（§13 第 10 条退役条款闭合，五项全数履行）**：
+   ① `POST /ward-patients` 与 `POST /ward-patients/{visitId}/remove` 两端点连同
+   `WardPatientRegisterRequest`/`WardPatientRemoveRequest` DTO 与 `IWardMetaService.register/remove`
+   服务面删除（workstation 入区/出区按钮与 useWardRegister 删档同步）；② V1108 DROP
+   status/source 两列，`nursing_ward_patient` 为纯事件投影（admitted upsert/transferred 归属与
+   床号/discharged 逻辑删/bed.changed 床号四 listener 单一写入面，唯一索引重建 deleted=0 谓词）；
+   ③ register/remove 的 `@AuditLog` 随端点退役，新写入面为事件消费（消费留痕经事件溯源）；
+   ④ `WardPatientVO` 六字段经 GC39 判据回归事件推导形状，`WardPatientDetailVO.conditionTags`
+   不可推导——**该字段退役降级**（condition_tags 读恒空列保留残列不消费），patientName 换源
+   `PatientNameQuery` 脱敏展示名、gender/age 恒 null（M02 敏感红线）；⑤ 一览 IT 换源重跑
+   （`WardPatientRetirementIT`：POST 404 + 事件链三态断言）。
+2. **护士站大屏（FU-M05-08）M14 聚合降级为前端组合**：床位墙×责任护士×riskFlags 聚合经
+   `GET /api/v1/nursing/board/{wardId}` 四段快照（Redis TTL 5s read-through 降级同构 iot 大屏）
+   + `/ws/nursing` SimpleBroker `/topic/nursing/board/{wardId}` 统一推送信封
+   `{type,payload,occurredAt}`（词表 BED_PATIENT/TASK_OVERDUE/INFUSION_ESCALATION/
+   ADVERSE_EVENT_REMIND/CALL_TRIGGERED）承载；输液动态段（M14）无 WS 主题——前端经
+   `GET /api/v1/ward/infusion-board/{wardId}` REST + 遥测信号刷新组合承载（Task 17 REST 化
+   裁决）；危急值段固定空数组（M07 缺位降级明示）；CALL_TRIGGERED 帧的 wardId 为 iot 数字
+   病区空间（与前端 iot 订阅同源），其余四类帧护理编码路由——两标识空间边界为 M16 联调
+   冻结裁决（联动任务 ward_id 数字串直传同族）。
+3. **打印与通知降级（沿 §13 第 3 条口径顺延）**：交接班单/腕带/执行单打印与通知推送本 PR
+   仍不落（任务提醒以任务列表与大屏可见为达意），归 P3 通知中心与打印模板。
+4. **`nursing_ward_config.iot_sync_interval/conflict_window` 列落而消费后置**：V1107 落
+   ward_config P2 六列（含 routine_task_templates JSONB），本 PR 消费面仅常规模板生成；
+   iot_sync_interval（体征自动同步周期）与 conflict_window（冲突窗）两列消费者随 P3 iot
+   深度联动后置（列在位、读面缺位）。
+5. **D-23 根治形态（部分唯一索引 + 冲突回查独立事务）**：V1108 落 `nursing_record`
+   `(visit_id, record_date)` 部分唯一索引（限定 auto_generated=true AND abnormal_flag=false
+   AND deleted=0 的正常合并行形态）+ 物理列 record_date（北京钟面回填）；`appendObservation`
+   合并分支捕获 DuplicateKeyException 后经 conflictMergeTx（REQUIRES_NEW 独立事务，D-22
+   先例）回查合并重试一次——观察行归集理论双行竞态窗口根治，TASK.md D-23 行销项。
+6. **D-24 维持结论**：量表条目维持 P1 连续闭区间取值域（Braden/Morse/Barthel，冻结用例
+   4/6 有效不动），不回归经典离散档位——无业务方离散需求，维持零代码；裁决留痕
+   CHANGELOG 2026-10-01 立项条目 ⑤，TASK.md D-24 行销项。
+7. **出院申请 board 推送与在途任务 remark 追加归 P3（Task 11 审查裁定）**：
+   `InpatientVisitEventListener.handleDischargeRequested` 维持提示占位日志形态（不改状态
+   红线保持），WS board 推送与在途任务 remark 追加不落（出院床位动态帧经 discharged 逻辑删
+   前行回读路由已承载），代码 TODO(P3) 在位。

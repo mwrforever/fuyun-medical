@@ -2,6 +2,39 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-03 · P2 PR-3 收口：真栈五环节闭环演示 + 三 Spec 落地注记 + 工单销项五项（W-34/W-60/D-23/D-24/D-25）
+
+- **范围**：PR-3 收口面（SDD 计划 Task 19）——真栈探针五项取证、05-nursing §14 /
+  06-pharmacy §13 / 04-inpatient §14 落地注记、TASK.md 五项销项、P2 计划 §3 PR-3 完成标注、
+  `InpatientVisitEventListener` TODO(P2-PR3)→TODO(P3) 改标（非行为变更）。
+- **真栈探针结论（2026-10-03，compose 全栈 healthy）**：① 迁移计数 V110*=10（V1100–V1109）、
+  V111*=2（V1110/V1111），总迁移 89 件全 success；② `integration.event_registry` 总行 83
+  （id 83 = nursing.adverse-event.reported 在册）；③ 容器内 `/v3/api-docs` 200（244KB）且含
+  `/api/v1/nursing/executions` 与 `/api/v1/pharmacy/dispense-plans` 路径族；④ compose 六服务
+  全 healthy；⑤ 五环节闭环演示链全链 2xx+库态断言全过——入院四步→LONG bid 静脉医嘱开立→
+  药师审方（异人）→转抄核对（compensateToday 当日时点计划+护理计划执行单）→摆药五步
+  （PIVAS/deliver 半步/出库流水）→签收（执行单批量 SIGNED+INFUSION 升格+监测建链）→袋签
+  核对→开始输注（iot 消费留痕）→告警信封直投（escalation_count=1+任务零新增+大屏
+  INFUSION_ESCALATION 帧推送日志）→拔针（COMPLETED/挂接 ENDED/自动入量 250ml/泵解绑/
+  M04 回签 EXECUTED/对账 CONFIRMED）；大屏截图经 playwright-cli 真机留痕。
+- **降级清单汇总（详见三 Spec 落地注记与 PR 描述）**：W-34 退役五项履行+conditionTags 降级；
+  大屏 M14 聚合降级为前端组合+危急值空段；打印/通知降级顺延 P3；iot_sync_interval/
+  conflict_window 列落消费后置；毒麻专册与摆药机 P3 预留；退药开关校验归发起端（W-66）；
+  出院申请 board 推送与在途任务 remark 追加归 P3；STAT 单次计划转抄链不发
+  order-plan.generated（护理计划执行单仅日切/补偿面承载——真栈实测边界，P3 复核）。
+- **工单销项（五行，履行完毕）**：W-34（退役五项，Task 7/13/14 履行+WardPatientRetirementIT）、
+  W-60（OfflineDetector 收敛，Task 12 履行）、D-23（V1108 部分唯一索引+冲突回查独立事务，
+  Task 2/7 履行）、D-24（维持连续区间零代码，裁决留痕本文件 2026-10-01 立项条目 ⑤）、
+  D-25（InpatientOrderCreateRequest/InpatientOrderItemRequest 改名，Task 13 履行）；
+  W-42/W-43/W-45 留单（本 PR 未拾取，PR 描述留痕声明）；W-66/W-67 在案（PR-3 新登记）。
+- **真栈新发现（呈报留痕，处置归主控）**：① 护士站大屏 REST 首屏三端点
+  （/nursing/board、/ward/infusion-board、/iot/alarms）不在 AUTH_WHITELIST 而 bigscreen
+  http.ts 禁注入 Authorization——真栈 401 降级轮询（WS 链路经 bigscreen-token 正常）；
+  ② billing.fee.created 住院行遭 outpatient 消费方死信（与 W-67 dispense.completed 同族，
+  载荷守卫未适配住院行）；③ 陈旧构建产物 V6/V7 迁移残留在 fuyun-integration target/classes
+  （源已改号 V500/V501），对既有卷起栈 Flyway 校验失败（fresh 库因 IF NOT EXISTS 吸收）——
+  `mvn clean` 全量重建即除，CI clean 构建无此患。
+
 ## 2026-10-01 · P2 PR-3 立项：M05 护理完整 + M06 住院摆药衔接（V1106–V1111 号段 + id 83 + 错误码排定 + 依赖增量与 D-23/D-24/D-25 裁决落档）
 
 - **范围**：P2 阶段 PR-3 切片（FU-M05-04/06/07/08/09 + FU-M06-05 + W-34 退役五项 + W-60 收敛 +
