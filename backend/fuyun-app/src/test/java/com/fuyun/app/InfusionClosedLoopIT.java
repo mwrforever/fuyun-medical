@@ -1,6 +1,7 @@
 package com.fuyun.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
@@ -396,7 +397,8 @@ class InfusionClosedLoopIT extends FuyunStackITBase {
                 break;
             }
         }
-        throw new IllegalStateException("投影行未在区：visitId=" + visitId);
+        // E-2：超时即本处红，防失败漂移至下游断言
+        fail("等待超时：nursing 投影行数未在时限内达标（visitId=" + visitId + "）");
     }
 
     /** 轮询等待捕获列表出现指定前缀帧。 */

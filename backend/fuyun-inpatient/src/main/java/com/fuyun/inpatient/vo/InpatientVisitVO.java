@@ -45,7 +45,7 @@ public record InpatientVisitVO(
         String status) {
 
     /**
-     * 实体→出参静态工厂（关键业务字段手写映射，禁 MapStruct——backend 宪法 A.1-8 先例）。
+     * 实体→出参静态工厂（关键业务字段手写映射，禁 MapStruct——backend 宪法 A.7-4 先例）。
      *
      * @param entity 住院就诊行，非空
      * @return 出参，非空

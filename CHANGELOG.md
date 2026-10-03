@@ -2,6 +2,40 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-03 · Flyway 号段登记：V1112/V1113 补课索引（C-4/C-5，先记再改）
+
+- **号段登记（先记再改，PR-4A Task 6 落盘）**：通用段 V1112/V1113 两件——撰写期实测全局最大
+  已应用 V1111，V1112 > V1111 乱序守卫通过。归属：V1112 pharmacy.dispense 计划号部分索引
+  idx_dispense_dispense_plan_no（C-4：住院链 receive/acceptInpatientReturn 按 dispense_plan_no
+  等值点查全表扫描根治，门诊行 NULL 不进索引）；V1113 nursing.order_execution visit_id 部分
+  索引 idx_execution_visit（C-5：casCancelByVisit/casRedirectWard 两支批量 CAS 首要谓词
+  visit_id 等值点查，status IN 残余行个位数不进索引）。依据：PR-4 评审遗留调研 r3 §二设计候选
+  （`.superpowers/pr4-research/r3-review-leftovers.md`）；登记载体
+  docs/migrations/flyway-version-registry.md 同 PR 同步更新。
+
+## 2026-10-03 · P2 PR-4 立项（多计划连续执行）· PR-4A 工程与 CI 基座包启动
+
+- **总纲**：docs/superpowers/plans/2026-10-03-p2-pr4-overview.md——五册拆分（A 基座/B 临床操作/C 大屏病区/E 事件工单/D 全量 403）
+  连续执行，每册 SDD→范围全量终验→（如涉联调）真机 e2e→/code-review→合入 dev→开工下一册（用户 2026-10-03 流程指令）。
+- **裁决固化**：D-28 全量端点 403/D-29 W-40 fail-closed+绑定行种子/D-30 W-66 入 PR-4B/D-31 顺手包全选
+  （W-70③→本册，D-3+D-8/D-11→B 册，D-4→C 册）。
+- **PR-4A 范围**：W-73 CI 过滤修复/技术债快修批/E-1 补测/V1112·V1113 索引/W-70①②③；迁移号段占 V1112/V1113。
+
+## 2026-10-03 · P2 PR-4A 工程与 CI 基座包收口
+
+- **范围销项清单（工单销项 + /code-review 评审 finding 编号一并列明）**：W-73 CI changes job
+  路径过滤修复（dorny/paths-filter v4.0.3 + some-with-excludes）；W-64/W-65 裸 now 钉面；
+  B-2 NursingProperties @Validated；B-3；E-2；E-3；W-70①②③（①出网用例钉北京钟面 ②enableAutoUnmount
+  经 bigscreen test-setup 落地 ③CI frontend job Vitest 时区双跑）；B-1（W-74 配套登记在案）；
+  A-7②；C-3 注记；B-5 批量修正 19 处；E-1 六用例；C-4/C-5 V1112·V1113 补课索引；W-74 登记
+  （NurseBoardView.vue 双标识空间如实申报）。
+- **终验结论（主控预跑）**：后端全量 verify 24 模块 BUILD SUCCESS（25:41）；前端六连全绿——
+  audit 按 CI 口径带 W-71 在案豁免参数通过（braces GHSA-vfj7-8cjw-p6xm 点名豁免）。
+- **W-73 探针终验义务移交主控**：本册合入 dev 后以 docs-only PR 复验（changes 输出
+  backend/frontend=false 且双 verify skip、required check 语义维持）。
+- **新登记 W-81**：DashboardView formatClock 渲染侧本地墙钟回显——渲染侧北京钟面钉面缺口，
+  轻量收口（详见 TASK.md W-81 行）。
+
 ## 2026-10-03 · CI 门禁补丁：backend job 超时线 40→55 分钟（runner 波动撞线两连杀）
 
 - **范围**：`.github/workflows/ci.yml` backend job `timeout-minutes` 40 → 55。

@@ -41,7 +41,7 @@ public record NursingAssessmentVO(
         String adverseEventRef) {
 
     /**
-     * 实体→出参静态工厂（关键业务字段手写映射，禁 MapStruct——backend 宪法 A.1-8 先例；
+     * 实体→出参静态工厂（关键业务字段手写映射，禁 MapStruct——backend 宪法 A.7-4 先例；
      * answers 由服务层解析 JSONB 文本后传入，本工厂不做结构解析）。
      *
      * @param entity  护理评估单行，非空

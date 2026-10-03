@@ -33,7 +33,7 @@ public record TransferWorklistVO(
         boolean highRisk) {
 
     /**
-     * 实体→出参静态工厂（关键业务字段手写映射，禁 MapStruct——backend 宪法 A.1-8 先例）；
+     * 实体→出参静态工厂（关键业务字段手写映射，禁 MapStruct——backend 宪法 A.7-4 先例）；
      * highRisk 按医嘱类型裁决（BLOOD 输血类=强制双人核对）。
      *
      * @param entity  待转抄医嘱行，非空

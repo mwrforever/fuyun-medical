@@ -624,7 +624,6 @@ class IoRecordServiceImplTest {
     @Test
     @DisplayName("小结清单：date 非空收敛 period_start 当日窗口谓词且按周期起升序；date 空=全量不设窗口")
     void summariesFilterByPeriodWindowOrdered() {
-        OffsetDateTime periodStart = LocalDate.now().atTime(8, 0).atZone(ZONE).toOffsetDateTime();
         when(summaryMapper.selectList(any())).thenReturn(List.of(existingSummary()));
 
         List<IoSummaryVO> windowed = service.summaries(VISIT, LocalDate.now());

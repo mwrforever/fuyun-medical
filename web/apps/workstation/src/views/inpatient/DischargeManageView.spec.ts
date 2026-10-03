@@ -155,15 +155,18 @@ describe('出院管理', () => {
     // 打开申请弹窗 → 填就诊号/预出院时间/离院方式 → 提交
     await clickButton(wrapper, '发起出院申请');
     await wrapper.find('input[aria-label="在院就诊号"]').setValue('I2026092500001');
+    // datetime-local 值为北京钟面墙钟（合法 datetime-local 形态，浏览器对带偏移值会清洗为空）
     await wrapper.find('input[aria-label="预出院时间"]').setValue('2026-09-26T10:00');
     await wrapper.find('select[aria-label="离院方式"]').setValue('1');
     await clickButton(wrapper, '提交申请');
     await flushPromises();
-    // 出网携 date-time 契约形态（OffsetDateTime 可解析，时点日期断言不绑时区）
+    // W-70①：钉北京钟面防时区漂移——组件侧按 +08:00 钉面解析（见 onCreate），出网 ISO
+    // 时点=北京钟面 2026-09-26T10:00 的精确钉面（toISOString 恒 UTC：+08:00 → 02:00Z），
+    // 任意运行时区下期望值唯一，不再随运行环境本地时区推导（原 TZ=GMT-14 全天窗暴露）
     expect(discharge.create).toHaveBeenCalledWith(
       'I2026092500001',
       expect.objectContaining({
-        expectDischargeAt: expect.stringContaining('2026-09-26T'),
+        expectDischargeAt: '2026-09-26T02:00:00.000Z',
         dischargeWay: '1',
       }),
     );

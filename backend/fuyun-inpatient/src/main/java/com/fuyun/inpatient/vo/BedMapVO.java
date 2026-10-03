@@ -38,7 +38,7 @@ public record BedMapVO(
 
     /**
      * 床位行 + 就诊行 → 床位图行静态工厂（关键业务字段手写映射，禁 MapStruct——backend
-     * 宪法 A.1-8 先例；占用摘要仅在 OCCUPIED 态且有就诊行时组装）。
+     * 宪法 A.7-4 先例；占用摘要仅在 OCCUPIED 态且有就诊行时组装）。
      *
      * @param bed   床位行，非空
      * @param visit 占用就诊行，可空（非占用态或就诊行缺失）

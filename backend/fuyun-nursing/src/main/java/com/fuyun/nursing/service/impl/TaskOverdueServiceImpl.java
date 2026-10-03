@@ -1,6 +1,7 @@
 package com.fuyun.nursing.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.nursing.api.TaskOverduePayload;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
@@ -30,7 +31,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * 发布 {@link NurseBoardPushEvent}（type=TASK_OVERDUE，载荷含 taskNo/wardId 维度——派发上下文
  * §1.2 口径），NurseBoardPushListener 于独立事务提交后（AFTER_COMMIT+fallback）推送
  * /topic/nursing/board/{wardId}；warn 级触达日志保留为伴随日志（推送为主面）。
- * 业务时间服务器时间（GC25）。线程安全：无状态 singleton。
+ * 业务时间统一北京钟面（时区纪律红线）。线程安全：无状态 singleton。
  */
 @Slf4j
 public class TaskOverdueServiceImpl implements ITaskOverdueService {
@@ -82,7 +83,8 @@ public class TaskOverdueServiceImpl implements ITaskOverdueService {
      */
     @Override
     public int scanAndEscalate() {
-        OffsetDateTime now = OffsetDateTime.now();
+        // 扫描基准钟面钉北京时区（B-3 时区纪律：禁裸 now() 随容器时区漂移——阈值比对语义恒定）
+        OffsetDateTime now = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
         NursingProperties.TaskOverdue config = properties.taskOverdue();
         // 数据库读操作：段①候选扫描（在途未标记 + 越首逾阈值，计划时间升序有界——事务外扫表）
         List<NursingTask> firstMarkCandidates = taskMapper.selectList(new LambdaQueryWrapper<NursingTask>()

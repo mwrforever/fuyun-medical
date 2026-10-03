@@ -127,6 +127,50 @@ class SmokeStackIT {
     }
 
     /**
+     * C-4 迁移交付物断言：V1112 部分索引 idx_dispense_dispense_plan_no 必须落位（PR-4A Task 6）。
+     *
+     * <p>住院摆药链 receive/acceptInpatientReturn 按 dispense_plan_no 等值点查的索引载体；
+     * 部分谓词（dispense_plan_no IS NOT NULL AND deleted = 0）使门诊行（恒 NULL）不入索引、
+     * 逻辑删行不占索引——索引缺失或谓词丢失即 C-4 补课意图落空
+     * （IotMigrationIT 断言④同款形态锚定定义，防迁移静默缺失）。
+     */
+    @Test
+    @DisplayName("C-4 索引断言：V1112 idx_dispense_dispense_plan_no 落位且含 NOT NULL/deleted=0 部分谓词")
+    void c4DispensePlanNoIndexExists() {
+        String indexDef = jdbcTemplate.queryForObject(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'pharmacy' AND indexname = ?",
+                String.class,
+                "idx_dispense_dispense_plan_no");
+        assertThat(indexDef)
+                .as("C-4：摆药计划号部分索引必须存在且部分谓词含 IS NOT NULL 与 deleted = 0")
+                .isNotBlank()
+                .contains("dispense_plan_no")
+                .contains("IS NOT NULL")
+                .contains("deleted = 0");
+    }
+
+    /**
+     * C-5 迁移交付物断言：V1113 部分索引 idx_execution_visit 必须落位（PR-4A Task 6）。
+     *
+     * <p>出院终清 casCancelByVisit / 转科改病区 casRedirectWard 两支批量 CAS 首要谓词
+     * visit_id 等值的索引载体；部分谓词 deleted = 0 与 MyBatis-Plus 逻辑删自动追加口径同构
+     * ——索引缺失即 C-5 补课意图落空。
+     */
+    @Test
+    @DisplayName("C-5 索引断言：V1113 idx_execution_visit 落位且含 deleted=0 部分谓词")
+    void c5ExecutionVisitIndexExists() {
+        String indexDef = jdbcTemplate.queryForObject(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = 'nursing' AND indexname = ?",
+                String.class,
+                "idx_execution_visit");
+        assertThat(indexDef)
+                .as("C-5：执行单 visit_id 部分索引必须存在且部分谓词含 deleted = 0")
+                .isNotBlank()
+                .contains("visit_id")
+                .contains("deleted = 0");
+    }
+
+    /**
      * Redis 链路验证：String 读写一回合，值一致、TTL 为正、删除生效。
      *
      * <p>键名遵循 fy:{module}:{biz}:{id} 冒号分层（backend 宪法 A.5-1）；
