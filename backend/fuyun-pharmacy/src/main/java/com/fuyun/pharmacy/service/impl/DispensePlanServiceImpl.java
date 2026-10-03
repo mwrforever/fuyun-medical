@@ -55,7 +55,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -238,13 +237,14 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
             // 临时/按需（null/st/prn/未知）单次即刻计划：同医嘱已有计划行不再新建（幂等收敛）
             toInsert.add(buildPlan(req, medication, planType, OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ)));
         }
-        // 数据库写操作：逐计划落库——uk_dispense_plan_order_time 并发窗口兜底（DuplicateKey 跳过）
+        // 数据库写操作：逐计划幂等落库——语句内 ON CONFLICT DO NOTHING 撞 uk_dispense_plan_order_time
+        // 部分唯一索引 0 行整行放弃（并发窗口对端已落同键行；不抛异常故物理事务不中止，同批
+        // 后续插入与末尾重查正常执行——Java 侧 catch DuplicateKeyException 在 PG 下必致 25P02
+        // 事务毒化，禁回退该形态）
         for (DispensePlan plan : toInsert) {
-            try {
-                planMapper.insert(plan);
-            } catch (DuplicateKeyException e) {
+            if (planMapper.insertIgnoreOrderTimeConflict(plan) == 0) {
                 log.info(
-                        "摆药计划生成幂等跳过（同医嘱同给药时点计划已存在）：m04OrderNo={}，planTime={}",
+                        "摆药计划生成幂等跳过（并发窗口对端已落同医嘱同给药时点计划）：m04OrderNo={}，planTime={}",
                         plan.getM04OrderNo(),
                         plan.getPlanTime());
             }

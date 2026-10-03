@@ -68,14 +68,14 @@ import org.mockito.MockedStatic;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * 住院摆药计划服务单测（P2 PR-3 Task 8，Step 1–3）：计划生成（APPROVED 前置/PH-1025/长期
- * 频次分解逐次/PIVAS 判定/uk 幂等）、摆药流五步（pick 预校验+排批/verify 双签+贴签/issue
- * 调剂行四列+库存三连/deliver 状态不变时间线半步/receive 事件载荷全字段断言）与
- * PH-1024/PH-1026 状态守卫、退药回补（部分/全部+returned 事件）与停嘱/出院两路作废。
+ * 频次分解逐次/PIVAS 判定/uk 幂等——DO NOTHING 幂等插入影响行数语义）、摆药流五步（pick
+ * 预校验+排批/verify 双签+贴签/issue 调剂行四列+库存三连/deliver 状态不变时间线半步/receive
+ * 事件载荷全字段断言）与 PH-1024/PH-1026 状态守卫、退药回补（部分/全部+returned 事件）与
+ * 停嘱/出院两路作废。
  * MP 3.5.17 单测范式：TableInfoHelper 手工注册 + baseMapper/entityClass 反射注入；
  * Db 批量通道静态桩（DispenseThreeStepTest 同款）。
  */
@@ -283,9 +283,9 @@ class DispensePlanServiceImplTest {
 
         List<DispensePlanVO> result = impl.generate(new DispensePlanGenerateRequest(ORDER_NO, WARD));
 
-        // 逐时点三计划落库（次日北京钟面 08:00/12:00/16:00——V904 tid 种子时点逐字同源）
+        // 逐时点三计划幂等落库（次日北京钟面 08:00/12:00/16:00——V904 tid 种子时点逐字同源）
         ArgumentCaptor<DispensePlan> insertCaptor = ArgumentCaptor.forClass(DispensePlan.class);
-        verify(planMapper, Mockito.times(3)).insert(insertCaptor.capture());
+        verify(planMapper, Mockito.times(3)).insertIgnoreOrderTimeConflict(insertCaptor.capture());
         LocalDate nextDay = LocalDate.now(BEIJING_TZ).plusDays(1);
         List<OffsetDateTime> expectedTimes =
                 List.of(LocalTime.of(8, 0), LocalTime.of(12, 0), LocalTime.of(16, 0)).stream()
@@ -320,7 +320,7 @@ class DispensePlanServiceImplTest {
                 .hasMessageContaining("未审方通过")
                 .extracting(ex -> ((BizException) ex).getErrorCode())
                 .isEqualTo(PharmacyErrorCode.DISPENSE_PLAN_ORDER_INVALID);
-        verify(planMapper, never()).insert(any(DispensePlan.class));
+        verify(planMapper, never()).insertIgnoreOrderTimeConflict(any(DispensePlan.class));
     }
 
     @Test
@@ -349,7 +349,7 @@ class DispensePlanServiceImplTest {
 
         // 静脉族用法归 PIVAS 静配链（后续 pick 排批/verify 贴签/INPATIENT_PIVA 映射的消费锚）
         ArgumentCaptor<DispensePlan> insertCaptor = ArgumentCaptor.forClass(DispensePlan.class);
-        verify(planMapper).insert(insertCaptor.capture());
+        verify(planMapper).insertIgnoreOrderTimeConflict(insertCaptor.capture());
         assertThat(insertCaptor.getValue().getPlanType()).isEqualTo("PIVAS");
         assertThat(insertCaptor.getValue().getPlanTime())
                 .isEqualTo(LocalDateTime.of(LocalDate.now(BEIJING_TZ).plusDays(1), LocalTime.of(8, 0))
@@ -371,7 +371,7 @@ class DispensePlanServiceImplTest {
         List<DispensePlanVO> result = impl.generate(new DispensePlanGenerateRequest(ORDER_NO, WARD));
 
         // 重复 generate 幂等：零新建（uk 锚跳过）、返回既有清单
-        verify(planMapper, never()).insert(any(DispensePlan.class));
+        verify(planMapper, never()).insertIgnoreOrderTimeConflict(any(DispensePlan.class));
         assertThat(result).hasSize(3);
     }
 
@@ -399,13 +399,13 @@ class DispensePlanServiceImplTest {
 
         // 单次即刻：planTime 落在调用窗口内（now 北京钟面）
         ArgumentCaptor<DispensePlan> insertCaptor = ArgumentCaptor.forClass(DispensePlan.class);
-        verify(planMapper).insert(insertCaptor.capture());
+        verify(planMapper).insertIgnoreOrderTimeConflict(insertCaptor.capture());
         assertThat(insertCaptor.getValue().getPlanTime()).isBetween(before, after);
 
         // 重复 generate（已有计划行）：临时单次不再新建
         when(planMapper.selectList(any())).thenReturn(List.of(plan("CREATED", "SINGLE_DOSE")));
         impl.generate(new DispensePlanGenerateRequest(ORDER_NO, WARD));
-        verify(planMapper, Mockito.times(1)).insert(any(DispensePlan.class));
+        verify(planMapper, Mockito.times(1)).insertIgnoreOrderTimeConflict(any(DispensePlan.class));
     }
 
     // ===================== Step 2：摆药流五步（TDD 五步+PH-1024） =====================
@@ -857,20 +857,23 @@ class DispensePlanServiceImplTest {
     }
 
     @Test
-    @DisplayName("生成·uk 并发窗口兜底：insert 撞 uk_dispense_plan_order_time → DuplicateKey 幂等跳过不抛")
-    void generateSkipsDuplicateKeyOnConcurrentInsert() {
+    @DisplayName("生成·uk 并发窗口兜底：幂等插入 0 行（对端已落同键行）不抛不毒化——末尾重查照常执行返回既有清单")
+    void generateConcurrentConflictSkipsRowWithoutPoisoningTransaction() {
         DispensePlanServiceImpl impl = newService();
         when(medicationMapper.selectOne(any())).thenReturn(medication("tid", "口服"));
         when(reviewTaskMapper.selectOne(any())).thenReturn(task("APPROVED"));
         when(planMapper.selectList(any())).thenReturn(List.of(), List.of(plan("CREATED", "SINGLE_DOSE")));
         when(seqGate.nextNo("DP")).thenReturn("DP2026100200001", "DP2026100200002", "DP2026100200003");
-        // 并发对端已插入同医嘱同时点计划：uk 冲突被捕获跳过（应用层预查窗口外的唯一防线）
-        when(planMapper.insert(any(DispensePlan.class)))
-                .thenThrow(new DuplicateKeyException("uk_dispense_plan_order_time"));
+        // 并发对端已插入同医嘱同时点计划：ON CONFLICT DO NOTHING 整行放弃（0 行不抛——
+        // 物理事务不中止，同批后续插入与末尾 selectList 均正常执行，catch 毒化形态已移除）
+        when(planMapper.insertIgnoreOrderTimeConflict(any(DispensePlan.class))).thenReturn(0, 0, 0);
 
         List<DispensePlanVO> result = impl.generate(new DispensePlanGenerateRequest(ORDER_NO, WARD));
 
-        // 三时点全部撞 uk → 零异常；重查输出对端已落清单（幂等收敛）
+        // 三时点全部 0 行跳过零异常；末尾幂等重查照常触达（事务未被毒化的行为锚），
+        // 输出对端已落清单（幂等收敛）
+        verify(planMapper, Mockito.times(3)).insertIgnoreOrderTimeConflict(any(DispensePlan.class));
+        verify(planMapper, Mockito.times(2)).selectList(any());
         assertThat(result).hasSize(1);
     }
 
@@ -1144,7 +1147,7 @@ class DispensePlanServiceImplTest {
         impl.generate(new DispensePlanGenerateRequest(ORDER_NO, WARD));
 
         ArgumentCaptor<DispensePlan> insertCaptor = ArgumentCaptor.forClass(DispensePlan.class);
-        verify(planMapper).insert(insertCaptor.capture());
+        verify(planMapper).insertIgnoreOrderTimeConflict(insertCaptor.capture());
         assertThat(insertCaptor.getValue().getPlanType()).isEqualTo("WHOLE");
     }
 
