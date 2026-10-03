@@ -21,6 +21,21 @@
   （W-70③→本册，D-3+D-8/D-11→B 册，D-4→C 册）。
 - **PR-4A 范围**：W-73 CI 过滤修复/技术债快修批/E-1 补测/V1112·V1113 索引/W-70①②③；迁移号段占 V1112/V1113。
 
+## 2026-10-03 · P2 PR-4A 工程与 CI 基座包收口
+
+- **范围销项清单（工单销项 + /code-review 评审 finding 编号一并列明）**：W-73 CI changes job
+  路径过滤修复（dorny/paths-filter v4.0.3 + some-with-excludes）；W-64/W-65 裸 now 钉面；
+  B-2 NursingProperties @Validated；B-3；E-2；E-3；W-70①②③（①出网用例钉北京钟面 ②enableAutoUnmount
+  经 bigscreen test-setup 落地 ③CI frontend job Vitest 时区双跑）；B-1（W-74 配套登记在案）；
+  A-7②；C-3 注记；B-5 批量修正 19 处；E-1 六用例；C-4/C-5 V1112·V1113 补课索引；W-74 登记
+  （NurseBoardView.vue 双标识空间如实申报）。
+- **终验结论（主控预跑）**：后端全量 verify 24 模块 BUILD SUCCESS（25:41）；前端六连全绿——
+  audit 按 CI 口径带 W-71 在案豁免参数通过（braces GHSA-vfj7-8cjw-p6xm 点名豁免）。
+- **W-73 探针终验义务移交主控**：本册合入 dev 后以 docs-only PR 复验（changes 输出
+  backend/frontend=false 且双 verify skip、required check 语义维持）。
+- **新登记 W-81**：DashboardView formatClock 渲染侧本地墙钟回显——渲染侧北京钟面钉面缺口，
+  轻量收口（详见 TASK.md W-81 行）。
+
 ## 2026-10-03 · CI 门禁补丁：backend job 超时线 40→55 分钟（runner 波动撞线两连杀）
 
 - **范围**：`.github/workflows/ci.yml` backend job `timeout-minutes` 40 → 55。
