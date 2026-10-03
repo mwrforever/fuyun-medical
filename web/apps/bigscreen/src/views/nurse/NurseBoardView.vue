@@ -313,6 +313,40 @@ function admissionMeta(type: string | undefined): { text: string; tone: string }
 }
 
 /* ---------- 时刻格式化（ISO → MM-dd HH:mm / HH:mm；解析失败回退原始字符串） ---------- */
+/**
+ * 北京钟面格式化器（时区钉扎，后端 HEALTHCARE_TZ 纪律的前端面）：大屏业务时刻（入区/
+ * 计划时点/告警与出入院时点）一律按 Asia/Shanghai 钟面展示，与浏览器/CI 运行时区解耦——
+ * CI 跑在 UTC 时钟面不漂移。模块级单例复用（DateTimeFormat 无状态可复用）；hourCycle
+ * 取 h23 规避午夜 24 点形态。bigscreen 无共享时区常量面，故本地钉扎（后续他页同需求再提炼）。
+ */
+const beijingClockFormatter = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** 北京钟面字段槽位（formatToParts 的字面量分隔符部件经槽位判别过滤） */
+type BeijingClockPart = 'month' | 'day' | 'hour' | 'minute';
+
+/** 北京钟面四字段抽取（各两位；非法时刻已在调用侧 NaN 拦截，不进入本函数） */
+function beijingClockParts(date: Date): Record<BeijingClockPart, string> {
+  const parts: Record<BeijingClockPart, string> = { month: '', day: '', hour: '', minute: '' };
+  for (const part of beijingClockFormatter.formatToParts(date)) {
+    if (
+      part.type === 'month' ||
+      part.type === 'day' ||
+      part.type === 'hour' ||
+      part.type === 'minute'
+    ) {
+      parts[part.type] = part.value;
+    }
+  }
+  return parts;
+}
+
 function formatDayClock(iso: string | undefined): string {
   return formatWith(iso, false);
 }
@@ -326,12 +360,12 @@ function formatWith(iso: string | undefined, timeOnly: boolean): string {
     return '-';
   }
   const date = new Date(iso);
+  // 解析失败回退原始字符串（词表外数据不炸渲染）；NaN 必须先拦截——formatToParts 遇无效时刻抛 RangeError
   if (Number.isNaN(date.getTime())) {
     return iso;
   }
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-  return timeOnly ? time : `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`;
+  const { month, day, hour, minute } = beijingClockParts(date);
+  return timeOnly ? `${hour}:${minute}` : `${month}-${day} ${hour}:${minute}`;
 }
 
 /* ---------- REST 首屏 + 10s 轮询降级编排（护理/设备双通道独立门控） ---------- */
