@@ -109,9 +109,13 @@ jobs:
       - name: vue-tsc 类型检查
         working-directory: web
         run: pnpm type-check
-      - name: Vitest 全量单测
+      # W-70③ 时区双跑：CI runner 默认 UTC，补北京钟面第二跑——两主要时区面全锁；
+      # 红例修复口径=钉北京钟面（W-70① 先例），禁删用例/放宽断言
+      - name: Vitest 全量单测（UTC 默认 + 北京钟面双跑）
         working-directory: web
-        run: pnpm test
+        run: |
+          pnpm test
+          TZ=Asia/Shanghai pnpm test
       - name: 三应用构建
         working-directory: web
         run: pnpm build
