@@ -31,6 +31,8 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/pharmacy/dispense-workbench', label: '发药工作台', abbr: '发', group: '药房管理' },
   { index: '/pharmacy/dispense-return', label: '退药受理', abbr: '收', group: '药房管理' },
   { index: '/nursing/ward', label: '护士站', abbr: '护', group: '护理管理' },
+  { index: '/nursing/execution', label: '护理执行工作台', abbr: '执', group: '护理管理' },
+  { index: '/nursing/adverse-events', label: '不良事件上报', abbr: '报', group: '护理管理' },
   { index: '/pda', label: 'PDA 扫码', abbr: '扫', group: '护理管理' },
   { index: '/inpatient/admission', label: '入院登记台', abbr: '登', group: '住院管理' },
   { index: '/inpatient/beds', label: '病区床位图', abbr: '床', group: '住院管理' },
@@ -38,6 +40,7 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/inpatient/transfer', label: '转抄工作台', abbr: '抄', group: '住院管理' },
   { index: '/inpatient/discharge', label: '出院管理', abbr: '出', group: '住院管理' },
   { index: '/pharmacy/review', label: '住院审方台', abbr: '审', group: '药房管理' },
+  { index: '/pharmacy/inpatient-dispense', label: '住院摆药台', abbr: '摆', group: '药房管理' },
   // IoT 管理分组（M14 管理台四项 + M16 命令/联动/质量三页）
   { index: '/iot/products', label: '产品与物模型', abbr: '物', group: 'IoT 管理' },
   { index: '/iot/devices', label: '设备管理', abbr: '备', group: 'IoT 管理' },

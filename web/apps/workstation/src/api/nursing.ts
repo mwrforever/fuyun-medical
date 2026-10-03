@@ -1,11 +1,15 @@
 /**
- * 护理域 API（M05 前端面，一域一文件）：病区患者（入区/出区/一览/详情）、责任护士分配、
+ * 护理域 API（M05 前端面，一域一文件）：病区患者（一览/详情）、责任护士分配、
  * 体征（录入/查询/待复核 confirm/reject）、体温单（月页查询/特殊事件）、出入量明细、
- * 护理记录单（创建/提交/修订）、护理评估（量表定义/提交/历史）、护理任务（列表/完成/取消）、
- * 交接班（生成/完成/清单）、PDA（患者摘要/巡视打卡）。
+ * 护理记录单（创建/提交/修订）、护理评估（量表定义/提交/历史）、护理任务（列表/完成/取消/
+ * 认领/常规模板生成）、交接班（生成/完成/清单）、PDA（患者摘要/巡视打卡/输液拔针/破码放行
+ * 双授权）、执行单（工作台清单/闭环追溯/签收/核对/开始/完成/撤销）、在途输注（监测挂接
+ * 聚合）、护理不良事件（分页/上报/处理/关闭/退回）。
  * 路径前缀 /v1/nursing/**（baseURL 已含 /api）；雪花 id 与数量金额一律 string 承载
  * （web A.3-6），本域无金额运算面（quantity 透传零运算）。
  * REST 面为后端 Task 1-11 冻结契约；函数按资源分组导出（spec mock 面）。
+ * W-34 退役（Task 7）：入区登记/出区移除两端点已随过渡通道退役——床位移除动作归
+ * inpatient 出院/转科事件投影，前端不再直调移除端点（本文件零 register/remove 面）。
  */
 import { http } from './http';
 import type { components } from '@fuyun/shared/api';
@@ -13,8 +17,6 @@ import type { components } from '@fuyun/shared/api';
 /** 契约类型别名（生成物唯一来源，A.3-3） */
 export type WardPatientVO = components['schemas']['WardPatientVO'];
 export type WardPatientDetailVO = components['schemas']['WardPatientDetailVO'];
-export type WardPatientRegisterRequest = components['schemas']['WardPatientRegisterRequest'];
-export type WardPatientRemoveRequest = components['schemas']['WardPatientRemoveRequest'];
 export type NurseAssignmentVO = components['schemas']['NurseAssignmentVO'];
 export type NurseAssignmentRequest = components['schemas']['NurseAssignmentRequest'];
 export type VitalSignVO = components['schemas']['VitalSignVO'];
@@ -39,6 +41,29 @@ export type HandoverGenerateRequest = components['schemas']['HandoverGenerateReq
 export type HandoverCompleteRequest = components['schemas']['HandoverCompleteRequest'];
 export type PdaPatientSummaryVO = components['schemas']['PdaPatientSummaryVO'];
 export type PdaPatrolRequest = components['schemas']['PdaPatrolRequest'];
+export type NeedleOutRequest = components['schemas']['NeedleOutRequest'];
+export type OverrideCheckRequest = components['schemas']['OverrideCheckRequest'];
+export type OrderExecutionVO = components['schemas']['OrderExecutionVO'];
+export type OrderExecutionTraceVO = components['schemas']['OrderExecutionTraceVO'];
+export type CheckLogVO = components['schemas']['CheckLogVO'];
+/** 执行单分页出参（common PageResult 单泛型生成物：content/page/size/total） */
+export type OrderExecutionPage = components['schemas']['PageResultOrderExecutionVO'];
+export type ExecutionCheckRequest = components['schemas']['CheckRequest'];
+export type ExecutionSignReceiveRequest = components['schemas']['SignReceiveRequest'];
+export type ExecutionStartRequest = components['schemas']['StartRequest'];
+export type ExecutionFinishRequest = components['schemas']['FinishRequest'];
+export type ExecutionCancelRequest = components['schemas']['CancelExecutionRequest'];
+export type ActiveInfusionVO = components['schemas']['ActiveInfusionVO'];
+export type TaskClaimRequest = components['schemas']['TaskClaimRequest'];
+export type RoutineTaskGenerateRequest = components['schemas']['RoutineTaskGenerateRequest'];
+export type RoutineTaskGenerateVO = components['schemas']['RoutineTaskGenerateVO'];
+export type AdverseEventVO = components['schemas']['AdverseEventVO'];
+/** 不良事件分页出参（common PageResult 单泛型生成物：content/page/size/total） */
+export type AdverseEventPage = components['schemas']['PageResultAdverseEventVO'];
+export type AdverseEventReportRequest = components['schemas']['AdverseEventReportRequest'];
+export type AdverseEventReturnRequest = components['schemas']['AdverseEventReturnRequest'];
+export type AdverseEventHandleRequest = components['schemas']['AdverseEventHandleRequest'];
+export type AdverseEventCloseRequest = components['schemas']['AdverseEventCloseRequest'];
 
 /**
  * 体温单部位 → 符号类名唯一映射（设计文档 §5.3 契约：AXILLARY 腋温×/ORAL 口温●/RECTAL 肛温〇，
@@ -64,14 +89,8 @@ export const NURSING_LEVEL_OPTIONS: ReadonlyArray<{ code: string; label: string 
   { code: 'NORMAL', label: '普通护理' },
 ];
 
-/** 病情标记选项（V801 condition_tags 词表五值，逗号分隔存储） */
-export const CONDITION_TAG_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'CRITICAL', label: '病危' },
-  { code: 'SEVERE', label: '病重' },
-  { code: 'NEW', label: '新入' },
-  { code: 'SURGERY', label: '手术' },
-  { code: 'DELIVERY', label: '分娩' },
-];
+/** 病情标记选项已随 W-34 退役（conditionTags 字段不可推导自四事件载荷，Task 7 ④项）；
+ * 病情角标/危重计数派生面同步退役，勿再以任何词表形态回补。 */
 
 /** 特殊事件类型选项（后端 SpecialEventType 枚举十值展示映射） */
 export const SPECIAL_EVENT_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
@@ -100,13 +119,62 @@ export const SHIFT_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
   { code: 'NIGHT', label: '大夜班' },
 ];
 
-/** 病区患者资源组：入区登记 / 病区一览 / 患者详情 / 出区移除。 */
+/** 执行单状态词表（后端 ExecutionStatus 六值展示映射；COMPLETED/CANCELLED 为终态，
+ * 工作台四列看板不承载——列映射见 useExecutions.EXECUTION_COLUMNS） */
+export const EXECUTION_STATUS_LABELS: Record<string, string> = {
+  CREATED: '待签收',
+  SIGNED: '已签收',
+  CHECKED: '已核对',
+  EXECUTING: '执行中',
+  COMPLETED: '已完成',
+  CANCELLED: '已撤销',
+};
+
+/** 执行类型词表（后端 ExecutionType 二值：GENERIC 通用给药/INFUSION 输液[监测挂接]） */
+export const EXECUTION_TYPE_LABELS: Record<string, string> = {
+  GENERIC: '通用给药',
+  INFUSION: '输液',
+};
+
+/** 三向扫码核对方式选项（后端 CheckType 三值：腕带=visitId 匹配/瓶签=袋签码/设备=执行单条码） */
+export const CHECK_TYPE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'WRISTBAND', label: '腕带' },
+  { code: 'BAG_LABEL', label: '瓶签' },
+  { code: 'DEVICE', label: '执行单' },
+];
+
+/** 不良事件类别选项（后端 AdverseEventCategory 八值冻结词表，扩充属 CF 契约变更） */
+export const ADVERSE_CATEGORY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'MEDICATION_ERROR', label: '用药错误' },
+  { code: 'FALL', label: '跌倒坠床' },
+  { code: 'PRESSURE_ULCER', label: '压疮' },
+  { code: 'TUBE_SLIP', label: '管路滑脱' },
+  { code: 'BLOOD_TRANFUSION', label: '输血' },
+  { code: 'DEVICE', label: '器械' },
+  { code: 'FACILITY', label: '设施' },
+  { code: 'OTHER', label: '其他' },
+];
+
+/** 严重度分级选项（后端 SeverityClass 四值：I 最重（24h 强制上报时限）→ IV 最轻） */
+export const SEVERITY_CLASS_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'I', label: 'I 级（最重）' },
+  { code: 'II', label: 'II 级（重）' },
+  { code: 'III', label: 'III 级（中）' },
+  { code: 'IV', label: 'IV 级（轻）' },
+];
+
+/** 严重度等级选项（后端 SeverityGrade 五值 A~E） */
+export const SEVERITY_GRADE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
+  { code: 'A', label: 'A' },
+  { code: 'B', label: 'B' },
+  { code: 'C', label: 'C' },
+  { code: 'D', label: 'D' },
+  { code: 'E', label: 'E' },
+];
+
+/** 病区患者资源组：病区一览 / 患者详情（W-34：入区登记与出区移除端点已退役，
+ * 床位进出归 inpatient 入院/出院/转科事件投影，前端零直调移除面）。 */
 export const wardPatients = {
-  /** 入区登记（新在区记录落床；床位/护理级别等由表单显式校验后出网）。 */
-  register: async (payload: WardPatientRegisterRequest): Promise<WardPatientVO> => {
-    const resp = await http.post<WardPatientVO>('/v1/nursing/ward-patients', payload);
-    return resp.data;
-  },
   /** 病区患者一览（按后端返回序；床位序排序由前端承载，卡墙渲染口径）。 */
   list: async (wardId: string): Promise<WardPatientVO[]> => {
     const resp = await http.get<WardPatientVO[]>('/v1/nursing/ward-patients', {
@@ -114,17 +182,10 @@ export const wardPatients = {
     });
     return resp.data;
   },
-  /** 患者详情（姓名/年龄/病情/过敏/风险/分配/在途任务聚合面）。 */
+  /** 患者详情（姓名/过敏/风险/分配/在途任务聚合面；gender/age 恒 null 无值不渲染，
+   * conditionTags 已随 W-34 退役——Task 7 审查 C2/C3 前端口径）。 */
   detail: async (visitId: string): Promise<WardPatientDetailVO> => {
     const resp = await http.get<WardPatientDetailVO>(`/v1/nursing/ward-patients/${visitId}`);
-    return resp.data;
-  },
-  /** 出区移除（高风险档：必填原因留痕，状态机终态由后端把守）。 */
-  remove: async (visitId: string, payload: WardPatientRemoveRequest): Promise<WardPatientVO> => {
-    const resp = await http.post<WardPatientVO>(
-      `/v1/nursing/ward-patients/${visitId}/remove`,
-      payload,
-    );
     return resp.data;
   },
 };
@@ -266,7 +327,7 @@ export const assessments = {
   },
 };
 
-/** 护理任务资源组：清单 / 完成 / 取消。 */
+/** 护理任务资源组：清单 / 完成 / 取消 / 认领 / 常规模板生成。 */
 export const tasks = {
   /** 任务清单（wardId + status/date 过滤；逾期 overdueFlag 为动作标记不改状态）。 */
   list: async (params: {
@@ -285,6 +346,19 @@ export const tasks = {
   /** 取消任务（必填原因留痕）。 */
   cancel: async (taskNo: string, payload: NursingTaskCancelRequest): Promise<NursingTaskVO> => {
     const resp = await http.post<NursingTaskVO>(`/v1/nursing/tasks/${taskNo}/cancel`, payload);
+    return resp.data;
+  },
+  /** 认领任务（待执行 → 执行中；assigneeId 留痕由后端承载）。 */
+  claim: async (taskNo: string, payload: TaskClaimRequest): Promise<NursingTaskVO> => {
+    const resp = await http.post<NursingTaskVO>(`/v1/nursing/tasks/${taskNo}/claim`, payload);
+    return resp.data;
+  },
+  /** 常规模板批量生成当日任务（幂等由后端模板日去重承载，返回生成条数）。 */
+  generateRoutine: async (payload: RoutineTaskGenerateRequest): Promise<RoutineTaskGenerateVO> => {
+    const resp = await http.post<RoutineTaskGenerateVO>(
+      '/v1/nursing/tasks/generate-routine',
+      payload,
+    );
     return resp.data;
   },
 };
@@ -314,7 +388,8 @@ export const handovers = {
   },
 };
 
-/** PDA 资源组：腕带/卡号解析患者摘要 / 巡视打卡。 */
+/** PDA 资源组（Task 15 扩 executions 面）：腕带/卡号解析患者摘要 / 巡视打卡 /
+ * 输液拔针 / 破码放行双授权。清单与 check/start/finish 复用执行单资源组同族端点。 */
 export const pda = {
   /** 患者摘要（脱敏口径：无证件/手机号字段；identifier 为腕带住院号或患者卡号）。 */
   patientSummary: async (identifier: string): Promise<PdaPatientSummaryVO> => {
@@ -326,6 +401,129 @@ export const pda = {
   /** 巡视打卡（生成巡视任务完成回执，taskNo 回显）。 */
   patrol: async (payload: PdaPatrolRequest): Promise<NursingTaskVO> => {
     const resp = await http.post<NursingTaskVO>('/v1/nursing/pda/patrol', payload);
+    return resp.data;
+  },
+  /** 输液拔针（INFUSION 型完成形态：腕带复扫核对+实际输注量→挂接收口+自动入量+双路回签；
+   * GENERIC 型完成走执行单资源组 finish 端点，后端型守卫 fail-closed）。 */
+  needleOut: async (no: string, payload: NeedleOutRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(
+      `/v1/nursing/executions/${no}/needle-out`,
+      payload,
+    );
+    return resp.data;
+  },
+  /** 破码放行双授权（扫码核对失败后双人授权留痕：override_flag 置位 + OVERRIDE 流水落行；
+   * 两授权人不得相同与角色校验归后端把守，前端显式校验前置零出网）。 */
+  overrideCheck: async (payload: OverrideCheckRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>('/v1/nursing/pda/override-check', payload);
+    return resp.data;
+  },
+};
+
+/** 执行单资源组（FU-M05-04 医嘱执行前端面）：工作台分组清单 / 闭环追溯 / 五环节动作
+ * （补签收/三向扫码核对/开始执行/执行完成/撤销）。状态机与时间窗校验归后端把守，
+ * 前端按返回态重拉看板；拔针（needle-out）归 Task 15 PDA 住院执行扩展同源面。 */
+export const executions = {
+  /** 执行工作台分组清单（病区+日期+班次+状态过滤，计划时间升序由后端承载）。 */
+  list: async (params: {
+    wardId: string;
+    date?: string;
+    shift?: string;
+    status?: string;
+    page?: number;
+    size?: number;
+  }): Promise<OrderExecutionPage> => {
+    const resp = await http.get<OrderExecutionPage>('/v1/nursing/executions', { params });
+    return resp.data;
+  },
+  /** 执行单闭环追溯（五环节时点+核对流水+关联告警，详情抽屉时间线数据源）。 */
+  trace: async (no: string): Promise<OrderExecutionTraceVO> => {
+    const resp = await http.get<OrderExecutionTraceVO>(`/v1/nursing/executions/${no}/trace`);
+    return resp.data;
+  },
+  /** 人工补签收（非药品类；药品类经摆药签收衔接自动签收）。 */
+  signReceive: async (
+    no: string,
+    payload: ExecutionSignReceiveRequest,
+  ): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(
+      `/v1/nursing/executions/${no}/sign-receive`,
+      payload,
+    );
+    return resp.data;
+  },
+  /** 三向扫码核对（腕带/瓶签/设备单维核对，PASS→CHECKED，FAIL 留痕拒绝）。 */
+  check: async (no: string, payload: ExecutionCheckRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(`/v1/nursing/executions/${no}/check`, payload);
+    return resp.data;
+  },
+  /** 开始执行（CHECKED→EXECUTING，时间窗外未破码拒绝归后端）。 */
+  start: async (no: string, payload: ExecutionStartRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(`/v1/nursing/executions/${no}/start`, payload);
+    return resp.data;
+  },
+  /** 执行完成（EXECUTING→COMPLETED+双路回签 M04；输注类完成归 PDA 拔针面）。 */
+  finish: async (no: string, payload: ExecutionFinishRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(`/v1/nursing/executions/${no}/finish`, payload);
+    return resp.data;
+  },
+  /** 撤销（未执行三态常规撤销，必填原因留痕；EXECUTING 中断归输液面不在本入口）。 */
+  cancel: async (no: string, payload: ExecutionCancelRequest): Promise<OrderExecutionVO> => {
+    const resp = await http.post<OrderExecutionVO>(`/v1/nursing/executions/${no}/cancel`, payload);
+    return resp.data;
+  },
+};
+
+/** 在途输注资源组（FU-M05-06 输液闭环前端面）：病区在途清单（监测挂接聚合）。 */
+export const infusions = {
+  /** 病区在途输注清单（开始时点升序；输液遥测条按 patientId 对齐的护理侧数据源）。 */
+  active: async (wardId: string): Promise<ActiveInfusionVO[]> => {
+    const resp = await http.get<ActiveInfusionVO[]>('/v1/nursing/infusions/active', {
+      params: { wardId },
+    });
+    return resp.data;
+  },
+};
+
+/** 护理不良事件资源组（FU-M05-09）：分页清单 / 上报 / 处理 / RCA 关闭 / 退回。
+ * 非惩罚通道口径：匿名上报开关透传，超时上报只留痕不拒绝（归后端承载）。 */
+export const adverseEvents = {
+  /** 分页清单（category/wardId/status/date 筛选均可空；page 0 基透传）。 */
+  list: async (params: {
+    category?: string;
+    wardId?: string;
+    status?: string;
+    date?: string;
+    page?: number;
+    size?: number;
+  }): Promise<AdverseEventPage> => {
+    const resp = await http.get<AdverseEventPage>('/v1/nursing/adverse-events', { params });
+    return resp.data;
+  },
+  /** 上报（类别/分级/等级/病区/时点/经过必填归后端校验，前端显式校验前置零出网）。 */
+  report: async (payload: AdverseEventReportRequest): Promise<AdverseEventVO> => {
+    const resp = await http.post<AdverseEventVO>('/v1/nursing/adverse-events', payload);
+    return resp.data;
+  },
+  /** 处理（REPORTED→HANDLING；handlerId 操作留痕）。 */
+  handle: async (no: string, payload: AdverseEventHandleRequest): Promise<AdverseEventVO> => {
+    const resp = await http.post<AdverseEventVO>(
+      `/v1/nursing/adverse-events/${no}/handle`,
+      payload,
+    );
+    return resp.data;
+  },
+  /** RCA 关闭（HANDLING→CLOSED 终态；rcaNote/correctiveAction 留痕）。 */
+  close: async (no: string, payload: AdverseEventCloseRequest): Promise<AdverseEventVO> => {
+    const resp = await http.post<AdverseEventVO>(`/v1/nursing/adverse-events/${no}/close`, payload);
+    return resp.data;
+  },
+  /** 退回（上报信息不全时退回补报；必填原因 + returnerId 留痕）。 */
+  return: async (no: string, payload: AdverseEventReturnRequest): Promise<AdverseEventVO> => {
+    const resp = await http.post<AdverseEventVO>(
+      `/v1/nursing/adverse-events/${no}/return`,
+      payload,
+    );
     return resp.data;
   },
 };

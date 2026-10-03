@@ -24,7 +24,6 @@ function detailMock(partial: Partial<WardPatientDetailVO> = {}): WardPatientDeta
     patientId: '1932000000000000001',
     visitId: 'I20260923000000001',
     patientName: '张三',
-    conditionTags: '',
     allergyFlag: false,
     riskFlags: '',
     ...partial,

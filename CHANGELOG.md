@@ -2,6 +2,124 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-03 · CI 门禁补丁：backend job 超时线 40→55 分钟（runner 波动撞线两连杀）
+
+- **范围**：`.github/workflows/ci.yml` backend job `timeout-minutes` 40 → 55。
+- **理由**：PR #63 修复环三笔（dc43bfb/809e71f/d2a6a92）推送后 CI run 37105473638 两次
+  尝试均在 **40 分 16/18 秒被超时线击杀**（非测试失败：commitlint/changes/hygiene/frontend
+  四 job 全绿，Maven 步骤无任何报错输出）；同代码基线 c91db7b 当日早上 backend 仅
+  23m28s（run 37095628097），修复环后端增量仅 pharmacy 一 Mapper 方法+单测（本地模块
+  verify BUILD SUCCESS），不足以解释 +17m——判定为 GitHub 托管 runner 环境波动
+  （Testcontainers 镜像拉取/磁盘 IO 时段性变慢）。
+- **裁决**：40m 线本就偏紧——PR #62 backend 实测 35m4s，余量仅 13%；上调至 55m
+  （对最差观测值 40m 留 37% 余量）。若 55m 仍撞线则排除环境波动假设，转入本地
+  复现七验收 IT 排查挂死（修复环 dc43bfb 改动 DispensePlanMapper 幂等插入形态，
+  全链 IT 本地未跑过——`-DskipITs` 门禁盲区，届时按 IT 复现流程处置）。
+
+## 2026-10-03 · PR #63 合并前修复环：/code-review 门槛项三点收口 + W-72 登记
+
+- **范围**：C-1 摆药 generate 事务毒化修复（dc43bfb，DispensePlanMapper 新增
+  `insertIgnoreOrderTimeConflict` ON CONFLICT DO NOTHING 与 V1110 部分唯一索引谓词
+  逐字咬合，净除毒化 catch）；D-1 不良事件上报 occurredAt 出网线改 `toISOString()`
+  带偏移形态（809e71f，修复后端 OffsetDateTime 反序列化必败致 UI 上报链路不可用）；
+  D-2 大屏 metricText 补 nullish 双判（809e71f，「余量 null ml」渲染瑕疵）；TASK.md
+  登记 W-72（临床留痕操作人身份客户端供给——门槛项 A-3 工单化归 PR-4 待产品裁决）。
+- **理由**：PR #63 /code-review 五路评审（A 安全/B 架构/C 数据/D 前端/E 测试，40 候选
+  →合并去重 36 条）终评门槛项 3 条——C-1（85，并发兜底在其设计场景整体失败）/D-1
+  （80，功能链路不可用）随修复环合并前收口（scoped 复审 APPROVED：谓词逐字咬合、
+  D-21 八条断言迁移无放宽、零越界 7 文件）；A-3（85，修复策略三选一涉产品语义）超主控
+  裁量，工单化随 PR-4 与 W-37/W-39 操作人可信面系统收敛。
+- **裁决留痕**：A-1（匿名令牌过 401 门）经主控取证归并 W-39 已知工单族（机制在案
+  逐字重合），真实增量=本 PR 使暴露面扩大至临床写面，作 PR-4 优先级佐证；C-2（同日
+  重入漏判）经取证下调——compose+Dockerfile 双源钉 TZ=Asia/Shanghai，真栈读回 +08:00
+  表示 contains 命中，非确定性失败；评审证据链留档 `.superpowers/code-review-pr63/`
+  （findings-A~E/merged/scores-final/brief-fixround/fixround-report/review-fixround.diff）。
+
+## 2026-10-03 · CI 门禁补丁：前端 audit 点名豁免 braces 无补丁 advisory（GHSA-vfj7-8cjw-p6xm）
+
+- **范围**：`.github/workflows/ci.yml` frontend job audit 步骤增补 `--ignore=GHSA-vfj7-8cjw-p6xm`
+  点名豁免参数（含注释留痕）；TASK.md 登记 W-71 追踪工单。
+- **理由**：PR #63 CI 第三轮（2026-10-03）frontend verify 挂于依赖漏洞审计——上游 advisory
+  滚动新判 braces<=3.0.3 全量 high（栈耗尽 DoS）且 **Patched=None 无补丁版本可升**（版本红线
+  的升级路径不存在）；引入链为 devDependency 工具链
+  （@vue/eslint-config-typescript>fast-glob>micromatch>braces）不进生产构建产物——属上游
+  事件非本仓引入，不豁免则 dev 后续一切 PR 被阻断。
+- **裁决**：走 pnpm 官方点名豁免机制（窄面单 advisory，非 --ignore-unfixable 宽面）+注释
+  留痕+W-71 工单追踪；上游发布补丁后随依赖升级提案（Renovate/Dependabot）落地时同步移除
+  豁免参数。共存 1 moderate 低于 high 阈值不阻断，随升级顺带收敛。
+- **同轮 CI 事实留痕**：第三轮 backend verify PASS（21m18s）+commitlint/changes/hygiene 过；
+  第二轮 frontend Vitest 五用例挂为 NurseBoardView 回显时区敏感（CI=UTC），时区修复环
+  1a2576e 回显钉北京钟面修复（Task 17 报告⑤节），W-70 工单化（DischargeManageView 预存
+  敏感+spec 泄漏放大器+前端时区双跑纪律建议）。
+
+## 2026-10-03 · P2 PR-3 收口：真栈五环节闭环演示 + 三 Spec 落地注记 + 工单销项五项（W-34/W-60/D-23/D-24/D-25）
+
+- **范围**：PR-3 收口面（SDD 计划 Task 19）——真栈探针五项取证、05-nursing §14 /
+  06-pharmacy §13 / 04-inpatient §14 落地注记、TASK.md 五项销项、P2 计划 §3 PR-3 完成标注、
+  `InpatientVisitEventListener` TODO(P2-PR3)→TODO(P3) 改标（非行为变更）。
+- **真栈探针结论（2026-10-03，compose 全栈 healthy）**：① 迁移计数 V110*=10（V1100–V1109）、
+  V111*=2（V1110/V1111），总迁移 89 件全 success；② `integration.event_registry` 总行 83
+  （id 83 = nursing.adverse-event.reported 在册）；③ 容器内 `/v3/api-docs` 200（244KB）且含
+  `/api/v1/nursing/executions` 与 `/api/v1/pharmacy/dispense-plans` 路径族；④ compose 六服务
+  全 healthy；⑤ 五环节闭环演示链全链 2xx+库态断言全过——入院四步→LONG bid 静脉医嘱开立→
+  药师审方（异人）→转抄核对（compensateToday 当日时点计划+护理计划执行单）→摆药五步
+  （PIVAS/deliver 半步/出库流水）→签收（执行单批量 SIGNED+INFUSION 升格+监测建链）→袋签
+  核对→开始输注（iot 消费留痕）→告警信封直投（escalation_count=1+任务零新增+大屏
+  INFUSION_ESCALATION 帧推送日志）→拔针（COMPLETED/挂接 ENDED/自动入量 250ml/泵解绑/
+  M04 回签 EXECUTED/对账 CONFIRMED）；大屏截图经 playwright-cli 真机留痕。
+- **降级清单汇总（详见三 Spec 落地注记与 PR 描述）**：W-34 退役五项履行+conditionTags 降级；
+  大屏 M14 聚合降级为前端组合+危急值空段；打印/通知降级顺延 P3；iot_sync_interval/
+  conflict_window 列落消费后置；毒麻专册与摆药机 P3 预留；退药开关校验归发起端（W-66）；
+  出院申请 board 推送与在途任务 remark 追加归 P3；STAT 单次计划转抄链不发
+  order-plan.generated（护理计划执行单仅日切/补偿面承载——真栈实测边界，P3 复核）。
+- **工单销项（五行，履行完毕）**：W-34（退役五项，Task 7/13/14 履行+WardPatientRetirementIT）、
+  W-60（OfflineDetector 收敛，Task 12 履行）、D-23（V1108 部分唯一索引+冲突回查独立事务，
+  Task 2/7 履行）、D-24（维持连续区间零代码，裁决留痕本文件 2026-10-01 立项条目 ⑤）、
+  D-25（InpatientOrderCreateRequest/InpatientOrderItemRequest 改名，Task 13 履行）；
+  W-42/W-43/W-45 留单（本 PR 未拾取，PR 描述留痕声明）；W-66/W-67 在案（PR-3 新登记）。
+- **真栈新发现（呈报留痕，处置归主控）**：① 护士站大屏 REST 首屏三端点
+  （/nursing/board、/ward/infusion-board、/iot/alarms）不在 AUTH_WHITELIST 而 bigscreen
+  http.ts 禁注入 Authorization——真栈 401 降级轮询（WS 链路经 bigscreen-token 正常）；
+  ② billing.fee.created 住院行遭 outpatient 消费方死信（与 W-67 dispense.completed 同族，
+  载荷守卫未适配住院行）；③ 陈旧构建产物 V6/V7 迁移残留在 fuyun-integration target/classes
+  （源已改号 V500/V501），对既有卷起栈 Flyway 校验失败（fresh 库因 IF NOT EXISTS 吸收）——
+  `mvn clean` 全量重建即除，CI clean 构建无此患。
+
+## 2026-10-01 · P2 PR-3 立项：M05 护理完整 + M06 住院摆药衔接（V1106–V1111 号段 + id 83 + 错误码排定 + 依赖增量与 D-23/D-24/D-25 裁决落档）
+
+- **范围**：P2 阶段 PR-3 切片（FU-M05-04/06/07/08/09 + FU-M06-05 + W-34 退役五项 + W-60 收敛 +
+  iot 联动/输液消费骨架回接），功能口径以 05/06 模块 Spec v1.1 为准；计划文档
+  `docs/superpowers/plans/2026-10-01-p2-pr3-m05-m06.md` 随本条目入库（GC-36）。
+- ① **迁移号段登记（先记再改，随 Task 2/3 落盘）**：通用段 V1106–V1111 六件——撰写期实测全局
+  最大已应用 V1105，V1106 > V1105 乱序守卫通过（nursing 固定段 V800–V899 已被守卫封死禁用）。
+  归属：nursing 四件（V1106 执行域三表 order_execution/execution_check_log/infusion_monitor_link；
+  V1107 不良事件表 adverse_event + nursing_ward_config P2 六列；V1108 W-34 表改造
+  nursing_ward_patient DROP status/source + D-23 部分唯一索引；V1109 event_registry id 83 种子）；
+  pharmacy 两件（V1110 dispense_plan 表 + dispense 住院扩列；V1111 id 28 载荷契约 UPDATE，
+  只增不删，双向评审声明进 PR 描述）。
+- ② **事件 id 83 排定**：`nursing.adverse-event.reported`（producer=nursing，落 V1109；撰写期
+  实测 event_registry 最大 id=82）；`MessagingGovernanceIT` 总行断言 82→83（Task 2 落）；id
+  61/62/63/64 由 P1 占位转实装，登记行不改（载荷契约按 V800 冻结文本出网）。
+- ③ **错误码排定（撰写期实测 NS 段最大 NS-1019、PH 段最大 PH-1022）**：NursingErrorCode 续号
+  NS-1020~1027（EXECUTION_NOT_FOUND 404 / EXECUTION_STATE_NOT_ALLOWED 409 /
+  EXECUTION_CHECK_FAILED 409 / OVERRIDE_CHECK_INVALID 409 / INFUSION_NOT_ACTIVE 409 /
+  ADVERSE_EVENT_NOT_FOUND 404 / ADVERSE_EVENT_STATE_NOT_ALLOWED 409 / EXECUTION_TIME_WINDOW 409）；
+  pharmacy 续号 PH-1023~1026（DISPENSE_PLAN_NOT_FOUND 404 / DISPENSE_PLAN_STATE_NOT_ALLOWED 409 /
+  DISPENSE_PLAN_ORDER_INVALID 400 / WARD_RECEIVE_INVALID 409）。
+- ④ **模块依赖两处增量及无环论证**：nursing pom 增 fuyun-inpatient（仅 api 面：新增
+  `OrderExecutionConfirmPort`，执行单 COMPLETED 后进程内直调回签，不走 HTTP 自调）；iot pom 增
+  fuyun-nursing（仅 api 面：新增 `NursingTaskLinkagePort`，联动 NURSING_TASK 动作进程内直调）。
+  无环论证：inpatient 不依赖 nursing/iot，nursing 不依赖 iot——两处增量均不成环；禁
+  nursing→fuyun-iot 任何形态依赖（与 iot→nursing 成环），nursing 对 iot 数据一律经事件
+  （iot.alarm.* 载荷自带 patientId/visitId/deviceId）与前端组合（复用
+  `GET /api/v1/ward/infusion-board/{wardId}` 与 /ws/iot 主题）；`ApplicationModules.verify()`
+  随 fuyun-app 门禁自动把关。
+- ⑤ **三项裁决落定（P2 计划 §3 PR-3 在案工单条目授权「结论在 PR-3 SDD 计划拆分时落定」，随
+  计划批准即生效；以下照计划范围声明节原文逐字落）**：
+  - **D-23 根治**：走部分唯一索引 + 冲突回查合并（D-22 同款两层兜底范式）——`nursing_record` 上 `(visit_id, record_date)` 部分唯一索引限定「auto_generated=true AND abnormal_flag=false AND deleted=0」正常合并行形态，`appendObservation` 合并分支捕获 `DuplicateKeyException` 后回查重试一次；DDL 落 V1108（通用段）。理由：用户 2026-09-29 总裁决「宪法为唯一标准，偏离一律收拢」，先查后插竞态属一致性路径隐患，根治成本一段索引+一个 catch 分支。
+  - **D-24 维持现状**：量表条目维持 P1 连续闭区间取值域（Task 8 冻结用例 4/6 有效不动），不回归经典离散档位。理由：无业务方提出离散档位需求，冻结用例已按连续口径验收，维持零代码；Task 19 删 TASK.md D-24 行并在 CHANGELOG 留痕。
+  - **D-25 选①改名**：住院 DTO `com.fuyun.inpatient.dto.OrderCreateRequest` 改名 `InpatientOrderCreateRequest`（出网 schema 名随之收敛），不动 springdoc 全局命名策略。理由：单点改名影响面=inpatient 模块两处方法签名+OpenAPI 生成物+前端一处类型别名，方案②全局 NamingStrategy 影响全仓 schema 名（存量前端类型全部漂移）；Task 13 落地并同步删前端本地 `OrderCreatePayload` 回归生成物。
+
 ## 2026-10-01 · 时区纪律专项立项（P2 第一步修复前置项：34 处裸 now() 收敛北京钟面 + 红线）
 
 - **根因**：终验报告 3.5a 呈报——全仓裸 `LocalDate/LocalDateTime/LocalTime.now()` 34 处，CI（UTC JVM）在北京 00:00–08:00 取错医疗日/业务窗；BUG-03 残余三处（PR #60=6c58768）已实证缺陷模型（班次小结查空、观察行该合并不合并），属医疗业务真实缺陷。

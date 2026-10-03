@@ -24,8 +24,8 @@ import com.fuyun.inpatient.api.payload.OrderCreatedPayload;
 import com.fuyun.inpatient.api.payload.OrderStoppedPayload;
 import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.dto.OrderCreateRequest;
-import com.fuyun.inpatient.dto.OrderItemRequest;
+import com.fuyun.inpatient.dto.InpatientOrderCreateRequest;
+import com.fuyun.inpatient.dto.InpatientOrderItemRequest;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.entity.MedicalOrder;
 import com.fuyun.inpatient.entity.MedicalOrderItem;
@@ -290,11 +290,12 @@ class MedicalOrderServiceImplTest {
         when(visitMapper.selectOne(any())).thenReturn(visitRow());
         when(practiceCheckPort.check(OPERATOR, "PRESCRIPTION")).thenReturn(new PracticeCheckResult(true, null));
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
-        OrderItemRequest drugNoDosage = new OrderItemRequest(
+        InpatientOrderItemRequest drugNoDosage = new InpatientOrderItemRequest(
                 "DRUG", "D0001", "头孢呋辛钠注射液", null, "g", "IV", null, new BigDecimal("2"), null, null, null, null);
 
         assertThatThrownBy(() -> service.create(
-                        VISIT_ID, new OrderCreateRequest("DRUG", "LONG", null, null, "qd", List.of(drugNoDosage))))
+                        VISIT_ID,
+                        new InpatientOrderCreateRequest("DRUG", "LONG", null, null, "qd", List.of(drugNoDosage))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> {
                     assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.ORDER_ITEM_INVALID);
@@ -329,7 +330,8 @@ class MedicalOrderServiceImplTest {
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
 
         assertThatThrownBy(() -> service.create(
-                        VISIT_ID, new OrderCreateRequest("DRUG", "STAT", true, null, null, List.of(drugItem(true)))))
+                        VISIT_ID,
+                        new InpatientOrderCreateRequest("DRUG", "STAT", true, null, null, List.of(drugItem(true)))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> {
                     assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID);
@@ -352,7 +354,7 @@ class MedicalOrderServiceImplTest {
         try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
             service.create(
                     VISIT_ID,
-                    new OrderCreateRequest(
+                    new InpatientOrderCreateRequest(
                             "DRUG",
                             "LONG",
                             null,
@@ -360,7 +362,7 @@ class MedicalOrderServiceImplTest {
                             "bid",
                             List.of(
                                     drugItem(true),
-                                    new OrderItemRequest(
+                                    new InpatientOrderItemRequest(
                                             "LAB",
                                             "L0001",
                                             "血常规",
@@ -416,7 +418,7 @@ class MedicalOrderServiceImplTest {
         try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
             result = service.create(
                     VISIT_ID,
-                    new OrderCreateRequest(
+                    new InpatientOrderCreateRequest(
                             "DRUG", "LONG", null, "GRP20260925001", "bid", List.of(drugItem(true), drugItem(false))));
             // EX-37：明细行一次批插（JDBC 批处理 + ASSIGN_ID 自动填充），逐行 insert 通道已下线
             @SuppressWarnings("unchecked")
@@ -583,7 +585,8 @@ class MedicalOrderServiceImplTest {
         // 医嘱类型词表外（服务面——Web 层 @Pattern 兜底）：IP-1022
         when(visitMapper.selectOne(any())).thenReturn(visitRow());
         assertThatThrownBy(() -> service.create(
-                        VISIT_ID, new OrderCreateRequest("PHYSIO", "LONG", null, null, "qd", List.of(drugItem(true)))))
+                        VISIT_ID,
+                        new InpatientOrderCreateRequest("PHYSIO", "LONG", null, null, "qd", List.of(drugItem(true)))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
@@ -610,7 +613,8 @@ class MedicalOrderServiceImplTest {
 
         // 医嘱分类词表外（服务面——Web 层 @Pattern 兜底）：IP-1022
         assertThatThrownBy(() -> service.create(
-                        VISIT_ID, new OrderCreateRequest("DRUG", "urgent", null, null, "qd", List.of(drugItem(false)))))
+                        VISIT_ID,
+                        new InpatientOrderCreateRequest("DRUG", "urgent", null, null, "qd", List.of(drugItem(false)))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
@@ -618,13 +622,13 @@ class MedicalOrderServiceImplTest {
         // 行项目类型词表外：IP-1022（L3 明细循环内拦截）
         assertThatThrownBy(() -> service.create(
                         VISIT_ID,
-                        new OrderCreateRequest(
+                        new InpatientOrderCreateRequest(
                                 "DRUG",
                                 "LONG",
                                 null,
                                 null,
                                 "qd",
-                                List.of(new OrderItemRequest(
+                                List.of(new InpatientOrderItemRequest(
                                         "FOOD",
                                         "F001",
                                         "流食",
@@ -644,7 +648,8 @@ class MedicalOrderServiceImplTest {
         // 长期医嘱缺频次：IP-1011（频次必填在字典命中查询之前）
         when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
         assertThatThrownBy(() -> service.create(
-                        VISIT_ID, new OrderCreateRequest("DRUG", "LONG", null, null, null, List.of(drugItem(false)))))
+                        VISIT_ID,
+                        new InpatientOrderCreateRequest("DRUG", "LONG", null, null, null, List.of(drugItem(false)))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(InpatientErrorCode.ORDER_ITEM_INVALID));
@@ -662,7 +667,7 @@ class MedicalOrderServiceImplTest {
             // EX-37 批插通道：本子场景达落库面（静态工具桩面机械包裹——业务断言零变化）
             result = service.create(
                     VISIT_ID,
-                    new OrderCreateRequest(
+                    new InpatientOrderCreateRequest(
                             "DRUG",
                             "LONG",
                             null,
@@ -670,7 +675,7 @@ class MedicalOrderServiceImplTest {
                             "qd",
                             List.of(
                                     drugItem(false),
-                                    new OrderItemRequest(
+                                    new InpatientOrderItemRequest(
                                             "LAB",
                                             "L0001",
                                             "血常规",
@@ -789,7 +794,7 @@ class MedicalOrderServiceImplTest {
         try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
             result = service.resubmit(
                     ORDER_NO,
-                    new OrderCreateRequest(
+                    new InpatientOrderCreateRequest(
                             "DRUG",
                             "LONG",
                             null,
@@ -797,7 +802,7 @@ class MedicalOrderServiceImplTest {
                             "bid",
                             List.of(
                                     drugItem(true),
-                                    new OrderItemRequest(
+                                    new InpatientOrderItemRequest(
                                             "LAB",
                                             "L0001",
                                             "血常规",
@@ -849,14 +854,16 @@ class MedicalOrderServiceImplTest {
         // 医嘱类型词表外（服务面——Web 层 @Pattern 兜底）：IP-1022，四层校验零触达
         when(orderMapper.selectOne(any())).thenReturn(orderRow(ORDER_NO, OrderStatus.AUDIT_REJECTED));
         assertThatThrownBy(() -> service.resubmit(
-                        ORDER_NO, new OrderCreateRequest("PHYSIO", "LONG", null, null, "qd", List.of(drugItem(false)))))
+                        ORDER_NO,
+                        new InpatientOrderCreateRequest("PHYSIO", "LONG", null, null, "qd", List.of(drugItem(false)))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
 
         // 医嘱分类词表外（类型裁决之后的同一守卫面）：IP-1022
         assertThatThrownBy(() -> service.resubmit(
-                        ORDER_NO, new OrderCreateRequest("DRUG", "urgent", null, null, "qd", List.of(drugItem(false)))))
+                        ORDER_NO,
+                        new InpatientOrderCreateRequest("DRUG", "urgent", null, null, "qd", List.of(drugItem(false)))))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(InpatientErrorCode.PARAM_FORMAT_INVALID));
@@ -886,13 +893,13 @@ class MedicalOrderServiceImplTest {
     }
 
     /** 构造长期用药开立入参（单药品行：剂量/单位/途径齐全）。 */
-    private OrderCreateRequest longDrugOrder() {
-        return new OrderCreateRequest("DRUG", "LONG", null, null, "qd", List.of(drugItem(false)));
+    private InpatientOrderCreateRequest longDrugOrder() {
+        return new InpatientOrderCreateRequest("DRUG", "LONG", null, null, "qd", List.of(drugItem(false)));
     }
 
     /** 构造药品明细行（延续标志可变——成组三要素载体）。 */
-    private OrderItemRequest drugItem(boolean continueFlag) {
-        return new OrderItemRequest(
+    private InpatientOrderItemRequest drugItem(boolean continueFlag) {
+        return new InpatientOrderItemRequest(
                 "DRUG",
                 "D0001",
                 "头孢呋辛钠注射液",

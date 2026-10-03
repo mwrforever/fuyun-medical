@@ -18,7 +18,6 @@ import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.entity.ShiftHandover;
 import com.fuyun.nursing.enums.HandoverStatus;
 import com.fuyun.nursing.enums.NursingLevel;
-import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
 import com.fuyun.nursing.mapper.ShiftHandoverMapper;
@@ -122,10 +121,10 @@ public class ShiftHandoverServiceImpl extends ServiceImpl<ShiftHandoverMapper, S
         // PG 只读事务内写操作直接报错，且 readOnly 标记经 Spring 默认传播（REQUIRED）波及调用方
         // 步骤①：病区配置校验（无配置行 → NS-1016 未知病区，wardConfig 冻结面实况行为）
         wardMetaService.wardConfig(req.wardId());
-        // 步骤②：在区患者视图汇总（listByWard 同谓词直查实体面：仅 IN_WARD 行、床位序）
+        // 步骤②：在册患者投影汇总（listByWard 同谓词直查实体面：仅本病区行、床位序；W-34 后
+        // 在册语义由逻辑删 deleted=0 单独承载——@TableLogic 自动过滤）
         List<NursingWardPatient> inWard = wardPatientMapper.selectList(Wrappers.<NursingWardPatient>lambdaQuery()
                 .eq(NursingWardPatient::getWardId, req.wardId())
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
                 .orderByAsc(NursingWardPatient::getBedNo)
                 .orderByAsc(NursingWardPatient::getAdmittedAt));
         PatientSummary summary = aggregateSummary(inWard);

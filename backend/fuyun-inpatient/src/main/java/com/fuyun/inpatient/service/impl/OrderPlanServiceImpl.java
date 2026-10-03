@@ -4,12 +4,14 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
+import com.fuyun.inpatient.api.ExecuteConfirmRequest;
+import com.fuyun.inpatient.api.ExecuteConfirmVO;
 import com.fuyun.inpatient.api.InpatientErrorCode;
+import com.fuyun.inpatient.api.OrderExecutionConfirmPort;
 import com.fuyun.inpatient.api.payload.OrderExecutedPayload;
 import com.fuyun.inpatient.api.payload.OrderPlanGeneratedPayload;
 import com.fuyun.inpatient.cache.InpatientSeqGate;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
-import com.fuyun.inpatient.dto.ExecuteConfirmRequest;
 import com.fuyun.inpatient.entity.InpatientVisit;
 import com.fuyun.inpatient.entity.MedicalOrder;
 import com.fuyun.inpatient.entity.MedicalOrderItem;
@@ -34,7 +36,6 @@ import com.fuyun.inpatient.mapper.OrderStatusLogMapper;
 import com.fuyun.inpatient.mapper.OrderTransferLogMapper;
 import com.fuyun.inpatient.service.IOrderPlanService;
 import com.fuyun.inpatient.service.IOrderStateMachineService;
-import com.fuyun.inpatient.vo.ExecuteConfirmVO;
 import com.fuyun.inpatient.vo.OrderTraceVO;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -84,15 +85,23 @@ import org.springframework.transaction.support.TransactionTemplate;
  *
  * <p>线程安全：无状态 singleton；executeConfirm/compensateToday 注解事务收口，
  * decomposeNextDay 分批编程式事务；事件一律事务内 publishEvent → AFTER_COMMIT 出 MQ（GC8）。
+ *
+ * <p>P2 PR-3 Task 5 起兼实现 {@link OrderExecutionConfirmPort}（M05 执行回签 api 端口——
+ * executeConfirm 方法签名与端口逐字同构，接口挂接零逻辑增量；nursing 执行单完成主路径
+ * 进程内直调，GC17 双路回签裁决）；操作者解析同步增 SYSTEM 字面量白名单（MQ/tick 系统
+ * 链路桥接口径，GC15）。
  */
 @Slf4j
-public class OrderPlanServiceImpl implements IOrderPlanService {
+public class OrderPlanServiceImpl implements IOrderPlanService, OrderExecutionConfirmPort {
 
     /** 日切分批事务的批量上界（brief 冻结：每 500 医嘱一事务，可断点续跑） */
     private static final int DECOMPOSE_BATCH_SIZE = 500;
 
     /** 系统操作者（日切任务无操作者上下文——审计列回退口径，与 cancelFuturePlans 同款） */
     private static final String SYSTEM_OPERATOR = "system";
+
+    /** 系统触发面白名单字面量（GC15 桥接口径：MQ/tick 链路 OperatorContextHolder.set("SYSTEM")） */
+    private static final String SYSTEM_OPERATOR_TEXT = "SYSTEM";
 
     /** 状态机留痕原因：长期医嘱首个执行回签（TRANSFERRED→EXECUTING） */
     private static final String REASON_FIRST_CONFIRM = "长期医嘱首个执行回签";
@@ -299,7 +308,8 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
     @Transactional
     public ExecuteConfirmVO executeConfirm(String planNo, ExecuteConfirmRequest req) {
         OrderExecutePlan plan = requirePlan(planNo);
-        long operator = parseOperatorAsEmployeeId();
+        // 操作者文本（数字员工位或 SYSTEM 白名单文本——GC15 桥接口径，直接落计划行审计列）
+        String operator = parseOperatorAsEmployeeId();
         // 执行时点缺省取北京钟面当前时刻（W-33 契约：executedAt 可空缺省服务器时间）：该缺省值
         // 除落库记录外，同时是 longOrderExhausted end_at 守卫「回签当日 ≥ end_at 当日」医疗日
         // 比较的推导基准——裸 now() 在非北京时区 JVM 取容器日期会漂移医疗日（时区纪律专项 A 类）；
@@ -308,11 +318,7 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
                 req.executedAt() == null ? OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ) : req.executedAt();
         // 数据库写操作：计划行状态 CAS（PENDING 限定；0 行=非 PENDING 态——幂等/拒绝裁决面）
         int rows = planMapper.casExecuteConfirm(
-                plan.getPlanNo(),
-                String.valueOf(req.executorId()),
-                executedAt,
-                req.routeCheckResult(),
-                String.valueOf(operator));
+                plan.getPlanNo(), String.valueOf(req.executorId()), executedAt, req.routeCheckResult(), operator);
         if (rows == 0) {
             // CAS 零行重读实态（并发窗口他方可能刚回签）——已 EXECUTED 幂等返回当前状态
             OrderExecutePlan current = requirePlan(planNo);
@@ -686,13 +692,16 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
      *
      * @param order      回签关联医嘱行（status 为回签前实态，迁移后内存同步），非空
      * @param executedAt 回签执行时点（end_at 守卫「当日」基准，与 W-33 executedAt 同源），非空
-     * @param operator   操作者员工 ID（状态机审计面），非空
+     * @param operator   操作者文本（数字员工位或 SYSTEM 白名单文本——状态机审计面按需转数字位），非空
      */
-    private void advanceOrderHead(MedicalOrder order, OffsetDateTime executedAt, long operator) {
+    private void advanceOrderHead(MedicalOrder order, OffsetDateTime executedAt, String operator) {
+        // 状态机操作者数字位适配：SYSTEM 白名单文本无数字员工位——null 承载，状态机审计面
+        // 按 null→SYSTEM 文本渲染（系统触发面留痕，与计划行审计列同口径）
+        Long operatorId = SYSTEM_OPERATOR_TEXT.equals(operator) ? null : Long.valueOf(operator);
         // 临时医嘱：单次回签即完成（多明细行后续回签头已 COMPLETED——仅落计划面）
         if (OrderClass.STAT.getCode().equals(order.getOrderClass())) {
             if (OrderStatus.TRANSFERRED.getCode().equals(order.getStatus())) {
-                stateMachine.transition(order, OrderStatus.COMPLETED, REASON_STAT_CONFIRM, operator);
+                stateMachine.transition(order, OrderStatus.COMPLETED, REASON_STAT_CONFIRM, operatorId);
             } else {
                 log.info("临时医嘱头已迁移（多明细后续回签仅落计划面）：orderNo={}，status={}", order.getOrderNo(), order.getStatus());
             }
@@ -700,7 +709,7 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
         }
         // 长期医嘱：首个回签推进执行中（迁移后内存同步目标态，穿透终态判定）
         if (OrderStatus.TRANSFERRED.getCode().equals(order.getStatus())) {
-            stateMachine.transition(order, OrderStatus.EXECUTING, REASON_FIRST_CONFIRM, operator);
+            stateMachine.transition(order, OrderStatus.EXECUTING, REASON_FIRST_CONFIRM, operatorId);
         }
         if (OrderStatus.EXECUTING.getCode().equals(order.getStatus())) {
             // 数据库读操作：在途 PENDING 计划计数（0=全部计划实例终态——EXECUTED/CANCELLED 均终态）
@@ -708,7 +717,7 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
                     .eq(OrderExecutePlan::getOrderId, order.getId())
                     .eq(OrderExecutePlan::getStatus, PlanStatus.PENDING.getCode()));
             if (pending != null && pending == 0 && longOrderExhausted(order, executedAt)) {
-                stateMachine.transition(order, OrderStatus.COMPLETED, REASON_ALL_PLANS_TERMINAL, operator);
+                stateMachine.transition(order, OrderStatus.COMPLETED, REASON_ALL_PLANS_TERMINAL, operatorId);
             } else if (pending != null && pending == 0) {
                 // 跨日窗口守卫留痕（审查修复环 R1）：当日末点回签后至次日 02:00 日切前「已有计划
                 // 全终态」窗口内不判 COMPLETED——保持 EXECUTING 待次日日切继续分解（正常终结路径
@@ -813,21 +822,28 @@ public class OrderPlanServiceImpl implements IOrderPlanService {
     }
 
     /**
-     * 操作者标识解析为员工 ID（REST 面操作者上下文；缺失/非数字显式 IP-1022 拒绝——
-     * 与请求承载的 executorId 并行口径：executorId 落计划行/事件，操作者上下文落审计列与状态机）。
+     * 操作者标识解析（REST 面操作者上下文；缺失/非数字显式 IP-1022 拒绝——与请求承载的
+     * executorId 并行口径：executorId 落计划行/事件，操作者上下文落审计列与状态机）。
+     * "SYSTEM" 字面量白名单（P2 PR-3 Task 5，GC15 桥接口径）：MQ/tick 系统链路（M05 回签
+     * 主路径补偿重试）经 OperatorContextHolder.set("SYSTEM") 进入——系统触发面豁免数字
+     * 校验，返回 SYSTEM 文本原样落审计列（非员工位，禁反向解析为数字）。
      *
-     * @return 员工 ID（OperatorContextHolder 运行态 userId 数字形态）
-     * @throws BizException IP-1022 操作者标识缺失或非数字时触发
+     * @return 操作者文本：数字员工位文本（REST 登录护士）或 "SYSTEM"（系统触发面白名单），非空
+     * @throws BizException IP-1022 操作者标识缺失或非数字且非 SYSTEM 白名单时触发
      */
-    private static long parseOperatorAsEmployeeId() {
+    private static String parseOperatorAsEmployeeId() {
         String operator = OperatorContextHolder.get();
+        // 系统触发面白名单：审计列落 SYSTEM 文本（M05 补偿链路无登录主体）
+        if (SYSTEM_OPERATOR_TEXT.equals(operator)) {
+            return SYSTEM_OPERATOR_TEXT;
+        }
         if (operator == null || !operator.matches("\\d+")) {
             throw new BizException(
                     InpatientErrorCode.PARAM_FORMAT_INVALID,
                     HttpStatus.BAD_REQUEST,
                     "操作者标识缺失或非数字（无法定位回签操作主体）：" + maskOperator(operator));
         }
-        return Long.parseLong(operator);
+        return operator;
     }
 
     /** 工号脱敏（等保三级口径，禁明文工号出 ProblemDetail/日志）：首尾各留 1 位，中段 ***。 */

@@ -18,7 +18,8 @@ public final class PharmacyMessagingConstants {
     /** 登记事件：审方驳回（id 27——P3 引擎接入前无发布点，禁引用于任何发布点） */
     public static final String EVENT_PRESCRIPTION_REJECTED = "pharmacy.prescription.rejected";
 
-    /** 发布事件：门诊发药完成（id 28） */
+    /** 发布事件：门诊发药完成（id 28；载荷 desc 自 V1111 起为「V702 冻结原文+住院四可空字段追加句」
+     *  合并面——契约演进只增不删，desc 权威载体 V702 文件禁改，追加面见 V1111） */
     public static final String EVENT_DISPENSE_COMPLETED = "pharmacy.dispense.completed";
 
     /** 发布事件：退药受理完成（id 29） */
@@ -55,6 +56,12 @@ public final class PharmacyMessagingConstants {
     /** 订阅事件：患者拆分（V105 id 12 既有；与 merged 成对，M-25） */
     public static final String EVENT_SUB_PATIENT_SPLIT = "patient.patient.split";
 
+    /** 订阅事件：医嘱停止（V800 id 44 既有，producer=inpatient；P2 PR-3 Task 8 住院摆药未摆药计划作废） */
+    public static final String EVENT_SUB_INPATIENT_ORDER_STOPPED = "inpatient.order.stopped";
+
+    /** 订阅事件：患者出院终态（V800 id 51 既有，producer=inpatient；P2 PR-3 Task 8 住院摆药终清作废+已摆未用提示） */
+    public static final String EVENT_SUB_INPATIENT_VISIT_DISCHARGED = "inpatient.visit.discharged";
+
     /**
      * 订阅绑定键：住院医嘱开立 drug 子键（生产方 inpatient）。登记名 inpatient.order.created
      * 不带子键（R3-06 口径），绑定键=登记名 + "." + order_type 子键——governance 订阅登记按
@@ -75,8 +82,9 @@ public final class PharmacyMessagingConstants {
 
     /**
      * 订阅事件全集（队列声明与监听器同源）：Task 5 补 charged/fee.created，
-     * Task 7 补 refund.approved/order.cancelled、Task 10 补 dict.published/merged/split
-     * （先登记后订阅红线）。
+     * Task 7 补 refund.approved/order.cancelled、Task 10 补 dict.published/merged/split、
+     * P2 PR-3 Task 8 补 order.stopped/visit.discharged（先登记后订阅红线——V800 id 44/51
+     * 登记面既有，governance 按登记名声明消费队列）。
      */
     public static final String[] SUBSCRIBED_EVENT_TYPES = {
         EVENT_SUB_OUTPATIENT_ORDER_CHARGED,
@@ -85,7 +93,9 @@ public final class PharmacyMessagingConstants {
         EVENT_SUB_BILLING_REFUND_APPROVED,
         EVENT_SUB_SYSTEM_DICT_PUBLISHED,
         EVENT_SUB_PATIENT_MERGED,
-        EVENT_SUB_PATIENT_SPLIT
+        EVENT_SUB_PATIENT_SPLIT,
+        EVENT_SUB_INPATIENT_ORDER_STOPPED,
+        EVENT_SUB_INPATIENT_VISIT_DISCHARGED
     };
 
     /** 私有构造器（A.2-6） */

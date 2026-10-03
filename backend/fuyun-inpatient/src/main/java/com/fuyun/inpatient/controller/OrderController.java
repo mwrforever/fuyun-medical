@@ -1,8 +1,8 @@
 package com.fuyun.inpatient.controller;
 
 import com.fuyun.common.web.PageResult;
+import com.fuyun.inpatient.dto.InpatientOrderCreateRequest;
 import com.fuyun.inpatient.dto.OrderCancelRequest;
-import com.fuyun.inpatient.dto.OrderCreateRequest;
 import com.fuyun.inpatient.dto.OrderReorganizeRequest;
 import com.fuyun.inpatient.dto.OrderStopRequest;
 import com.fuyun.inpatient.enums.OrderClass;
@@ -59,7 +59,7 @@ public class OrderController {
     @PostMapping("/api/v1/inpatient/visits/{visitId}/orders")
     @AuditLog(actionType = AuditActionType.WRITE)
     public MedicalOrderVO create(
-            @PathVariable("visitId") @NotBlank String visitId, @Valid @RequestBody OrderCreateRequest req) {
+            @PathVariable("visitId") @NotBlank String visitId, @Valid @RequestBody InpatientOrderCreateRequest req) {
         return medicalOrderService.create(visitId, req);
     }
 
@@ -168,7 +168,7 @@ public class OrderController {
     @PostMapping("/api/v1/inpatient/orders/{no}/resubmit")
     @AuditLog(actionType = AuditActionType.WRITE)
     public MedicalOrderVO resubmit(
-            @PathVariable("no") @NotBlank String no, @Valid @RequestBody OrderCreateRequest req) {
+            @PathVariable("no") @NotBlank String no, @Valid @RequestBody InpatientOrderCreateRequest req) {
         return medicalOrderService.resubmit(no, req);
     }
 

@@ -9,9 +9,11 @@ import lombok.Getter;
 import lombok.Setter;
 
 /**
- * 调剂单实体（pharmacy.dispense，V703）：发药闭环主单（charged 放行入队起点），一处方一张活动单
- * （uk_dispense_rx_active，CANCELLED 不占）。枚举字段以 String 承载 code（值域见 enums 包），
- * 双签留痕 picker/verifier/issuer 随三段与签名回写。
+ * 调剂单实体（pharmacy.dispense，V703 + V1110 住院扩列）：发药闭环主单（门诊 charged 放行入队
+ * 起点 / 住院摆药 issue 出库落行），一处方一张活动单（uk_dispense_rx_active 谓词限 OUTPATIENT，
+ * 住院行不受约束）。枚举字段以 String 承载 code（值域见 enums 包），双签留痕 picker/verifier/
+ * issuer 随三段与签名回写；住院三列（wardId/m04OrderNo/dispensePlanNo）门诊行 NULL，住院行
+ * 必填由应用层（DispensePlanServiceImpl.issue 落库面）保证。
  */
 @Getter
 @Setter
@@ -25,22 +27,28 @@ public class Dispense {
     /** 调剂单号（D+yyyyMMdd+6 位纳秒尾数，uk 唯一） */
     private String dispenseNo;
 
-    /** 调剂单类型（DispenseType code） */
+    /** 调剂单类型（DispenseType code：OUTPATIENT 门诊/INPATIENT_DOSE 住院单剂量/INPATIENT_PIVA 静配） */
     private String dispenseType;
 
-    /** 处方 id（引用处方主数据，红线 1 不复制明细为权威） */
+    /**
+     * 处方 id（引用处方主数据，红线 1 不复制明细为权威）；住院摆药行无处方承载 0 占位——
+     * uk_dispense_rx_active 谓词限 OUTPATIENT 不占，住院行不受一处方一活动单约束（V1110 扩列声明）
+     */
     private Long prescriptionId;
 
-    /** 处方号（检索/事件载荷锚） */
+    /**
+     * 处方号（检索/事件载荷锚）；住院摆药行承载摆药计划号可读锚（rx_no NOT NULL 列双语义承载，
+     * V1110 住院扩列口径——事件载荷 rxNo 仍出 null，列值仅供检索）
+     */
     private String rxNo;
 
     /** 患者主索引（M02） */
     private Long patientId;
 
-    /** CF-3 门诊就诊号（O 型 14 位） */
+    /** 就诊号双语义承载：门诊行 O 型 14 位 / 住院行 I 型 14 位（V1110 列注释双语义声明） */
     private String visitId;
 
-    /** 库房编码（P1 演示常量 OUTP_PHARM） */
+    /** 库房编码（P1 演示常量 OUTP_PHARM——住院链共用单一药房库，分库随 P3） */
     private String storehouse;
 
     /** 调配药师（双签之一） */
@@ -55,7 +63,16 @@ public class Dispense {
     /** 发药时刻 */
     private OffsetDateTime issuedAt;
 
-    /** 发药单状态（DispenseStatus code） */
+    /** 目标病区编码（住院摆药行归属病区；门诊行 NULL；V1110 住院扩列） */
+    private String wardId;
+
+    /** 住院医嘱号（住院行回链 M04 医嘱；门诊行 NULL；V1110 住院扩列） */
+    private String m04OrderNo;
+
+    /** 摆药计划号（住院行回链 dispense_plan.plan_no；门诊行 NULL；V1110 住院扩列） */
+    private String dispensePlanNo;
+
+    /** 发药单状态（DispenseStatus code；住院链 PICKED→CHECKED→DELIVERED，行经 issue 诞生即 CHECKED） */
     private String status;
 
     /** 创建时刻 */

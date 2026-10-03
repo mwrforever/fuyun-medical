@@ -676,6 +676,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pharmacy/dispense-plans/{no}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 摆药核对 */
+        post: operations["verifyPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/{no}/receive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 摆药病区签收 */
+        post: operations["receivePlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/{no}/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 摆药开始 */
+        post: operations["pickPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/{no}/issue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 摆药出库交接 */
+        post: operations["issuePlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/{no}/deliver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 摆药配送交接 */
+        post: operations["deliverPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 生成住院摆药计划 */
+        post: operations["generate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/patient/privacy/unmask": {
         parameters: {
             query?: never;
@@ -1158,7 +1260,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** T+N 放号生成 */
-        post: operations["generate"];
+        post: operations["generate_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1369,41 +1471,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/nursing/ward-patients": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** 病区在区患者一览 */
-        get: operations["listByWard"];
-        put?: never;
-        /** 入区登记（P1 过渡通道，幂等 upsert） */
-        post: operations["register"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/nursing/ward-patients/{visitId}/remove": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** 移出病区一览 */
-        post: operations["remove"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/nursing/vital-signs": {
         parameters: {
             query?: never;
@@ -1500,8 +1567,25 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 护理任务完成 */
+        /** 护理任务完成（可携关联执行单引用） */
         post: operations["complete_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/tasks/{taskNo}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 护理任务认领（待执行 → 执行中） */
+        post: operations["claim"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1525,6 +1609,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nursing/tasks/generate-routine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 常规模板批量生成当日任务 */
+        post: operations["generateRoutine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/nursing/pda/patrol": {
         parameters: {
             query?: never;
@@ -1536,6 +1637,23 @@ export interface paths {
         put?: never;
         /** PDA 巡视打卡（扫码直落 COMPLETED） */
         post: operations["patrol"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/pda/override-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 破码放行双授权（扫码核对失败后双人授权放行） */
+        post: operations["overrideCheckOrderExecution"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1657,7 +1775,109 @@ export interface paths {
         get?: never;
         put?: never;
         /** 交接班单生成（SBAR 自动汇总初稿） */
-        post: operations["generate_1"];
+        post: operations["generate_2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 开始执行（CHECKED→EXECUTING，时间窗外未破码拒绝） */
+        post: operations["startOrderExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/sign-receive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 人工补签收（非药品类；药品类经摆药签收衔接自动签收） */
+        post: operations["signReceiveOrderExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/needle-out": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 输液拔针（腕带核对+自动入量+监测收口+双路回签） */
+        post: operations["needleOutOrderExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/finish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 执行完成（EXECUTING→COMPLETED+双路回签 M04） */
+        post: operations["finishOrderExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 三向扫码核对（腕带/瓶签/设备单维核对，PASS→CHECKED，FAIL 留痕拒绝） */
+        post: operations["checkOrderExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 执行单撤销（未执行三态常规撤销；EXECUTING 仅输注中断携量部分回签） */
+        post: operations["cancelOrderExecution"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1694,6 +1914,75 @@ export interface paths {
         put?: never;
         /** 护理评估单创建（五量表判级 + 高危联动） */
         post: operations["create_9"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/adverse-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 不良事件分页查询（非惩罚红线：出参零惩罚字段） */
+        get: operations["listAdverseEvents"];
+        put?: never;
+        /** 上报不良事件（匿名通道+I/II 级 24 小时时限落库+id 83 事件） */
+        post: operations["reportAdverseEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/adverse-events/{no}/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 处置退回（HANDLING→REPORTED；退回原因留痕） */
+        post: operations["returnAdverseEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/adverse-events/{no}/handle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 受理处置（REPORTED→HANDLING；I/II 级超时留痕不阻断） */
+        post: operations["handleAdverseEvent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/adverse-events/{no}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 关闭（HANDLING→CLOSED；RCA 与整改措施随关闭落库） */
+        post: operations["closeAdverseEvent"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1805,7 +2094,7 @@ export interface paths {
         };
         get: operations["page_4"];
         put?: never;
-        post: operations["register_1"];
+        post: operations["register"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2013,7 +2302,7 @@ export interface paths {
         };
         get: operations["list_6"];
         put?: never;
-        post: operations["register_2"];
+        post: operations["register_1"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3123,6 +3412,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/pharmacy/dispense-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 住院摆药计划分页查询 */
+        get: operations["pagePlans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/{no}/label": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** PIVAS 贴签数据面 */
+        get: operations["label"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/patient/privacy-mask-rules": {
         parameters: {
             query?: never;
@@ -3370,6 +3693,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nursing/ward-patients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区在区患者一览 */
+        get: operations["listByWard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/nursing/ward-patients/{visitId}": {
         parameters: {
             query?: never;
@@ -3421,6 +3761,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nursing/stats/adverse-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分类统计趋势（类别/病区/等级/时段聚合计数，M19 消费缺位注记） */
+        get: operations["statsAdverseEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/nursing/pda/patient-summary": {
         parameters: {
             query?: never;
@@ -3455,6 +3812,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nursing/infusions/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区在途输注清单（监测挂接聚合，开始时点升序） */
+        get: operations["listActiveInfusions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/nursing/handovers": {
         parameters: {
             query?: never;
@@ -3464,6 +3838,74 @@ export interface paths {
         };
         /** 病区交接班清单（按日检索） */
         get: operations["list_9"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 执行工作台分组清单（病区+日期+班次+状态，计划时间升序） */
+        get: operations["listOrderExecutions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/{no}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 执行单闭环追溯（五环节时点+核对流水+关联告警一屏） */
+        get: operations["traceOrderExecution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/executions/occupancy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 在途执行单占用清单（退费前置校验：非终态行集） */
+        get: operations["listOrderExecutionOccupancy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nursing/board/{wardId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 病区大屏四段快照（REST 兜底，WS 主通道增量） */
+        get: operations["getNursingBoard"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4682,14 +5124,59 @@ export interface components {
             items: components["schemas"]["PickLine"][];
         };
         DispenseReturnRequest: {
-            dispenseNo: string;
-            mode: string;
-            items: components["schemas"]["ReturnLine"][];
+            dispenseNo?: string;
+            mode?: string;
+            items?: components["schemas"]["ReturnLine"][];
+            dispensePlanNo?: string;
+            returnLines?: components["schemas"]["InpatientReturnLine"][];
+        };
+        InpatientReturnLine: {
+            itemSeq: string;
+            returnQuantity: string;
+            traceCodes?: string[];
         };
         ReturnLine: {
             prescriptionItemId: string;
             returnQuantity: string;
             traceCodes?: string[];
+        };
+        DispensePlanReceiveRequest: {
+            /** @example 0 */
+            receivedBy: string;
+        };
+        DispensePlanDeliverRequest: {
+            carrier?: string;
+        };
+        DispensePlanGenerateRequest: {
+            m04OrderNo: string;
+            wardId: string;
+        };
+        DispensePlanVO: {
+            /** @example 0 */
+            id?: string;
+            planNo?: string;
+            m04OrderNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            planType?: string;
+            /** Format: date-time */
+            planTime?: string;
+            status?: string;
+            pivasBatchNo?: string;
+            labelPrinted?: boolean;
+            /** @example 0 */
+            pickedBy?: string;
+            /** @example 0 */
+            verifiedBy?: string;
+            /** Format: date-time */
+            issuedAt?: string;
+            /** Format: date-time */
+            deliveredAt?: string;
+            /** @example 0 */
+            receivedBy?: string;
+            cancelReason?: string;
         };
         UnmaskRequest: {
             /** @example 0 */
@@ -5079,32 +5566,6 @@ export interface components {
             /** @example 0 */
             newPoolId: string;
         };
-        WardPatientRegisterRequest: {
-            visitId: string;
-            /** @example 0 */
-            patientId: string;
-            wardId: string;
-            bedNo: string;
-            patientName: string;
-            gender?: string;
-            /** Format: int32 */
-            age?: number;
-            nursingLevel?: string;
-            conditionTags?: string;
-        };
-        WardPatientVO: {
-            visitId?: string;
-            /** @example 0 */
-            patientId?: string;
-            wardId?: string;
-            bedNo?: string;
-            nursingLevel?: string;
-            /** Format: date-time */
-            admittedAt?: string;
-        };
-        WardPatientRemoveRequest: {
-            reason: string;
-        };
         VitalSignRecordRequest: {
             visitId: string;
             source?: string;
@@ -5223,12 +5684,73 @@ export interface components {
             completedAt?: string;
             cancelReason?: string;
         };
+        NursingTaskCompleteRequest: {
+            relatedExecutionNo?: string;
+        };
+        TaskClaimRequest: {
+            /** @example 0 */
+            assigneeId: string;
+        };
         NursingTaskCancelRequest: {
             reason: string;
+        };
+        RoutineTaskGenerateRequest: {
+            wardId: string;
+            /** Format: date */
+            date?: string;
+        };
+        RoutineTaskGenerateVO: {
+            /** Format: int32 */
+            createdTasks?: number;
         };
         PdaPatrolRequest: {
             identifier: string;
             visitId: string;
+        };
+        OverrideCheckRequest: {
+            executionNo: string;
+            /** @example 0 */
+            primaryAuthorizerId: string;
+            /** @example 0 */
+            secondaryAuthorizerId: string;
+            reason: string;
+        };
+        OrderExecutionVO: {
+            /** @example 0 */
+            id?: string;
+            executionNo?: string;
+            m04OrderNo?: string;
+            m04PlanNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            bedNo?: string;
+            executionType?: string;
+            execItemCode?: string;
+            execItemName?: string;
+            dosageText?: string;
+            /** Format: date-time */
+            planTime?: string;
+            status?: string;
+            /** Format: date-time */
+            signedAt?: string;
+            /** Format: date-time */
+            checkedAt?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            finishedAt?: string;
+            /** Format: date-time */
+            needleOutAt?: string;
+            /** @example 0 */
+            executorId?: string;
+            /** @example 0 */
+            checkerId?: string;
+            overrideFlag?: boolean;
+            cancelReason?: string;
+            confirmStatus?: string;
+            latestAlarmNo?: string;
         };
         NursingRecordCreateRequest: {
             visitId: string;
@@ -5377,6 +5899,36 @@ export interface components {
             wardId: string;
             shiftCode: string;
         };
+        StartRequest: {
+            /** @example 0 */
+            executorId: string;
+            deviceId?: string;
+            overrideTimeWindow?: boolean;
+        };
+        SignReceiveRequest: {
+            receivedNote?: string;
+        };
+        NeedleOutRequest: {
+            /** @example 0 */
+            executorId: string;
+            /** Format: int32 */
+            actualVolumeMl: number;
+            wristbandCode: string;
+        };
+        FinishRequest: {
+            /** @example 0 */
+            executorId: string;
+            routeCheckResult?: string;
+        };
+        CheckRequest: {
+            code: string;
+            codeType: string;
+        };
+        CancelExecutionRequest: {
+            reason: string;
+            /** Format: int32 */
+            actualVolumeMl?: number;
+        };
         NurseAssignmentRequest: {
             wardId: string;
             nurseId: string;
@@ -5437,6 +5989,67 @@ export interface components {
             nextAssessPlan?: string;
             triggeredTaskRef?: string;
             adverseEventRef?: string;
+        };
+        AdverseEventReportRequest: {
+            category: string;
+            severityClass: string;
+            severityGrade: string;
+            wardId: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** Format: date-time */
+            occurredAt: string;
+            eventSummary: string;
+            handlingNote?: string;
+            /** @example 0 */
+            reporterId?: string;
+            isAnonymous?: boolean;
+        };
+        AdverseEventVO: {
+            /** @example 0 */
+            id?: string;
+            eventNo?: string;
+            category?: string;
+            severityClass?: string;
+            severityGrade?: string;
+            wardId?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            /** Format: date-time */
+            occurredAt?: string;
+            eventSummary?: string;
+            handlingNote?: string;
+            isAnonymous?: boolean;
+            /** Format: date-time */
+            reportDeadline?: string;
+            deadlineMet?: boolean;
+            status?: string;
+            /** @example 0 */
+            handlerId?: string;
+            rcaNote?: string;
+            correctiveAction?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        AdverseEventReturnRequest: {
+            reason: string;
+            /** @example 0 */
+            returnerId: string;
+        };
+        AdverseEventHandleRequest: {
+            /** @example 0 */
+            handlerId: string;
+            handlingNote?: string;
+        };
+        AdverseEventCloseRequest: {
+            rcaNote?: string;
+            correctiveAction?: string;
+            /** @example 0 */
+            closedBy: string;
         };
         CreateProductRequest: {
             productName: string;
@@ -5768,6 +6381,28 @@ export interface components {
             toBedId?: string;
             /** Format: date-time */
             transferredAt?: string;
+        };
+        InpatientOrderCreateRequest: {
+            orderType: string;
+            orderClass: string;
+            standbyFlag?: boolean;
+            groupNo?: string;
+            freqCode?: string;
+            items: components["schemas"]["InpatientOrderItemRequest"][];
+        };
+        InpatientOrderItemRequest: {
+            itemType: string;
+            itemCode: string;
+            itemName: string;
+            dosage?: string;
+            dosageUnit?: string;
+            route?: string;
+            dripRate?: string;
+            quantity?: number;
+            execDeptId?: string;
+            skinTestFlag?: boolean;
+            oralFlag?: boolean;
+            continueFlag?: boolean;
         };
         MedicalOrderVO: {
             orderNo?: string;
@@ -6362,6 +6997,41 @@ export interface components {
             status?: string;
             items?: components["schemas"]["DispenseItemVO"][];
         };
+        PageResultDispensePlanVO: {
+            content?: components["schemas"]["DispensePlanVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        DispensePlanLabelVO: {
+            planNo?: string;
+            m04OrderNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            patientName?: string;
+            visitId?: string;
+            wardId?: string;
+            bedNo?: string;
+            pivasBatchNo?: string;
+            /** Format: date-time */
+            planTime?: string;
+            /** @example 0 */
+            pickedBy?: string;
+            /** @example 0 */
+            verifiedBy?: string;
+            items?: components["schemas"]["LabelItem"][];
+        };
+        LabelItem: {
+            itemCode?: string;
+            itemName?: string;
+            dosage?: string;
+            unit?: string;
+            route?: string;
+            quantity?: string;
+        };
         PageResultPrivacyAccessLogVO: {
             content?: components["schemas"]["PrivacyAccessLogVO"][];
             /** @example 0 */
@@ -6558,6 +7228,16 @@ export interface components {
             /** Format: int32 */
             calledCount?: number;
         };
+        WardPatientVO: {
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            wardId?: string;
+            bedNo?: string;
+            nursingLevel?: string;
+            /** Format: date-time */
+            admittedAt?: string;
+        };
         AllergyItem: {
             /** @example 0 */
             itemId?: string;
@@ -6576,7 +7256,6 @@ export interface components {
             /** Format: int32 */
             age?: number;
             nursingLevel?: string;
-            conditionTags?: string;
             allergyFlag?: boolean;
             riskFlags?: string;
             /** Format: date-time */
@@ -6599,6 +7278,31 @@ export interface components {
             specialEvents?: components["schemas"]["ChartEntryVO"][];
             dailyValues?: components["schemas"]["ChartEntryVO"][];
         };
+        AdverseEventStatsVO: {
+            /** Format: date */
+            date?: string;
+            /** @example 0 */
+            total?: string;
+            byCategory?: {
+                [key: string]: string;
+            };
+            bySeverityClass?: {
+                [key: string]: string;
+            };
+            bySeverityGrade?: {
+                [key: string]: string;
+            };
+            byWard?: {
+                [key: string]: string;
+            };
+            byShift?: {
+                [key: string]: string;
+            };
+            /** @example 0 */
+            deadlineTotal?: string;
+            /** @example 0 */
+            deadlineMetCount?: string;
+        };
         PdaPatientSummaryVO: {
             /** @example 0 */
             patientId?: string;
@@ -6611,6 +7315,106 @@ export interface components {
             /** Format: int32 */
             inFlightTaskCount?: number;
         };
+        ActiveInfusionVO: {
+            executionNo?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            wardId?: string;
+            bedNo?: string;
+            execItemName?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            bagLabelCode?: string;
+            iotDeviceId?: string;
+            latestAlarmNo?: string;
+            /** Format: int32 */
+            escalationCount?: number;
+        };
+        PageResultOrderExecutionVO: {
+            content?: components["schemas"]["OrderExecutionVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
+        };
+        CheckLogVO: {
+            checkType?: string;
+            checkResult?: string;
+            failType?: string;
+            codeDigest?: string;
+            /** @example 0 */
+            operatorId?: string;
+            /** Format: date-time */
+            occurredAt?: string;
+        };
+        OrderExecutionTraceVO: {
+            executionNo?: string;
+            m04OrderNo?: string;
+            m04PlanNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            status?: string;
+            /** Format: date-time */
+            planTime?: string;
+            /** Format: date-time */
+            signedAt?: string;
+            /** Format: date-time */
+            checkedAt?: string;
+            /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
+            finishedAt?: string;
+            /** Format: date-time */
+            needleOutAt?: string;
+            /** @example 0 */
+            executorId?: string;
+            /** @example 0 */
+            checkerId?: string;
+            overrideFlag?: boolean;
+            cancelReason?: string;
+            confirmStatus?: string;
+            latestAlarmNo?: string;
+            checkLogs?: components["schemas"]["CheckLogVO"][];
+        };
+        AdmissionRow: {
+            visitId?: string;
+            bedNo?: string;
+            /** Format: date-time */
+            at?: string;
+            type?: string;
+        };
+        BedRow: {
+            bedNo?: string;
+            visitId?: string;
+            /** @example 0 */
+            patientId?: string;
+            nursingLevel?: string;
+            /** Format: date-time */
+            admittedAt?: string;
+            assigneeName?: string;
+            riskFlags?: string;
+        };
+        NurseBoardVO: {
+            wardId?: string;
+            beds?: components["schemas"]["BedRow"][];
+            overdueTasks?: components["schemas"]["OverdueTaskRow"][];
+            admissions?: components["schemas"]["AdmissionRow"][];
+            criticalValues?: unknown[];
+            /** Format: date-time */
+            generatedAt?: string;
+        };
+        OverdueTaskRow: {
+            taskNo?: string;
+            taskType?: string;
+            /** Format: date-time */
+            planTime?: string;
+            /** Format: int32 */
+            escalationCount?: number;
+        };
         ScaleDefinitionVO: {
             scaleType?: string;
             itemCodes?: string[];
@@ -6619,6 +7423,15 @@ export interface components {
                 [key: string]: number[];
             };
             totalRule?: string;
+        };
+        PageResultAdverseEventVO: {
+            content?: components["schemas"]["AdverseEventVO"][];
+            /** @example 0 */
+            page?: string;
+            /** @example 0 */
+            size?: string;
+            /** @example 0 */
+            total?: string;
         };
         TelemetrySeriesRequest: {
             scope: string;
@@ -8653,6 +9466,138 @@ export interface operations {
             };
         };
     };
+    verifyPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    receivePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispensePlanReceiveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pickPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issuePlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deliverPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DispensePlanDeliverRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    generate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DispensePlanGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DispensePlanVO"][];
+                };
+            };
+        };
+    };
     unmask: {
         parameters: {
             query?: never;
@@ -9375,7 +10320,7 @@ export interface operations {
             };
         };
     };
-    generate: {
+    generate_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -9689,78 +10634,6 @@ export interface operations {
             };
         };
     };
-    listByWard: {
-        parameters: {
-            query: {
-                wardId: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["WardPatientVO"][];
-                };
-            };
-        };
-    };
-    register: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WardPatientRegisterRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["WardPatientVO"];
-                };
-            };
-        };
-    };
-    remove: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                visitId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["WardPatientRemoveRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["WardPatientVO"];
-                };
-            };
-        };
-    };
     listByPatient: {
         parameters: {
             query: {
@@ -9940,7 +10813,37 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["NursingTaskCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NursingTaskVO"];
+                };
+            };
+        };
+    };
+    claim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                taskNo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TaskClaimRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -9979,6 +10882,30 @@ export interface operations {
             };
         };
     };
+    generateRoutine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoutineTaskGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RoutineTaskGenerateVO"];
+                };
+            };
+        };
+    };
     patrol: {
         parameters: {
             query?: never;
@@ -9999,6 +10926,30 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["NursingTaskVO"];
+                };
+            };
+        };
+    };
+    overrideCheckOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OverrideCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
                 };
             };
         };
@@ -10218,7 +11169,7 @@ export interface operations {
             };
         };
     };
-    generate_1: {
+    generate_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -10238,6 +11189,162 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ShiftHandoverVO"];
+                };
+            };
+        };
+    };
+    startOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
+                };
+            };
+        };
+    };
+    signReceiveOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SignReceiveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
+                };
+            };
+        };
+    };
+    needleOutOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NeedleOutRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
+                };
+            };
+        };
+    };
+    finishOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
+                };
+            };
+        };
+    };
+    checkOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
+                };
+            };
+        };
+    };
+    cancelOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CancelExecutionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"];
                 };
             };
         };
@@ -10332,6 +11439,135 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["NursingAssessmentVO"];
+                };
+            };
+        };
+    };
+    listAdverseEvents: {
+        parameters: {
+            query?: {
+                category?: string;
+                wardId?: string;
+                status?: string;
+                date?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultAdverseEventVO"];
+                };
+            };
+        };
+    };
+    reportAdverseEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdverseEventReportRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdverseEventVO"];
+                };
+            };
+        };
+    };
+    returnAdverseEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdverseEventReturnRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdverseEventVO"];
+                };
+            };
+        };
+    };
+    handleAdverseEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdverseEventHandleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdverseEventVO"];
+                };
+            };
+        };
+    };
+    closeAdverseEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdverseEventCloseRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdverseEventVO"];
                 };
             };
         };
@@ -10584,7 +11820,7 @@ export interface operations {
             };
         };
     };
-    register_1: {
+    register: {
         parameters: {
             query?: never;
             header?: never;
@@ -10981,7 +12217,7 @@ export interface operations {
             };
         };
     };
-    register_2: {
+    register_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -11090,7 +12326,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OrderCreateRequest"];
+                "application/json": components["schemas"]["InpatientOrderCreateRequest"];
             };
         };
         responses: {
@@ -11238,7 +12474,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OrderCreateRequest"];
+                "application/json": components["schemas"]["InpatientOrderCreateRequest"];
             };
         };
         responses: {
@@ -12645,6 +13881,54 @@ export interface operations {
             };
         };
     };
+    pagePlans: {
+        parameters: {
+            query?: {
+                m04OrderNo?: string;
+                wardId?: string;
+                status?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultDispensePlanVO"];
+                };
+            };
+        };
+    };
+    label: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DispensePlanLabelVO"];
+                };
+            };
+        };
+    };
     maskRules: {
         parameters: {
             query?: never;
@@ -12992,6 +14276,28 @@ export interface operations {
             };
         };
     };
+    listByWard: {
+        parameters: {
+            query: {
+                wardId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WardPatientVO"][];
+                };
+            };
+        };
+    };
     detail_3: {
         parameters: {
             query?: never;
@@ -13058,6 +14364,30 @@ export interface operations {
             };
         };
     };
+    statsAdverseEvents: {
+        parameters: {
+            query?: {
+                category?: string;
+                wardId?: string;
+                date?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdverseEventStatsVO"];
+                };
+            };
+        };
+    };
     patientSummary: {
         parameters: {
             query: {
@@ -13102,6 +14432,28 @@ export interface operations {
             };
         };
     };
+    listActiveInfusions: {
+        parameters: {
+            query: {
+                wardId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ActiveInfusionVO"][];
+                };
+            };
+        };
+    };
     list_9: {
         parameters: {
             query: {
@@ -13121,6 +14473,100 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ShiftHandoverVO"][];
+                };
+            };
+        };
+    };
+    listOrderExecutions: {
+        parameters: {
+            query: {
+                wardId: string;
+                date?: string;
+                shift?: string;
+                status?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResultOrderExecutionVO"];
+                };
+            };
+        };
+    };
+    traceOrderExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionTraceVO"];
+                };
+            };
+        };
+    };
+    listOrderExecutionOccupancy: {
+        parameters: {
+            query?: {
+                patientId?: string;
+                m04OrderNo?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrderExecutionVO"][];
+                };
+            };
+        };
+    };
+    getNursingBoard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wardId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NurseBoardVO"];
                 };
             };
         };

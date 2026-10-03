@@ -84,8 +84,10 @@ public interface IDispenseService extends IService<Dispense> {
     void issue(String dispenseNo);
 
     /**
-     * 退药受理（POST /dispense-returns，R2-13 两时点）：
+     * 退药受理（POST /dispense-returns，R2-13 两时点；P2 PR-3 Task 8 扩住院形态）：
      * <ul>
+     * <li>住院形态（req.dispensePlanNo 非空分流，整体委托 {@link com.fuyun.pharmacy.service.IDispensePlanService#acceptInpatientReturn}）：
+     * DELIVERED 调剂行逐行退+批次回补+returned 事件——详见该接口 javadoc。</li>
      * <li>mode=ISSUED_RETURN（发药后实物退）：追溯码与发药采集记录逐码核验（PH-1012 防回流药，
      * Spec §10）→ 批次回补+RETURN_RESTOCK 回补流水同事务（流水正数，与批次变更勾稽）→ 逐明细
      * returnedQty ≤ issuedQty 累计守卫（PH-1013）→ 发药单 ISSUED/PART_RETURNED→PART/FULL_RETURNED
@@ -95,11 +97,14 @@ public interface IDispenseService extends IService<Dispense> {
      * （锁定数非数量流水，不落 stock_ledger）+ 明细退场 CANCELLED；处方保持 DISPENSING 继续剩余
      * 明细调配，不发 returned 事件。</li>
      * </ul>
+     * 门诊形态入参守卫（dispenseNo/items 必填）自 DTO 注解应用层化——住院形态互斥承载后静态注解
+     * 无法表达「按形态必填」，缺单号/缺退药行 PH-1013 定性 400。
      *
-     * @param req 退药受理入参（单号/受理模式/逐行退药面），非空；来源：M06 药师工作站提交
+     * @param req 退药受理入参（门诊：单号/受理模式/逐行退药面；住院：dispensePlanNo/returnLines），
+     *            非空；来源：M06 工作站/M05 病区提交
      * @throws BizException PH-1008（缺单）/ PH-1009（终态 CAS 并发被抢）/
-     *                      PH-1012（追溯码不一致或缺码，防回流拒）/ PH-1013（模式未知、状态违例、
-     *                      缺行、超可退数、回补/释放条件更新 0 行——整事务回滚零写面）
+     *                      PH-1012（追溯码不一致或缺码，防回流拒）/ PH-1013（模式未知、入参不完整、
+     *                      状态违例、缺行、超可退数、回补/释放条件更新 0 行——整事务回滚零写面）
      */
     void acceptReturn(DispenseReturnRequest req);
 

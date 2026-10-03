@@ -7,12 +7,20 @@ import com.fuyun.pharmacy.api.PharmacyErrorCode;
 import org.springframework.http.HttpStatus;
 
 /**
- * 调剂单类型（Spec :111）：PR-4 仅门诊发药；住院摆药/PIVAS 等值随 P2 增补（枚举值域扩展属契约演进）。
+ * 调剂单类型（Spec :111）：PR-4 门诊发药；P2 PR-3（V1110）增补住院摆药两值——单剂量口与 PIVAS
+ * 静配口（枚举值域扩展属契约演进，出院带药随 P3）。住院两值由 dispense_plan.plan_type 摆药计划
+ * 归并生成：SINGLE_DOSE/WHOLE 归 INPATIENT_DOSE、PIVAS 归 INPATIENT_PIVA。
  */
 public enum DispenseType {
 
     /** 门诊发药 */
-    OUTPATIENT("OUTPATIENT");
+    OUTPATIENT("OUTPATIENT"),
+
+    /** 住院摆药·单剂量（含整包摆药归并口径，病区护士摆药核对链） */
+    INPATIENT_DOSE("INPATIENT_DOSE"),
+
+    /** 住院摆药·PIVAS 静脉用药调配（静配中心排批配送链） */
+    INPATIENT_PIVA("INPATIENT_PIVA");
 
     /** 存储值：DB 列写入（@EnumValue）与 JSON 输出（@JsonValue）共用 */
     @EnumValue

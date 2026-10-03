@@ -3,6 +3,7 @@ package com.fuyun.nursing.service;
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.fuyun.nursing.dto.NursingTaskCancelRequest;
 import com.fuyun.nursing.dto.NursingTaskCreateRequest;
+import com.fuyun.nursing.dto.TaskClaimRequest;
 import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.vo.NursingTaskVO;
@@ -15,17 +16,19 @@ import java.util.Map;
  * 护理任务域服务（V805 nursing_task 业务面；Task 8 评估高危联动、Task 9 交接班待续事项、
  * Task 10 PDA 巡视打卡与 Task 3 详情卡在途任务段的消费契约来源）。P1 仅落「任务最小载体」：
  * 创建（发号 + 默认 PENDING + created 事件）、完成/取消（CAS 终态流转 + completed 事件）、
- * 病区清单与患者在途查询（单查/批量，读时惰性逾期判定）、巡视打卡（直落 COMPLETED）。任务工作台
- * （分组/认领/模板批量生成）归 P2——IN_PROGRESS 为 P1 声明态（仅注册迁移对，无迁移入口）。
+ * 病区清单与患者在途查询（单查/批量，读时惰性逾期判定）、巡视打卡（直落 COMPLETED）。
+ * P2 PR-3 Task 9 任务工作台首批落地：任务认领（PENDING → IN_PROGRESS 迁移入口）与完成扩参
+ * 关联执行单回写；常规模板批量生成归 {@link IRoutineTaskGenerator}、tick 逾期升级归
+ * {@link ITaskOverdueService}（同包分面承载）。
  * 逾期口径（Spec :127 动作式逾期）：overdue_flag + escalation_count 为动作落点，读时惰性
- * 判定单次递增，P1 不发布 nursing.task.overdue（V800 占位登记，发布随 P2 延迟队列）。
+ * 判定单次递增（查询侧），tick 驱动升级链发布 nursing.task.overdue（P2 PR-3 Task 9 实装）。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
  *
  * <p>配对纪律（宪法 A.4.3-20）：单主表 nursing_task 与实现侧
  * {@code ServiceImpl<NursingTaskMapper, NursingTask>} 配对，接口侧收拢
  * {@code extends IService<NursingTask>}——主表通用 CRUD 直接复用 IService 契约面；
- * 终态流转（complete/cancel 的 CAS 行数判定 + 事件发布）与读时惰性逾期写为带守卫链的
+ * 终态流转（complete/cancel 的 CAS 行数判定 + 事件发布）、认领迁移与读时惰性逾期写为带守卫链的
  * 自有方法承载（禁经 IService 通用面绕行——通用面不盖操作者审计列、不发领域事件）。
  */
 public interface INursingTaskService extends IService<NursingTask> {
@@ -45,15 +48,31 @@ public interface INursingTaskService extends IService<NursingTask> {
 
     /**
      * 护理任务完成（PENDING/IN_PROGRESS → COMPLETED）：@Update CAS 单语句（GC26，0 行 →
-     * NS-1011），completed_at 随 CAS 盖章；命中后回读行数据并发布 nursing.task.completed
-     * （载荷 TaskCompletedPayload，status=COMPLETED）。
+     * NS-1011），completed_at 随 CAS 盖章；relatedExecutionNo 非空时随完成定格 source_ref
+     * （关联执行单引用回写——任务↔执行单追溯链，空值保持原引用零覆盖）；命中后回读行数据并
+     * 发布 nursing.task.completed（载荷 TaskCompletedPayload，status=COMPLETED）。
      *
-     * @param taskNo 任务业务号，非空；来源：路径参数
+     * @param taskNo             任务业务号，非空；来源：路径参数
+     * @param relatedExecutionNo 关联执行单号（完成时回写 source_ref 的单据引用），可空；
+     *                           来源：工作站/PDA 完成表单（执行单驱动的任务完成时携带）
      * @return 完成后任务出参，非空
      * @throws BizException NS-1011（409 任务不存在或已终态，禁止完成）/
      *                      NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
      */
-    NursingTaskVO complete(String taskNo);
+    NursingTaskVO complete(String taskNo, String relatedExecutionNo);
+
+    /**
+     * 护理任务认领（P2 PR-3 Task 9 任务工作台面，PENDING → IN_PROGRESS）：@Update CAS 单语句
+     * （GC26，仅 PENDING 可认领，0 行 → NS-1011），assigneeId 落 assigned_nurse（文本承载）。
+     * 在途态内部迁移非终态——不发任务事件（终态广播语义归 complete/cancel）。
+     *
+     * @param taskNo 任务业务号，非空；来源：路径参数
+     * @param req    认领入参（assigneeId 必填），非空；来源：任务工作台认领动作
+     * @return 认领后任务出参（IN_PROGRESS 态），非空
+     * @throws BizException NS-1019（400 assigneeId 为空）/ NS-1011（409 任务不存在、非 PENDING
+     *                      或已被逻辑删，禁止认领）/ NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
+     */
+    NursingTaskVO claim(String taskNo, TaskClaimRequest req);
 
     /**
      * 护理任务取消（PENDING/IN_PROGRESS → CANCELLED）：取消原因强制留痕（空拒 NS-1019）→

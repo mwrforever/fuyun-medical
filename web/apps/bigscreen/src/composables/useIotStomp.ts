@@ -126,6 +126,17 @@ export function alarmTopicPath(wardId: string): string {
   return `/topic/iot/alarm/${wardId}`;
 }
 
+/**
+ * 生成设备状态订阅主题路径（与后端 IotMessagingConstants.TOPIC_DEVICE_STATUS_PREFIX 契约
+ * 逐字对齐；载荷=DeviceStatusEvent 四字段同构——护士站大屏 Task 17 作输液看板刷新信号消费）。
+ *
+ * @param wardId 病区 ID，纯数字字符串（调用方已校验）
+ * @return 主题路径，如 /topic/iot/device-status/1001
+ */
+export function deviceStatusTopicPath(wardId: string): string {
+  return `/topic/iot/device-status/${wardId}`;
+}
+
 /** 全院摘要订阅主题（与后端 IotMessagingConstants.TOPIC_DASHBOARD_GLOBAL 契约逐字对齐：
  * 全院主题不分病区，载荷与 REST DashboardSummaryVO 同构） */
 export const DASHBOARD_GLOBAL_TOPIC = '/topic/iot/dashboard/global';

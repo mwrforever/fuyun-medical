@@ -182,6 +182,50 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
     }
 
     /**
+     * 输液执行自动入量行（Task 6 拔针全链内嵌步骤）：在区校验（patient_id/ward_id 服务端
+     * 装配，失败 NS-1004 上抛拔针事务整体回滚——fail-closed）→ INTAKE/IV_FLUID 行落库
+     * （source=INFUSION_AUTO 预留源本链路写入、source_ref=执行单号、occur_at=拔针时点——
+     * 服务器动作钟面满足 GC25、recorder=拔针护士）。
+     */
+    @Override
+    @Transactional
+    public void appendInfusionIntake(
+            String visitId, String executionNo, int actualVolumeMl, OffsetDateTime occurredAt, long executorId) {
+        // 在区校验（patient_id/ward_id 由在区行服务端装配，与手工录入同守卫）
+        WardPatientDetailVO inWard = requireInWard(visitId);
+        String recorder = String.valueOf(executorId);
+        IoRecord row = new IoRecord();
+        row.setVisitId(visitId);
+        row.setPatientId(inWard.patientId());
+        row.setWardId(inWard.wardId());
+        // 入量发生时点=拔针时点（服务器动作钟面承载，非采集侧时钟）
+        row.setOccurAt(occurredAt);
+        row.setIoType(IoType.INTAKE.getCode());
+        row.setItemCode(IoItemCode.IV_FLUID.getCode());
+        // itemName 服务端按词表冗余落库（与手工录入同口径，禁客户端/调用方伪造展示名）
+        row.setItemName(IoItemCode.IV_FLUID.getDisplayName());
+        row.setQuantity(BigDecimal.valueOf(actualVolumeMl).setScale(2, RoundingMode.HALF_UP));
+        row.setUnit(DEFAULT_UNIT);
+        row.setSource(IoSource.INFUSION_AUTO.getCode());
+        // 来源单据引用=执行单号（V804 source_ref 列 P2 写入方首个落值面）
+        row.setSourceRef(executionNo);
+        row.setRecorderId(recorder);
+        row.setRemark("拔针自动入量");
+        row.setCreatedBy(recorder);
+        row.setUpdatedBy(recorder);
+        // 数据库写操作：自动入量行落库（明细账无唯一约束；重复拔针由执行单 CAS 前置拦截）
+        baseMapper.insert(row);
+        log.info(
+                "输液拔针自动入量：visitId={}，patientId={}，executionNo={}，quantity={} ml，executorId={}，occurAt={}",
+                row.getVisitId(),
+                row.getPatientId(),
+                executionNo,
+                row.getQuantity(),
+                executorId,
+                occurredAt);
+    }
+
+    /**
      * 按住院就诊号列出入量明细（发生时间升序）；date 非空时收敛为北京时区当日窗口
      * [当日 00:00, 次日 00:00)。
      *

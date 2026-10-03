@@ -6,7 +6,6 @@ import com.fuyun.common.utils.SensitiveMasker;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.dto.PdaPatrolRequest;
 import com.fuyun.nursing.entity.NursingWardPatient;
-import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
 import com.fuyun.nursing.service.INursingTaskService;
 import com.fuyun.nursing.service.IPdaService;
@@ -293,20 +292,18 @@ public class PdaServiceImpl implements IPdaService {
         return row;
     }
 
-    /** 按就诊号查在区行（与 WardMetaServiceImpl 在区谓词同源；逻辑删由 @TableLogic 自动过滤）。 */
+    /** 按就诊号查在册投影行（与 WardMetaServiceImpl 在册谓词同源——逻辑删由 @TableLogic 自动过滤）。 */
     private NursingWardPatient findInWardByVisit(String visitId) {
-        // 数据库读操作：在区行定位（visit_id + IN_WARD 双谓词）
-        return wardPatientMapper.selectOne(Wrappers.<NursingWardPatient>lambdaQuery()
-                .eq(NursingWardPatient::getVisitId, visitId)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode()));
+        // 数据库读操作：在册投影行定位（visit_id 谓词；W-34 后在册语义由逻辑删单独承载）
+        return wardPatientMapper.selectOne(
+                Wrappers.<NursingWardPatient>lambdaQuery().eq(NursingWardPatient::getVisitId, visitId));
     }
 
-    /** 按患者主索引查在区行（卡路径摘要定位；同患者极端多行取最近入区，无行返回 null 交调用方降级）。 */
+    /** 按患者主索引查在册投影行（卡路径摘要定位；同患者极端多行取最近入区，无行返回 null 交调用方降级）。 */
     private NursingWardPatient findInWardByPatient(long patientId) {
-        // 数据库读操作：在区行定位（patient_id + IN_WARD 谓词，入区时间倒序取首行）
+        // 数据库读操作：在册投影行定位（patient_id 谓词，入区时间倒序取首行）
         List<NursingWardPatient> rows = wardPatientMapper.selectList(Wrappers.<NursingWardPatient>lambdaQuery()
                 .eq(NursingWardPatient::getPatientId, patientId)
-                .eq(NursingWardPatient::getStatus, WardPatientStatus.IN_WARD.getCode())
                 .orderByDesc(NursingWardPatient::getAdmittedAt));
         return rows.isEmpty() ? null : rows.get(0);
     }

@@ -35,6 +35,15 @@ public class NursingWardConfig {
     /** 班次定义（JSONB 文本：[{"code","name","start","end"}]） */
     private String shiftDefinitions;
 
+    /** 执行时间窗（分钟，V1107 执行域扩列）：计划时间 ± 窗口内允许开始执行，窗外拦截提示；缺省 30 */
+    private Integer executeTimeWindowMinutes;
+
+    /** 破码放行授权角色（逗号分隔角色码，V1107 执行域扩列）：扫码核对失败后放行与输注中断近似权限面；缺省护士长 */
+    private String overrideRoles;
+
+    /** 常规模板（JSONB 文本：[{templateCode,name,frequencyMinutes,taskType}]，V1107 扩列；Task 9 批量生成消费，缺省空数组） */
+    private String routineTaskTemplates;
+
     /** 创建时刻 */
     private OffsetDateTime createdAt;
 

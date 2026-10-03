@@ -45,7 +45,8 @@ jobs:
   backend:
     name: backend / verify
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # 超时线 55m：PR #62 实测 35m+runner 波动观测 40m+（2026-10-03 两连撞 40m 线击杀，CHANGELOG 留痕），留 37% 余量
+    timeout-minutes: 55
     needs: changes
     # 触发条件：后端路径有变更即跑全量门禁（仅改 java/资源文件不触碰 pom.xml 亦必须过门禁）
     if: needs.changes.outputs.backend == 'true'
@@ -112,7 +113,11 @@ jobs:
         working-directory: web
         # 显式携带阈值参数：pnpm 内建命令优先于 package.json 同名 script，裸 pnpm audit 会按任意级别阻断，
         # 与 web 宪法 C.5-5 约定的 high 及以上阻断不符（终审 M-1）
-        run: pnpm audit --audit-level high
+        # 点名豁免 GHSA-vfj7-8cjw-p6xm（braces 栈耗尽 DoS）：advisory 判 <=3.0.3 全量且 Patched=None 无补丁可升，
+        # 引入链为 devDependency 工具链（@vue/eslint-config-typescript>fast-glob>micromatch>braces）不进生产构建产物，
+        # 属上游 advisory 滚动事件非本仓引入（PR #63 CI 第三轮 2026-10-03 实证）——豁免经 TASK.md W-71 追踪，
+        # 上游发布补丁后随依赖升级提案移除本豁免（版本红线：升级走 Renovate/Dependabot，人工不擅自升）
+        run: pnpm audit --audit-level high --ignore=GHSA-vfj7-8cjw-p6xm
 
   # ===== 镜像：PR 只验证可构建性；push main 登录 GHCR 推送（sha 不可变 tag + 分支-latest 可读 tag） =====
   # 禁用 strategy.matrix：matrix 展开后 check run 名带维度后缀（PR #4 真跑实测 images (backend, …)），与分支保护 required

@@ -9,19 +9,21 @@ import org.junit.jupiter.api.Test;
 
 /**
  * 护理域错误码接续锚（Global Constraints「NS-1001 起连续无重号」红线的可执行化）：
- * 枚举全集无重号、NS-1001~NS-1016 逐位连续、NS-1017/NS-1018 预留不分配、NS-1019 收尾——
- * 中途插码/删码/改号即红灯，防 ProblemDetail.errorCode 漂移破坏前端提示映射与跨模块排障约定。
+ * 枚举全集无重号、NS-1001~NS-1016 逐位连续、NS-1017/NS-1018 预留不分配、NS-1019 收尾、
+ * P2 PR-3 执行域续号 NS-1020~1027 全集在位（NS-1025/1026 不良事件面已随 Task 10 扩位，
+ * 立项排定全集至此齐备）——中途插码/删码/改号即红灯，防 ProblemDetail.errorCode 漂移
+ * 破坏前端提示映射与跨模块排障约定。
  */
 class NursingErrorCodeTest {
 
     @Test
-    @DisplayName("错误码全集 NS-1001~NS-1016 逐位连续 + NS-1019 预留位收尾，总数十七无重号")
+    @DisplayName("错误码全集无重号且按冻结序在位（P1 十七 + 执行域八 = 二十五）")
     void errorCodesFollowFrozenSequenceWithoutDuplicates() {
         List<String> codes = Arrays.stream(NursingErrorCode.values())
                 .map(NursingErrorCode::getCode)
                 .toList();
         assertThat(codes).as("错误码存在重号").doesNotHaveDuplicates();
-        assertThat(codes).as("错误码总数偏离 Global Constraints 14 全集（应为 17 条）").hasSize(17);
+        assertThat(codes).as("错误码总数偏离冻结全集（应为 25 条）").hasSize(25);
         for (int i = 0; i < 16; i++) {
             // 逐位连续断言：前 16 个枚举码必须恰为 NS-(1001+i)，插码/跳号/改号任一漂移即红灯
             assertThat(codes.get(i))
@@ -30,5 +32,13 @@ class NursingErrorCodeTest {
         }
         // 预留位收尾断言：NS-1017/NS-1018 不分配，第 17 个码必须恰为 NS-1019
         assertThat(codes.get(16)).as("预留位收尾码偏离（期望 NS-1019）").isEqualTo("NS-1019");
+        // P2 PR-3 执行域续号段：NS-1020~1026 连续接续（NS-1025/1026 不良事件面随 Task 10 扩位到位）
+        for (int i = 0; i < 7; i++) {
+            assertThat(codes.get(17 + i))
+                    .as("执行域续号第 %d 位偏离（期望 NS-%04d）", i + 1, 1020 + i)
+                    .isEqualTo(String.format("NS-%04d", 1020 + i));
+        }
+        // 尾位断言：时间窗码 NS-1027 收尾（立项排定全集 NS-1020~1027 齐备）
+        assertThat(codes.get(24)).as("执行域尾码偏离（期望 NS-1027）").isEqualTo("NS-1027");
     }
 }

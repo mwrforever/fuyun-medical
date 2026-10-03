@@ -31,7 +31,6 @@ import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.entity.ShiftHandover;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.enums.TaskType;
-import com.fuyun.nursing.enums.WardPatientStatus;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
 import com.fuyun.nursing.mapper.ShiftHandoverMapper;
@@ -184,10 +183,11 @@ class ShiftHandoverServiceImplTest {
         assertThat(vo.patientSummary().criticalCount()).isEqualTo(1);
         assertThat(vo.patientSummary().newAdmissionCount()).isEqualTo(2);
         assertThat(vo.patientSummary().surgeryCount()).isEqualTo(1);
-        // 汇总数据源谓词锚：病区 + 在区态（listByWard 同口径，床位序）
+        // 汇总数据源谓词锚：病区单承载（W-34 后在册语义由逻辑删承载，listByWard 同口径，床位序）
         verify(wardPatientMapper).selectList(wardQueryCaptor.capture());
         LambdaQueryWrapper<NursingWardPatient> wrapper = rendered(wardQueryCaptor.getValue());
-        assertThat(wrapper.getParamNameValuePairs().values()).contains(WARD, WardPatientStatus.IN_WARD.getCode());
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(WARD);
+        assertThat(wrapper.getSqlSegment()).doesNotContain("status");
         assertThat(wrapper.getSqlSegment()).contains("ORDER BY").contains("bed_no");
     }
 
@@ -544,7 +544,6 @@ class ShiftHandoverServiceImplTest {
         row.setVisitId(visitId);
         row.setNursingLevel(nursingLevel);
         row.setConditionTags(conditionTags);
-        row.setStatus(WardPatientStatus.IN_WARD.getCode());
         return row;
     }
 

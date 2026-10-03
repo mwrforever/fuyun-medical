@@ -9,7 +9,9 @@ import java.util.Set;
  * <p>fy.topic 事件三件套词表与 fuyun-integration MessagingConstants 命名口径一致（q. 前缀队列、
  * iot.device.status-changed 事件，V403 已登记 event_registry；CF-7 实装事件族八条随 V1004 登记
  * id 74–81，与 iot/api/payload 载荷 record 组件名三方一致，契约锚 IotMessagingContractTest）；
- * 本模块自持一份常量避免跨模块常量耦合（B.2-2 只依赖 api 契约，常量词表非 api 契约）。帧判别键为
+ * 本模块自持一份常量避免跨模块常量耦合（B.2-2 只依赖 api 契约，常量词表非 api 契约）。P2 PR-3
+ * Task 6 起跨域订阅 nursing 输液起止两事件（V800 id 62/63 登记，iot 侧自持消费常量，载荷经
+ * EventEnvelope JSON 取冻结子集——不依赖 nursing jar）。帧判别键为
  * CF-7 线格式（BRIEF-PR4-01
  * §1.3 P0 线格式契约）与状态帧 P0 契约形态的字段名；IOTDA_ 前缀常量为 IoTDA AMQP 推送报文
  * （TASK.md L-3 冻结映射）的字段键——解析器以顶层 {@link #FRAME_FIELD_RESOURCE} 精确等于
@@ -54,8 +56,20 @@ public final class IotMessagingConstants {
     /** 发布事件：设备呼叫触发（V1004 id 81；M16 呼叫域入口；载荷 CallTriggeredPayload） */
     public static final String EVENT_CALL_TRIGGERED = "iot.call.triggered";
 
+    /** 消费事件：开始输注（V800 id 62，P2 PR-3 Task 6 订阅——输液监测关联建立；producer=nursing） */
+    public static final String EVENT_SUB_NURSING_INFUSION_STARTED = "nursing.infusion.started";
+
+    /** 消费事件：拔针/输注结束（V800 id 63，P2 PR-3 Task 6 订阅——患者维度监测停止；producer=nursing） */
+    public static final String EVENT_SUB_NURSING_INFUSION_COMPLETED = "nursing.infusion.completed";
+
     /** 本模块自事件消费队列：q.&lt;消费者模块&gt;.&lt;事件类型&gt;（治理构件声明用） */
     public static final String QUEUE_DEVICE_STATUS = "q.iot.iot.device.status-changed";
+
+    /** 跨域消费队列：护理开始输注（q.iot.nursing.infusion.started，P2 PR-3 Task 6——监测关联建立） */
+    public static final String QUEUE_NURSING_INFUSION_STARTED = QUEUE_PREFIX + EVENT_SUB_NURSING_INFUSION_STARTED;
+
+    /** 跨域消费队列：护理拔针/输注结束（q.iot.nursing.infusion.completed，P2 PR-3 Task 6——监测停止） */
+    public static final String QUEUE_NURSING_INFUSION_COMPLETED = QUEUE_PREFIX + EVENT_SUB_NURSING_INFUSION_COMPLETED;
 
     /** 本模块自事件消费队列：告警触发（q.iot.iot.alarm.triggered，P2 PR-2 Task 9 联动触发源主入口） */
     public static final String QUEUE_ALARM_TRIGGERED = "q.iot.iot.alarm.triggered";

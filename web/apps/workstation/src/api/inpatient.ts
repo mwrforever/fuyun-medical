@@ -29,6 +29,16 @@ export type ChangeBedRequest = components['schemas']['ChangeBedRequest'];
 export type AdmissionQueuePage = components['schemas']['PageResultAdmissionVO'];
 /** 医嘱头出参（分页行与开立返回共用） */
 export type MedicalOrderVO = components['schemas']['MedicalOrderVO'];
+/**
+ * 医嘱开立入参（D-25 根治后生成物直连：住院 DTO 改名 InpatientOrderCreateRequest 出网唯一化，
+ * 本地手写别名 OrderCreatePayload 已删；头六字段+明细行由后端 record 契约承载）。
+ */
+export type InpatientOrderCreateRequest = components['schemas']['InpatientOrderCreateRequest'];
+/**
+ * 医嘱开立明细行入参（生成物直连：12 字段全量，quantity 为 JSON number——BigDecimal 非 Long
+ * 序列化豁免面；本地手写别名 OrderItemPayload 已删）。
+ */
+export type InpatientOrderItemRequest = components['schemas']['InpatientOrderItemRequest'];
 /** 医嘱详情出参（头 + 明细行全集） */
 export type OrderDetailVO = components['schemas']['OrderDetailVO'];
 /** 医嘱明细行出参（详情渲染面；quantity 为 JSON number——BigDecimal 非 Long 序列化豁免面） */
@@ -284,51 +294,14 @@ export const transfer = {
   },
 };
 
-/**
- * 医嘱开立入参（住院侧运行时契约：后端 inpatient OrderCreateRequest Java record——头六字段
- * + 富明细行）。生成物「OrderCreateRequest/OrderItemRequest」被门诊同名 DTO 碰撞覆盖
- * （Springdoc 简单名冲突：同名 schema 后注册者胜，生成物仅存门诊 {orderType,items} 形状），
- * 按生成物出网将被住院侧 bean 校验 400 拒绝——此处按后端运行时实况声明（GC30 以实况为准），
- * 后端修复同名 DTO 后删除本别名回归生成物（PR 描述登记）。
- */
-export interface OrderCreatePayload {
-  /** 医嘱类型（ORDER_TYPE_OPTIONS 九值词表） */
-  orderType: string;
-  /** 医嘱分类（LONG 长期/STAT 临时；LONG 须携 freqCode，缺频次后端拒 IP-1011） */
-  orderClass: string;
-  /** 备用嘱（嘱托）标记——仅 LONG 可 true（STAT+standby 后端拒 IP-1022），缺省 false */
-  standbyFlag?: boolean;
-  /** 频次编码（ORDER_FREQUENCY_OPTIONS 七值；LONG 必填/STAT 缺省不传） */
-  freqCode?: string;
-  /** 明细行列表（≥1 行；多行共用服务层回填组号=成组医嘱） */
-  items: OrderItemPayload[];
-}
-
-/** 医嘱开立明细行入参（后端 OrderItemRequest record 必需字段对齐+可选字段按 UI 面裁剪；行序号由服务层按列表序生成） */
-export interface OrderItemPayload {
-  /** 行项目类型（与头 orderType 同词表，服务层校验一致性） */
-  itemType: string;
-  /** 项目编码（药品/检验等项目字典编码） */
-  itemCode: string;
-  /** 项目名称（名称快照誊写源，药品通用名非敏感项） */
-  itemName: string;
-  /** 剂量（数值字符串如 0.5）——药品行必填（服务层拒 IP-1011） */
-  dosage?: string;
-  /** 剂量单位（如 g/ml）——药品行必填（服务层拒 IP-1011） */
-  dosageUnit?: string;
-  /** 给药途径（M01 medication.route 字典 code）——药品行必填（服务层拒 IP-1011） */
-  route?: string;
-  /** 滴速（如 40 滴/分）——静滴类可空 */
-  dripRate?: string;
-  /** 数量（正数；JSON number——BigDecimal 非 Long 全局字符串化豁免面） */
-  quantity: number;
-}
-
 /** 医嘱资源组：开立（四层校验→CREATED→审核链收口）/就诊医嘱分页/闭环追溯。 */
 export const orders = {
   /** 医嘱开立（红线方法：执业授权/过敏/明细频次/嘱托限定校验与状态迁移全归后端；
    * 用药类返回 status=CREATED 语义=「待药师审」）。 */
-  create: async (visitId: string, payload: OrderCreatePayload): Promise<MedicalOrderVO> => {
+  create: async (
+    visitId: string,
+    payload: InpatientOrderCreateRequest,
+  ): Promise<MedicalOrderVO> => {
     const resp = await http.post<MedicalOrderVO>(`/v1/inpatient/visits/${visitId}/orders`, payload);
     return resp.data;
   },

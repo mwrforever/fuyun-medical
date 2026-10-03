@@ -23,7 +23,7 @@ import {
   visits,
   WARD_OPTIONS,
 } from '@/api/inpatient';
-import type { MedicalOrderVO, OrderItemPayload, TraceEntry } from '@/api/inpatient';
+import type { InpatientOrderItemRequest, MedicalOrderVO, TraceEntry } from '@/api/inpatient';
 import { wardPatients } from '@/api/nursing';
 import type { WardPatientVO } from '@/api/nursing';
 import { useAsyncTask } from '@/composables/useAsyncTask';
@@ -211,7 +211,7 @@ async function onSaveOrder(): Promise<void> {
   }
   // 明细行显式校验+规范化一并完成（校验通过的行即时窄化入列，quantity 收敛 number）：
   // 编码/名称必填、数量正数；用药类加剂量/单位/途径必填（IP-1011 类）
-  const validatedItems: OrderItemPayload[] = [];
+  const validatedItems: InpatientOrderItemRequest[] = [];
   for (let i = 0; i < itemRows.value.length; i += 1) {
     const row = itemRows.value[i];
     if (row.itemCode.trim() === '' || row.itemName.trim() === '') {

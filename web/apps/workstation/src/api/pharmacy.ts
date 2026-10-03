@@ -1,6 +1,7 @@
 /**
  * 药事域 API（web A.3-5 模块化）：药品字典/开方作废/调剂三段/退药受理/占用查询/
- * 住院用药审方（M06 薄切片工作台：清单/通过/驳回）。
+ * 住院用药审方（M06 薄切片工作台：清单/通过/驳回）/住院摆药计划（dispense-plans
+ * 八端点：分页/生成/摆药流五步/PIVAS 贴签数据面）。
  * 路径前缀 /v1/pharmacy/**（baseURL 已含 /api）；雪花 id 与数量一律 string 承载（web A.3-6），
  * 本域无金额运算面（计费权威在 M13）。
  */
@@ -25,6 +26,18 @@ export type ReviewTaskVO = components['schemas']['ReviewTaskVO'];
 export type ReviewTaskPage = components['schemas']['PageResultReviewTaskVO'];
 /** 审方决策入参（opinion 驳回必填由服务端守卫——缺/空白 PH-1020） */
 export type ReviewDecisionRequest = components['schemas']['ReviewDecisionRequest'];
+/** 摆药计划行（planNo/医嘱号/患者号面/病区/类型/给药时点/状态/排批/时间线；全字段可缺省） */
+export type DispensePlanVO = components['schemas']['DispensePlanVO'];
+/** 摆药计划分页出参（common PageResult 单泛型生成物：content/page/size/total） */
+export type DispensePlanPage = components['schemas']['PageResultDispensePlanVO'];
+/** 计划生成入参（m04OrderNo+目标病区均必填——病区由发起端显式声明，后端裁决口径） */
+export type DispensePlanGenerateRequest = components['schemas']['DispensePlanGenerateRequest'];
+/** 配送交接入参（carrier 可空——无落列载体，后端日志留痕承载） */
+export type DispensePlanDeliverRequest = components['schemas']['DispensePlanDeliverRequest'];
+/** 病区签收入参（receivedBy 必填纯数字——签收主体为病区侧责任人，与药房操作者分权留痕） */
+export type DispensePlanReceiveRequest = components['schemas']['DispensePlanReceiveRequest'];
+/** PIVAS 贴签数据面出参（脱敏患者名/病区/排批/调配核对双人/药品明细；打印归 M01 降级注记） */
+export type DispensePlanLabelVO = components['schemas']['DispensePlanLabelVO'];
 
 /** 审方任务状态选项（工作台状态过滤词表：待审/已通过/已驳回） */
 export const REVIEW_TASK_STATUS_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
@@ -32,6 +45,23 @@ export const REVIEW_TASK_STATUS_OPTIONS: ReadonlyArray<{ code: string; label: st
   { code: 'APPROVED', label: '已通过' },
   { code: 'REJECTED', label: '已驳回' },
 ];
+
+/** 摆药计划五列看板列定义（后端 DispenseStatus 住院链五活动态 1:1 映射；列序即渲染序，
+ * spec 冻结断言——CANCELLED 作废态与退药态（由调剂行承载，计划行不迁）不进列） */
+export const DISPENSE_PLAN_COLUMNS: ReadonlyArray<{ status: string; label: string }> = [
+  { status: 'CREATED', label: '待摆药' },
+  { status: 'PICKING', label: '摆药中' },
+  { status: 'PICKED', label: '已配待核对' },
+  { status: 'CHECKED', label: '已核对待交接' },
+  { status: 'DELIVERED', label: '病区已签收' },
+];
+
+/** 计划类型标签词表（后端 resolvePlanType 判定三值：单剂量口服/PIVAS 静配/整包） */
+export const DISPENSE_PLAN_TYPE_LABELS: Record<string, string> = {
+  SINGLE_DOSE: '单剂量',
+  PIVAS: 'PIVAS',
+  WHOLE: '整包',
+};
 
 /** 选药检索（keyword/essential/antibioClass/insuranceMapped；默认启用面）。 */
 export async function searchDrugs(params: {
@@ -148,5 +178,61 @@ export const reviewTasks = {
    * 冻结语义）；回执 audit-rejected 驱动医生站修改重提。 */
   reject: async (id: string, payload: ReviewDecisionRequest): Promise<void> => {
     await http.post(`/v1/pharmacy/review-tasks/${id}/reject`, payload);
+  },
+};
+
+/** 住院摆药计划资源组（P2 PR-3 Task 16，dispense-plans 八端点）：分页查询/计划生成/
+ * 摆药流五步（pick→verify→issue→deliver→receive，deliver 为 CHECKED 态内时间线半步
+ * 不迁状态、receive 才迁 DELIVERED——Task 8 裁决口径）/ PIVAS 贴签数据面。
+ * 摆药五步为法定留痕写操作（后端 WRITE 审计），操作后由调用方重拉看板刷新。 */
+export const dispensePlans = {
+  /** 计划分页查询（医嘱号/病区/状态三过滤全可空组合；planTime 升序由后端承载）。 */
+  list: async (params: {
+    m04OrderNo?: string;
+    wardId?: string;
+    status?: string;
+    page?: number;
+    size?: number;
+  }): Promise<DispensePlanPage> => {
+    const resp = await http.get<DispensePlanPage>('/v1/pharmacy/dispense-plans', { params });
+    return resp.data;
+  },
+  /** 生成住院摆药计划（APPROVED 前置+长期频次分解+uk 幂等；返回该医嘱全部未删计划）。 */
+  generate: async (payload: DispensePlanGenerateRequest): Promise<DispensePlanVO[]> => {
+    const resp = await http.post<DispensePlanVO[]>('/v1/pharmacy/dispense-plans/generate', payload);
+    return resp.data;
+  },
+  /** 摆药开始（CREATED→PICKING；单剂量人工摆药+库存预校验、PIVAS 排药+排批号）。 */
+  pick: async (no: string): Promise<void> => {
+    await http.post(`/v1/pharmacy/dispense-plans/${no}/pick`);
+  },
+  /** 药师核对（PICKING→PICKED；双人核对第二签分权同人拒、PIVAS 链贴签核对置位）。 */
+  verify: async (no: string): Promise<void> => {
+    await http.post(`/v1/pharmacy/dispense-plans/${no}/verify`);
+  },
+  /** 出库交接（PICKED→CHECKED；落住院调剂行+库存扣减+批次回填）。 */
+  issue: async (no: string): Promise<void> => {
+    await http.post(`/v1/pharmacy/dispense-plans/${no}/issue`);
+  },
+  /** 配送交接（CHECKED 态内 issued_at 时间线半步——不迁移状态，签收归 receive；
+   * carrier 可空无落列载体，后端日志留痕承载；入参缺省时无请求体出网）。
+   */
+  deliver: async (no: string, payload?: DispensePlanDeliverRequest): Promise<void> => {
+    if (payload === undefined) {
+      await http.post(`/v1/pharmacy/dispense-plans/${no}/deliver`);
+      return;
+    }
+    await http.post(`/v1/pharmacy/dispense-plans/${no}/deliver`, payload);
+  },
+  /** 病区签收（CHECKED→DELIVERED CAS+completed 事件住院载荷；receivedBy 必填纯数字
+   * ——string 契约承载 Long，签收主体为病区侧责任人与药房操作者分权留痕）。 */
+  receive: async (no: string, payload: DispensePlanReceiveRequest): Promise<void> => {
+    await http.post(`/v1/pharmacy/dispense-plans/${no}/receive`, payload);
+  },
+  /** PIVAS 贴签数据面（脱敏患者名/病区/排批/药品明细；仅 PIVAS 链承载，非 PIVAS 后端
+   * 409 拒——调用方按 planType 门控）。 */
+  label: async (no: string): Promise<DispensePlanLabelVO> => {
+    const resp = await http.get<DispensePlanLabelVO>(`/v1/pharmacy/dispense-plans/${no}/label`);
+    return resp.data;
   },
 };

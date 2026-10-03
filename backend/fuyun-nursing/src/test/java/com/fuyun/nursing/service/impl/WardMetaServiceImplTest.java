@@ -8,7 +8,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
@@ -18,14 +17,10 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
-import com.fuyun.common.messaging.DomainEventSender;
 import com.fuyun.common.messaging.EventEnvelope;
-import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.nursing.api.NursingErrorCode;
 import com.fuyun.nursing.controller.WardController;
 import com.fuyun.nursing.dto.NurseAssignmentRequest;
-import com.fuyun.nursing.dto.WardPatientRegisterRequest;
-import com.fuyun.nursing.dto.WardPatientRemoveRequest;
 import com.fuyun.nursing.entity.NurseAssignment;
 import com.fuyun.nursing.entity.NursingTask;
 import com.fuyun.nursing.entity.NursingWardConfig;
@@ -35,9 +30,6 @@ import com.fuyun.nursing.enums.TaskPriority;
 import com.fuyun.nursing.enums.TaskSource;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.enums.TaskType;
-import com.fuyun.nursing.enums.WardPatientSource;
-import com.fuyun.nursing.enums.WardPatientStatus;
-import com.fuyun.nursing.internal.NursingEventPublisher;
 import com.fuyun.nursing.internal.PatientHealthSummaryListener;
 import com.fuyun.nursing.internal.PatientMergedListener;
 import com.fuyun.nursing.internal.PatientSplitListener;
@@ -52,10 +44,10 @@ import com.fuyun.nursing.vo.WardPatientDetailVO;
 import com.fuyun.nursing.vo.WardPatientVO;
 import com.fuyun.patient.api.AllergyChecker;
 import com.fuyun.patient.api.AllergyItem;
-import com.fuyun.patient.api.PatientContextResolver;
-import com.fuyun.patient.api.PatientContextView;
-import java.lang.reflect.Field;
+import com.fuyun.patient.api.PatientDisplayName;
+import com.fuyun.patient.api.PatientNameQuery;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -93,11 +85,14 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 
 /**
- * 病区元数据域服务单测（Task 3 十六用例冻结集 + 补充覆盖）：入区登记过渡通道守卫链
- * （visitId 结构校验 → 档案拦截 → 床位占用 → 幂等 upsert）、GC38 四护栏（移出零外发/触达最小/
- * reason 不落库/无 ADT 语义）、端点面冻结结构断言（禁写路径下渗）、患者合并/拆分成对逆映射、
- * 病区配置三班种子。MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册表信息；
- * 条件更新断言直读 @Update 注解 SQL（GC26 可执行锚）。
+ * 病区元数据域服务单测（W-34 退役后冻结集）：读面契约（一览床位序/详情卡聚合含 patient api
+ * 展示名嵌查）、责任分配（查重/类型一致性/CAS 撤销）、风险标识回写（EX-26 原子追加/移除与并发
+ * 护航）、患者合并/拆分成对逆映射、病区配置三班种子，与 <b>退役核验三断言</b>（W-34 判退役
+ * 完成的可执行锚）：①controller 公开方法面方法名清单断言（register/remove 已删，仅余 GET
+ * 两端点 + assignments 三端点）②WardPatientStatus/WardPatientSource 两枚举类不存在断言
+ * （反射 ClassNotFound）③GC39 六字段断言（WardPatientVO record 组件清单逐一 equals）。
+ * MP 3.5.17 单测范式：lambdaQuery 触达实体 @BeforeAll 手工注册表信息；条件更新断言直读
+ * @Update 注解 SQL（GC26 可执行锚）。
  */
 @ExtendWith(MockitoExtension.class)
 class WardMetaServiceImplTest {
@@ -105,15 +100,17 @@ class WardMetaServiceImplTest {
     /** I 型 14 位合法 visit_id（结构校验守卫链通过值） */
     private static final String VISIT = "I2026092200001";
 
-    /** 端点面冻结清单（2026-09-22 批复「禁写路径下渗」；方法 + 全路径逐字冻结） */
+    /** 端点面冻结清单（W-34 退役后：ward 两 GET + 责任分配三端点；2026-09-22 批复「禁写路径下渗」） */
     private static final Set<String> FROZEN_ENDPOINTS = Set.of(
-            "POST /api/v1/nursing/ward-patients",
-            "POST /api/v1/nursing/ward-patients/{visitId}/remove",
             "GET /api/v1/nursing/ward-patients",
             "GET /api/v1/nursing/ward-patients/{visitId}",
             "GET /api/v1/nursing/assignments",
             "POST /api/v1/nursing/assignments",
             "DELETE /api/v1/nursing/assignments/{id}");
+
+    /** controller 公开方法面冻结清单（W-34 退役核验断言①：register/remove 两方法已删） */
+    private static final Set<String> FROZEN_PUBLIC_METHODS =
+            Set.of("listByWard", "detail", "listAssignments", "assign", "unassign");
 
     /** V801 种子班次定义（与迁移 INSERT 行逐字同源） */
     private static final String SEED_SHIFTS =
@@ -134,7 +131,7 @@ class WardMetaServiceImplTest {
     private NursingWardConfigMapper wardConfigMapper;
 
     @Mock
-    private PatientContextResolver patientContextResolver;
+    private PatientNameQuery patientNameQuery;
 
     @Mock
     private AllergyChecker allergyChecker;
@@ -142,20 +139,11 @@ class WardMetaServiceImplTest {
     @Mock
     private INursingTaskService taskService;
 
-    @Mock
-    private NursingEventPublisher nursingEventPublisher;
-
-    @Mock
-    private MessagingGovernance messagingGovernance;
-
     @Captor
     private ArgumentCaptor<Wrapper<NursingWardPatient>> patientQueryCaptor;
 
     @Captor
     private ArgumentCaptor<Wrapper<NurseAssignment>> assignmentQueryCaptor;
-
-    @Captor
-    private ArgumentCaptor<NursingWardPatient> patientRowCaptor;
 
     private WardMetaServiceImpl service;
 
@@ -176,7 +164,7 @@ class WardMetaServiceImplTest {
                 wardPatientMapper,
                 assignmentMapper,
                 wardConfigMapper,
-                patientContextResolver,
+                patientNameQuery,
                 allergyChecker,
                 taskService,
                 new ObjectMapper());
@@ -189,111 +177,6 @@ class WardMetaServiceImplTest {
     @AfterEach
     void clearOperator() {
         OperatorContextHolder.clear();
-    }
-
-    @Test
-    @DisplayName("入区登记：visitId 结构不合法拒 NS-1003，且不触达任何下游（守卫链首位）")
-    void registerRejectsInvalidVisitId() {
-        assertThatThrownBy(() -> service.register(registerReq("I20260922", "01")))
-                .isInstanceOfSatisfying(BizException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.VISIT_ID_INVALID);
-                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1003");
-                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
-                });
-        verifyNoInteractions(patientContextResolver, wardPatientMapper);
-    }
-
-    @Test
-    @DisplayName("入区登记：FROZEN 档案拒 NS-1004，消息含「档案已冻结」")
-    void registerRejectsFrozenPatient() {
-        when(patientContextResolver.resolve(7L)).thenReturn(new PatientContextView(7L, 7L, "FROZEN", true, "欠费冻结"));
-
-        assertThatThrownBy(() -> service.register(registerReq(VISIT, "01")))
-                .isInstanceOfSatisfying(BizException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PATIENT_BLOCKED);
-                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1004");
-                    assertThat(e.getMessage()).contains("档案已冻结");
-                });
-        verifyNoInteractions(wardPatientMapper);
-    }
-
-    @Test
-    @DisplayName("入区登记：MERGED 档案按 resolvedPatientId 收敛主档落库（CF-3 归一语义）")
-    void registerAcceptsMergedPatientByResolvedId() {
-        when(patientContextResolver.resolve(7L)).thenReturn(new PatientContextView(7L, 99L, "MERGED", false, ""));
-        when(wardPatientMapper.selectOne(any())).thenReturn(null);
-        when(wardPatientMapper.selectCount(any())).thenReturn(0L);
-        when(wardPatientMapper.insert(any(NursingWardPatient.class))).thenAnswer(inv -> {
-            inv.getArgument(0, NursingWardPatient.class).setId(1L);
-            return 1;
-        });
-
-        WardPatientVO vo = service.register(registerReq(VISIT, "01"));
-
-        verify(wardPatientMapper).insert(patientRowCaptor.capture());
-        assertThat(patientRowCaptor.getValue().getPatientId()).isEqualTo(99L);
-        assertThat(patientRowCaptor.getValue().getStatus()).isEqualTo(WardPatientStatus.IN_WARD.getCode());
-        assertThat(patientRowCaptor.getValue().getSource()).isEqualTo(WardPatientSource.MANUAL.getCode());
-        assertThat(vo.patientId()).isEqualTo(99L);
-    }
-
-    @Test
-    @DisplayName("入区登记：同病区同床位已有在区行拒 NS-1002（不落 insert）")
-    void registerRejectsOccupiedBed() {
-        when(patientContextResolver.resolve(7L)).thenReturn(new PatientContextView(7L, 7L, "NORMAL", false, ""));
-        when(wardPatientMapper.selectOne(any())).thenReturn(null);
-        when(wardPatientMapper.selectCount(any())).thenReturn(1L);
-
-        assertThatThrownBy(() -> service.register(registerReq(VISIT, "01")))
-                .isInstanceOfSatisfying(BizException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.BED_OCCUPIED);
-                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1002");
-                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
-                });
-
-        // 床位占用谓词钉死：等值条件必须落在 (ward_id, bed_no, status=IN_WARD) 三元组上
-        verify(wardPatientMapper).selectCount(patientQueryCaptor.capture());
-        LambdaQueryWrapper<NursingWardPatient> wrapper = renderedPatient(patientQueryCaptor.getValue());
-        assertThat(wrapper.getParamNameValuePairs().values())
-                .contains("W01", "01", WardPatientStatus.IN_WARD.getCode());
-        verify(wardPatientMapper, never()).insert(any(NursingWardPatient.class));
-    }
-
-    @Test
-    @DisplayName("入区登记幂等：同 visit_id 已在区且视图属性全等 → 返回既有行零写入")
-    void registerIsIdempotentOnSameVisit() {
-        when(patientContextResolver.resolve(7L)).thenReturn(new PatientContextView(7L, 7L, "NORMAL", false, ""));
-        when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
-
-        WardPatientVO vo = service.register(registerReq(VISIT, "01"));
-
-        assertThat(vo.visitId()).isEqualTo(VISIT);
-        assertThat(vo.bedNo()).isEqualTo("01");
-        // 零写入钉死：不新建行、不回写、不做床位占用复查
-        verify(wardPatientMapper, never()).insert(any(NursingWardPatient.class));
-        verify(wardPatientMapper, never()).updateById(any(NursingWardPatient.class));
-        verify(wardPatientMapper, never()).selectCount(any());
-    }
-
-    @Test
-    @DisplayName("入区登记幂等：同 visit_id 再登记变更床位 → 更新既有行（insert 未被调），新床位先校验占用")
-    void registerUpsertsExistingInWardRow() {
-        when(patientContextResolver.resolve(7L)).thenReturn(new PatientContextView(7L, 7L, "NORMAL", false, ""));
-        when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
-        when(wardPatientMapper.selectCount(any())).thenReturn(0L);
-
-        WardPatientVO vo = service.register(registerReq(VISIT, "02"));
-
-        assertThat(vo.bedNo()).isEqualTo("02");
-        verify(wardPatientMapper).selectCount(patientQueryCaptor.capture());
-        assertThat(renderedPatient(patientQueryCaptor.getValue())
-                        .getParamNameValuePairs()
-                        .values())
-                .contains("W01", "02", WardPatientStatus.IN_WARD.getCode());
-        verify(wardPatientMapper).updateById(patientRowCaptor.capture());
-        assertThat(patientRowCaptor.getValue().getId()).isEqualTo(5L);
-        assertThat(patientRowCaptor.getValue().getBedNo()).isEqualTo("02");
-        verify(wardPatientMapper, never()).insert(any(NursingWardPatient.class));
     }
 
     @Test
@@ -317,81 +200,36 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("病区一览：仅本病区 IN_WARD 行（排除 REMOVED 与他病区；语义锁枚举仅二值）")
-    void listByWardExcludesRemovedAndOtherWards() {
+    @DisplayName("病区一览：仅本病区在册行（ward 过滤；逻辑删行由 @TableLogic 自动排除——W-34 后在册语义单承载）")
+    void listByWardFiltersByWardOnly() {
         when(wardPatientMapper.selectList(any())).thenReturn(List.of(inWardRow(1L, 7L, "W01", "01")));
 
         List<WardPatientVO> list = service.listByWard("W01");
 
         verify(wardPatientMapper).selectList(patientQueryCaptor.capture());
         LambdaQueryWrapper<NursingWardPatient> wrapper = renderedPatient(patientQueryCaptor.getValue());
-        assertThat(wrapper.getParamNameValuePairs().values()).contains("W01", WardPatientStatus.IN_WARD.getCode());
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("W01");
+        // W-34 列退役锚：查询谓词不再触达 status（列已 DROP，触达即 SQL 报错）
+        assertThat(wrapper.getSqlSegment()).doesNotContain("status");
         assertThat(list).hasSize(1);
-        // GC38 语义锁：枚举值域仅 IN_WARD/REMOVED，无任何 ADT 语义值可写
-        assertThat(WardPatientStatus.values())
-                .extracting(WardPatientStatus::getCode)
-                .containsExactly("IN_WARD", "REMOVED");
     }
 
     @Test
-    @DisplayName("移出病区一览：CAS 置 REMOVED（在区谓词解除）+ reason 仅留痕不落库 + 零跨模块调用")
-    void removeMarksStatusAndClearsBedOccupancy() {
-        when(wardPatientMapper.casRemove(VISIT, "nurse-01")).thenReturn(1);
-
-        WardPatientVO vo = service.remove(VISIT, new WardPatientRemoveRequest("患者转外院治疗"));
-
-        assertThat(vo.visitId()).isEqualTo(VISIT);
-        verify(wardPatientMapper).casRemove(VISIT, "nurse-01");
-        // 无实体回写（updateById 载荷不含新列），不触达任何跨模块面/其他 mapper
-        verify(wardPatientMapper, never()).updateById(any(NursingWardPatient.class));
-        verifyNoInteractions(patientContextResolver, allergyChecker, assignmentMapper, wardConfigMapper);
-        String sql = wardPatientSql("casRemove", String.class, String.class);
-        // 床位占用谓词解除的可执行锚：在区态条件迁移至 REMOVED
-        assertThat(sql).contains("status = 'REMOVED'");
-        assertThat(sql).contains("status = 'IN_WARD'");
-        assertThat(sql).contains("deleted = 0");
-        // reason 仅入审计/日志留痕：SQL 不得承载 reason
-        assertThat(sql).doesNotContain("reason");
-    }
-
-    @Test
-    @DisplayName("移出病区一览（10b）：零外发 + 单表单语句触达最小（级联禁令可执行锚）")
-    void removeHasZeroOutboundAndMinimalTouch() {
-        when(wardPatientMapper.casRemove(VISIT, "nurse-01")).thenReturn(1);
-
-        service.remove(VISIT, new WardPatientRemoveRequest("演示移出"));
-
-        // ① 零外发：实现类依赖面禁止出现任何事件发布/治理构件（结构性不可达）
-        for (Field field : WardMetaServiceImpl.class.getDeclaredFields()) {
-            boolean outbound = NursingEventPublisher.class.isAssignableFrom(field.getType())
-                    || MessagingGovernance.class.isAssignableFrom(field.getType())
-                    || DomainEventSender.class.isAssignableFrom(field.getType());
-            assertThat(outbound)
-                    .as("移出路径实现类依赖面禁止出现事件发布/治理构件：%s", field.getName())
-                    .isFalse();
-        }
-        verifyNoInteractions(nursingEventPublisher, messagingGovernance);
-        // ② 触达最小：仅一条 @Update 于 nursing_ward_patient（表唯一、字段集仅 status + 审计列）
-        verify(wardPatientMapper).casRemove(VISIT, "nurse-01");
-        verifyNoMoreInteractions(wardPatientMapper);
-        verifyNoInteractions(assignmentMapper, wardConfigMapper);
-        assertThat(wardPatientSql("casRemove", String.class, String.class))
-                .isEqualTo("UPDATE nursing.nursing_ward_patient SET status = 'REMOVED', updated_by = #{updatedBy} "
-                        + "WHERE visit_id = #{visitId} AND status = 'IN_WARD' AND deleted = 0");
-    }
-
-    @Test
-    @DisplayName("端点面冻结：公开端点集合逐字等于冻结清单，无独立 PUT/PATCH 视图属性变更端点")
+    @DisplayName("端点面冻结（W-34 退役核验①）：公开方法面=方法名清单断言（register/remove 已删），端点集合逐字等于冻结清单")
     void noAdtWriteEndpointExposed() {
         assertThat(WardController.class.getAnnotation(RequestMapping.class))
                 .as("类级 @RequestMapping 不承载（端点集合结构断言需方法级全路径）")
                 .isNull();
 
+        Set<String> publicMethods = new HashSet<>();
         Set<String> actual = new HashSet<>();
         for (Method method : WardController.class.getDeclaredMethods()) {
             assertThat(method.isAnnotationPresent(PutMapping.class) || method.isAnnotationPresent(PatchMapping.class))
                     .as("禁写路径下渗：出现独立 PUT/PATCH 视图属性变更端点：%s", method.getName())
                     .isFalse();
+            if (Modifier.isPublic(method.getModifiers())) {
+                publicMethods.add(method.getName());
+            }
             if (method.isAnnotationPresent(GetMapping.class)) {
                 actual.add("GET "
                         + firstPath(method.getAnnotation(GetMapping.class).value(), method));
@@ -403,7 +241,28 @@ class WardMetaServiceImplTest {
                         + firstPath(method.getAnnotation(DeleteMapping.class).value(), method));
             }
         }
+        // W-34 退役核验①：controller 公开方法面只剩 GET 两端点 + assignments 三端点（方法名清单断言）
+        assertThat(publicMethods)
+                .as("W-34 退役：register/remove 两方法面必须删除（任何方法面增删须先回决策点重新上报）")
+                .isEqualTo(FROZEN_PUBLIC_METHODS);
         assertThat(actual).as("端点面扩即本用例失败（任何新增端点须先回决策点重新上报）").isEqualTo(FROZEN_ENDPOINTS);
+    }
+
+    @Test
+    @DisplayName("W-34 退役核验②：WardPatientStatus/WardPatientSource 两枚举类不存在（反射 ClassNotFound 固化退役）")
+    void retiredEnumsAreGoneFromClasspath() {
+        assertClassNotFound("com.fuyun.nursing.enums.WardPatientStatus");
+        assertClassNotFound("com.fuyun.nursing.enums.WardPatientSource");
+    }
+
+    @Test
+    @DisplayName("GC39 六字段断言（W-34 退役核验③）：WardPatientVO record 组件清单逐一 equals（读面不变契约）")
+    void wardPatientVoComponentsFrozen() {
+        List<String> components = Arrays.stream(WardPatientVO.class.getRecordComponents())
+                .map(RecordComponent::getName)
+                .toList();
+        // 读面不变契约（GC39）：六字段名与序逐字冻结——四事件载荷可推导性锚定见 WardPatientVO 类注
+        assertThat(components).containsExactly("visitId", "patientId", "wardId", "bedNo", "nursingLevel", "admittedAt");
     }
 
     @Test
@@ -426,22 +285,26 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("详情卡：聚合过敏实时嵌查与当班责任护士；inFlightTasks 占位空清单；不含体征摘要字段")
+    @DisplayName("详情卡：聚合 patient api 展示名嵌查、过敏实时嵌查与当班责任护士；inFlightTasks 实时填充；不含体征摘要字段")
     void detailAggregatesAllergyAndAssignments() {
         when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
         when(wardConfigMapper.selectOne(any())).thenReturn(configRow());
+        when(patientNameQuery.displayNamesOf(List.of(7L))).thenReturn(List.of(new PatientDisplayName(7L, "张*")));
         when(allergyChecker.listActiveAllergies(7L))
                 .thenReturn(List.of(
                         new AllergyItem(1L, "PENICILLIN", "青霉素", "SEVERE"), new AllergyItem(2L, null, "海鲜", "MILD")));
         when(assignmentMapper.selectList(any())).thenReturn(List.of(assignmentRow(11L, "nurse-09", "BED", "01")));
-        // Task 7 在途任务段：详情卡经 INursingTaskService#inFlightByVisit 实时填充
+        // 在途任务段：详情卡经 INursingTaskService#inFlightByVisit 实时填充
         when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of(inFlightTaskVO()));
 
         WardPatientDetailVO detail = service.detail(VISIT);
 
         assertThat(detail.allergies()).hasSize(2);
         assertThat(detail.assignments()).hasSize(1);
-        // Task 7 断言落点：在途任务段由任务服务填充（非空清单 + 字段透传 + 填充来源钉死）
+        // W-34 后展示名来源锚：patient api 嵌查出参（脱敏展示名），非投影行占位列
+        assertThat(detail.patientName()).isEqualTo("张*");
+        verify(patientNameQuery).displayNamesOf(List.of(7L));
+        // 在途任务段由任务服务填充（非空清单 + 字段透传 + 填充来源钉死）
         assertThat(detail.inFlightTasks()).hasSize(1);
         assertThat(detail.inFlightTasks().get(0).taskNo()).isEqualTo("TK2026092200001");
         assertThat(detail.inFlightTasks().get(0).overdueFlag()).isTrue();
@@ -454,10 +317,28 @@ class WardMetaServiceImplTest {
                 .map(RecordComponent::getName)
                 .toList();
         assertThat(components).noneMatch(name -> name.toLowerCase().contains("vital"));
+        // W-34 退役锚：conditionTags 组件不可推导（GC39）已从详情卡出参面退役
+        assertThat(components).doesNotContain("conditionTags");
     }
 
     @Test
-    @DisplayName("患者合并消费：IN_WARD 行 patient_id 收敛为存活主档（载荷 7→99）")
+    @DisplayName("详情卡：患者展示名嵌查无命中时 patientName 为 null（患者行缺失不阻断详情卡其余面）")
+    void detailToleratesPatientNameMiss() {
+        when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
+        when(wardConfigMapper.selectOne(any())).thenReturn(null);
+        when(patientNameQuery.displayNamesOf(List.of(7L))).thenReturn(List.of());
+        when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
+        when(assignmentMapper.selectList(any())).thenReturn(List.of());
+        when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
+
+        WardPatientDetailVO detail = service.detail(VISIT);
+
+        assertThat(detail.patientName()).isNull();
+        assertThat(detail.inFlightTasks()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("患者合并消费：在册行 patient_id 收敛为存活主档（载荷 7→99）")
     void mergeListenerCollapsesWardPatientToSurvivor() throws Exception {
         PatientMergedListener listener = new PatientMergedListener(null, wardPatientMapper);
 
@@ -467,11 +348,13 @@ class WardMetaServiceImplTest {
         String sql = wardPatientSql("casMergePatient", long.class, long.class);
         assertThat(sql).contains("SET patient_id = #{survivorPatientId}");
         assertThat(sql).contains("WHERE patient_id = #{mergedPatientId}");
-        assertThat(sql).contains("status = 'IN_WARD'").contains("deleted = 0");
+        assertThat(sql).contains("deleted = 0");
+        // W-34 列退役锚：订阅面 SQL 不再触达 status 列
+        assertThat(sql).doesNotContain("status");
     }
 
     @Test
-    @DisplayName("患者拆分消费：merged 成对逆映射，IN_WARD 行按 restoredPatientId 还原（99→7）")
+    @DisplayName("患者拆分消费：merged 成对逆映射，在册行按 restoredPatientId 还原（99→7）")
     void splitListenerRestoresRestoredPatientRow() throws Exception {
         PatientSplitListener listener = new PatientSplitListener(null, wardPatientMapper);
 
@@ -482,7 +365,8 @@ class WardMetaServiceImplTest {
         String sql = wardPatientSql("casSplitPatient", long.class, long.class);
         assertThat(sql).contains("SET patient_id = #{restoredPatientId}");
         assertThat(sql).contains("WHERE patient_id = #{survivorPatientId}");
-        assertThat(sql).contains("status = 'IN_WARD'").contains("deleted = 0");
+        assertThat(sql).contains("deleted = 0");
+        assertThat(sql).doesNotContain("status");
     }
 
     @Test
@@ -499,7 +383,7 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("健康档案变更消费：按载荷刷新在区行过敏标识（allergyCodes 不消费不解析）")
+    @DisplayName("健康档案变更消费：按载荷刷新在册行过敏标识（allergyCodes 不消费不解析）")
     void healthSummaryListenerRefreshesAllergyFlag() throws Exception {
         PatientHealthSummaryListener listener = new PatientHealthSummaryListener(null, wardPatientMapper);
 
@@ -511,12 +395,12 @@ class WardMetaServiceImplTest {
         assertThat(wardPatientSql("updateAllergyFlag", long.class, boolean.class))
                 .contains("SET allergy_flag = #{hasAllergy}")
                 .contains("WHERE patient_id = #{patientId}")
-                .contains("status = 'IN_WARD'")
-                .contains("deleted = 0");
+                .contains("deleted = 0")
+                .doesNotContain("status");
     }
 
     @Test
-    @DisplayName("风险标识回写（Task 8 消费面）：追加缺失项，已含标识零写入不重复追加")
+    @DisplayName("风险标识回写：追加缺失项，已含标识零写入不重复追加")
     void appendRiskFlagAppendsMissingAndSkipsDuplicate() {
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
         row.setRiskFlags("FALL");
@@ -584,7 +468,7 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("在途就诊 SPI：IN_WARD 行存在即真（合并前置检查「命中即阻断」口径）")
+    @DisplayName("在途就诊 SPI：在册投影行存在即真（合并前置检查「命中即阻断」口径；逻辑删自动排除）")
     void ongoingVisitQueryHitsInWardRow() {
         NursingOngoingVisitQuery query = new NursingOngoingVisitQuery(wardPatientMapper);
         when(wardPatientMapper.selectCount(any())).thenReturn(1L);
@@ -596,20 +480,7 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("入区登记：护理级别 code 非法显式拒 NS-1019（W-22⑦ 禁裸 parse 先例）")
-    void registerRejectsUnknownNursingLevel() {
-        WardPatientRegisterRequest req =
-                new WardPatientRegisterRequest(VISIT, 7L, "W01", "01", "张三", null, null, "URGENT", null);
-
-        assertThatThrownBy(() -> service.register(req)).isInstanceOfSatisfying(BizException.class, e -> {
-            assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
-            assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
-        });
-        verifyNoInteractions(wardPatientMapper);
-    }
-
-    @Test
-    @DisplayName("风险标识回写：在区行不存在拒 NS-1001")
+    @DisplayName("风险标识回写：在册行不存在拒 NS-1001")
     void appendRiskFlagRejectsMissingRow() {
         when(wardPatientMapper.selectOne(any())).thenReturn(null);
 
@@ -619,52 +490,14 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("入区登记：双唯一约束并发冲突兜底转 NS-1002（禁裸插吞异常）")
-    void registerTranslatesUniqueConflictToBedOccupied() {
-        when(patientContextResolver.resolve(7L)).thenReturn(new PatientContextView(7L, 7L, "NORMAL", false, ""));
-        when(wardPatientMapper.selectOne(any())).thenReturn(null);
-        when(wardPatientMapper.selectCount(any())).thenReturn(0L);
-        when(wardPatientMapper.insert(any(NursingWardPatient.class)))
-                .thenThrow(new DuplicateKeyException("uk_ward_patient_visit"));
-
-        assertThatThrownBy(() -> service.register(registerReq(VISIT, "01")))
-                .isInstanceOfSatisfying(
-                        BizException.class, e -> assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.BED_OCCUPIED));
-    }
-
-    @Test
-    @DisplayName("移出病区一览：在区行不存在（CAS 0 行）拒 NS-1001")
-    void removeRejectsMissingInWardRow() {
-        when(wardPatientMapper.casRemove(VISIT, "nurse-01")).thenReturn(0);
-
-        assertThatThrownBy(() -> service.remove(VISIT, new WardPatientRemoveRequest("误操作移出")))
-                .isInstanceOfSatisfying(BizException.class, e -> {
-                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.WARD_PATIENT_NOT_FOUND);
-                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
-                });
-    }
-
-    @Test
-    @DisplayName("移出病区一览：无登录上下文时操作者回退 system（审计列默认同源）")
-    void removeFallsBackToSystemOperatorWhenContextEmpty() {
-        OperatorContextHolder.clear();
-        when(wardPatientMapper.casRemove(VISIT, "system")).thenReturn(1);
-
-        WardPatientVO vo = service.remove(VISIT, new WardPatientRemoveRequest("夜班批量清场"));
-
-        assertThat(vo.visitId()).isEqualTo(VISIT);
-        verify(wardPatientMapper).casRemove(VISIT, "system");
-    }
-
-    @Test
-    @DisplayName("详情卡：在区行不存在拒 NS-1001")
+    @DisplayName("详情卡：在册投影行不存在拒 NS-1001")
     void detailRejectsMissingInWardRow() {
         when(wardPatientMapper.selectOne(any())).thenReturn(null);
 
         assertThatThrownBy(() -> service.detail(VISIT))
                 .isInstanceOfSatisfying(BizException.class, e -> assertThat(e.getErrorCode())
                         .isEqualTo(NursingErrorCode.WARD_PATIENT_NOT_FOUND));
-        verifyNoInteractions(assignmentMapper, allergyChecker);
+        verifyNoInteractions(assignmentMapper, allergyChecker, patientNameQuery);
     }
 
     @Test
@@ -672,6 +505,7 @@ class WardMetaServiceImplTest {
     void detailSkipsShiftFilterWhenWardConfigMissing() {
         when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
         when(wardConfigMapper.selectOne(any())).thenReturn(null);
+        when(patientNameQuery.displayNamesOf(List.of(7L))).thenReturn(List.of());
         when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
         when(assignmentMapper.selectList(any())).thenReturn(List.of());
         when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
@@ -701,6 +535,7 @@ class WardMetaServiceImplTest {
         when(wardConfigMapper.selectOne(any()))
                 .thenReturn(
                         configRow("[{\"code\":\"NIGHT-X\",\"name\":\"跨零班\",\"start\":\"22:00\",\"end\":\"06:00\"}]"));
+        when(patientNameQuery.displayNamesOf(List.of(7L))).thenReturn(List.of());
         when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
         when(assignmentMapper.selectList(any())).thenReturn(List.of());
         when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
@@ -729,6 +564,7 @@ class WardMetaServiceImplTest {
             String expectedShift = shiftCodeOf(beijingClock);
             when(wardPatientMapper.selectOne(any())).thenReturn(inWardRow(5L, 7L, "W01", "01"));
             when(wardConfigMapper.selectOne(any())).thenReturn(configRow());
+            when(patientNameQuery.displayNamesOf(List.of(7L))).thenReturn(List.of());
             when(allergyChecker.listActiveAllergies(7L)).thenReturn(List.of());
             when(assignmentMapper.selectList(any())).thenReturn(List.of());
             when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of());
@@ -880,7 +716,7 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("风险标识原子追加（EX-26）：非空串追加走 DB 侧拼接单语句，SQL 契约（拼接/去重谓词/在区谓词）钉死")
+    @DisplayName("风险标识原子追加（EX-26）：非空串追加走 DB 侧拼接单语句，SQL 契约（拼接/去重谓词/在册谓词）钉死")
     void appendRiskFlagAppendsAtomicallyViaDbSideConcat() {
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
         row.setRiskFlags("FALL");
@@ -896,8 +732,9 @@ class WardMetaServiceImplTest {
         assertThat(sql).contains("risk_flags || ',' || #{flag}");
         // 幂等去重锚：首尾补逗 position 定位谓词（与 Java 侧 tokens.contains 逐字等价，并发同标识 0 行）
         assertThat(sql).contains("position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') = 0");
-        assertThat(sql).contains("status = 'IN_WARD'");
+        // W-34 列退役锚：在册谓词由 deleted=0 单独承载
         assertThat(sql).contains("deleted = 0");
+        assertThat(sql).doesNotContain("status");
     }
 
     @Test
@@ -947,7 +784,7 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("风险标识原子移除（EX-26 N7 收口对称化）：DB 侧 array_remove 单语句摘除只携目标标识，" + "SQL 契约（移除/含标识谓词/在区谓词）钉死；不含该标识零写入幂等")
+    @DisplayName("风险标识原子移除（EX-26 N7 收口对称化）：DB 侧 array_remove 单语句摘除只携目标标识，" + "SQL 契约（移除/含标识谓词/在册谓词）钉死；不含该标识零写入幂等")
     void removeRiskFlagRemovesAtomicallyViaDbSideArrayRemove() {
         // 双标识行移除其一：原子调用只携目标标识与审计操作者（不再服务层拼剩余串整串回写）
         NursingWardPatient row = inWardRow(5L, 7L, "W01", "01");
@@ -964,8 +801,8 @@ class WardMetaServiceImplTest {
         assertThat(sql).contains("array_to_string(array_remove(string_to_array(risk_flags, ','), #{flag}), ',')");
         // 幂等谓词锚：首尾补逗 position 定位「当前值含该标识」才施写（与追加侧同形态取反向）
         assertThat(sql).contains("position(',' || #{flag} || ',' in ',' || COALESCE(risk_flags, '') || ',') > 0");
-        assertThat(sql).contains("status = 'IN_WARD'");
         assertThat(sql).contains("deleted = 0");
+        assertThat(sql).doesNotContain("status");
 
         // 仅存标识被移除：同样只携目标标识原子摘除（末位摘除落空串由 array_remove 自然承载）
         NursingWardPatient single = inWardRow(5L, 7L, "W01", "01");
@@ -1033,7 +870,7 @@ class WardMetaServiceImplTest {
     }
 
     @Test
-    @DisplayName("风险标识移除：在区行不存在拒 NS-1001")
+    @DisplayName("风险标识移除：在册行不存在拒 NS-1001")
     void removeRiskFlagRejectsMissingRow() {
         when(wardPatientMapper.selectOne(any())).thenReturn(null);
 
@@ -1043,6 +880,21 @@ class WardMetaServiceImplTest {
     }
 
     // ===================== 测试数据与断言辅助 =====================
+
+    /**
+     * 退役类不存在断言（W-34 退役核验②）：反射加载必须 ClassNotFound——类重现（如误 revert）
+     * 即本断言失败，退役状态被结构固化。
+     *
+     * @param fqcn 待断言不存在的类全限定名，非空
+     */
+    private static void assertClassNotFound(String fqcn) {
+        try {
+            Class.forName(fqcn);
+            fail("退役类不得存在于 classpath：%s", fqcn);
+        } catch (ClassNotFoundException expected) {
+            // 退役固化锚：类不存在即断言通过
+        }
+    }
 
     /**
      * 三班种子窗判定（锚定用例期望推导辅助，与 WardMetaServiceImpl.matchesShiftWindow 同口径：
@@ -1058,12 +910,7 @@ class WardMetaServiceImplTest {
         return clock.isBefore(LocalTime.of(16, 0)) ? "DAY" : "EVENING";
     }
 
-    /** 登记入参构造（patientId 固定 7，其余缺省）。 */
-    private WardPatientRegisterRequest registerReq(String visitId, String bedNo) {
-        return new WardPatientRegisterRequest(visitId, 7L, "W01", bedNo, "张三", null, null, null, null);
-    }
-
-    /** 在区视图行构造（W01/ NORMAL/无风险，status=IN_WARD、source=MANUAL）。 */
+    /** 在册投影行构造（W01/NORMAL/无风险；W-34 后无 status/source 形态）。 */
     private NursingWardPatient inWardRow(long id, long patientId, String wardId, String bedNo) {
         NursingWardPatient row = new NursingWardPatient();
         row.setId(id);
@@ -1071,14 +918,12 @@ class WardMetaServiceImplTest {
         row.setPatientId(patientId);
         row.setWardId(wardId);
         row.setBedNo(bedNo);
-        row.setPatientName("张三");
+        row.setPatientName("");
         row.setNursingLevel(NursingLevel.NORMAL.getCode());
         row.setConditionTags("");
         row.setAllergyFlag(false);
         row.setRiskFlags("");
         row.setAdmittedAt(OffsetDateTime.now());
-        row.setStatus(WardPatientStatus.IN_WARD.getCode());
-        row.setSource(WardPatientSource.MANUAL.getCode());
         return row;
     }
 

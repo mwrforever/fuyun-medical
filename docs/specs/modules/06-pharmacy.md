@@ -292,3 +292,29 @@
 - **R6-10**：`pharmacy.drug.changed` 消费方描述修正——选药场景实时查 `GET /drugs/search` 查询 API，不做广播缓存订阅，M03/M04/M13 不补订（§6/§7）。
 - **M-25**：§7 订阅 `patient.merged` 处成对补订 `patient.split`。
 - **§8"M03 退药时序"待决事项**：已按 B-3 裁决落定（"退药受理 → 退费审批 → 终态收敛"单向链）。
+
+## 13. P2 PR-3 落地注记（2026-10-03，feat/p2-pr3-m05-m06）
+
+> 本节为 P2 PR-3 住院摆药切片（FU-M06-05）交付面相对本 Spec 的界定与降级声明，执行依据
+> `docs/superpowers/plans/2026-10-01-p2-pr3-m05-m06.md`（GC28 收口硬门槛）；P2 PR-3 口径
+> 以本节为准，Spec 正文不回改。
+
+1. **住院摆药交付形态（FU-M06-05）**：`/api/v1/pharmacy/dispense-plans` 端点族（generate/
+   pick/verify[异人双签]/issue[库存三连+调剂行]/deliver/receive + 标签打印留痕列与分页查询）；
+   计划类型判定——静脉用法（route 含「静」/PIVAS）升 PIVAS、口服用法 SINGLE_DOSE；长期医嘱
+   次日逐时点分解（FREQ_TIME_POINTS 五频次与 V904 种子逐字同源），临时/按需单次即刻计划；
+   **deliver 为时间线半步**（仅 issued_at 置位不迁状态，receive 迁 DELIVERED 并事务内发布
+   id 28）；库存扣减复用门诊通道（FEFO 选批/锁定/扣减+ISSUE 流水）；generate 的 wardId 必填
+   （V1110 NOT NULL 且无病区解析面）；退药住院形态——逐行退药语义+计划行不迁退药态、
+   prescription_id=0+rx_no 载计划号（V703 uk 原生谓词限 OUTPATIENT 实证不冲突）。
+2. **毒麻专册与自动摆药机 P3 预留**：毒麻药品双人双锁/空安瓿回收/批号追溯强化与摆药机
+   适配器接口本 PR 不落（显式排除，归 P3 药房管理扩展）。
+3. **id 28 载荷扩展（V1111 住院四字段）**：`pharmacy.dispense.completed` 载荷扩
+   m04OrderNo/dispenseType（INPATIENT_DOSE/INPATIENT_PIVA）/dispensePlanNo/lines[]（itemCode/
+   batchNo/traceCodes）——只增可空字段，门诊消费方按原子集取用不受影响；**已知消费侧缺口**
+   （登记 TASK.md W-67）：billing/outpatient 两 P1 消费方按 rxNo 非空假设解包，住院行遭
+   重试死信（修复面在消费侧载荷守卫）；billing.fee.created 住院行遭 outpatient 消费方同族
+   死信（Task 19 真栈实测呈报）。
+4. **退药开关校验归发起端**：`nursing_ward_config` 退药开关列（05-nursing §13 第 8 条顺延
+   项）本 PR 不落消费——住院退药校验归发起端（workstation 退药弹窗固定单行提交；多明细
+   住院计划退药 UI 不可达已登记 TASK.md W-66，P3 补可退明细读面与弹窗多行化）。

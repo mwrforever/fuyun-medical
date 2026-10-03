@@ -1,23 +1,35 @@
 package com.fuyun.nursing.config;
 
 import com.fuyun.nursing.cache.NursingSeqGate;
+import com.fuyun.nursing.controller.AdverseEventController;
+import com.fuyun.nursing.controller.BoardController;
+import com.fuyun.nursing.controller.InfusionController;
 import com.fuyun.nursing.controller.IoController;
 import com.fuyun.nursing.controller.NursingAssessmentController;
 import com.fuyun.nursing.controller.NursingRecordController;
 import com.fuyun.nursing.controller.NursingTaskController;
+import com.fuyun.nursing.controller.OrderExecutionController;
 import com.fuyun.nursing.controller.PdaController;
 import com.fuyun.nursing.controller.ShiftHandoverController;
 import com.fuyun.nursing.controller.TemperatureChartController;
 import com.fuyun.nursing.controller.VitalSignController;
 import com.fuyun.nursing.controller.WardController;
 import com.fuyun.nursing.properties.NursingProperties;
+import com.fuyun.nursing.service.impl.AdverseEventServiceImpl;
+import com.fuyun.nursing.service.impl.InfusionServiceImpl;
 import com.fuyun.nursing.service.impl.IoRecordServiceImpl;
+import com.fuyun.nursing.service.impl.NurseBoardServiceImpl;
 import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
+import com.fuyun.nursing.service.impl.NursingTaskLinkagePortImpl;
 import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
+import com.fuyun.nursing.service.impl.OrderExecutionGenerateServiceImpl;
+import com.fuyun.nursing.service.impl.OrderExecutionOperateServiceImpl;
 import com.fuyun.nursing.service.impl.PdaServiceImpl;
+import com.fuyun.nursing.service.impl.RoutineTaskGeneratorImpl;
 import com.fuyun.nursing.service.impl.ShiftHandoverServiceImpl;
+import com.fuyun.nursing.service.impl.TaskOverdueServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
 import com.fuyun.nursing.service.impl.VitalSignServiceImpl;
 import com.fuyun.nursing.service.impl.WardMetaServiceImpl;
@@ -36,7 +48,18 @@ import org.springframework.context.annotation.Import;
  * （{@link NursingProperties}，BillingWebConfig @EnableConfigurationProperties 先例形态）。
  * Task 8 追加：护理评估服务（五量表引擎 + 高危联动）与评估控制器。Task 9 追加：交接班服务
  * （SBAR 自动汇总/双签/事件发布）与交接班控制器。Task 10 追加：PDA 护理面服务
- * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。
+ * （标识解析患者摘要 + 巡视打卡）与 PDA 控制器。P2 PR-3 Task 4 追加：执行单生成域服务
+ * （inpatient 医嘱事件族消费落单，IOrderExecutionService 三方法）。P2 PR-3 Task 5 追加：
+ * 执行单操作域服务（五环节状态链+工作台/占用/追溯+双路回签，回签端口经构造器注入解析
+ * inpatient OrderExecutionConfirmPort Bean）与执行单控制器。P2 PR-3 Task 6 追加：输液闭环
+ * 域服务（start 的 INFUSION 分支挂接/告警升级挂单三路）与输液控制器（拔针+在途输注清单）。
+ * P2 PR-3 Task 9 追加：任务逾期扫描升级服务（tick 段①②动作体）与常规模板批量生成器。
+ * P2 PR-3 Task 10 追加：不良事件域服务（上报匿名通道/处置关闭退回状态机/分类统计/tick
+ * 超时提醒扫描段）与不良事件控制器。P2 PR-3 Task 11 追加：护士站大屏快照服务
+ * （board 四段聚合+Redis TTL 5s read-through）与大屏快照端点（WS 装配面归
+ * NursingWebSocketConfig）。P2 PR-3 Task 12 追加：联动任务创建端口实现（M14→M05 联动
+ * 回接面，IOT_LINKAGE 幂等创建复用护理任务服务；消费方 iot LinkageExecutor 经构造器
+ * 注入本 PortImpl Bean）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -50,9 +73,18 @@ import org.springframework.context.annotation.Import;
     VitalSignServiceImpl.class,
     IoRecordServiceImpl.class,
     NursingTaskServiceImpl.class,
+    OrderExecutionGenerateServiceImpl.class,
     NursingAssessmentServiceImpl.class,
     ShiftHandoverServiceImpl.class,
     PdaServiceImpl.class,
+    OrderExecutionOperateServiceImpl.class,
+    InfusionServiceImpl.class,
+    TaskOverdueServiceImpl.class,
+    RoutineTaskGeneratorImpl.class,
+    AdverseEventServiceImpl.class,
+    NurseBoardServiceImpl.class,
+    // P2 PR-3 Task 12 联动任务创建端口实现（M14→M05 联动回接）：IOT_LINKAGE 幂等创建单点
+    NursingTaskLinkagePortImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,
@@ -60,6 +92,10 @@ import org.springframework.context.annotation.Import;
     NursingTaskController.class,
     NursingAssessmentController.class,
     ShiftHandoverController.class,
-    PdaController.class
+    PdaController.class,
+    OrderExecutionController.class,
+    InfusionController.class,
+    AdverseEventController.class,
+    BoardController.class
 })
 public class NursingWebConfig {}

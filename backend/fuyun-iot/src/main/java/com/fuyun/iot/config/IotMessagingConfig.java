@@ -10,6 +10,8 @@ import com.fuyun.iot.constants.IotMessagingConstants;
 import com.fuyun.iot.internal.IotDomainPublisher;
 import com.fuyun.iot.internal.IotEventPublisher;
 import com.fuyun.iot.internal.IotFanoutListener;
+import com.fuyun.iot.internal.NursingInfusionCompletedListener;
+import com.fuyun.iot.internal.NursingInfusionStartedListener;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Bean;
@@ -30,14 +32,22 @@ import org.springframework.context.annotation.Import;
  * 「事务内 publishEvent → AFTER_COMMIT → iotEventSender fy.topic 直发」出 MQ（照住院域形态；
  * 事务内禁 MQ 发送红线），发布器不注册 Confirm/Returns 回调（GC7）；P0 设备状态自事件队列声明
  * 与既有扇出链（IotEventPublisher/IotFanoutListener）零改动。新事件的消费队列归消费方模块
- * （M05/M16）按先登记后订阅红线自行声明，本配置不代声明。
+ * （M05/M16）按先登记后订阅红线自行声明，本配置不代声明。P2 PR-3 Task 6 追加：护理输液起止
+ * 两跨域消费队列声明（q.iot.nursing.infusion.started/completed，V800 id 62/63 已登记）与
+ * 两监听器注册（监测关联建立/患者维度监测停止）。
  *
  * <p>本配置与 IotAmqpConfig（@ConditionalOnProperty enabled 开关）解耦：模板 Bean/发布器/队列
  * 声明无条件生效——MQ 事件总线域不依赖 IoTDA AMQP 消费链开关；状态事件的产生源头（AMQP 状态
  * 帧消费）在 enabled=false 时不运行，扇出链路自然静默，零孤儿 Bean。
  */
 @Configuration
-@Import({IotEventPublisher.class, IotDomainPublisher.class, IotFanoutListener.class})
+@Import({
+    IotEventPublisher.class,
+    IotDomainPublisher.class,
+    IotFanoutListener.class,
+    NursingInfusionStartedListener.class,
+    NursingInfusionCompletedListener.class
+})
 public class IotMessagingConfig {
 
     /**
@@ -120,5 +130,34 @@ public class IotMessagingConfig {
     public Declarables alarmTriggeredFanoutConsumerQueue(MessagingGovernance governance) {
         return governance.declareConsumerQueue(new ConsumerQueueSpec(
                 IotMessagingConstants.FANOUT_CONSUMER_MODULE, IotMessagingConstants.EVENT_ALARM_TRIGGERED));
+    }
+
+    /**
+     * 声明 iot 模块的护理开始输注跨域消费队列并绑定 fy.topic（P2 PR-3 Task 6，事件 V800 id 62
+     * 已登记；q.iot.nursing.infusion.started，消费者 NursingInfusionStartedListener——患者维度
+     * 监测关联建立，patientId 直配零新表）。与 ward 侧 q.ward.nursing.infusion.* 队列构成
+     * 「每消费者一队列」形态（同路由键多队列绑定各自独立消费互不竞争）。
+     *
+     * @param governance 消息治理构件，非空；来源：integration MessagingGovernanceConfig 装配
+     * @return 声明集合（quorum 队列 + 绑定）；由 RabbitAdmin 随连接建立幂等声明
+     */
+    @Bean
+    public Declarables nursingInfusionStartedConsumerQueue(MessagingGovernance governance) {
+        return governance.declareConsumerQueue(new ConsumerQueueSpec(
+                IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_SUB_NURSING_INFUSION_STARTED));
+    }
+
+    /**
+     * 声明 iot 模块的护理拔针/输注结束跨域消费队列并绑定 fy.topic（P2 PR-3 Task 6，事件 V800
+     * id 63 已登记；q.iot.nursing.infusion.completed，消费者 NursingInfusionCompletedListener——
+     * 患者维度监测停止，泵类绑定解绑承载「绑定关系监测暂停」标记）。
+     *
+     * @param governance 消息治理构件，非空；来源：integration MessagingGovernanceConfig 装配
+     * @return 声明集合（quorum 队列 + 绑定）；由 RabbitAdmin 随连接建立幂等声明
+     */
+    @Bean
+    public Declarables nursingInfusionCompletedConsumerQueue(MessagingGovernance governance) {
+        return governance.declareConsumerQueue(new ConsumerQueueSpec(
+                IotMessagingConstants.MODULE, IotMessagingConstants.EVENT_SUB_NURSING_INFUSION_COMPLETED));
     }
 }

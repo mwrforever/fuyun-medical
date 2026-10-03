@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.within;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.integration.api.ConsumerQueueSpec;
@@ -18,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -50,21 +52,23 @@ import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
 
 /**
- * PR-6 M05 验收锚点①：体征归集链真栈 IT（FU-M05-02/03，零 mock HTTP/DB/MQ）。链路：入区登记
- * （真实流转经 POST /ward-patients 落视图行、GET 一览回读命中）→ 体征录入（全项正常合并当日
- * 观察行 / 二次正常换行追加 / 异常独立落行）→ 体温单 VITAL 条目逐次写入 → 同刻同部位重复入
- * 权威栏幂等拒绝（NS-1016，事务回滚行数不变）→ 生理极限拒收（NS-1005）→ 待复核夹具行复核
- * 转正（补写体温单条目 + 二次转正 NS-1015）→ 事件帧断言（nursing.vital-sign.recorded 经
- * 捕获队列消费，异常帧与转正帧按载荷锚定）。
+ * PR-6 M05 验收锚点①：体征归集链真栈 IT（FU-M05-02/03，零 mock HTTP/DB/MQ）。链路：入区夹具
+ * （W-34 后入区唯一写入面：inpatient 入院四步→admitted/bed.changed 事件投影在区行、GET 一览
+ * 回读命中）→ 体征录入（全项正常合并当日观察行 / 二次正常换行追加 / 异常独立落行）→ 体温单
+ * VITAL 条目逐次写入 → 同刻同部位重复入权威栏幂等拒绝（NS-1016，事务回滚行数不变）→ 生理极限
+ * 拒收（NS-1005）→ 待复核夹具行复核转正（补写体温单条目 + 二次转正 NS-1015）→ 事件帧断言
+ * （nursing.vital-sign.recorded 经捕获队列消费，异常帧与转正帧按载荷锚定）。
  *
  * <p>偏差登记（简报 vs 实况，详见 task-11-report）：①简报 step5 设想「同 (visit_id,
  * measured_at, temp_site) 再 POST 被拒 NS-1019」——实况 measured_at 为服务端时间（GC25），
  * 顺序 HTTP 再录必然异刻，vital 层唯一索引经 API 不可达（DuplicateKey→NS-1016 翻译已有
  * VitalSignServiceImplTest 单测锚）；本 IT 改以同语义验证：重开待复核行再 confirm 重入权威栏，
  * 撞体温单 (page, entry_time, VITAL, type_key) 唯一键 → 409 NS-1016、行数不变、事务回滚。
- * ②简报 step1「返回 status=IN_WARD」——WardPatientVO（GC39 冻结面）无 status 组件，改以
- * 2xx + jdbcTemplate 行 status + GET 一览命中断言。③患者主档行经 jdbcTemplate 直插
- * （resolve 依赖，OutpatientFullFlowIT:422 同款主数据夹具，非视图行验收）。
+ * ②简报 step1「返回 status=IN_WARD」——WardPatientVO（GC39 冻结面）无 status 组件，且 W-34
+ * 退役后 nursing_ward_patient 表 status 列已删（V1108，在册谓词由 deleted=0 承载），入区夹具
+ * 改走 inpatient 入院四步事件投影链，在区态以库态 deleted=0 + GET 一览命中锚定。
+ * ③患者主档行经 jdbcTemplate 直插（resolve 依赖，OutpatientFullFlowIT:422 同款主数据夹具，
+ * 非视图行验收）。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -92,8 +96,19 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
     /** 体征链患者主索引（patient.patient SQL 直插主数据夹具；resolve 归一依赖） */
     private static final long PATIENT_ID = 920051L;
 
-    /** 体征链住院就诊号（brief 冻结字面量：I 型 14 位） */
-    private static final String VISIT_ID = "I2026092200001";
+    /** 体征链住院就诊号（step1 入院链登记确认签发 I 型 14 位；断言锚经 static 跨用例传递） */
+    private static String visitId = "";
+
+    /** 体征链病区床位（W01 内 IT 自备床——inpatient.bed 零种子，事件链入区载体） */
+    private static final long BED_ID = 920071L;
+
+    private static final String BED_NO = "IT20-01";
+
+    /** 投影收敛轮询上限（覆盖 MQ 真实投递与乱序自愈 500ms 重试窗口） */
+    private static final Duration PROJECTION_TIMEOUT = Duration.ofSeconds(10);
+
+    /** 轮询步长 */
+    private static final long POLL_INTERVAL_MILLIS = 200L;
 
     /** 待复核体征夹具行 id（状态机边界夹具：PENDING_REVIEW 行经 jdbcTemplate 构造，批复口径允许项） */
     private static final long PENDING_FIXTURE_ID = 920601L;
@@ -206,7 +221,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
     /** 体征录入请求体构造（体温项 + 全常规指标；source=MANUAL）。 */
     private ObjectNode vitalBody(String temperature, String tempSite) {
         ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID)
+        req.put("visitId", visitId)
                 .put("source", "MANUAL")
                 .put("temperature", temperature)
                 .put("tempSite", tempSite)
@@ -221,7 +236,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
     /** 该就诊体征行总数（重复拒绝/拒收用例的行数不变断言锚）。 */
     private int vitalCount() {
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT count(*) FROM nursing.vital_sign_record WHERE visit_id = ?", Integer.class, VISIT_ID);
+                "SELECT count(*) FROM nursing.vital_sign_record WHERE visit_id = ?", Integer.class, visitId);
         return count == null ? 0 : count;
     }
 
@@ -232,7 +247,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                         + " JOIN nursing.temperature_chart_page p ON p.id = e.page_id"
                         + " WHERE p.visit_id = ? AND e.entry_type = 'VITAL'",
                 Integer.class,
-                VISIT_ID);
+                visitId);
         return count == null ? 0 : count;
     }
 
@@ -241,14 +256,14 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
         Integer count = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM nursing.nursing_record WHERE visit_id = ? AND auto_generated = true",
                 Integer.class,
-                VISIT_ID);
+                visitId);
         return count == null ? 0 : count;
     }
 
     @Test
     @Order(1)
-    @DisplayName("入区登记：POST /ward-patients 2xx 落 nursing_ward_patient 一行 IN_WARD，GET 一览回读命中（真实流转口径）")
-    void step1_registerWardPatient() {
+    @DisplayName("入区夹具（W-34 换源）：inpatient 入院四步→admitted/bed.changed 投影在册行（W01 床号补齐），GET 一览回读命中")
+    void step1_registerWardPatientViaAdmissionChain() {
         token = loginToken(ADMIN_LOGIN_NAME);
         // 主数据夹具：患者主档行（resolve 归一依赖；OutpatientFullFlowIT 同款直插先例）
         jdbcTemplate.update(
@@ -256,32 +271,89 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                         + " VALUES (?, ?, '1', 'NORMAL', 'WINDOW')",
                 PATIENT_ID,
                 "IT 体征患者");
-        ObjectNode req = objectMapper.createObjectNode();
-        req.put("visitId", VISIT_ID)
-                .put("patientId", PATIENT_ID)
-                .put("wardId", "W01")
-                .put("bedNo", "01")
-                .put("patientName", "IT 体征患者")
-                .put("nursingLevel", "NORMAL");
-        ResponseEntity<String> resp = postForEntity("/api/v1/nursing/ward-patients", token, req);
-        assertThat(resp.getStatusCode().is2xxSuccessful())
-                .as("入区登记应 2xx，实况：%s", resp.getBody())
+        // W01 自备床 + 入院四步真链（W-34 后入区唯一写入面=事件投影，POST /ward-patients 已退役）
+        jdbcTemplate.update(
+                "INSERT INTO inpatient.bed (id, bed_no, ward_id, bed_attr, allow_gender, visit_id, status)"
+                        + " VALUES (?, ?, 'W01', 'NORMAL', NULL, NULL, 'FREE')",
+                BED_ID,
+                BED_NO);
+        ObjectNode create = objectMapper.createObjectNode();
+        create.put("patientId", PATIENT_ID)
+                .put("sourceType", "OTHER")
+                .put("admissionType", "NORMAL")
+                .put("targetWardId", "W01")
+                .put("issuedDoctorId", "3");
+        String admissionNo = toNode(postForEntity("/api/v1/inpatient/admissions", token, create)
+                        .getBody())
+                .path("admissionNo")
+                .asText();
+        assertThat(admissionNo).as("住院证号应签发").isNotBlank();
+        ObjectNode schedule = objectMapper.createObjectNode();
+        schedule.put("targetWardId", "W01")
+                .put("targetBedId", BED_ID)
+                // 期望入住日按北京钟面取当日（时区红线：裸 now() 在 CI UTC 深夜窗错归前一日）
+                .put("expectDate", LocalDate.now(TimeConstants.HEALTHCARE_TZ).toString());
+        assertThat(postForEntity("/api/v1/inpatient/admissions/" + admissionNo + "/schedule", token, schedule)
+                        .getStatusCode()
+                        .is2xxSuccessful())
+                .as("预约入院应 2xx")
                 .isTrue();
-        assertThat(toNode(resp.getBody()).path("visitId").asText()).isEqualTo(VISIT_ID);
-        // 行落库断言（brief 明示的 jdbcTemplate 行锚；WardPatientVO 无 status 组件故取库态）
+        visitId = toNode(postForEntity(
+                                "/api/v1/inpatient/admissions/" + admissionNo + "/register",
+                                token,
+                                objectMapper.createObjectNode().put("insuranceType", "IT-YIBAO"))
+                        .getBody())
+                .path("visitId")
+                .asText();
+        assertThat(visitId).as("登记确认应签发 I 型 14 位 visit_id").hasSize(14);
+        ObjectNode admit = objectMapper.createObjectNode();
+        admit.put("wardId", "W01").put("bedId", BED_ID).put("nursingLevel", "NORMAL");
+        assertThat(postForEntity("/api/v1/inpatient/visits/" + visitId + "/admit-ward", token, admit)
+                        .getStatusCode()
+                        .is2xxSuccessful())
+                .as("入科确认应 2xx（admitted/bed.changed 发布）")
+                .isTrue();
+        awaitWardPatientRow();
+        // 行落库断言（在区谓词 V1108 后由逻辑删单独承载；WardPatientVO 无状态组件故取库态）
         Map<String, Object> row = jdbcTemplate.queryForMap(
-                "SELECT status, patient_id, ward_id, bed_no FROM nursing.nursing_ward_patient WHERE visit_id = ?",
-                VISIT_ID);
-        assertThat(row.get("status")).as("视图行应为在区态").isEqualTo("IN_WARD");
+                "SELECT patient_id, ward_id, bed_no, deleted FROM nursing.nursing_ward_patient WHERE visit_id = ?",
+                visitId);
+        assertThat(((Number) row.get("deleted")).intValue())
+                .as("投影行应为在册态（deleted=0）")
+                .isZero();
         assertThat(((Number) row.get("patient_id")).longValue()).isEqualTo(PATIENT_ID);
+        assertThat(row.get("ward_id")).as("投影归属=入科病区").isEqualTo("W01");
+        assertThat(row.get("bed_no")).as("床号=bed.changed 载荷补齐").isEqualTo(BED_NO);
         // 真实流转一览验收：GET /ward-patients 回读命中（禁以直插视图行冒充验收）
         JsonNode list = getJson("/api/v1/nursing/ward-patients?wardId=W01", token);
         assertThat(list.isArray()).isTrue();
         boolean hit = false;
         for (JsonNode item : list) {
-            hit = hit || VISIT_ID.equals(item.path("visitId").asText());
+            hit = hit || visitId.equals(item.path("visitId").asText());
         }
-        assertThat(hit).as("在区一览应回读命中登记行").isTrue();
+        assertThat(hit).as("在区一览应回读命中投影行").isTrue();
+    }
+
+    /** 轮询等待护理投影在册行落库且床号补齐（admitted/bed.changed 消费收敛；超时即失败禁静默降级）。 */
+    private void awaitWardPatientRow() {
+        long deadline = System.currentTimeMillis() + PROJECTION_TIMEOUT.toMillis();
+        while (System.currentTimeMillis() < deadline) {
+            Integer ready = jdbcTemplate.queryForObject(
+                    "SELECT count(*) FROM nursing.nursing_ward_patient"
+                            + " WHERE visit_id = ? AND deleted = 0 AND bed_no IS NOT NULL AND bed_no <> ''",
+                    Integer.class,
+                    visitId);
+            if (ready != null && ready > 0) {
+                return;
+            }
+            try {
+                Thread.sleep(POLL_INTERVAL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new IllegalStateException("护理投影在册行未落库（visitId=" + visitId + "）");
     }
 
     @Test
@@ -314,7 +386,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
         String observation = jdbcTemplate.queryForObject(
                 "SELECT observation FROM nursing.nursing_record WHERE visit_id = ? AND auto_generated = true",
                 String.class,
-                VISIT_ID);
+                visitId);
         assertThat(observation).as("观察行应含首笔体温值").contains("36.5");
     }
 
@@ -329,7 +401,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
         String observation = jdbcTemplate.queryForObject(
                 "SELECT observation FROM nursing.nursing_record WHERE visit_id = ? AND auto_generated = true",
                 String.class,
-                VISIT_ID);
+                visitId);
         assertThat(observation).as("观察行应保留首笔内容").contains("36.5");
         assertThat(observation).as("观察行应追加第二笔内容").contains("36.7");
         assertThat(chartVitalCount()).as("体温单条目随录随增").isEqualTo(2);
@@ -347,7 +419,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
         String abnormalObservation = jdbcTemplate.queryForObject(
                 "SELECT observation FROM nursing.nursing_record WHERE visit_id = ? AND abnormal_flag = true",
                 String.class,
-                VISIT_ID);
+                visitId);
         assertThat(abnormalObservation).as("异常行应含体温值").contains("38.6");
         assertThat(abnormalObservation)
                 .as("异常行应含阈值结论文本（NursingVitalThresholds 冻结锚）")
@@ -400,7 +472,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                         + " VALUES (?, ?, ?, 'W01', now() - interval '30 minutes', 36.8, 'ORAL', 'MANUAL',"
                         + " 'PENDING_REVIEW', false, 'it-fixture', 'it-fixture')",
                 PENDING_FIXTURE_ID,
-                VISIT_ID,
+                visitId,
                 PATIENT_ID);
         // 待复核工作台清单命中（真实流转 GET 面）
         JsonNode pending = getJson("/api/v1/nursing/vital-signs/pending-review?wardId=W01", token);
@@ -443,7 +515,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                 .filter(e -> e.payload().path("abnormal").asBoolean())
                 .findFirst()
                 .orElseThrow();
-        assertThat(abnormalFrame.payload().path("visitId").asText()).isEqualTo(VISIT_ID);
+        assertThat(abnormalFrame.payload().path("visitId").asText()).isEqualTo(visitId);
         assertThat(abnormalFrame.payload().path("patientId").asLong()).isEqualTo(PATIENT_ID);
         // 转正帧：reviewStatus=CONFIRMED 且测量时点≈夹具行（与 step2/3/4 录入帧按时点区分）
         Timestamp fixtureMeasuredAt = jdbcTemplate.queryForObject(
@@ -453,7 +525,7 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                 .filter(e -> nearInstant(e.payload().path("measuredAt").asText(), fixtureMeasuredAt))
                 .findFirst()
                 .orElseThrow();
-        assertThat(confirmFrame.payload().path("visitId").asText()).isEqualTo(VISIT_ID);
+        assertThat(confirmFrame.payload().path("visitId").asText()).isEqualTo(visitId);
         assertThat(confirmFrame.payload().path("source").asText()).isEqualTo("MANUAL");
     }
 
@@ -490,13 +562,13 @@ class NursingVitalSignFlowIT extends FuyunStackITBase {
                         + " (?, ?, ?, 'W01', now(), 36.6, 'ORAL', 'MANUAL', 'CONFIRMED', false, 'it-fixture', 'it-fixture'),"
                         + " (?, ?, ?, 'W01', now(), 36.9, 'RECTAL', 'MANUAL', 'CONFIRMED', false, 'it-fixture', 'it-fixture')",
                 TIE_EARLIER_ID,
-                VISIT_ID,
+                visitId,
                 PATIENT_ID,
                 TIE_FIRST_ID,
-                VISIT_ID,
+                visitId,
                 PATIENT_ID,
                 TIE_LAST_ID,
-                VISIT_ID,
+                visitId,
                 PATIENT_ID);
         // 旧取值路径：升序全量清单取末位（ALGO-01 改造前的 PDA 摘要取数口径）
         List<VitalSignVO> legacy = vitalSignService.listByPatient(PATIENT_ID, null, null);

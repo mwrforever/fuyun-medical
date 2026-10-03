@@ -7,6 +7,7 @@ import com.fuyun.nursing.entity.IoRecord;
 import com.fuyun.nursing.vo.IoRecordVO;
 import com.fuyun.nursing.vo.IoSummaryVO;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -37,6 +38,23 @@ public interface IIoRecordService extends IService<IoRecord> {
      *                      NS-1004（409 患者不在区）
      */
     IoRecordVO create(IoRecordCreateRequest req);
+
+    /**
+     * 输液执行自动入量行（Task 6 拔针全链内嵌步骤，P2 执行域写入方落地 INFUSION_AUTO 预留源）：
+     * 在区校验（patient_id/ward_id 服务端装配）→ 落 INTAKE/IV_FLUID 行（source=INFUSION_AUTO、
+     * source_ref=执行单号、quantity=actualVolumeMl、occur_at=拔针时点、recorder=拔针护士）。
+     * 与手工录入 {@link #create} 分面：自动链路无词表/数量入参面（固定 INTAKE/IV_FLUID），
+     * INFUSION_AUTO 预留源拒收守卫不适用本写入方（P1 录入面守卫，非本链路）。
+     *
+     * @param visitId        住院就诊号（在区定位键），非空；来源：执行单行快照
+     * @param executionNo    执行单号（source_ref 来源引用），非空；来源：拔针路径参数
+     * @param actualVolumeMl 实际输注量 ml（护士确认值，0~5000 已守卫），非空；来源：拔针请求体
+     * @param occurredAt     入量发生时点（=拔针时点，服务器动作钟面），非空
+     * @param executorId     拔针护士员工 ID（recorder 落值），非空；来源：拔针请求体
+     * @throws BizException  NS-1004（409 患者不在区——拔针事务整体回滚，fail-closed）
+     */
+    void appendInfusionIntake(
+            String visitId, String executionNo, int actualVolumeMl, OffsetDateTime occurredAt, long executorId);
 
     /**
      * 按住院就诊号列出入量明细（发生时间升序）；date 非空时收敛为服务器时区当日窗口

@@ -758,7 +758,6 @@ class VitalSignServiceImplTest {
                 null,
                 null,
                 "NORMAL",
-                "",
                 false,
                 "",
                 OffsetDateTime.now(),

@@ -1,9 +1,16 @@
 package com.fuyun.pharmacy.controller;
 
+import com.fuyun.common.web.PageResult;
+import com.fuyun.pharmacy.dto.DispensePlanDeliverRequest;
+import com.fuyun.pharmacy.dto.DispensePlanGenerateRequest;
+import com.fuyun.pharmacy.dto.DispensePlanReceiveRequest;
 import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.dto.PickRequest;
 import com.fuyun.pharmacy.dto.VerifyCredentialRequest;
+import com.fuyun.pharmacy.service.IDispensePlanService;
 import com.fuyun.pharmacy.service.IDispenseService;
+import com.fuyun.pharmacy.vo.DispensePlanLabelVO;
+import com.fuyun.pharmacy.vo.DispensePlanVO;
 import com.fuyun.pharmacy.vo.DispenseVO;
 import com.fuyun.pharmacy.vo.OccupancyVO;
 import com.fuyun.system.api.AuditActionType;
@@ -24,7 +31,11 @@ import org.springframework.web.bind.annotation.RestController;
  * 调剂端点（/api/v1/pharmacy/dispenses 与退药受理 /api/v1/pharmacy/dispense-returns，
  * Spec :171 顶层路径）：pick/verify/issue 调剂三段、退药受理两时点与工作台按处方号回显；
  * 三段与退药受理为法定留痕操作全量审计（WRITE）。调用方：M06 药师工作站 / IT 直调模拟 / M05 病区退药发起。
- * 类级 @RequestMapping 不承载（dispense-returns 为 dispenses 的兄弟顶层路径），各方法携全路径。
+ * P2 PR-3 Task 8 扩住院摆药面（/api/v1/pharmacy/dispense-plans 族）：计划生成/摆药流五步/
+ * 分页查询/PIVAS 贴签数据面——摆药五步为法定留痕操作全量审计（WRITE），GET 两端点按
+ * Task 5/6 minor 口径不挂审计注记（查询面 W-47 统一收口，最终审查裁定）。
+ * 类级 @RequestMapping 不承载（dispense-returns/dispense-plans 为 dispenses 的兄弟顶层路径），
+ * 各方法携全路径。
  */
 @Tag(name = "调剂")
 @RestController
@@ -32,6 +43,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class DispenseController {
 
     private final IDispenseService dispenseService;
+
+    private final IDispensePlanService dispensePlanService;
 
     /**
      * 配药（CREATED→PICKING）：FEFO 选批锁定批次 + 追溯码逐盒采集（「无码不结」）。
@@ -117,5 +130,114 @@ public class DispenseController {
     public List<DispenseVO> getByRxNo(@RequestParam("rxNo") String rxNo) {
         DispenseVO vo = dispenseService.getByRxNo(rxNo);
         return vo == null ? List.of() : List.of(vo);
+    }
+
+    /**
+     * 生成住院摆药计划（APPROVED 前置+长期频次分解+plan_type 判定+uk 幂等）。
+     *
+     * @param req 生成入参（医嘱号+目标病区），非空
+     * @return 该医嘱全部未删计划（幂等稳定输出，planTime 升序）
+     */
+    @Operation(summary = "生成住院摆药计划")
+    @PostMapping("/api/v1/pharmacy/dispense-plans/generate")
+    @AuditLog(actionType = AuditActionType.WRITE)
+    public List<DispensePlanVO> generate(@Valid @RequestBody DispensePlanGenerateRequest req) {
+        return dispensePlanService.generate(req);
+    }
+
+    /**
+     * 摆药开始（CREATED→PICKING；单剂量=人工摆药+库存预校验、PIVAS=排药+排批号）。
+     *
+     * @param no 摆药计划号（路径参数）
+     */
+    @Operation(summary = "摆药开始")
+    @PostMapping("/api/v1/pharmacy/dispense-plans/{no}/pick")
+    @AuditLog(actionType = AuditActionType.WRITE)
+    public void pickPlan(@PathVariable("no") String no) {
+        dispensePlanService.pick(no);
+    }
+
+    /**
+     * 药师核对（PICKING→PICKED；PIVAS 链=贴签核对 label_printed 置位）。
+     *
+     * @param no 摆药计划号（路径参数）
+     */
+    @Operation(summary = "摆药核对")
+    @PostMapping("/api/v1/pharmacy/dispense-plans/{no}/verify")
+    @AuditLog(actionType = AuditActionType.WRITE)
+    public void verifyPlan(@PathVariable("no") String no) {
+        dispensePlanService.verify(no);
+    }
+
+    /**
+     * 出库交接（PICKED→CHECKED；落调剂行+库存扣减+批次回填）。
+     *
+     * @param no 摆药计划号（路径参数）
+     */
+    @Operation(summary = "摆药出库交接")
+    @PostMapping("/api/v1/pharmacy/dispense-plans/{no}/issue")
+    @AuditLog(actionType = AuditActionType.WRITE)
+    public void issuePlan(@PathVariable("no") String no) {
+        dispensePlanService.issue(no);
+    }
+
+    /**
+     * 配送交接（CHECKED 态内 issued_at 时间线半步——不迁移状态，签收归 receive）。
+     *
+     * @param no  摆药计划号（路径参数）
+     * @param req 配送交接入参（carrier 可空），可缺省
+     */
+    @Operation(summary = "摆药配送交接")
+    @PostMapping("/api/v1/pharmacy/dispense-plans/{no}/deliver")
+    @AuditLog(actionType = AuditActionType.WRITE)
+    public void deliverPlan(
+            @PathVariable("no") String no, @Valid @RequestBody(required = false) DispensePlanDeliverRequest req) {
+        dispensePlanService.deliver(no, req == null ? null : req.carrier());
+    }
+
+    /**
+     * 病区签收（CHECKED→DELIVERED CAS+事务内发布 pharmacy.dispense.completed 住院四字段载荷）。
+     *
+     * @param no  摆药计划号（路径参数）
+     * @param req 签收入参（receivedBy 必填），非空
+     */
+    @Operation(summary = "摆药病区签收")
+    @PostMapping("/api/v1/pharmacy/dispense-plans/{no}/receive")
+    @AuditLog(actionType = AuditActionType.WRITE)
+    public void receivePlan(@PathVariable("no") String no, @Valid @RequestBody DispensePlanReceiveRequest req) {
+        dispensePlanService.receive(no, req.receivedBy());
+    }
+
+    /**
+     * 住院摆药计划分页查询（病区工作台高频过滤面；GET 不挂审计——查询面统一收口口径）。
+     *
+     * @param m04OrderNo 住院医嘱号过滤，可空
+     * @param wardId     病区编码过滤，可空
+     * @param status     计划状态过滤，可空
+     * @param page       页码（0 基），默认 0
+     * @param size       页大小，默认 20
+     * @return 分页结果
+     */
+    @Operation(summary = "住院摆药计划分页查询")
+    @GetMapping("/api/v1/pharmacy/dispense-plans")
+    public PageResult<DispensePlanVO> pagePlans(
+            @RequestParam(required = false) String m04OrderNo,
+            @RequestParam(required = false) String wardId,
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        return dispensePlanService.page(m04OrderNo, wardId, status, page, size);
+    }
+
+    /**
+     * PIVAS 贴签数据面（患者脱敏名/病区/排批/调配核对双人/药品明细——打印归 M01 降级注记）。
+     *
+     * @param no 摆药计划号（路径参数）
+     * @return 贴签数据面
+     */
+    @Operation(summary = "PIVAS 贴签数据面")
+    @GetMapping("/api/v1/pharmacy/dispense-plans/{no}/label")
+    public DispensePlanLabelVO label(@PathVariable("no") String no) {
+        return dispensePlanService.label(no);
     }
 }

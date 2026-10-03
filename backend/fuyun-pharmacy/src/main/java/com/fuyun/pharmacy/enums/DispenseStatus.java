@@ -7,8 +7,11 @@ import com.fuyun.pharmacy.api.PharmacyErrorCode;
 import org.springframework.http.HttpStatus;
 
 /**
- * 发药单状态机七值（Spec :134 逐字冻结）：CREATED(放行入队)→PICKING(批次锁定+追溯码采集)→
- * PICKED(已配待核对)→ISSUED(发药签名完成，发 dispense.completed，终态基点)→PART/FULL_RETURNED；
+ * 发药单状态机九值（Spec :134 逐字冻结 + P2 PR-3 V1110 住院链增补）：共享前缀
+ * CREATED(放行入队)→PICKING(批次锁定+追溯码采集)→PICKED(已配待核对)后分链——
+ * 门诊链 PICKED→ISSUED(发药签名完成，发 dispense.completed，终态基点)→PART/FULL_RETURNED，
+ * 门诊链止于 ISSUED 不受住院增补影响；住院链 PICKED→CHECKED(药师双人核对)→DELIVERED
+ * (病区签收，住院终态——语义与门诊 ISSUED 区分：住院发药止于 DELIVERED 签收)；
  * CREATED/PICKING→CANCELLED（处方作废联动释放锁定批次）。
  */
 public enum DispenseStatus {
@@ -22,7 +25,13 @@ public enum DispenseStatus {
     /** 已配待核对 */
     PICKED("PICKED"),
 
-    /** 已发药（终态基点） */
+    /** 已核对（住院链：摆药完成经药师双人核对，下一步病区签收） */
+    CHECKED("CHECKED"),
+
+    /** 已签收（住院链终态：病区护士签收交付，语义对齐门诊 ISSUED 基点） */
+    DELIVERED("DELIVERED"),
+
+    /** 已发药（门诊链终态基点） */
     ISSUED("ISSUED"),
 
     /** 部分退药 */

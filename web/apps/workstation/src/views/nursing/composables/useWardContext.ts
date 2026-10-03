@@ -1,25 +1,18 @@
 /**
- * 病区看板作业面①②底座：病区/班次上下文 + 床位序患者卡墙 + 全页患者选中锚点 + 出区
+ * 病区看板作业面①②底座：病区/班次上下文 + 床位序患者卡墙 + 全页患者选中锚点
  * （WardBoardView 巨型脚本随迁，EX-47 拆分）。选中患者（selectedVisitId）是③⑤⑥⑦区块的
  * 患者上下文锚点；换患者时的草稿复位与患者上下文重载经入参回调注入（各作业面 composable
  * 承载，时序与拆分前逐字一致：先换锚点 → 同步复位草稿 → 异步发起上下文加载）。
  * 病区主加载（一览 → 逐床详情富化 → 四面联动重载）同样经 getWardReloads 惰性求值注入，
  * 保持「单床失败不阻塞卡墙 + 四面并行重载」的原时序。
+ * W-34 换源（Task 7 审查 C2/C3 口径）：conditionTags 已随过渡通道退役——病情角标环与
+ * 危/重计数派生面同步退役（过敏/风险角标保留）；出区移除动作归 inpatient 出院/转科事件
+ * 投影，前端不再直调移除端点（原 onRemovePatient/removing 随端点退役删除）。
  */
 import { computed, ref } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
 import { wardPatients, SHIFT_OPTIONS, WARD_OPTIONS } from '@/api/nursing';
 import type { WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
 import { splitTags } from '../wardBoardShared';
-
-/** 病情标记 → 角标类/文案映射（§3.11：娩归 brand 系） */
-const CONDITION_FLAG_META: Record<string, { cls: string; text: string }> = {
-  CRITICAL: { cls: 'fuy-nursing-flag--danger', text: '危' },
-  SEVERE: { cls: 'fuy-nursing-flag--warning', text: '重' },
-  NEW: { cls: 'fuy-nursing-flag--brand', text: '新' },
-  SURGERY: { cls: 'fuy-nursing-flag--info', text: '术' },
-  DELIVERY: { cls: 'fuy-nursing-flag--brand', text: '娩' },
-};
 
 /** 床旁风险标识 → 空心角标文案（§3.11：跌倒/压疮红描边空心） */
 const RISK_FLAG_LABELS: Record<string, string> = {
@@ -64,23 +57,11 @@ export function useWardContext(options: UseWardContextOptions = {}) {
     [...patientList.value].sort((a, b) => (a.bedNo ?? '').localeCompare(b.bedNo ?? '')),
   );
 
-  /** 病区概览计数（在区/危/重，头部病情计数行） */
-  const wardCounts = computed(() => {
-    let critical = 0;
-    let severe = 0;
-    for (const patient of patientList.value) {
-      const tags = splitTags(detailMap.value[patient.visitId ?? '']?.conditionTags);
-      if (tags.includes('CRITICAL')) {
-        critical += 1;
-      }
-      if (tags.includes('SEVERE')) {
-        severe += 1;
-      }
-    }
-    return { total: patientList.value.length, critical, severe };
-  });
+  /** 病区概览计数（在区总数，头部计数行；危/重计数已随 conditionTags 退役——W-34 换源） */
+  const wardCounts = computed(() => ({ total: patientList.value.length }));
 
-  /** 卡墙角标行（§3.4：显示优先级 过敏>危>重>风险>其余，上限 4 个 + 溢出 +N） */
+  /** 卡墙角标行（§3.4：显示优先级 过敏>风险>其余，上限 4 个 + 溢出 +N；病情角标环已随
+   * conditionTags 退役，仅存过敏与风险两类） */
   function bedFlags(detail: WardPatientDetailVO | undefined): {
     shown: Array<{ cls: string; text: string }>;
     overflow: number;
@@ -88,29 +69,18 @@ export function useWardContext(options: UseWardContextOptions = {}) {
     if (detail === undefined) {
       return { shown: [], overflow: 0 };
     }
-    const ordered: Array<{ cls: string; text: string; rank: number }> = [];
+    const ordered: Array<{ cls: string; text: string }> = [];
     if (detail.allergyFlag === true) {
-      ordered.push({ cls: 'fuy-nursing-flag--danger', text: '敏', rank: 0 });
-    }
-    for (const tag of splitTags(detail.conditionTags)) {
-      const meta = CONDITION_FLAG_META[tag];
-      if (meta !== undefined) {
-        ordered.push({
-          cls: meta.cls,
-          text: meta.text,
-          rank: tag === 'CRITICAL' ? 1 : tag === 'SEVERE' ? 2 : 4,
-        });
-      }
+      ordered.push({ cls: 'fuy-nursing-flag--danger', text: '敏' });
     }
     for (const risk of splitTags(detail.riskFlags)) {
       const label = RISK_FLAG_LABELS[risk];
       if (label !== undefined) {
-        ordered.push({ cls: 'fuy-nursing-flag--outline', text: label, rank: 3 });
+        ordered.push({ cls: 'fuy-nursing-flag--outline', text: label });
       }
     }
-    ordered.sort((a, b) => a.rank - b.rank);
     return {
-      shown: ordered.slice(0, 4).map(({ cls, text }) => ({ cls, text })),
+      shown: ordered.slice(0, 4),
       overflow: Math.max(0, ordered.length - 4),
     };
   }
@@ -173,45 +143,6 @@ export function useWardContext(options: UseWardContextOptions = {}) {
     options.onPatientSwitchLoad?.();
   }
 
-  /** 出区在途标志（防双击重复出区） */
-  const removing = ref(false);
-
-  /** 出区（高风险档 §6.2：danger 确认 + 必填原因 + 回显摘要） */
-  async function onRemovePatient(detail: WardPatientDetailVO): Promise<void> {
-    if (removing.value) {
-      return;
-    }
-    removing.value = true;
-    try {
-      try {
-        const { value } = await ElMessageBox.prompt(
-          `即将为 ${detail.bedNo ?? ''} ${detail.patientName ?? ''} 办理出区，出区后不可恢复`,
-          '出区确认',
-          {
-            type: 'warning',
-            confirmButtonText: '确认出区',
-            confirmButtonClass: 'el-button--danger',
-            inputPlaceholder: '出区原因（必填）',
-            inputValidator: (input: string) => (input.trim() === '' ? '出区原因不能为空' : true),
-          },
-        );
-        if (value.trim() === '') {
-          return;
-        }
-        await wardPatients.remove(detail.visitId ?? '', { reason: value.trim() });
-        void ElMessage.success(`已出区：${detail.bedNo ?? ''} ${detail.patientName ?? ''}`);
-        if (selectedVisitId.value === detail.visitId) {
-          selectedVisitId.value = null;
-        }
-        await loadWard();
-      } catch {
-        // 用户取消或出区失败：取消静默，失败弹错归拦截器
-      }
-    } finally {
-      removing.value = false;
-    }
-  }
-
   return {
     wardId,
     shiftCode,
@@ -229,8 +160,6 @@ export function useWardContext(options: UseWardContextOptions = {}) {
     loadWard,
     onWardChange,
     selectPatient,
-    removing,
-    onRemovePatient,
     RISK_FLAG_LABELS,
   };
 }

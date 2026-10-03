@@ -5,10 +5,16 @@ import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
 import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.integration.api.ConsumerQueueSpec;
+import com.fuyun.integration.api.DelayQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
+import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
+import java.time.Duration;
 import java.util.Arrays;
+import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.Declarables;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -20,13 +26,36 @@ import org.springframework.context.annotation.Import;
  * 生效——装配根豁免 Modulith 边界，IotConfig 引 iot/internal 先例）。交换机全集归 integration
  * 禁私建（A.5-4）；订阅队列声明随消费任务逐批追加（先登记后订阅红线，Task 3 起三订阅），
  * 监听器类同步追加进 @Import；发布面经 NursingEventPublisher 于业务事务提交后出 MQ。
+ * P2 PR-3 Task 4 追加：inpatient 医嘱事件族（order.transferred/order-plan.generated/
+ * stopped/cancelled 四路合一）与就诊事件族（visit.admitted/transferred/discharge-requested/
+ * discharged/bed.changed 五路）两监听器。 P2 PR-3 Task 5 追加：摆药签收衔接监听器
+ * （DispenseSignoffListener——pharmacy.dispense.completed 首消费者，队列声明随既有
+ * SUBSCRIBED_EVENT_TYPES id 28 项）与回签补偿扫描组件（ExecutionConfirmCompensator——
+ * tick 接线归 Task 9，本任务仅注册 Bean 供调用）。P2 PR-3 Task 6 追加：IoT 告警执行单
+ * 挂接监听器（IotAlarmExecutionListener——iot.alarm.triggered/escalated/closed 三路，
+ * 队列声明随既有 SUBSCRIBED_EVENT_TYPES id 74–76 项）。P2 PR-3 Task 9 追加：任务逾期 tick
+ * 消费链三件（TaskOverdueTickListener/TaskOverdueTickSender/TaskOverdueTickSeeder——tick
+ * 消费队列自声明见 taskOverdueTickQueue，ExecutionConfirmCompensator 接线归监听器）。
+ * P2 PR-3 Task 11 追加：设备呼叫转发监听器（IotCallTriggeredListener——iot.call.triggered
+ * V1004 id 81 在册，第 14 条消费队列 q.nursing.iot.call.triggered，队列声明随
+ * SUBSCRIBED_EVENT_TYPES 扩项；大屏 WS 推送执行点归 NursingWebSocketConfig
+ * NurseBoardPushListener）。
  */
 @Configuration
 @Import({
     NursingEventPublisher.class,
     PatientHealthSummaryListener.class,
     PatientMergedListener.class,
-    PatientSplitListener.class
+    PatientSplitListener.class,
+    InpatientOrderEventListener.class,
+    InpatientVisitEventListener.class,
+    DispenseSignoffListener.class,
+    ExecutionConfirmCompensator.class,
+    IotAlarmExecutionListener.class,
+    TaskOverdueTickListener.class,
+    TaskOverdueTickSender.class,
+    TaskOverdueTickSeeder.class,
+    IotCallTriggeredListener.class
 })
 public class NursingMessagingConfig {
 
@@ -58,8 +87,11 @@ public class NursingMessagingConfig {
     }
 
     /**
-     * 声明订阅队列并绑定 fy.topic（事件未登记时构件抛异常阻断启动；V105 id 11/12/16 既有登记）。
-     * Task 3 交付三条：健康档案变更/患者合并/患者拆分（成对口径 M-25）。
+     * 声明订阅队列并绑定 fy.topic（事件未登记时构件抛异常阻断启动；V105 id 11/12/16 与 V800/V702/V1004
+     * 登记面既有）。P1 三条：健康档案变更/患者合并/患者拆分（成对口径 M-25）；P2 PR-3 扩十四条：
+     * inpatient 医嘱/就诊/床位九条（Task 4/7 消费面）+ pharmacy 摆药签收一条（Task 6）+ iot 告警三条
+     * （Task 6）+ iot 呼叫转发一条（Task 11——V1004 id 81 在册），队列名由治理构件按
+     * q.nursing.&lt;eventType&gt; 统一推导（契约锚 NursingEventContractTest）。
      *
      * @param governance 消息治理构件，非空
      * @return 声明集合（quorum 队列 + 绑定）；RabbitAdmin 幂等声明
@@ -71,5 +103,50 @@ public class NursingMessagingConfig {
                         new ConsumerQueueSpec(NursingMessagingConstants.MODULE, eventType)))
                 .flatMap(ds -> ds.getDeclarables().stream())
                 .toList());
+    }
+
+    /**
+     * 任务逾期延迟档位（05-nursing Spec §4 / V805 头注：delay.task-overdue；单档位、TTL=60 秒）：
+     * 到期经 DLX 以 nursing.task-overdue.tick 路由键回 fy.topic，由 Task 9 tick 监听器消费驱动
+     * 逾期扫描与升级广播（nursing.task.overdue）。tick 键非事件不入 event_registry（先登记后订阅
+     * 红线豁免口径见 NursingMessagingConstants 类注释）；declareDelayQueue 无先登记校验
+     * （A.5-7 延迟档位语义——QueueGovernorImpl 实测：仅命名与 TTL 参数校验，不触 event_registry）；
+     * 声明幂等（RabbitAdmin）。
+     *
+     * @param governance 消息治理构件，非空
+     * @return 声明集合（延迟队列 + 绑定）
+     */
+    @Bean
+    public Declarables taskOverdueDelayQueue(MessagingGovernance governance) {
+        return governance.declareDelayQueue(new DelayQueueSpec(
+                NursingMessagingConstants.DELAY_BUSINESS_TASK_OVERDUE,
+                Duration.ofSeconds(60),
+                NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK));
+    }
+
+    /**
+     * 任务逾期 tick 消费队列自声明（P2 PR-3 Task 9——ledger 派发义务：tick 键无 event_registry
+     * 登记面，QueueGovernorImpl.declareConsumerQueue 会经 registerSubscriber 对未登记键抛
+     * IllegalStateException 阻断启动，故治理构件无可用声明入口；W-27 同族先例
+     * outpatient.appointment.timeout 为 V204 id 39 在册事件走 declareConsumerQueue，不适用
+     * 本键）。自声明姿态逐字镜像 QueueGovernorImpl 消费队列形态：durable + 显式 quorum +
+     * 死信指向 fy.dlx 且不设死信路由键（死信保留原始路由键可溯源）+ fy.topic 绑定
+     * （key=tick 路由键）；RabbitAdmin 幂等声明。
+     *
+     * @return 声明集合（tick 消费队列 + 绑定）
+     */
+    @Bean
+    public Declarables taskOverdueTickQueue() {
+        Queue tickQueue = QueueBuilder.durable(NursingMessagingConstants.QUEUE_TASK_OVERDUE_TICK)
+                .quorum()
+                .deadLetterExchange(MessagingConstants.EXCHANGE_DLX)
+                .build();
+        Binding tickBinding = new Binding(
+                NursingMessagingConstants.QUEUE_TASK_OVERDUE_TICK,
+                Binding.DestinationType.QUEUE,
+                MessagingConstants.EXCHANGE_TOPIC,
+                NursingMessagingConstants.ROUTING_TASK_OVERDUE_TICK,
+                null);
+        return new Declarables(tickQueue, tickBinding);
     }
 }
