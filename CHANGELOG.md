@@ -2,6 +2,23 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-03 · CI 门禁补丁：前端 audit 点名豁免 braces 无补丁 advisory（GHSA-vfj7-8cjw-p6xm）
+
+- **范围**：`.github/workflows/ci.yml` frontend job audit 步骤增补 `--ignore=GHSA-vfj7-8cjw-p6xm`
+  点名豁免参数（含注释留痕）；TASK.md 登记 W-71 追踪工单。
+- **理由**：PR #63 CI 第三轮（2026-10-03）frontend verify 挂于依赖漏洞审计——上游 advisory
+  滚动新判 braces<=3.0.3 全量 high（栈耗尽 DoS）且 **Patched=None 无补丁版本可升**（版本红线
+  的升级路径不存在）；引入链为 devDependency 工具链
+  （@vue/eslint-config-typescript>fast-glob>micromatch>braces）不进生产构建产物——属上游
+  事件非本仓引入，不豁免则 dev 后续一切 PR 被阻断。
+- **裁决**：走 pnpm 官方点名豁免机制（窄面单 advisory，非 --ignore-unfixable 宽面）+注释
+  留痕+W-71 工单追踪；上游发布补丁后随依赖升级提案（Renovate/Dependabot）落地时同步移除
+  豁免参数。共存 1 moderate 低于 high 阈值不阻断，随升级顺带收敛。
+- **同轮 CI 事实留痕**：第三轮 backend verify PASS（21m18s）+commitlint/changes/hygiene 过；
+  第二轮 frontend Vitest 五用例挂为 NurseBoardView 回显时区敏感（CI=UTC），时区修复环
+  1a2576e 回显钉北京钟面修复（Task 17 报告⑤节），W-70 工单化（DischargeManageView 预存
+  敏感+spec 泄漏放大器+前端时区双跑纪律建议）。
+
 ## 2026-10-03 · P2 PR-3 收口：真栈五环节闭环演示 + 三 Spec 落地注记 + 工单销项五项（W-34/W-60/D-23/D-24/D-25）
 
 - **范围**：PR-3 收口面（SDD 计划 Task 19）——真栈探针五项取证、05-nursing §14 /
