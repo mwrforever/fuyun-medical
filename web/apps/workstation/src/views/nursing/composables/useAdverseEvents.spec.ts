@@ -105,6 +105,31 @@ describe('useAdverseEvents', () => {
     expect(adverseEvents.list).toHaveBeenCalledTimes(1);
   });
 
+  it('上报出网时点形态：occurredAt 转 ISO 带时区偏移（datetime-local 本地串直拼后端 OffsetDateTime 必 400）', async () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    state.openReport();
+    state.reportForm.value = {
+      category: 'FALL',
+      severityClass: 'II',
+      severityGrade: 'B',
+      wardId: 'W01',
+      occurredAt: '2026-10-01T08:00',
+      eventSummary: '病房走廊跌倒',
+      handlingNote: '',
+      visitId: '',
+      patientId: '',
+      isAnonymous: false,
+    };
+    await state.onReport();
+    expect(adverseEvents.report).toHaveBeenCalledTimes(1);
+    const payload = vi.mocked(adverseEvents.report).mock.calls[0]?.[0];
+    // W-70 时区双跑纪律：形态正则断言（Z 或 ±HH:MM 偏移可解析）；绝对时刻值断言在
+    // CI UTC 与本地北京时区双跑必有一侧翻车（new Date 按运行环境本地时区解析），禁用
+    expect(payload?.occurredAt).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/,
+    );
+  });
+
   it('处理操作：操作人留痕出网（handlerId=会话 userId）且成功后重拉', async () => {
     const state = useAdverseEvents({ getOperatorId: () => 'u1' });
     await state.onHandle({ eventNo: 'AE2026100100001', status: 'REPORTED' });

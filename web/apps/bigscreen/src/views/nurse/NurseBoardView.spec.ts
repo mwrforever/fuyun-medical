@@ -157,6 +157,16 @@ function infusionMock(): Record<string, unknown> {
   };
 }
 
+/** 构造无遥测数据输液快照 mock 出参（后端无数据落 null 非 undefined——JSON 反序列化 null 形态锚） */
+function infusionNullMetricMock(): Record<string, unknown> {
+  return {
+    wardId: '1001',
+    devices: [
+      { deviceId: 'dev-inf-03', remainLatest: null, dropRateLatest: null, alertLevel: 'NONE' },
+    ],
+  };
+}
+
 /** 构造活跃告警分页 mock 出参（REST 兜底行） */
 function alarmsPageMock(): Record<string, unknown> {
   return {
@@ -277,6 +287,21 @@ describe('护士站大屏（双端点订阅与五区视图）', () => {
 
     // 危急值段（M07 预留空段）：不渲染任何危急值区
     expect(wrapper.text()).not.toContain('危急值');
+    wrapper.unmount();
+  });
+
+  it('输液动态无遥测数据（null 形态）：余量/滴速占位 —，不渲染 null 字面量', async () => {
+    // 后端 InfusionBoardDeviceVO 无数据明示 null（JSON 落 null 非 undefined）——覆盖
+    // remainLatest/dropRateLatest 双 null 行的占位渲染（D-2 回归锚）
+    vi.mocked(ward.infusionBoard).mockResolvedValue(infusionNullMetricMock());
+    const wrapper = await mountNurseBoard('?wardId=1001');
+
+    const metric = wrapper.find('.nurse-infusion-metric');
+    expect(metric.exists()).toBe(true);
+    expect(metric.text()).toContain('—');
+    expect(metric.text()).not.toContain('null');
+    // 倒计时组合计算对 null 同样占位（unknown 守卫既有安全面一并锚定）
+    expect(wrapper.find('.nurse-infusion-remain').text()).toContain('—');
     wrapper.unmount();
   });
 

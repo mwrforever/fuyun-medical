@@ -247,9 +247,9 @@ function remainText(device: InfusionBoardDeviceRow): string {
   return minutes === null ? '—' : `${minutes} 分钟`;
 }
 
-/** 余量/滴速展示（无遥测数据占位不炸渲染） */
-function metricText(value: number | undefined): string {
-  return value === undefined ? '—' : String(value);
+/** 余量/滴速展示（后端无数据落 null 非 undefined，nullish 双判占位不渲染 null 字面量） */
+function metricText(value: number | null | undefined): string {
+  return value == null ? '—' : String(value);
 }
 
 /* ---------- ④ 任务逾期看板（board overdueTasks 段 + TASK_OVERDUE 帧前插升级闪烁） ---------- */

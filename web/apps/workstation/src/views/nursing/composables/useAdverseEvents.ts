@@ -81,8 +81,8 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
   }
 
   /**
-   * 提交上报：必填面逐项显式校验（零出网，服务端同语义兜底）→ 出网（occurredAt 补秒
-   * 成 ISO 时点）→ 关窗回第一页重拉。入口在途早退守卫防双击重复上报。
+   * 提交上报：必填面逐项显式校验（零出网，服务端同语义兜底）→ 出网（occurredAt 本地时点
+   * 转 ISO 带时区偏移）→ 关窗回第一页重拉。入口在途早退守卫防双击重复上报。
    */
   async function onReport(): Promise<void> {
     if (reporting.value) {
@@ -120,7 +120,9 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         severityClass: form.severityClass,
         severityGrade: form.severityGrade,
         wardId: form.wardId,
-        occurredAt: `${form.occurredAt}:00`,
+        // datetime-local 本地串无时区偏移，后端 OffsetDateTime 解析必 400——new Date 按本地
+        // 时区解析后转 UTC ISO（带 Z 偏移）出网（DischargeManageView 同场景先例）
+        occurredAt: new Date(form.occurredAt).toISOString(),
         eventSummary: form.eventSummary.trim(),
         handlingNote: form.handlingNote.trim() === '' ? undefined : form.handlingNote.trim(),
         visitId: form.visitId.trim() === '' ? undefined : form.visitId.trim(),
