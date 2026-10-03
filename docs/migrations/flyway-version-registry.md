@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]、2026-10-02 V1106–V1111 排定登记[P2 PR-3，先记再改，随 Task 2/3 落盘]）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]、2026-10-02 V1106–V1111 排定登记[P2 PR-3，先记再改，随 Task 2/3 落盘]、2026-10-03 V1112/V1113 追加[C-4/C-5 补课索引迁移，PR-4A Task 6]）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -100,6 +100,8 @@
 | V1109 | V1109__seed_nursing_adverse_event_registry.sql | nursing / fuyun-nursing | event_registry id 83 种子（nursing.adverse-event.reported，producer=nursing，幂等 INSERT WHERE NOT EXISTS，P2 PR-3 Task 2 落盘） |
 | V1110 | V1110__create_dispense_plan.sql | pharmacy / fuyun-pharmacy | dispense_plan 摆药计划表 + dispense 住院扩列（ward_id/m04_order_no/visit_id 双语义/dispense_plan_no 四可空列，M06 住院摆药衔接，P2 PR-3 Task 3 落盘） |
 | V1111 | V1111__update_dispense_completed_payload.sql | pharmacy / fuyun-pharmacy | event_registry id 28 payload_desc 载荷契约 UPDATE（住院摆药行增 m04OrderNo/visitId/wardId/dispensePlanNo 四可空字段，只增不删双向评审，P2 PR-3 Task 3 落盘） |
+| V1112 | V1112__add_dispense_plan_no_index.sql | pharmacy / fuyun-pharmacy | dispense 计划号部分索引（C-4：住院链 receive/acceptInpatientReturn 按 dispense_plan_no 等值点查全表扫描→索引点查，门诊行 NULL 不进索引；调研 r3 §二设计候选，PR-4A Task 6 落盘；通用段——全局最大 V1111 的下一号，满足乱序守卫） |
+| V1113 | V1113__add_order_execution_visit_index.sql | nursing / fuyun-nursing | order_execution visit_id 部分索引（C-5：casCancelByVisit/casRedirectWard 两支批量 CAS 首要谓词 visit_id 等值点查，status IN 残余行个位数不进索引；调研 r3 §二设计候选，PR-4A Task 6 落盘；通用段——全局最大 V1112 的下一号，满足乱序守卫） |
 
 ## 冻结段速查（禁落新文件）
 
