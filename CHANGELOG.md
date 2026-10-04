@@ -2,6 +2,19 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-05 · P2 PR-4E 立项（事件与工单收敛包）
+
+- 占用迁移号 V1115（integration.event_registry id 17 billing.fee.created payload_desc 追加
+  visitType 组件语义句——先记再占，全局最大 V1114）。
+- 范围：W-67 死信分流（dispense.completed 两消费方判别子跳过+fee.created 载荷扩 visitType
+  净解）+W-47 患者读面 SENSITIVE_QUERY 审计（11 GET 端点）+A-6 上报 wardId 词表（nursing_
+  ward_config requireConfig）+NursingRateGuard 频控骨架（A-6 上报限频+A-8 PDA 枚举冷却）+
+  W-41 收费页 payerType UI 参数化（preview+settle 双硬编码联动）+W-27 号源超时 tick 三件套
+  （克隆 nursing delay.task-overdue 先例）+T-R3-4 quorum TTL 探针实测+TASK 六工单销项
+  （W-38/W-61/W-62 随 PR #59 闭环补注记+W-27/W-41/W-47/W-67 本册 ✅+T-R3-4 回填销项）。
+- 裁决依据：总纲既有裁决重申（W-67 判别子+visitType 净解/W-41 仅 SELF_PAY 门/W-27 仅号源
+  tick/GC21④ 不并入）；fee.created 载荷扩 visitType 走 V1115 通用段。
+
 ## 2026-10-05 · P2 PR-4C 收口（大屏通道与病区防线包）
 
 - 交付：11 任务全落地（立项→wardId 携带→哨兵 REST 限行→WardAccessService→V1114 种子→九端点守卫→
