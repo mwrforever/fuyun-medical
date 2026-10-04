@@ -15,11 +15,7 @@ import type { Pinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
 import { createDispenseReturn, dispensePlans, reviewTasks } from '@/api/pharmacy';
-import type {
-  DispensePlanReturnableVO,
-  DispensePlanVO,
-  ReviewTaskVO,
-} from '@/api/pharmacy';
+import type { DispensePlanReturnableVO, DispensePlanVO, ReviewTaskVO } from '@/api/pharmacy';
 import { router } from '@/router';
 import InpatientDispenseView from './InpatientDispenseView.vue';
 

@@ -283,9 +283,7 @@ const receiving = ref(false);
 const receiveTarget = ref<DispensePlanVO | null>(null);
 
 /** 签收人展示文案（当前登录人 displayName 优先、缺省回退 userId——W-72 签收人取会话身份） */
-const receiverText = computed(
-  () => auth.user?.displayName ?? auth.user?.userId ?? '—（未登录）',
-);
+const receiverText = computed(() => auth.user?.displayName ?? auth.user?.userId ?? '—（未登录）');
 
 /** 打开签收弹窗（零手输：签收人以会话身份展示回显，无录入面） */
 function openReceive(row: DispensePlanVO): void {
@@ -663,8 +661,8 @@ onMounted(() => {
           </el-table>
           <p class="plan-dialog-hint">
             逐行填写退药数量（全明细逐行交代）；追溯码免录——住院摆药未采集追溯码，
-            防回流核验由后端承载。受理成功后计划行仍在病区已签收列（退药态由调剂行承载）；
-            nursing 侧退药开关校验端点未建，本入口直调药房退药受理
+            防回流核验由后端承载。受理成功后计划行仍在病区已签收列（退药态由调剂行承载）； nursing
+            侧退药开关校验端点未建，本入口直调药房退药受理
           </p>
         </template>
         <p v-else class="plan-dialog-hint">可退明细加载中…</p>
