@@ -47,6 +47,18 @@ function extractErrorDetail(error: AxiosError): string | undefined {
   return undefined;
 }
 
+/**
+ * traceId 生成（D-5 降级）：非安全上下文（HTTP 部署无 TLS）crypto.randomUUID 为
+ * undefined 时降级时间戳+随机串（bigscreen STOMP 侧先例同款；每 app 内嵌一份，勿抽
+ * shared——运行时导出超出顺带体量）。
+ */
+function generateTraceId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // 请求拦截器：注入 Authorization 与 X-Trace-Id；useAuthStore 延迟到回调运行时调用
 // （此时 pinia 已安装，符合 web B.3-1 组件外使用口径），避免模块加载期循环依赖触雷
 http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
@@ -56,8 +68,8 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     // 后端 AuthTokenInterceptor 按 Bearer 方案解析；令牌禁止落日志（web A.6 红线）
     config.headers.Authorization = `Bearer ${token}`;
   }
-  // 每请求新生成 uuid，后端 TraceIdFilter 复用为 MDC 锚点并回写响应头（traceId 全链路贯穿）
-  config.headers['X-Trace-Id'] = crypto.randomUUID();
+  // 每请求新生成 traceId，后端 TraceIdFilter 复用为 MDC 锚点并回写响应头（traceId 全链路贯穿）
+  config.headers['X-Trace-Id'] = generateTraceId();
   return config;
 });
 

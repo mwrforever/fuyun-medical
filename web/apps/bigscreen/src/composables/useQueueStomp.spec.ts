@@ -1,9 +1,10 @@
 // 门诊叫号 STOMP 单例封装单测（镜像 useIotStomp.spec 范式）：vi.mock('@stomp/stompjs') 捕获
-// 构造参数与回调挂接（禁真实建连）；令牌经 vi.mock('@/api/bigscreenToken') 承载运行期签发。
-// 核心断言：令牌运行期获取失败时 connect 拒建连【零连接零出网】+ tokenFailed 横幅态、
+// 构造参数与回调挂接（禁真实建连）；令牌缓存单源经 vi.mock('@/api/bigscreenToken') 承载
+// （W-68 收敛：ensure 把关 + getCached 拼头，缓存命中/到期重签本体归 bigscreenToken.spec
+// 覆盖）。核心断言：令牌获取失败时 connect 拒建连【零连接零出网】+ tokenFailed 横幅态、
 // brokerURL=ws://…/ws/outpatient 形态、订阅路径精确等于 /topic/outpatient/queue/{deptCode}、
-// beforeConnect 取令牌拼 Bearer 头的时序与缓存到期重签、毒帧防御、空诊区拒订阅与显式断开
-// 先退订后 deactivate。每用例 vi.resetModules 后动态再导入，重置模块级单例与令牌缓存。
+// beforeConnect 取令牌拼 Bearer 头的时序（泛哨兵无病区面）、毒帧防御、空诊区拒订阅与显式
+// 断开先退订后 deactivate。每用例 vi.resetModules 后动态再导入，重置模块级单例。
 import { flushPromises } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -18,15 +19,12 @@ const h = vi.hoisted(() => ({
   /** 捕获的订阅：destination + 帧回调（用例内投递毒帧/合法帧） */
   subscriptions: [] as { destination: string; callback: (message: { body: string }) => void }[],
   unsubscribeCalls: 0,
-  /** 令牌签发端点桩状态：tokenValue=本次签发令牌值；expiresIn 镜像线格式（后端 Long→String
-   *  全局序列化出网为字符串，负值字符串=签出即过期、undefined/非数值=畸形载荷），非 null
-   *  tokenError=签发失败（模拟后端不可达/5xx），fetchCalls=签发调用计数 */
+  /** 令牌缓存单源桩状态：tokenReady=ensure 结论（false=签发失败）；tokenValue=getCached
+   *  缓存值（拼 Bearer 头用）；ensureCalls/ensureWardIds=ensure 调用计数与透传病区序列 */
   tokenValue: 'tok-screen',
-  tokenExpiresIn: '600',
-  /** 畸形载荷模拟：true=签发载荷整体省略 expiresIn 字段（生成物字段可选，缺失经 Number→NaN） */
-  tokenExpiresInOmitted: false,
-  tokenError: null as Error | null,
-  fetchCalls: 0,
+  tokenReady: true,
+  ensureCalls: 0,
+  ensureWardIds: [] as Array<string | undefined>,
 }));
 
 vi.mock('@stomp/stompjs', () => {
@@ -58,24 +56,15 @@ vi.mock('@stomp/stompjs', () => {
 });
 
 vi.mock('@/api/bigscreenToken', () => ({
-  // 运行期签发桩（BUG-19：令牌唯一来源改 HTTP 签发端点，非构建期 VITE_ 注入）；
-  // 出参形态镜像生成物 BigscreenTokenVO（expiresIn 为字符串线格式，字段可选）
-  fetchBigscreenToken: (): Promise<{
-    accessToken: string;
-    tokenType: string;
-    expiresIn?: string;
-  }> => {
-    h.fetchCalls += 1;
-    if (h.tokenError !== null) {
-      return Promise.reject(h.tokenError);
-    }
-    return Promise.resolve({
-      accessToken: h.tokenValue,
-      tokenType: 'Bearer',
-      // 省略标志开启时字段整体缺失（模拟生成物 BigscreenTokenVO 可选字段缺省的畸形载荷）
-      ...(h.tokenExpiresInOmitted ? {} : { expiresIn: h.tokenExpiresIn }),
-    });
+  // 令牌缓存单源桩（W-68 收敛改造）：ensure 承载「是否持有有效令牌」把关结论并捕获透传
+  // 病区序列（叫号大屏恒泛哨兵 undefined），getCached 承载拼 Bearer 头的缓存值；缓存命中/
+  // 到期/畸形载荷重签本体归 bigscreenToken.spec 覆盖（本层只验消费契约）
+  ensureBigscreenToken: (wardId?: string): Promise<boolean> => {
+    h.ensureCalls += 1;
+    h.ensureWardIds.push(wardId);
+    return Promise.resolve(h.tokenReady);
   },
+  getCachedBigscreenToken: (): string => (h.tokenReady ? h.tokenValue : ''),
 }));
 
 // 模块级单例经 resetModules 重置：每用例取得全新模块实例（令牌缓存与失败态随重置归零）
@@ -97,10 +86,9 @@ beforeEach(async () => {
   h.subscriptions = [];
   h.unsubscribeCalls = 0;
   h.tokenValue = 'tok-screen';
-  h.tokenExpiresIn = '600';
-  h.tokenExpiresInOmitted = false;
-  h.tokenError = null;
-  h.fetchCalls = 0;
+  h.tokenReady = true;
+  h.ensureCalls = 0;
+  h.ensureWardIds = [];
   await importModule();
 });
 
@@ -120,12 +108,12 @@ function lastClient(): { connected: boolean; connectHeaders: Record<string, stri
 
 describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
   it('令牌运行期获取失败：connect 拒建连，零 Client 创建零激活，tokenFailed 置位供页面横幅', async () => {
-    h.tokenError = new Error('签发端点不可用');
+    h.tokenReady = false;
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     queueStomp.connect('DEPT-INT');
     await flushPromises();
     // 核心断言（拒建连语义保持）：取不到令牌不创建 Client、不发起激活——整条 WS 链路禁用
-    expect(h.fetchCalls).toBe(1);
+    expect(h.ensureCalls).toBe(1);
     expect(h.constructorCalls).toBe(0);
     expect(h.activateCalls).toBe(0);
     expect(queueStomp.connectionState.value).toBe('disconnected');
@@ -156,59 +144,32 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
     expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-screen');
   });
 
-  it('令牌缓存有效期内多次连接尝试仅签发一次；到期后 beforeConnect 重签携带新值', async () => {
-    // 假时钟确定性控制缓存到期（真实 flushPromises 依赖 setTimeout，假时钟下改经计时器推进）
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-29T00:00:00Z'));
-    try {
-      queueStomp.connect('DEPT-INT');
-      await vi.advanceTimersByTimeAsync(0);
-      const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
-      await beforeConnect();
-      // 缓存复用：未到期重试不重复签发（防匿名签发端点被重连风暴放大调用）
-      expect(h.fetchCalls).toBe(1);
-      expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-screen');
-      // 时间推进 20 分钟（>600s 有效期 + 30s 重签余量）：缓存到期，重连尝试重签携带新值
-      vi.setSystemTime(new Date('2026-09-29T00:20:00Z'));
-      h.tokenValue = 'tok-screen-2';
-      await beforeConnect();
-      expect(h.fetchCalls).toBe(2);
-      expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-screen-2');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('expiresIn 缺失/NaN 畸形载荷：本次连接仍建连，但令牌不可缓存——下次尝试立即重签兜底', async () => {
-    // 线格式为字符串；缺失（字段整体省略）与非数值串经 Number() 同落 NaN：兜底为「不可缓存」
-    // （到期时刻归零），防 undefined*1000=NaN 令缓存判定静默恒 false 却表面签发成功
-    h.tokenExpiresInOmitted = true;
+  it('beforeConnect 每次连接尝试经 ensure 把关（缓存/重签收敛 api 层单源，泛哨兵无病区面）', async () => {
     queueStomp.connect('DEPT-INT');
     await flushPromises();
-    // 本次连接不因畸形 expiresIn 升级为拒建连：Client 已建并激活（携令牌尝试由服务端裁决）
-    expect(h.activateCalls).toBe(1);
-    // 兜底生效：紧邻的连接尝试不复用缓存、立即重签（对照缓存有效用例的 fetchCalls=1）
     const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
     await beforeConnect();
-    expect(h.fetchCalls).toBe(2);
-    // NaN 同路：非数值字符串同样落入不可缓存兜底，重签后继续携带新令牌
-    h.tokenExpiresIn = 'not-a-number';
-    await beforeConnect();
-    expect(h.fetchCalls).toBe(3);
+    // connect 建连把关一次 + beforeConnect 重连把关一次：每次连接尝试都经 ensure（到期重签
+    // 裁决在 api 层命中条件承载，W-68 收敛）；叫号大屏无病区筛选面，恒泛哨兵 undefined
+    expect(h.ensureCalls).toBe(2);
+    expect(h.ensureWardIds.every((wardId) => wardId === undefined)).toBe(true);
     expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-screen');
+    // api 层重签后缓存值更新：重连尝试拼头携带新值（getCached 实时读取不固化）
+    h.tokenValue = 'tok-screen-2';
+    await beforeConnect();
+    expect(h.ensureCalls).toBe(3);
+    expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-screen-2');
   });
 
   it('重连路径令牌重签失败：beforeConnect 不抛异常且本次尝试无凭证头，交服务端拒绝+库内建重连', async () => {
-    // 首签即过期形态（expiresIn='-1' 线格式）：模拟「令牌在断线期间已到期」，重连路径必然触发重签
-    h.tokenExpiresIn = '-1';
     queueStomp.connect('DEPT-INT');
     await flushPromises();
     const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
-    h.tokenError = new Error('签发端点不可用');
+    h.tokenReady = false;
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     // 重连路径语义（useIotStomp 同款）：不中断库重连节奏，本次尝试被服务端 CONNECT 帧鉴权拒绝
     await expect(beforeConnect()).resolves.toBeUndefined();
-    expect(h.fetchCalls).toBe(2);
+    expect(h.ensureCalls).toBe(2);
     expect(lastClient().connectHeaders['Authorization']).toBeUndefined();
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
@@ -271,7 +232,7 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
 
   it('空诊区编码拒绝连接与订阅（异常上抛且不产生库订阅、不触发令牌签发）', () => {
     expect(() => queueStomp.connect('')).not.toThrow();
-    expect(h.fetchCalls).toBe(0);
+    expect(h.ensureCalls).toBe(0);
     expect(h.constructorCalls).toBe(0);
     expect(() => queueStomp.subscribeQueue('   ', () => {})).toThrow();
     expect(h.subscriptions).toHaveLength(0);
@@ -296,7 +257,7 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
     await queueStomp.disconnect();
     await flushPromises();
     // 令牌签发已真实发起（窗口存在），但代际失配：零 Client 创建零激活——WS 不得在卸载后被激活
-    expect(h.fetchCalls).toBe(1);
+    expect(h.ensureCalls).toBe(1);
     expect(h.constructorCalls).toBe(0);
     expect(h.activateCalls).toBe(0);
     // 状态保持断开态且不置 tokenFailed（页面已卸载，失败横幅态无消费方）
@@ -322,15 +283,14 @@ describe('门诊叫号 STOMP 单例封装（web B.3-3）', () => {
 
   it('令牌值禁入任何日志（web A.6 红线）：全部 info/warn/error 输出拼接后不得出现令牌值', async () => {
     h.tokenValue = 'tok-screen-secret';
-    h.tokenExpiresIn = '-1';
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-    // 覆盖拒建连分支（空诊区）、签发成功（info 留痕仅有效期秒数）、重签失败与连接失败分支
+    // 覆盖拒建连分支（空诊区）、连接成功留痕、重签失败与连接失败分支
     queueStomp.connect('');
     queueStomp.connect('DEPT-INT');
     await flushPromises();
-    h.tokenError = new Error('签发端点不可用');
+    h.tokenReady = false;
     const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
     await beforeConnect();
     (lastConfig()['onWebSocketClose'] as () => void)();

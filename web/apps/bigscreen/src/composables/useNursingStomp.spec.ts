@@ -1,10 +1,12 @@
 // 护士站大屏 STOMP 单例封装单测（Task 17，镜像 useQueueStomp.spec 母版——禁自造 mock 形态）：
-// vi.mock('@stomp/stompjs') 捕获构造参数与回调挂接（禁真实建连）；匿名短期令牌经
-// vi.mock('@/api/bigscreenToken') 承载运行期签发（useQueueStomp 先例）。三组断言：
-// 连接单例（令牌失败拒建连零出网/brokerURL=/ws/nursing/库内建重连心跳/匿名令牌 Bearer 时序/
-// 缓存到期重签/单例复用）、重订阅（订阅路径精确/topic/nursing/board/{wardId} 登记转正/
-// 断线重连重订阅禁假连接/显式断开先退订/在飞卸载代际作废/空病区拒绝）、帧收窄挂接
-// （毒帧 warn 不中断、合法帧触达回调、令牌值禁入日志）。每用例 vi.resetModules 后动态再导入。
+// vi.mock('@stomp/stompjs') 捕获构造参数与回调挂接（禁真实建连）；令牌缓存单源经
+// vi.mock('@/api/bigscreenToken') 承载（W-68 收敛：ensure 把关 + getCached 拼头，缓存/重签
+// 行为本体归 bigscreenToken.spec 覆盖）。三组断言：连接单例（令牌失败拒建连零出网/
+// brokerURL=/ws/nursing/库内建重连心跳/匿名令牌 Bearer 时序/beforeConnect 每次经 ensure
+// 把关/单例复用）、重订阅（订阅路径精确/topic/nursing/board/{wardId} 登记转正/换病区透传
+// 当前 wardId/断线重连重订阅禁假连接/显式断开先退订/在飞卸载代际作废/空病区拒绝）、
+// 帧收窄挂接（毒帧 warn 不中断、合法帧触达回调、令牌值禁入日志）。每用例 vi.resetModules
+// 后动态再导入。
 import { flushPromises } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -19,11 +21,12 @@ const h = vi.hoisted(() => ({
   /** 捕获的订阅：destination + 帧回调（用例内投递毒帧/合法帧） */
   subscriptions: [] as { destination: string; callback: (message: { body: string }) => void }[],
   unsubscribeCalls: 0,
-  /** 令牌签发端点桩状态（形态镜像 useQueueStomp.spec：expiresIn 字符串线格式） */
+  /** 令牌缓存单源桩状态：tokenReady=ensure 结论（false=签发失败）；tokenValue=getCached
+   *  缓存值（拼 Bearer 头用）；ensureCalls/ensureWardIds=ensure 调用计数与透传病区序列 */
   tokenValue: 'tok-nurse',
-  tokenExpiresIn: '600',
-  tokenError: null as Error | null,
-  fetchCalls: 0,
+  tokenReady: true,
+  ensureCalls: 0,
+  ensureWardIds: [] as Array<string | undefined>,
 }));
 
 vi.mock('@stomp/stompjs', () => {
@@ -55,22 +58,15 @@ vi.mock('@stomp/stompjs', () => {
 });
 
 vi.mock('@/api/bigscreenToken', () => ({
-  // 匿名短期令牌运行期签发桩（useQueueStomp 先例同源端点——与登录 access 同构，两态通吃）
-  fetchBigscreenToken: (): Promise<{
-    accessToken: string;
-    tokenType: string;
-    expiresIn?: string;
-  }> => {
-    h.fetchCalls += 1;
-    if (h.tokenError !== null) {
-      return Promise.reject(h.tokenError);
-    }
-    return Promise.resolve({
-      accessToken: h.tokenValue,
-      tokenType: 'Bearer',
-      expiresIn: h.tokenExpiresIn,
-    });
+  // 令牌缓存单源桩（W-68 收敛改造）：ensure 承载「是否持有有效令牌」把关结论并捕获透传
+  // 病区序列，getCached 承载拼 Bearer 头的缓存值；缓存命中/到期/换病区重签本体归
+  // bigscreenToken.spec 覆盖（本层只验消费契约）
+  ensureBigscreenToken: (wardId?: string): Promise<boolean> => {
+    h.ensureCalls += 1;
+    h.ensureWardIds.push(wardId);
+    return Promise.resolve(h.tokenReady);
   },
+  getCachedBigscreenToken: (): string => (h.tokenReady ? h.tokenValue : ''),
 }));
 
 // 模块级单例经 resetModules 重置：每用例取得全新模块实例（令牌缓存与失败态随重置归零）
@@ -92,9 +88,9 @@ beforeEach(async () => {
   h.subscriptions = [];
   h.unsubscribeCalls = 0;
   h.tokenValue = 'tok-nurse';
-  h.tokenExpiresIn = '600';
-  h.tokenError = null;
-  h.fetchCalls = 0;
+  h.tokenReady = true;
+  h.ensureCalls = 0;
+  h.ensureWardIds = [];
   await importModule();
 });
 
@@ -115,12 +111,12 @@ function lastClient(): { connected: boolean; connectHeaders: Record<string, stri
 describe('护士站大屏 STOMP 单例封装（web B.3-3）', () => {
   describe('连接单例', () => {
     it('匿名令牌获取失败：connect 拒建连，零 Client 创建零激活，tokenFailed 置位供页面横幅', async () => {
-      h.tokenError = new Error('签发端点不可用');
+      h.tokenReady = false;
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       nursingStomp.connect('1001');
       await flushPromises();
       // 拒建连语义（useQueueStomp 同款）：取不到令牌不建 Client、不激活——整条 WS 链路禁用
-      expect(h.fetchCalls).toBe(1);
+      expect(h.ensureCalls).toBe(1);
       expect(h.constructorCalls).toBe(0);
       expect(h.activateCalls).toBe(0);
       expect(nursingStomp.connectionState.value).toBe('disconnected');
@@ -150,25 +146,20 @@ describe('护士站大屏 STOMP 单例封装（web B.3-3）', () => {
       expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-nurse');
     });
 
-    it('令牌缓存有效期内多次连接尝试仅签发一次；到期后 beforeConnect 重签携带新值', async () => {
-      vi.useFakeTimers();
-      vi.setSystemTime(new Date('2026-10-03T00:00:00Z'));
-      try {
-        nursingStomp.connect('1001');
-        await vi.advanceTimersByTimeAsync(0);
-        const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
-        await beforeConnect();
-        // 缓存复用：未到期重试不重复签发（防匿名签发端点被重连风暴放大调用）
-        expect(h.fetchCalls).toBe(1);
-        // 时间推进 20 分钟（>600s 有效期 + 30s 重签余量）：缓存到期，重连尝试重签携带新值
-        vi.setSystemTime(new Date('2026-10-03T00:20:00Z'));
-        h.tokenValue = 'tok-nurse-2';
-        await beforeConnect();
-        expect(h.fetchCalls).toBe(2);
-        expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-nurse-2');
-      } finally {
-        vi.useRealTimers();
-      }
+    it('beforeConnect 每次连接尝试经 ensure 把关（缓存/重签收敛 api 层单源）并携带最新令牌值', async () => {
+      nursingStomp.connect('1001');
+      await flushPromises();
+      const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
+      await beforeConnect();
+      // connect 建连把关一次 + beforeConnect 重连把关一次：每次连接尝试都经 ensure（到期/
+      // 换病区重签裁决在 api 层命中条件承载，W-68 收敛）
+      expect(h.ensureCalls).toBe(2);
+      expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-nurse');
+      // api 层重签后缓存值更新：重连尝试拼头携带新值（getCached 实时读取不固化）
+      h.tokenValue = 'tok-nurse-2';
+      await beforeConnect();
+      expect(h.ensureCalls).toBe(3);
+      expect(lastClient().connectHeaders['Authorization']).toBe('Bearer tok-nurse-2');
     });
 
     it('两次 connect 复用同一 Client 单例（首次 connect 惰性创建，不重复建连）', async () => {
@@ -207,6 +198,17 @@ describe('护士站大屏 STOMP 单例封装（web B.3-3）', () => {
       expect(h.subscriptions.at(-1)?.destination).toBe('/topic/nursing/board/1002');
     });
 
+    it('换病区重订阅透传当前 wardId 调 ensure（wardId 变化强制重签——WS 单病区防线衔接）', async () => {
+      nursingStomp.connect('1001');
+      await flushPromises();
+      // 换病区重订阅后重连路径必须按新病区签发：禁复用旧病区令牌订新病区（WS 防线会拒）
+      nursingStomp.subscribeBoard('1002', () => {});
+      const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
+      await beforeConnect();
+      expect(h.ensureWardIds[0]).toBe('1001');
+      expect(h.ensureWardIds.at(-1)).toBe('1002');
+    });
+
     it('断线 close 后重连 onConnect 重新落地订阅（stompjs 7.3.0 无自动重订阅，禁假连接）', async () => {
       nursingStomp.connect('1001');
       await flushPromises();
@@ -240,7 +242,7 @@ describe('护士站大屏 STOMP 单例封装（web B.3-3）', () => {
       // 竞态窗口模拟：令牌签发在飞（未 flush）即卸载断开——真实组件 onUnmounted 调用时序
       await nursingStomp.disconnect();
       await flushPromises();
-      expect(h.fetchCalls).toBe(1);
+      expect(h.ensureCalls).toBe(1);
       expect(h.constructorCalls).toBe(0);
       expect(h.activateCalls).toBe(0);
       expect(nursingStomp.connectionState.value).toBe('disconnected');
@@ -249,7 +251,7 @@ describe('护士站大屏 STOMP 单例封装（web B.3-3）', () => {
 
     it('空病区编码拒绝连接与订阅（异常上抛且不产生库订阅、不触发令牌签发）', () => {
       expect(() => nursingStomp.connect('')).not.toThrow();
-      expect(h.fetchCalls).toBe(0);
+      expect(h.ensureCalls).toBe(0);
       expect(h.constructorCalls).toBe(0);
       expect(() => nursingStomp.subscribeBoard('   ', () => {})).toThrow();
       expect(h.subscriptions).toHaveLength(0);
@@ -309,15 +311,14 @@ describe('护士站大屏 STOMP 单例封装（web B.3-3）', () => {
 
     it('令牌值禁入任何日志（web A.6 红线）：全部 info/warn/error 输出拼接后不得出现令牌值', async () => {
       h.tokenValue = 'tok-nurse-secret';
-      h.tokenExpiresIn = '-1';
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
-      // 覆盖拒建连分支（空病区）、签发成功（info 留痕仅有效期秒数）、重签失败与连接失败分支
+      // 覆盖拒建连分支（空病区）、连接成功留痕、重签失败与连接失败分支
       nursingStomp.connect('');
       nursingStomp.connect('1001');
       await flushPromises();
-      h.tokenError = new Error('签发端点不可用');
+      h.tokenReady = false;
       const beforeConnect = lastConfig()['beforeConnect'] as () => Promise<void>;
       await beforeConnect();
       (lastConfig()['onWebSocketClose'] as () => void)();

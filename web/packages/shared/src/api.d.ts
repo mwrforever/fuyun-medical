@@ -9222,7 +9222,9 @@ export interface operations {
     };
     bigscreenToken: {
         parameters: {
-            query?: never;
+            query?: {
+                wardId?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

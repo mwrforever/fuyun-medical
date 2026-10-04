@@ -67,10 +67,22 @@ function extractErrorCode(error: AxiosError): string | null {
   return null;
 }
 
-// 请求拦截器：仅注入 X-Trace-Id（每请求唯一 uuid，后端 TraceIdFilter 复用为 MDC 锚点）；
+/**
+ * traceId 生成（D-5 降级）：非安全上下文（HTTP 部署无 TLS）crypto.randomUUID 为
+ * undefined 时降级时间戳+随机串（bigscreen STOMP 侧先例同款；每 app 内嵌一份，勿抽
+ * shared——运行时导出超出顺带体量）。
+ */
+function generateTraceId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// 请求拦截器：仅注入 X-Trace-Id（每请求唯一，后端 TraceIdFilter 复用为 MDC 锚点）；
 // 免登录通道禁 Authorization 注入（匿名语义，见文件头）
 http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  config.headers['X-Trace-Id'] = crypto.randomUUID();
+  config.headers['X-Trace-Id'] = generateTraceId();
   return config;
 });
 
