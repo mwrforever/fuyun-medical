@@ -702,7 +702,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 摆药病区签收 */
+        /** 摆药病区签收（签收人=登录令牌身份） */
         post: operations["receivePlan"];
         delete?: never;
         options?: never;
@@ -1584,7 +1584,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 护理任务认领（待执行 → 执行中） */
+        /** 护理任务认领（待执行 → 执行中，认领人=登录令牌身份） */
         post: operations["claim"];
         delete?: never;
         options?: never;
@@ -1964,7 +1964,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 受理处置（REPORTED→HANDLING；I/II 级超时留痕不阻断） */
+        /** 受理处置（REPORTED→HANDLING；处置人=登录令牌身份；I/II 级超时留痕不阻断） */
         post: operations["handleAdverseEvent"];
         delete?: never;
         options?: never;
@@ -3421,6 +3421,23 @@ export interface paths {
         };
         /** 住院摆药计划分页查询 */
         get: operations["pagePlans"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pharmacy/dispense-plans/{no}/returnable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 住院可退明细读面 */
+        get: operations["returnable"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5142,7 +5159,7 @@ export interface components {
         };
         DispensePlanReceiveRequest: {
             /** @example 0 */
-            receivedBy: string;
+            receivedBy?: string;
         };
         DispensePlanDeliverRequest: {
             carrier?: string;
@@ -5689,7 +5706,7 @@ export interface components {
         };
         TaskClaimRequest: {
             /** @example 0 */
-            assigneeId: string;
+            assigneeId?: string;
         };
         NursingTaskCancelRequest: {
             reason: string;
@@ -5710,7 +5727,7 @@ export interface components {
         OverrideCheckRequest: {
             executionNo: string;
             /** @example 0 */
-            primaryAuthorizerId: string;
+            primaryAuthorizerId?: string;
             /** @example 0 */
             secondaryAuthorizerId: string;
             reason: string;
@@ -5901,7 +5918,7 @@ export interface components {
         };
         StartRequest: {
             /** @example 0 */
-            executorId: string;
+            executorId?: string;
             deviceId?: string;
             overrideTimeWindow?: boolean;
         };
@@ -5910,14 +5927,14 @@ export interface components {
         };
         NeedleOutRequest: {
             /** @example 0 */
-            executorId: string;
+            executorId?: string;
             /** Format: int32 */
             actualVolumeMl: number;
             wristbandCode: string;
         };
         FinishRequest: {
             /** @example 0 */
-            executorId: string;
+            executorId?: string;
             routeCheckResult?: string;
         };
         CheckRequest: {
@@ -6038,18 +6055,18 @@ export interface components {
         AdverseEventReturnRequest: {
             reason: string;
             /** @example 0 */
-            returnerId: string;
+            returnerId?: string;
         };
         AdverseEventHandleRequest: {
             /** @example 0 */
-            handlerId: string;
+            handlerId?: string;
             handlingNote?: string;
         };
         AdverseEventCloseRequest: {
             rcaNote?: string;
             correctiveAction?: string;
             /** @example 0 */
-            closedBy: string;
+            closedBy?: string;
         };
         CreateProductRequest: {
             productName: string;
@@ -7005,6 +7022,24 @@ export interface components {
             size?: string;
             /** @example 0 */
             total?: string;
+        };
+        DispensePlanReturnableVO: {
+            planNo?: string;
+            dispenseNo?: string;
+            dispenseStatus?: string;
+            /** @example 0 */
+            patientId?: string;
+            visitId?: string;
+            wardId?: string;
+            items?: components["schemas"]["ReturnableItem"][];
+        };
+        ReturnableItem: {
+            itemSeq?: string;
+            itemCode?: string;
+            batchNo?: string;
+            issuedQty?: string;
+            returnedQty?: string;
+            returnableQty?: string;
         };
         DispensePlanLabelVO: {
             planNo?: string;
@@ -13903,6 +13938,28 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["PageResultDispensePlanVO"];
+                };
+            };
+        };
+    };
+    returnable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                no: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DispensePlanReturnableVO"];
                 };
             };
         };
