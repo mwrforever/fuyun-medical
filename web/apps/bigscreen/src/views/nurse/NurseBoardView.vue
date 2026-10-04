@@ -45,7 +45,7 @@ import type {
 } from '@/utils/nursingMessage';
 import type { IotAlarmFrame } from '@/types/iot';
 
-/** 病区 ID 合法形态：纯数字字符串（CALL_TRIGGERED 的 iot 数字串与护理编码同源直订零映射） */
+/** 病区 ID 合法形态：纯数字字符串——CALL_TRIGGERED 帧按 iot 数字病区 id 路由、其余四类按护理编码路由；依赖 org_code 与 sys_org id 数字串同值部署约定（演示 '1001' 同值成立）；失配时 CALL_TRIGGERED 帧静默丢失——映射面收口归 M16 联调冻结（工单 W-74） */
 const WARD_ID_PATTERN = /^\d+$/;
 
 /** 路由 query 缺省病区（演示病区，与运营大屏示例值一致；书签化部署按 query 覆盖） */

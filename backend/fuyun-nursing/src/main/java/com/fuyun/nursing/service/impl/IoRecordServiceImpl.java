@@ -154,8 +154,8 @@ public class IoRecordServiceImpl extends ServiceImpl<IoRecordMapper, IoRecord> i
         row.setVisitId(req.visitId());
         row.setPatientId(inWard.patientId());
         row.setWardId(inWard.wardId());
-        // GC25 红线：发生时间一律服务器时间（不设入参组件）
-        row.setOccurAt(OffsetDateTime.now());
+        // GC25 红线：发生时间一律服务器时间（不设入参组件）；钟面钉北京时区（W-65 时区纪律）
+        row.setOccurAt(OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ));
         row.setIoType(ioType.getCode());
         row.setItemCode(item.getCode());
         // itemName 服务端按词表冗余落库（字典未建时前端直显，禁客户端伪造展示名）

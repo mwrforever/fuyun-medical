@@ -81,8 +81,8 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
   }
 
   /**
-   * 提交上报：必填面逐项显式校验（零出网，服务端同语义兜底）→ 出网（occurredAt 本地时点
-   * 转 ISO 带时区偏移）→ 关窗回第一页重拉。入口在途早退守卫防双击重复上报。
+   * 提交上报：必填面逐项显式校验（零出网，服务端同语义兜底）→ 出网（occurredAt 北京
+   * 钟面钉面转 ISO 带时区偏移）→ 关窗回第一页重拉。入口在途早退守卫防双击重复上报。
    */
   async function onReport(): Promise<void> {
     if (reporting.value) {
@@ -120,9 +120,11 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         severityClass: form.severityClass,
         severityGrade: form.severityGrade,
         wardId: form.wardId,
-        // datetime-local 本地串无时区偏移，后端 OffsetDateTime 解析必 400——new Date 按本地
-        // 时区解析后转 UTC ISO（带 Z 偏移）出网（DischargeManageView 同场景先例）
-        occurredAt: new Date(form.occurredAt).toISOString(),
+        // datetime-local 本地串无时区偏移，后端 OffsetDateTime 解析必 400——W-70① 裁定该值
+        // 为用户录入的北京钟面墙钟（HIS 用户面语义，不良事件 I/II 级 24h 时限计算基准），
+        // 显式拼 +08:00 钉面解析后转 UTC ISO 出网（先例口径=DischargeManageView onCreate
+        // 同款 +08:00 钉面——非北京客户端发生时点不随本地时区漂移）
+        occurredAt: new Date(`${form.occurredAt}+08:00`).toISOString(),
         eventSummary: form.eventSummary.trim(),
         handlingNote: form.handlingNote.trim() === '' ? undefined : form.handlingNote.trim(),
         visitId: form.visitId.trim() === '' ? undefined : form.visitId.trim(),

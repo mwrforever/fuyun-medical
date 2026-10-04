@@ -1,6 +1,7 @@
 package com.fuyun.nursing.service.impl;
 
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
+import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
@@ -456,7 +457,10 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
      * @param rows 待判定的任务行清单（读路径返回集），非空；方法内按 CAS 结果原位回写
      */
     private void markOverdueLazily(List<NursingTask> rows) {
-        OffsetDateTime threshold = OffsetDateTime.now().minusMinutes(properties.taskOverdueMinutes());
+        // 阈值基准钉北京钟面（TaskOverdueServiceImpl 同域口径统一；now(tz) 与 now() 同
+        // instant，阈值比对零语义变化，纯纪律统一）
+        OffsetDateTime threshold =
+                OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).minusMinutes(properties.taskOverdueMinutes());
         for (NursingTask row : rows) {
             boolean active = TaskStatus.PENDING.getCode().equals(row.getStatus())
                     || TaskStatus.IN_PROGRESS.getCode().equals(row.getStatus());
@@ -489,7 +493,10 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
      * @param rows 批查返回的全部任务行（跨患者），非空；守卫命中行按批量 CAS 结果原位回写
      */
     private void markOverdueLazilyBatch(List<NursingTask> rows) {
-        OffsetDateTime threshold = OffsetDateTime.now().minusMinutes(properties.taskOverdueMinutes());
+        // 阈值基准钉北京钟面（与 markOverdueLazily 同源口径；now(tz) 与 now() 同 instant，
+        // 阈值比对零语义变化，纯纪律统一）
+        OffsetDateTime threshold =
+                OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).minusMinutes(properties.taskOverdueMinutes());
         List<NursingTask> guarded = new ArrayList<>();
         for (NursingTask row : rows) {
             boolean active = TaskStatus.PENDING.getCode().equals(row.getStatus())

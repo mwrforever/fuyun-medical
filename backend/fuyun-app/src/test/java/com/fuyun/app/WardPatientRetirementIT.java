@@ -1,6 +1,7 @@
 package com.fuyun.app;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
@@ -191,7 +192,8 @@ class WardPatientRetirementIT extends FuyunStackITBase {
                 break;
             }
         }
-        throw new IllegalStateException("投影行逻辑删超时：" + projectionRow());
+        // E-2：超时即本处红，防失败漂移至下游断言
+        fail("等待超时：REMOVED 投影行未在时限内删除（" + projectionRow() + "）");
     }
 
     /** 一览清单行定位（GC39 六字段断言取数面）。 */

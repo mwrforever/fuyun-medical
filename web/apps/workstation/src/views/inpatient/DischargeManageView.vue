@@ -73,14 +73,18 @@ async function onCreate(): Promise<void> {
     return;
   }
   const rawTime = createForm.value.expectDischargeAt;
-  const parsed = rawTime === '' ? null : new Date(rawTime);
+  // W-70①：钉北京钟面防时区漂移——datetime-local 值是用户录入的北京钟面墙钟（HIS 用户面
+  // 语义），裸交 new Date 会按运行环境本地时区解析致时点漂移；显式拼 +08:00 偏移钉面
+  // （中国无夏令时，偏移恒定，北京时区客户端行为不变），跨时区客户端出网时点唯一
+  // （Task 17 修复环 formatWith 同款北京钉面口径）
+  const parsed = rawTime === '' ? null : new Date(`${rawTime}+08:00`);
   if (parsed === null || Number.isNaN(parsed.getTime())) {
     void ElMessage.warning('请选择预出院时间');
     return;
   }
   creating.value = true;
   try {
-    // datetime-local 本地时点 → ISO date-time（OffsetDateTime 契约可解析形态）
+    // 北京钟面墙钟（+08:00 钉面解析）→ ISO date-time（OffsetDateTime 契约可解析形态）
     const saved = await discharge.create(createForm.value.visitId.trim(), {
       expectDischargeAt: parsed.toISOString(),
       dischargeWay: createForm.value.dischargeWay,

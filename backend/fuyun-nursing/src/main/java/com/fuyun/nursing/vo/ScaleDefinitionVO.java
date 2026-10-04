@@ -23,7 +23,7 @@ public record ScaleDefinitionVO(
         String totalRule) {
 
     /**
-     * 常量定义→出参静态工厂（code 逐字透传，禁 MapStruct——backend 宪法 A.1-8 先例）。
+     * 常量定义→出参静态工厂（code 逐字透传，禁 MapStruct——backend 宪法 A.7-4 先例）。
      *
      * @param definition 量表冻结定义，非空；来源：NursingScaleConstants
      * @return 量表定义出参，非空
