@@ -2,6 +2,7 @@ package com.fuyun.nursing.config;
 
 import com.fuyun.nursing.internal.NurseBoardPushListener;
 import com.fuyun.nursing.internal.NursingConnectAuthInterceptor;
+import com.fuyun.nursing.internal.NursingSubscribeWardInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -12,14 +13,17 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 
 /**
  * 护理 STOMP 端点装配（FU-M05-08，Task 11——照抄 IotWebSocketConfig/OutpatientWebSocketConfig
- * 形态）：/ws/nursing 纯 WebSocket 端点 + 内存 SimpleBroker 的集中配置点。
+ * 形态；PR-4C Task 7 增 SUBSCRIBE 病区防线）：/ws/nursing 纯 WebSocket 端点 + 内存 SimpleBroker
+ * 的集中配置点。
  *
  * <p>端点：{@code /ws/nursing}（根定位层 §7 统一 /ws/** 前缀，nginx /ws/ 升级路由已就绪）。
- * 鉴权挂载于 clientInboundChannel 的 {@link NursingConnectAuthInterceptor}（M01 令牌 CONNECT
- * 帧校验——登录 access 与 bigscreen 匿名短期令牌同构两态通吃，鉴权形态实测结论见其 javadoc）；
- * 升级端点不挂 HandshakeInterceptor（浏览器原生 WebSocket 无法携带自定义 HTTP 头，stompjs
- * connectHeaders 只进入建连后的 CONNECT 帧——iot PR-5 Finding 1 同源结论）。纯 WebSocket
- * 传输不做 SockJS fallback（客户端仅 bigscreen 原生 WebSocket）。
+ * 鉴权挂载于 clientInboundChannel 的双拦截器序（A-2）：{@link NursingConnectAuthInterceptor}
+ * 在前（M01 令牌 CONNECT 帧校验——登录 access 与 bigscreen 匿名短期令牌同构两态通吃，通过即
+ * 缓存令牌主体进会话属性）+ {@link NursingSubscribeWardInterceptor} 在后（board 主题族病区
+ * 防线——哨兵单病区/登录态当班绑定集 fail-closed，消费前者缓存的主体）；升级端点不挂
+ * HandshakeInterceptor（浏览器原生 WebSocket 无法携带自定义 HTTP 头，stompjs connectHeaders
+ * 只进入建连后的 CONNECT 帧——iot PR-5 Finding 1 同源结论）。纯 WebSocket 传输不做 SockJS
+ * fallback（客户端仅 bigscreen 原生 WebSocket）。
  *
  * <p>消息代理：内存 SimpleBroker 订阅前缀 /topic（/topic/nursing/board/{wardId} 大屏统一
  * 信封推送，NurseBoardPushListener 唯一出口）。推送时序=事务提交后 AFTER_COMMIT +
@@ -34,24 +38,32 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
  * NurseBoardPushListener 注入消费。
  *
  * <p>com.fuyun.nursing 包不在 @SpringBootApplication 扫描范围（com.fuyun.app.*）内，本配置经
- * fuyun-app NursingConfig @Import 生效（不放宽扫描，宪法 B.1/B.4-12）；@Import 引入帧级鉴权
- * 拦截器（构造器注入 TokenVerifier，宪法 A.1-7）与大屏推送监听器（WS 推送执行点）。
+ * fuyun-app NursingConfig @Import 生效（不放宽扫描，宪法 B.1/B.4-12）；@Import 引入帧级双
+ * 拦截器（CONNECT 鉴权注入 TokenVerifier、SUBSCRIBE 防线注入 IWardAccessService，构造器注入
+ * 宪法 A.1-7）与大屏推送监听器（WS 推送执行点）。
  */
 @Configuration
 @EnableWebSocketMessageBroker
-@Import({NursingConnectAuthInterceptor.class, NurseBoardPushListener.class})
+@Import({NursingConnectAuthInterceptor.class, NursingSubscribeWardInterceptor.class, NurseBoardPushListener.class})
 public class NursingWebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
-    /** CONNECT 帧鉴权拦截器：挂载于 clientInboundChannel（未授权 CONNECT 被拒，无数据暴露） */
+    /** CONNECT 帧鉴权拦截器：双拦截器序第一位（鉴权通过即缓存令牌主体进会话属性） */
     private final NursingConnectAuthInterceptor connectAuthInterceptor;
+
+    /** SUBSCRIBE 病区防线拦截器：双拦截器序第二位（消费 CONNECT 阶段缓存的主体限行 board 订阅） */
+    private final NursingSubscribeWardInterceptor subscribeWardInterceptor;
 
     /**
      * 全参构造器（装配归 NursingConfig @Import，backend 宪法 B.1）。
      *
-     * @param connectAuthInterceptor CONNECT 帧鉴权拦截器，非空；来源：本配置 @Import 构造器注入
+     * @param connectAuthInterceptor   CONNECT 帧鉴权拦截器，非空；来源：本配置 @Import 构造器注入
+     * @param subscribeWardInterceptor SUBSCRIBE 病区防线拦截器，非空；来源：本配置 @Import 构造器注入
      */
-    public NursingWebSocketConfig(NursingConnectAuthInterceptor connectAuthInterceptor) {
+    public NursingWebSocketConfig(
+            NursingConnectAuthInterceptor connectAuthInterceptor,
+            NursingSubscribeWardInterceptor subscribeWardInterceptor) {
         this.connectAuthInterceptor = connectAuthInterceptor;
+        this.subscribeWardInterceptor = subscribeWardInterceptor;
     }
 
     /** 注册 /ws/nursing STOMP 端点（纯 WebSocket 无 SockJS；无握手层拦截器，鉴权见帧级拦截器）。 */
@@ -60,10 +72,10 @@ public class NursingWebSocketConfig implements WebSocketMessageBrokerConfigurer 
         registry.addEndpoint("/ws/nursing");
     }
 
-    /** CONNECT 帧级鉴权拦截器挂载 clientInboundChannel（iot/outpatient 侧同构）。 */
+    /** 双拦截器序挂载 clientInboundChannel：CONNECT 鉴权在前（注入会话主体），SUBSCRIBE 病区防线在后（消费主体）——A-2。 */
     @Override
     public void configureClientInboundChannel(ChannelRegistration registration) {
-        registration.interceptors(connectAuthInterceptor);
+        registration.interceptors(connectAuthInterceptor, subscribeWardInterceptor);
     }
 
     /** 内存 SimpleBroker 承载 /topic/** 订阅（三 configurer 同值幂等——共存去重依据）。 */
