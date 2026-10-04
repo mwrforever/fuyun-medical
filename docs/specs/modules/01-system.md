@@ -90,7 +90,8 @@
 
 **REST（节选）**：
 - `POST /api/v1/system/auth/login|logout|refresh`
-- `POST /api/v1/system/auth/bigscreen-token`（匿名白名单：按大屏哨兵会话签发 5 分钟短期单 access 订阅令牌，供 web-bigscreen /ws/outpatient STOMP CONNECT 帧鉴权运行期获取——BUG-19 删除构建期 VITE_ 内联；与 HTTP 认证共用校验链的过渡态随 P2 WS 通道演进收敛，锚 TASK.md W-39）
+- `POST /api/v1/system/auth/bigscreen-token`（匿名白名单：按大屏哨兵会话签发 5 分钟短期单 access 订阅令牌，供 web-bigscreen /ws/outpatient STOMP CONNECT 帧鉴权运行期获取——BUG-19 删除构建期 VITE_ 内联；锚 TASK.md W-39；PR-4C 起增可选 query 参数 `wardId`——病区编码，格式 `^[A-Za-z0-9_-]{1,64}$`、空白归一 null：不携=泛哨兵会话（候诊屏，无病区绑定），携值=单病区哨兵会话，wardId 入会话随令牌可达下游防线；令牌校验 api 面同步新增 `verifyAccessPrincipal` 访问主体解析，返回 userId/loginName/wardId 主体摘要供 /ws/nursing 订阅病区防线等消费方取用，失败返回 null 防枚举（口径同访问令牌校验））
+  - **哨兵 REST 限行（PR-4C W-39 收口）**：大屏哨兵令牌（哨兵登录名会话）REST 面收窄到三个只读看板端点（病区护理板快照、病区输液板快照、设备告警列表），且要求路径尾段或 query 参数 wardId 与令牌绑定病区一致——越面或病区不符一律 403 SYS-1032（大屏匿名令牌越权访问只读看板端点外路径或病区不匹配）；泛哨兵（未携病区签发）无一致可校、三端点全拒（fail-closed）；与 HTTP 认证共用校验链的过渡态就此收窄为匿名仅达三读端点
 - `GET/POST/PUT /api/v1/system/orgs|users|roles|grants`（管理端 CRUD）
 - `POST /api/v1/system/practice/check`（业务校验，被 M03/M04/M06/M10 高频调用）
 - `GET /api/v1/system/dicts/{type}?version=`（业务读字典，带缓存头）
