@@ -232,6 +232,23 @@ class AdverseEventServiceImplTest {
     }
 
     @Test
+    @DisplayName("W-72 实名守卫：令牌身份非空但非数字拒 NS-1019（评审 E-1 补覆盖——fail-closed）")
+    void reportRejectsNonNumericOperatorContextForRealName() {
+        // 非空非数字令牌（评审 E-1：该守卫分支此前零覆盖，既有用例只测 clear() 缺失路径）
+        OperatorContextHolder.set("operator-x");
+
+        assertThatThrownBy(() -> service.report(
+                        report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), REPORTER, false)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
+                });
+        // 令牌身份不可解析为员工 ID 即拒绝：零落库零事件（与缺失路径同款 fail-closed 面）
+        verify(mapper, never()).insert(any(AdverseEvent.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
     @DisplayName("W-72 处置/关闭/退回：留痕人一律令牌身份（请求体差异值忽略）")
     void handleCloseReturnUseTokenIdentity() {
         // 处置：请求体 handlerId=888（差异值），handler_id=令牌 REPORTER

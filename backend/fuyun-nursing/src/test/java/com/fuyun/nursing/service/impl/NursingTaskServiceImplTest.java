@@ -624,8 +624,19 @@ class NursingTaskServiceImplTest {
 
     @Test
     @DisplayName("W-72 认领守卫：操作者上下文缺失/非数字拒 NS-1019（fail-closed——认领人须可定位）")
-    void claimRejectsMissingOperatorContext() {
+    void claimRejectsMissingOrNonNumericOperatorContext() {
+        // 缺失路径：clear() 后无令牌
         OperatorContextHolder.clear();
+        assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(9001L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(taskMapper, never()).casClaim(any(), any(), any());
+
+        // 非空非数字路径（评审 E-1 补覆盖：DisplayName 原只实跑缺失面虚报非数字，本块补齐后如实）
+        OperatorContextHolder.set("operator-x");
         assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(9001L)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
