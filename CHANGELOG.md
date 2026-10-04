@@ -2,6 +2,17 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-04 · P2 PR-4C 立项（大屏通道与病区防线包）
+
+- 占用迁移号 V1114（nurse_assignment 演示/运维账号绑定行种子——先记再占，全局最大 V1113）。
+- 范围：W-39 哨兵 REST 限行（三端点 allowlist+wardId 一致性+SYS-1032）+令牌携 wardId
+  （SessionData/SessionUser 扩展+TokenPrincipal api 面）+W-68 bigscreen 令牌附调+A-2 WS
+  SUBSCRIBE 病区防线（哨兵单病区+登录态绑定集）+W-40 方案 A fail-closed（九读端点守卫
+  NS-1028+绑定行种子同批）+D-5 三 app randomUUID 降级+D-4 大屏 WS 增量行 TTL。
+- 裁决依据：总纲 D-29/D-31 与评审 A-5（组合①+②，禁白名单化）；r1 §3.4 灰度语义已被 D-29 推翻
+  （无 ACTIVE 绑定行一律 403）；范围边界=iot/ward 域 Long 型 wardId 端点不挂守卫（双标识空间
+  W-74 在案，留 PR-4D/W-74 收敛）。
+
 ## 2026-10-04 · PR-4B 五路评审修复环：两门槛项收口 + W-88/W-89 登记
 
 - **C-F1（85）**：退药数量 scale≤3 前后端双钉——后端 DispensePlanServiceImpl.parseReturnQuantity
