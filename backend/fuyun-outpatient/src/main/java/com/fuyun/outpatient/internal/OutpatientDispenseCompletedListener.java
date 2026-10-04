@@ -13,7 +13,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 /**
  * 发药完成回流消费侧（pharmacy.dispense.completed，V702 id 28 既有登记；「已发药」派生镜像
  * 唯一回流通道）：RX_REF 引用行 dispense_status=DISPENSED 镜像（引用行状态机五值不变，Spec :142
- * 医生站/患者端可见已发药）业务分发面。载荷锚守卫归 IChargingService.onDispenseCompleted，本
+ * 医生站/患者端可见已发药）业务分发面；住院行（m04OrderNo 在位）判别子跳过——住院计费归
+ * M13 路径，收费链回流语义不适用（W-67a）。载荷锚守卫归 IChargingService.onDispenseCompleted，本
  * 监听器仅做编排所消费组件（rxNo/dispenseNo；lines 组件归 M13 占用面，本编排不消费不解析）解析
  * 与三段式委托。归 internal/，Bean 注册点 OutpatientMessagingConfig @Import。
  */
@@ -52,12 +53,23 @@ public class OutpatientDispenseCompletedListener {
 
     /**
      * 回流业务体（包级可见供单测直驱；@RabbitListener 入口仅做 consume 委托）：V702 id 28 载荷
-     * 所消费组件解析后委托收费编排。
+     * 所消费组件解析后委托收费编排；住院行（m04OrderNo 在位）判别子跳过——门诊收费链回流
+     * 语义不适用（住院计费归 M13 InpatientChargeService 路径），info 留痕直接确认（W-67a）。
      *
      * @param envelope 已解码信封，非空
      */
     void handleDispenseCompleted(EventEnvelope envelope) {
         JsonNode payload = envelope.payload();
+        // W-67 住院行判别子跳过：住院摆药签收（m04OrderNo 在位）不归门诊收费链回流，
+        // 住院计费归 M13 InpatientChargeService 路径——不抛错走死信，info 留痕直接确认
+        String m04OrderNo = payload.path("m04OrderNo").asText(null);
+        if (m04OrderNo != null && !m04OrderNo.isBlank()) {
+            log.info(
+                    "dispense.completed 住院行跳过门诊收费链回流：dispenseNo={}，m04OrderNo={}",
+                    payload.path("dispenseNo").asText(""),
+                    m04OrderNo);
+            return;
+        }
         chargingService.onDispenseCompleted(
                 payload.path("rxNo").asText(""), payload.path("dispenseNo").asText(""));
     }

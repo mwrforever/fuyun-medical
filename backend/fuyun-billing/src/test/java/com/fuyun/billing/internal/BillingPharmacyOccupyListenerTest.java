@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.messaging.IdempotentConsumerSupport;
@@ -17,8 +18,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * billing 占用回写监听器单测：completed→DISPENSED、returned(fullReturn)→NONE、
- * 部分退保持、缺 rxNo 不合规帧抛出（死信留痕）。业务体为包级 handle 方法，@RabbitListener
- * 入口仅做 consume 委托（模板三段式已在 IT 面验证），单测直驱 handle 等价路径。
+ * 部分退保持、缺 rxNo 不合规帧抛出（死信留痕）、住院行判别子跳过（W-67a）。业务体为包级
+ * handle 方法，@RabbitListener 入口仅做 consume 委托（模板三段式已在 IT 面验证），
+ * 单测直驱 handle 等价路径。
  */
 @ExtendWith(MockitoExtension.class)
 class BillingPharmacyOccupyListenerTest {
@@ -76,5 +78,31 @@ class BillingPharmacyOccupyListenerTest {
                         .handleCompleted(envelope("pharmacy.dispense.completed", "{\"dispenseNo\":\"D1\"}")))
                 .isInstanceOf(IllegalStateException.class);
         verify(feeRecordMapper, never()).casMarkDispensed(any());
+    }
+
+    @Test
+    @DisplayName("住院行 dispense.completed（rxNo/prescriptionId 双缺席+m04OrderNo 在位）：占位回写跳过不抛（住院计费归 M13 路径）")
+    void skipsInpatientDispenseCompletedWithoutOccupancyWrite() throws Exception {
+        // 住院行载荷（V1111 扩列形态）：m04OrderNo 在位即住院判别子，门诊占位回写语义不适用
+        new BillingPharmacyOccupyListener(consumerSupport, feeRecordMapper)
+                .handleCompleted(envelope(
+                        "pharmacy.dispense.completed",
+                        "{\"dispenseNo\":\"DP-1\",\"patientId\":9,\"visitId\":\"I2026100500001\","
+                                + "\"dispenseType\":\"INPATIENT\",\"lines\":[],\"m04OrderNo\":\"M04-001\","
+                                + "\"wardId\":\"W01\",\"dispensePlanNo\":\"DPN-1\"}"));
+
+        // 跳过=不触达占用回写链（方法直返即 ack，住院计费归 M13 InpatientChargeService 路径）
+        verifyNoInteractions(feeRecordMapper);
+    }
+
+    @Test
+    @DisplayName("门诊行（rxNo 在位）照常走占位回写——分流不误伤既有路径")
+    void outpatientRowStillRoutesToOccupancyWrite() throws Exception {
+        new BillingPharmacyOccupyListener(consumerSupport, feeRecordMapper)
+                .handleCompleted(envelope(
+                        "pharmacy.dispense.completed",
+                        "{\"rxNo\":\"R20261005000001\",\"dispenseNo\":\"D1\",\"lines\":[]}"));
+
+        verify(feeRecordMapper).casMarkDispensed("R20261005000001");
     }
 }
