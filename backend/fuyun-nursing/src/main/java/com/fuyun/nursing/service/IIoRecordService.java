@@ -50,7 +50,7 @@ public interface IIoRecordService extends IService<IoRecord> {
      * @param executionNo    执行单号（source_ref 来源引用），非空；来源：拔针路径参数
      * @param actualVolumeMl 实际输注量 ml（护士确认值，0~5000 已守卫），非空；来源：拔针请求体
      * @param occurredAt     入量发生时点（=拔针时点，服务器动作钟面），非空
-     * @param executorId     拔针护士员工 ID（recorder 落值），非空；来源：拔针请求体
+     * @param executorId     拔针护士员工 ID（recorder 落值），非空；来源：服务端令牌身份（W-72）
      * @throws BizException  NS-1004（409 患者不在区——拔针事务整体回滚，fail-closed）
      */
     void appendInfusionIntake(

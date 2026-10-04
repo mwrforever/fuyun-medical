@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -265,12 +266,13 @@ class OrderExecutionOperateServiceImplTest {
         NursingWardConfig config = new NursingWardConfig();
         config.setExecuteTimeWindowMinutes(10);
         when(wardConfigMapper.selectOne(any())).thenReturn(config);
-        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(1);
+        // W-72：casStart 落令牌身份（请求体 EXECUTOR 兼容保留忽略）
+        when(executionMapper.casStart(eq(EXEC), any(), eq(NURSE), any())).thenReturn(1);
 
         OrderExecutionVO vo = service.start(EXEC, new StartRequest(EXECUTOR, null, null));
 
         assertThat(vo.status()).isEqualTo(ExecutionStatus.EXECUTING.getCode());
-        verify(executionMapper).casStart(eq(EXEC), any(), eq(EXECUTOR), any());
+        verify(executionMapper).casStart(eq(EXEC), any(), eq(NURSE), any());
     }
 
     @Test
@@ -280,7 +282,8 @@ class OrderExecutionOperateServiceImplTest {
         target.setPlanTime(OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
         when(executionMapper.selectOne(any())).thenReturn(target);
         when(wardConfigMapper.selectOne(any())).thenReturn(null);
-        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(1);
+        // W-72：casStart 落令牌身份（请求体 EXECUTOR 兼容保留忽略）
+        when(executionMapper.casStart(eq(EXEC), any(), eq(NURSE), any())).thenReturn(1);
 
         OrderExecutionVO vo = service.start(EXEC, new StartRequest(EXECUTOR, "PUMP-01", true));
 
@@ -311,11 +314,13 @@ class OrderExecutionOperateServiceImplTest {
         assertThat(payload.executionNo()).isEqualTo(EXEC);
         assertThat(payload.m04PlanNo()).isEqualTo(PLAN_NO);
         assertThat(payload.m04OrderNo()).isEqualTo(ORDER_NO);
-        assertThat(payload.executorId()).isEqualTo(EXECUTOR);
+        // W-72：回执载荷执行人=令牌身份（请求体 EXECUTOR 兼容保留忽略）
+        assertThat(payload.executorId()).isEqualTo(NURSE);
         assertThat(payload.finishedAt()).isNotNull();
         // 主路径：事务提交后（无事务环境直调——单测形态）进程内回签
         verify(confirmPort).executeConfirm(eq(PLAN_NO), confirmCaptor.capture());
-        assertThat(confirmCaptor.getValue().executorId()).isEqualTo(EXECUTOR);
+        // W-72：回签请求执行人=令牌身份（请求体 EXECUTOR 兼容保留忽略）
+        assertThat(confirmCaptor.getValue().executorId()).isEqualTo(NURSE);
         assertThat(confirmCaptor.getValue().executedAt()).isNotNull();
         assertThat(confirmCaptor.getValue().routeCheckResult()).isEqualTo("静脉通路通畅");
         verify(executionMapper).casMarkConfirmStatus(eq(EXEC), eq("PENDING"), eq("CONFIRMED"), any());
@@ -380,14 +385,15 @@ class OrderExecutionOperateServiceImplTest {
         // GENERIC 型开始：不触达输液域（无监测挂接链）
         OrderExecution generic = row(ExecutionStatus.CHECKED, ExecutionType.GENERIC, null);
         when(executionMapper.selectOne(any())).thenReturn(generic);
-        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(1);
+        // W-72：casStart 落令牌身份（请求体 EXECUTOR 兼容保留忽略）
+        when(executionMapper.casStart(eq(EXEC), any(), eq(NURSE), any())).thenReturn(1);
         service.start(EXEC, new StartRequest(EXECUTOR, null, null));
         verifyNoInteractions(infusionService);
 
         // INFUSION 型开始：CAS 成功后段扩展点委托（row 已同步 EXECUTING/startedAt，deviceId 透传）
         OrderExecution infusion = row(ExecutionStatus.CHECKED, ExecutionType.INFUSION, null);
         when(executionMapper.selectOne(any())).thenReturn(infusion);
-        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(1);
+        when(executionMapper.casStart(eq(EXEC), any(), eq(NURSE), any())).thenReturn(1);
 
         service.start(EXEC, new StartRequest(EXECUTOR, "PUMP-01", null));
 
@@ -413,17 +419,18 @@ class OrderExecutionOperateServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(ExecutionStatus.COMPLETED.getCode());
         assertThat(vo.needleOutAt()).isNotNull();
-        // 腕带核对 PASS 流水（拔针护士为核对主体）
+        // 腕带核对 PASS 流水（拔针护士为核对主体——W-72：一律令牌身份）
         verify(checkLogMapper).insert(checkLogCaptor.capture());
         assertThat(checkLogCaptor.getValue().getCheckType()).isEqualTo("WRISTBAND");
         assertThat(checkLogCaptor.getValue().getCheckResult()).isEqualTo("PASS");
-        assertThat(checkLogCaptor.getValue().getOperatorId()).isEqualTo(EXECUTOR);
+        assertThat(checkLogCaptor.getValue().getOperatorId()).isEqualTo(NURSE);
         // 拔针完成 CAS+挂接收口 CAS（双时点同刻）
         verify(executionMapper).casNeedleOut(eq(EXEC), any(), any());
         verify(monitorLinkMapper).casEnd(eq(EXEC), any(), any());
         // 自动入量行：INFUSION_AUTO/IV_FLUID 维度经出入量服务承载（quantity=实际输注量，occurAt=拔针时点）
+        // W-72：入量执行人=令牌身份（请求体 EXECUTOR 兼容保留忽略）
         verify(ioRecordService)
-                .appendInfusionIntake(eq(VISIT), eq(EXEC), eq(250), any(OffsetDateTime.class), eq(EXECUTOR));
+                .appendInfusionIntake(eq(VISIT), eq(EXEC), eq(250), any(OffsetDateTime.class), eq(NURSE));
         // 双事件：infusion.completed（id 63 四字段）+ order-execution.completed（id 64 回执）
         verify(events, times(2)).publishEvent(eventCaptor.capture());
         NursingDomainEvent infusionEvent =
@@ -438,8 +445,9 @@ class OrderExecutionOperateServiceImplTest {
                 (NursingDomainEvent) eventCaptor.getAllValues().get(1);
         assertThat(receiptEvent.eventType()).isEqualTo(NursingMessagingConstants.EVENT_ORDER_EXECUTION_COMPLETED);
         // 回签主路径（无事务环境直调——单测形态）：executedAt=拔针时点，routeCheckResult 无来源透空
+        // W-72：回签请求执行人=令牌身份（请求体 EXECUTOR 兼容保留忽略）
         verify(confirmPort).executeConfirm(eq(PLAN_NO), confirmCaptor.capture());
-        assertThat(confirmCaptor.getValue().executorId()).isEqualTo(EXECUTOR);
+        assertThat(confirmCaptor.getValue().executorId()).isEqualTo(NURSE);
         assertThat(confirmCaptor.getValue().executedAt()).isNotNull();
         verify(executionMapper).casMarkConfirmStatus(eq(EXEC), eq("PENDING"), eq("CONFIRMED"), any());
     }
@@ -526,6 +534,70 @@ class OrderExecutionOperateServiceImplTest {
         verify(executionMapper, never()).casFinish(any(), any(), any());
         verifyNoInteractions(events);
         verifyNoInteractions(confirmPort);
+    }
+
+    // ===================== W-72 操作人服务端强制（令牌身份锁定用例） =====================
+
+    @Test
+    @DisplayName("W-72 start：请求体 executorId 被忽略，一律以令牌身份落库与出参")
+    void startUsesTokenExecutorIgnoringRequestBody() {
+        // 行夹具与 stub 循既有 start 成功用例（④）同款；请求体传 EXECUTOR(9)、令牌为 NURSE(1001)
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.CHECKED, ExecutionType.GENERIC, null));
+        when(executionMapper.casStart(eq(EXEC), any(), eq(NURSE), any())).thenReturn(1);
+
+        OrderExecutionVO vo = service.start(EXEC, new StartRequest(EXECUTOR, null, null));
+
+        assertThat(vo.executorId()).as("执行人=令牌身份（W-72）").isEqualTo(NURSE);
+        verify(executionMapper).casStart(eq(EXEC), any(), eq(NURSE), any());
+    }
+
+    @Test
+    @DisplayName("W-72 finish：回执载荷与回签请求的 executorId=令牌身份（请求体值忽略）")
+    void finishUsesTokenExecutorInReceiptAndConfirm() {
+        // 行夹具 stub 同既有 ⑤ 成功用例；请求体传 EXECUTOR(9)、令牌为 NURSE(1001)
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.GENERIC, null));
+        when(executionMapper.casFinish(eq(EXEC), any(), any())).thenReturn(1);
+
+        service.finish(EXEC, new FinishRequest(EXECUTOR, null));
+
+        // id 64 回执：载荷执行人=令牌身份（循 ⑤ 断言锚的事件捕获形态）
+        verify(events).publishEvent(eventCaptor.capture());
+        OrderExecutionCompletedPayload payload =
+                (OrderExecutionCompletedPayload) ((NursingDomainEvent) eventCaptor.getValue()).payload();
+        assertThat(payload.executorId()).as("回执载荷执行人=令牌身份（W-72）").isEqualTo(NURSE);
+        // M04 回签：请求执行人=令牌身份（循 ⑤ 断言锚的端口捕获形态）
+        verify(confirmPort).executeConfirm(eq(PLAN_NO), confirmCaptor.capture());
+        assertThat(confirmCaptor.getValue().executorId())
+                .as("回签请求执行人=令牌身份（W-72）")
+                .isEqualTo(NURSE);
+    }
+
+    @Test
+    @DisplayName("W-72 needleOut：核对流水 operator_id 与自动入量/回签执行人=令牌身份")
+    void needleOutUsesTokenExecutorInCheckLogAndIntake() {
+        // 行夹具 stub 同既有 T6② 拔针成功用例；请求体传 EXECUTOR(9)、令牌为 NURSE(1001)
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.EXECUTING, ExecutionType.INFUSION, null));
+        when(executionMapper.casNeedleOut(eq(EXEC), any(), any())).thenReturn(1);
+        when(monitorLinkMapper.casEnd(eq(EXEC), any(), any())).thenReturn(1);
+
+        service.needleOut(EXEC, new NeedleOutRequest(EXECUTOR, 250, VISIT));
+
+        verify(checkLogMapper).insert(argThat((ExecutionCheckLog logRow) -> logRow.getOperatorId() == NURSE));
+        verify(ioRecordService).appendInfusionIntake(any(), eq(EXEC), eq(250), any(), eq(NURSE));
+    }
+
+    @Test
+    @DisplayName("A-4 破码：两人不同改服务端比较（令牌=secondary 拒 NS-1023），流水 operator_id=令牌")
+    void overrideCheckComparesTokenAgainstSecondaryServerSide() {
+        when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.SIGNED, ExecutionType.GENERIC, null));
+
+        // 令牌 NURSE(1001) 与 secondary 相同 → 409 OVERRIDE_CHECK_INVALID（请求体 primary 字段不参与比较）
+        assertThatThrownBy(() -> service.overrideCheck(new OverrideCheckRequest(EXEC, 5L, NURSE, "同一人")))
+                .isInstanceOf(BizException.class);
+        // 不同 → 通过：流水 operator_id=令牌（不再取请求体 primary——循 ⑩ 既有角色注入先例）
+        RoleContextHolder.set(List.of("HEAD_NURSE"));
+        service.overrideCheck(new OverrideCheckRequest(EXEC, 5L, 6L, "同意"));
+        verify(checkLogMapper).insert(argThat((ExecutionCheckLog logRow) -> logRow.getOperatorId() == NURSE));
     }
 
     @Test
@@ -718,7 +790,8 @@ class OrderExecutionOperateServiceImplTest {
         OrderExecution target = row(ExecutionStatus.CHECKED, ExecutionType.GENERIC, null);
         target.setPlanTime(OffsetDateTime.now(ZoneOffset.UTC));
         when(executionMapper.selectOne(any())).thenReturn(target);
-        when(executionMapper.casStart(eq(EXEC), any(), eq(EXECUTOR), any())).thenReturn(0);
+        // W-72：casStart 落令牌身份（请求体 EXECUTOR 兼容保留忽略）
+        when(executionMapper.casStart(eq(EXEC), any(), eq(NURSE), any())).thenReturn(0);
 
         assertThatThrownBy(() -> service.start(EXEC, new StartRequest(EXECUTOR, null, null)))
                 .isInstanceOf(BizException.class)
@@ -791,12 +864,12 @@ class OrderExecutionOperateServiceImplTest {
     }
 
     @Test
-    @DisplayName("破码放行：双授权同一人 NS-1023；角色不符 NS-1023；通过置位+OVERRIDE 流水（短理由全遮蔽）")
+    @DisplayName("破码放行：双授权同一人（令牌=第二授权人）NS-1023；角色不符 NS-1023；通过置位+OVERRIDE 流水（短理由全遮蔽）")
     void overrideCheckCoversGuardsAndSuccess() {
         when(executionMapper.selectOne(any())).thenReturn(row(ExecutionStatus.SIGNED, ExecutionType.GENERIC, null));
 
-        // 双授权同一人拒绝
-        assertThatThrownBy(() -> service.overrideCheck(new OverrideCheckRequest(EXEC, 5L, 5L, "同一人")))
+        // 双授权同一人拒绝（W-72/A-4：同一人判定=令牌身份 vs 第二授权人服务端比较）
+        assertThatThrownBy(() -> service.overrideCheck(new OverrideCheckRequest(EXEC, 5L, NURSE, "同一人")))
                 .isInstanceOf(BizException.class)
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(NursingErrorCode.OVERRIDE_CHECK_INVALID));
@@ -808,7 +881,7 @@ class OrderExecutionOperateServiceImplTest {
                 .satisfies(e -> assertThat(((BizException) e).getErrorCode())
                         .isEqualTo(NursingErrorCode.OVERRIDE_CHECK_INVALID));
 
-        // 通过：置位 CAS+OVERRIDE 流水（主授权人 operator_id，理由摘要短码全遮蔽）
+        // 通过：置位 CAS+OVERRIDE 流水（W-72：operator_id=令牌身份，请求体 primary 兼容保留忽略），理由摘要短码全遮蔽
         RoleContextHolder.set(List.of("HEAD_NURSE"));
         when(executionMapper.casMarkOverride(eq(EXEC), any())).thenReturn(1);
         OrderExecutionVO vo = service.overrideCheck(new OverrideCheckRequest(EXEC, 5L, 6L, "同意"));
@@ -816,7 +889,7 @@ class OrderExecutionOperateServiceImplTest {
         verify(checkLogMapper).insert(checkLogCaptor.capture());
         assertThat(checkLogCaptor.getValue().getCheckType()).isEqualTo("OVERRIDE");
         assertThat(checkLogCaptor.getValue().getCheckResult()).isEqualTo("PASS");
-        assertThat(checkLogCaptor.getValue().getOperatorId()).isEqualTo(5L);
+        assertThat(checkLogCaptor.getValue().getOperatorId()).isEqualTo(NURSE);
         // 长度 ≤6 全遮蔽（防短码全露——脱敏红线短码分支）
         assertThat(checkLogCaptor.getValue().getCodeDigest()).isEqualTo("****(len=2)");
     }

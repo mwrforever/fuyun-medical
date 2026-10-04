@@ -151,7 +151,7 @@ public interface OrderExecutionMapper extends BaseMapper<OrderExecution> {
      *
      * @param executionNo 执行单号，非空；来源：路径参数
      * @param startedAt   开始执行时点（北京钟面 now），非空
-     * @param executorId  执行护士员工 ID（请求承载），非空
+     * @param executorId  执行护士员工 ID（W-72：服务端令牌身份承载），非空
      * @param updatedBy   操作者（审计留痕），非空
      * @return 影响行数（0=非 CHECKED 态——未核对/执行中/终态，调用方 NS-1021 拒绝）
      */
