@@ -32,6 +32,7 @@ import com.fuyun.nursing.service.impl.ShiftHandoverServiceImpl;
 import com.fuyun.nursing.service.impl.TaskOverdueServiceImpl;
 import com.fuyun.nursing.service.impl.TemperatureChartServiceImpl;
 import com.fuyun.nursing.service.impl.VitalSignServiceImpl;
+import com.fuyun.nursing.service.impl.WardAccessServiceImpl;
 import com.fuyun.nursing.service.impl.WardMetaServiceImpl;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -59,7 +60,9 @@ import org.springframework.context.annotation.Import;
  * （board 四段聚合+Redis TTL 5s read-through）与大屏快照端点（WS 装配面归
  * NursingWebSocketConfig）。P2 PR-3 Task 12 追加：联动任务创建端口实现（M14→M05 联动
  * 回接面，IOT_LINKAGE 幂等创建复用护理任务服务；消费方 iot LinkageExecutor 经构造器
- * 注入本 PortImpl Bean）。
+ * 注入本 PortImpl Bean）。P2 PR-4C Task 4 追加：病区归属校验域服务（当班 ACTIVE 绑定集
+ * +fail-closed 403 NS-1028，W-40 方案 A；Task 6 端点守卫与 Task 7 WS SUBSCRIBE 防线
+ * 消费基座）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -85,6 +88,8 @@ import org.springframework.context.annotation.Import;
     NurseBoardServiceImpl.class,
     // P2 PR-3 Task 12 联动任务创建端口实现（M14→M05 联动回接）：IOT_LINKAGE 幂等创建单点
     NursingTaskLinkagePortImpl.class,
+    // P2 PR-4C Task 4 病区归属校验域服务（W-40 方案 A）：当班绑定集+fail-closed 403 NS-1028
+    WardAccessServiceImpl.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,
