@@ -188,7 +188,12 @@ public class WardMetaServiceImpl extends ServiceImpl<NursingWardPatientMapper, N
                 row.getRiskFlags(),
                 row.getAdmittedAt(),
                 allergies,
-                assignments.stream().map(NurseAssignmentVO::from).toList(),
+                // V1114 访问授权种子行（PRIMARY 型 patient/bed 双 NULL）不属责任分配展示语义——
+                // 消费侧排除（同 NurseBoardServiceImpl 床位墙双判防御先例，评审 C-F1）
+                assignments.stream()
+                        .filter(a -> a.getPatientId() != null || a.getBedNo() != null)
+                        .map(NurseAssignmentVO::from)
+                        .toList(),
                 inFlightTasks);
     }
 

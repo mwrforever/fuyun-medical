@@ -1,7 +1,9 @@
 // 大屏令牌缓存单源单测（W-68 附调改造）：http.post 经 vi.mock 桩承载（禁真实网络），断言
 // 三导出契约——ensureBigscreenToken 携 wardId 出网与按 wardId 区分缓存（换病区强制重签为
 // 裁决固化语义：禁复用旧病区令牌订新病区，WS 单病区防线会拒）、getCachedBigscreenToken
-// 同步读缓存（空串=未持有，http.ts 拦截器据此保持匿名）、签发失败清缓存返 false 不抛。
+// 同步读缓存（空串=未持有，http.ts 拦截器据此保持匿名）、签发失败清缓存返 false 不抛、
+// 缓存到期自动重签（30s 提前量边界，fake timers——承接原 useNursingStomp/useQueueStomp
+// spec 随收敛删除的时间维度覆盖，收口评审 D-1/E-F1）。
 // 泛哨兵形态（wardId undefined）经 axios params 序列化自动省略 query 参数，与后端
 // required=false 空白归一 null 口径对齐。每用例 vi.resetModules 后动态再导入（模块级
 // 缓存三态随重置归零）。
@@ -97,5 +99,28 @@ describe('大屏令牌缓存单源（W-68：ensure/fetch/getCached 三导出）'
     h.postError = new Error('签发端点不可用');
     await expect(bigt.ensureBigscreenToken('1001')).resolves.toBe(false);
     expect(h.postCalls).toHaveLength(4);
+  });
+
+  it('缓存到期自动重签（30s 提前量边界）：到期后同 wardId 再 ensure 出网，未到期零出网', async () => {
+    // 时间维度覆盖（收口评审 D-1/E-F1 回补——原 useNursingStomp/useQueueStomp spec 的
+    // fake timers 到期重签用例随 W-68 收敛删除，本单源模块须承接等价覆盖）
+    vi.useFakeTimers();
+    try {
+      await importModule();
+      await bigt.ensureBigscreenToken('1001');
+      expect(h.postCalls).toHaveLength(1);
+      // 有效期 300s、提前量 30s：时刻 300-30+1ms 起命中判定失效（临界点 1ms 后重签）
+      vi.advanceTimersByTime(300_000 - 30_000 + 1);
+      h.responseBody = { accessToken: 't2', tokenType: 'Bearer', expiresIn: '300' };
+      await bigt.ensureBigscreenToken('1001');
+      expect(h.postCalls).toHaveLength(2);
+      expect(bigt.getCachedBigscreenToken()).toBe('t2');
+      // 新令牌 300s 有效期内再次 ensure 零出网（时间窗内缓存命中）
+      vi.advanceTimersByTime(100_000);
+      await bigt.ensureBigscreenToken('1001');
+      expect(h.postCalls).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

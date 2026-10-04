@@ -26,12 +26,13 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
 
 /**
- * /ws/nursing SUBSCRIBE 病区防线拦截器单测（PR-4C Task 7 A-2——GC10 全分支覆盖）：哨兵令牌
- * 区内订阅放行/越区拒、泛哨兵（wardId=null）一律拒、登录态绑定集内过/集外拒（BizException 经
- * 拦截器转 MessagingException——ERROR 帧 + 连接关闭语义）、无会话主体（异常态未 CONNECT）拒、
- * 非 board 主题与非 SUBSCRIBE 帧原样放行。帧构造对齐 NursingConnectAuthInterceptorTest 既有
- * StompHeaderAccessor + MessageBuilder 手法（会话主体经 simpSessionAttributes 头承载，与
- * StompSubProtocolHandler 真实链路同一入口）。
+ * /ws/nursing 病区防线拦截器单测（PR-4C Task 7 A-2——GC10 全分支覆盖；收口评审 A-1 修复环扩 SEND，
+ * D-21 申报：原「SEND 直通不校验」用例收紧为「SEND 到 board 目的地同受限行」）：哨兵令牌
+ * 区内订阅放行/越区拒、泛哨兵（wardId=null）一律拒、SEND 越区拒（注入封堵）/SEND 非 board
+ * 与 DISCONNECT 放行、登录态绑定集内过/集外拒（BizException 经拦截器转 MessagingException——
+ * ERROR 帧 + 连接关闭语义）、无会话主体（异常态未 CONNECT）拒、非 board 主题订阅原样放行。
+ * 帧构造对齐 NursingConnectAuthInterceptorTest 既有 StompHeaderAccessor + MessageBuilder 手法
+ * （会话主体经 simpSessionAttributes 头承载，与 StompSubProtocolHandler 真实链路同一入口）。
  */
 @ExtendWith(MockitoExtension.class)
 class NursingSubscribeWardInterceptorTest {
@@ -127,17 +128,40 @@ class NursingSubscribeWardInterceptorTest {
     }
 
     @Test
-    @DisplayName("非 SUBSCRIBE 帧（SEND 等）直通不校验（即使 destination 命中 board 前缀）")
-    void nonSubscribeFrameToBoardDestinationPassesThrough() {
+    @DisplayName("SEND 帧到 board 目的地同受防线限行：哨兵越区发送被拒（评审 A-1 注入封堵）")
+    void sendFrameToCrossWardBoardDestinationRejected() {
         Map<String, Object> attrs = withPrincipal(new TokenPrincipal(0L, "bigscreen", SENTINEL_WARD));
 
         StompHeaderAccessor accessor = StompHeaderAccessor.create(StompCommand.SEND);
-        accessor.setDestination("/topic/nursing/board/" + SENTINEL_WARD);
+        accessor.setDestination("/topic/nursing/board/9999");
         accessor.setSessionAttributes(attrs);
         Message<byte[]> sendFrame = MessageBuilder.createMessage(new byte[0], accessor.getMessageHeaders());
 
+        assertThatThrownBy(() -> interceptor.preSend(sendFrame, channel))
+                .as("SEND 到越区 board 主题必须拒绝（防持令牌者向其他病区看板注入伪造帧）")
+                .isInstanceOf(MessagingException.class);
+        verifyNoInteractions(wardAccessService);
+    }
+
+    @Test
+    @DisplayName("SEND 帧到非 board 目的地与 DISCONNECT 帧直通不校验")
+    void sendToNonBoardAndDisconnectFramesPassThrough() {
+        Map<String, Object> attrs = withPrincipal(new TokenPrincipal(0L, "bigscreen", SENTINEL_WARD));
+
+        StompHeaderAccessor sendAccessor = StompHeaderAccessor.create(StompCommand.SEND);
+        sendAccessor.setDestination("/topic/nursing/vital-signs");
+        sendAccessor.setSessionAttributes(attrs);
+        Message<byte[]> sendFrame = MessageBuilder.createMessage(new byte[0], sendAccessor.getMessageHeaders());
         assertThatCode(() -> interceptor.preSend(sendFrame, channel))
-                .as("非 SUBSCRIBE 帧不在防线面（SEND 由消息链路自身守卫承担）")
+                .as("非 board 目的地的 SEND 不在防线面")
+                .doesNotThrowAnyException();
+
+        StompHeaderAccessor disconnectAccessor = StompHeaderAccessor.create(StompCommand.DISCONNECT);
+        disconnectAccessor.setSessionAttributes(attrs);
+        Message<byte[]> disconnectFrame =
+                MessageBuilder.createMessage(new byte[0], disconnectAccessor.getMessageHeaders());
+        assertThatCode(() -> interceptor.preSend(disconnectFrame, channel))
+                .as("DISCONNECT 帧无病区语义直通")
                 .doesNotThrowAnyException();
         verifyNoInteractions(wardAccessService);
     }

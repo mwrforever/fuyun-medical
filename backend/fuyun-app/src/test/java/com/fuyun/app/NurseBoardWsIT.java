@@ -556,7 +556,7 @@ class NurseBoardWsIT extends FuyunStackITBase {
                     .isTrue();
             assertThat(errorMessage.get())
                     .as("ERROR 帧消息=防线固定摘要（不含令牌与绑定差异——防枚举）")
-                    .isEqualTo("大屏匿名令牌仅可订阅绑定病区的看板主题");
+                    .isEqualTo("大屏匿名令牌仅可访问绑定病区的看板主题");
             // 服务端发 ERROR 后关闭连接（PROTOCOL_ERROR）——会话终将被置为非连接态
             awaitUntil("越区被拒后连接应被服务端关闭", PUSH_TIMEOUT.toMillis(), () -> !outWard.isConnected());
         } finally {

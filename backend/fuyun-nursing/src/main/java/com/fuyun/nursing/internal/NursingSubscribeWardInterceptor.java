@@ -14,16 +14,18 @@ import org.springframework.messaging.support.ChannelInterceptor;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 
 /**
- * /ws/nursing STOMP SUBSCRIBE 病区防线拦截器（PR-4C Task 7 A-2，评审 75 分门槛项）：board 主题族
- * 的病区级订阅限行——哨兵令牌单病区（destination 尾段==令牌绑定病区，泛哨兵一律拒）、登录态
- * 限当班绑定集（fail-closed，D-29：查无绑定同拒，ADMIN 无豁免）。
+ * /ws/nursing STOMP 病区防线拦截器（PR-4C Task 7 A-2，评审 75 分门槛项；收口评审 A-1 扩 SEND）：
+ * board 主题族的病区级订阅与发送双限行——哨兵令牌单病区（destination 尾段==令牌绑定病区，
+ * 泛哨兵一律拒）、登录态限当班绑定集（fail-closed，D-29：查无绑定同拒，ADMIN 无豁免）。
  *
- * <p><b>防线语义</b>：仅拦 SUBSCRIBE 帧且 destination 以 board 前缀开头（
- * {@link NurseBoardPushListener#BOARD_TOPIC_PREFIX}——与推送出口逐字同源，防两侧漂移）；其余
- * destination 不在防线面（A-2 原文范围即 board 族；iot/outpatient WS 主题族无病区隔离语义，
- * 不挂本防线）。主体取自 CONNECT 阶段 {@link NursingConnectAuthInterceptor} 缓存的会话属性
+ * <p><b>防线语义</b>：仅拦 SUBSCRIBE 与 SEND 帧且 destination 以 board 前缀开头（
+ * {@link NurseBoardPushListener#BOARD_TOPIC_PREFIX}——与推送出口逐字同源，防两侧漂移）；
+ * SEND 同拦封堵「持有效令牌向其他病区 board 主题注入伪造帧」的展示面欺骗（评审 A-1，
+ * SimpleBroker 对 /topic 目的地的 SEND 直投订阅者）；其余 destination 不在防线面（A-2 原文
+ * 范围即 board 族；iot/outpatient WS 主题族无病区隔离语义，不挂本防线）。主体取自 CONNECT
+ * 阶段 {@link NursingConnectAuthInterceptor} 缓存的会话属性
  * {@link NursingConnectAuthInterceptor#ATTR_TOKEN_PRINCIPAL}（连接级生命周期，零二次 Redis 读）；
- * 无主体（异常态未 CONNECT 即订阅）拒——防线 fail-closed，不因链路异常放行。
+ * 无主体（异常态未 CONNECT 即发送/订阅）拒——防线 fail-closed，不因链路异常放行。
  *
  * <p><b>拒绝口径（GC12）</b>：日志记 destination/绑定病区/operator（哨兵记绑定病区、登录态记
  * operatorId），禁打令牌内容；抛 {@link MessagingException}（登录态为 BizException NS-1028 的
@@ -51,10 +53,10 @@ public class NursingSubscribeWardInterceptor implements ChannelInterceptor {
     }
 
     /**
-     * SUBSCRIBE 病区防线：board 主题族订阅按主体形态限行——哨兵要求尾段==令牌绑定病区（null 一律
+     * 病区防线：board 主题族 SUBSCRIBE/SEND 按主体形态限行——哨兵要求尾段==令牌绑定病区（null 一律
      * 拒），登录态要求尾段 ∈ 当班绑定集（fail-closed）；其余帧与 destination 原样放行。
      *
-     * @param message 入站消息，非空；SUBSCRIBE 帧的会话属性表由 StompSubProtocolHandler 建帧时
+     * @param message 入站消息，非空；SUBSCRIBE/SEND 帧的会话属性表由 StompSubProtocolHandler 建帧时
      *                注入（WS 会话 attributes 原引用，含 CONNECT 阶段缓存的令牌主体）
      * @param channel 入站通道（clientInboundChannel），非空（本拦截器不直接使用）
      * @return 原消息（放行）；拒绝时不返回而是抛 MessagingException
@@ -65,8 +67,10 @@ public class NursingSubscribeWardInterceptor implements ChannelInterceptor {
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
         StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
-        if (accessor == null || accessor.getCommand() != StompCommand.SUBSCRIBE) {
-            // 非 SUBSCRIBE 帧放行（CONNECT 鉴权由第一拦截器承担，SEND 由消息链路自身守卫）
+        // 仅 SUBSCRIBE（订阅限行）与 SEND（注入封堵，评审 A-1）两态受防线；CONNECT 鉴权由第一拦截器
+        // 承担，DISCONNECT/ACK 等其余帧无病区语义直通
+        if (accessor == null
+                || (accessor.getCommand() != StompCommand.SUBSCRIBE && accessor.getCommand() != StompCommand.SEND)) {
             return message;
         }
         String destination = accessor.getDestination();
@@ -80,10 +84,10 @@ public class NursingSubscribeWardInterceptor implements ChannelInterceptor {
                 : accessor.getSessionAttributes().get(NursingConnectAuthInterceptor.ATTR_TOKEN_PRINCIPAL);
         if (!(raw instanceof TokenPrincipal principal)) {
             log.warn(
-                    "board 订阅缺少已鉴权会话主体（异常态未 CONNECT 即订阅）：sessionId={}，destination={}",
+                    "board 帧缺少已鉴权会话主体（异常态未 CONNECT 即订阅/发送）：sessionId={}，destination={}",
                     accessor.getSessionId(),
                     destination);
-            throw new MessagingException("订阅缺少已鉴权会话主体，订阅已被服务端拒绝");
+            throw new MessagingException("订阅/发送缺少已鉴权会话主体，已被服务端拒绝");
         }
         String wardId = destination.substring(NurseBoardPushListener.BOARD_TOPIC_PREFIX.length());
         if (NursingSecurityConstants.BIGSCREEN_LOGIN_NAME.equals(principal.loginName())) {
@@ -91,11 +95,11 @@ public class NursingSubscribeWardInterceptor implements ChannelInterceptor {
             if (principal.wardId() == null || !principal.wardId().equals(wardId)) {
                 // GC12：记 destination/绑定病区，禁打令牌内容
                 log.warn(
-                        "哨兵越区订阅被拒：sessionId={}，destination={}，绑定病区={}",
+                        "哨兵越区订阅/发送被拒：sessionId={}，destination={}，绑定病区={}",
                         accessor.getSessionId(),
                         destination,
                         principal.wardId());
-                throw new MessagingException("大屏匿名令牌仅可订阅绑定病区的看板主题");
+                throw new MessagingException("大屏匿名令牌仅可访问绑定病区的看板主题");
             }
             return message;
         }
@@ -106,11 +110,11 @@ public class NursingSubscribeWardInterceptor implements ChannelInterceptor {
         } catch (BizException e) {
             // GC12：记 destination/operatorId（日志取 userId，不涉令牌与敏感身份字段）
             log.warn(
-                    "登录态越区订阅被拒：sessionId={}，destination={}，operatorId={}",
+                    "登录态越区订阅/发送被拒：sessionId={}，destination={}，operatorId={}",
                     accessor.getSessionId(),
                     destination,
                     principal.userId());
-            throw new MessagingException("订阅病区不在当班绑定范围，订阅已被服务端拒绝", e);
+            throw new MessagingException("目标病区不在当班绑定范围，访问已被服务端拒绝", e);
         }
         return message;
     }
