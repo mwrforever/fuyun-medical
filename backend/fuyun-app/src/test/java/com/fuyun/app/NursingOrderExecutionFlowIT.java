@@ -96,6 +96,9 @@ class NursingOrderExecutionFlowIT extends FuyunStackITBase {
     /** V704 演示医师（开单操作者主体） */
     private static final String DOCTOR_LOGIN_NAME = "doctordemo";
 
+    /** V303 种子 admin 账号 id——W-72 后回签执行人=登录令牌身份 */
+    private static final long ADMIN_USER_ID = 1L;
+
     /** MQ 消费链路等待上限 */
     private static final Duration LINK_TIMEOUT = Duration.ofSeconds(15);
 
@@ -629,11 +632,14 @@ class NursingOrderExecutionFlowIT extends FuyunStackITBase {
                 Integer.class,
                 orderNo);
         assertThat(compensating).as("对账零差异锚：全单无 COMPENSATING 残留").isZero();
-        // M04 计划行值面：执行人/途径核对结论透传（W-33 存储落点）
+        // M04 计划行值面：执行人/途径核对结论透传（W-33 存储落点；W-72：执行人=登录令牌身份，
+        // 请求体 executorId 兼容保留忽略）
         Map<String, Object> planValues = jdbcTemplate.queryForMap(
                 "SELECT executor_id, route_check_result FROM inpatient.order_execute_plan WHERE plan_no = ?",
                 m04PlanNo);
-        assertThat(planValues.get("executor_id")).as("回签执行人透传").isEqualTo("66");
+        assertThat(planValues.get("executor_id"))
+                .as("回签执行人=登录令牌身份（W-72，请求体 66 被忽略）")
+                .isEqualTo(String.valueOf(ADMIN_USER_ID));
         assertThat(planValues.get("route_check_result")).as("给药途径核对结论透传").isEqualTo("IT 五环节给药核对无误");
 
         // 辅路径：回执帧可观测（id 64 载荷锚定——五时点+执行人+破码标志契约组件抽验）
@@ -643,7 +649,8 @@ class NursingOrderExecutionFlowIT extends FuyunStackITBase {
                 orderNo);
         assertThat(receipt.payload().path("executionNo").asText()).isEqualTo(planExecutionNo);
         assertThat(receipt.payload().path("m04PlanNo").asText()).isEqualTo(m04PlanNo);
-        assertThat(receipt.payload().path("executorId").asLong()).isEqualTo(66L);
+        // W-72：回执帧执行人=登录令牌身份（请求体 66 兼容保留忽略）
+        assertThat(receipt.payload().path("executorId").asLong()).isEqualTo(ADMIN_USER_ID);
         assertThat(receipt.payload().path("finishedAt").isMissingNode())
                 .as("完成回执帧携带终态时点")
                 .isFalse();

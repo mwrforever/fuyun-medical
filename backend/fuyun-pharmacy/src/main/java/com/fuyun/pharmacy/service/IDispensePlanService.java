@@ -6,6 +6,7 @@ import com.fuyun.pharmacy.dto.DispensePlanGenerateRequest;
 import com.fuyun.pharmacy.dto.DispenseReturnRequest;
 import com.fuyun.pharmacy.entity.DispensePlan;
 import com.fuyun.pharmacy.vo.DispensePlanLabelVO;
+import com.fuyun.pharmacy.vo.DispensePlanReturnableVO;
 import com.fuyun.pharmacy.vo.DispensePlanVO;
 import java.util.List;
 
@@ -13,8 +14,8 @@ import java.util.List;
  * 住院摆药计划服务（FU-M06-05，P2 PR-3 Task 8）：计划生成（APPROVED 前置+长期频次分解+
  * plan_type 判定+uk 幂等）、摆药流五步（pick 摆药/verify 核对/issue 出库落 dispense 行与
  * 库存扣减/deliver 配送交接半步/receive 病区签收 CAS+事务内发布 pharmacy.dispense.completed
- * 住院四字段全量载荷）、查询面（分页+PIVAS 贴签数据面）、住院退药（DELIVERED→PART/
- * FULL_RETURNED+批次回补+returned 事件）与终清联动作废（停嘱/出院两路）。
+ * 住院四字段全量载荷）、查询面（分页+PIVAS 贴签数据面+住院可退明细读面）、住院退药
+ * （DELIVERED→PART/FULL_RETURNED+批次回补+returned 事件）与终清联动作废（停嘱/出院两路）。
  * 配对纪律（宪法 A.4.3-20）：本服务以 dispense_plan 为主表（实现侧已 extends
  * ServiceImpl&lt;DispensePlanMapper, DispensePlan&gt;），接口侧对应 extends
  * IService&lt;DispensePlan&gt;。状态迁移一律走自有 CAS/编排方法（PH-1024 定性拒绝），
@@ -93,14 +94,15 @@ public interface IDispensePlanService extends IService<DispensePlan> {
      * rxNo=null/lines[]+
      * m04OrderNo/visitId/wardId/dispensePlanNo——M05 签收衔接（nursing DispenseSignoffListener）
      * 与 M13 占用消费）。
+     * W-72：签收人=令牌身份（服务端强制落值），请求体 receivedBy 仅为兼容保留、服务端不消费。
      *
-     * @param planNo     摆药计划号，非空
-     * @param receivedBy 病区签收人员工 ID，非空；来源：病区签收确认提交
+     * @param planNo 摆药计划号，非空
      * @throws BizException PH-1023（404 计划缺单）/ PH-1026（409 未配送不可签收）/
      *                      PH-1024（409 状态违例或 CAS 并发被抢）/ PH-1008（404 计划已出库但
-     *                      调剂行缺行——数据不一致面）/ PH-1009（409 调剂行状态同步并发被抢）
+     *                      调剂行缺行——数据不一致面）/ PH-1009（409 调剂行状态同步并发被抢）/
+     *                      PH-1016（400 操作者标识缺失或非数字）
      */
-    void receive(String planNo, long receivedBy);
+    void receive(String planNo);
 
     /**
      * 计划分页查询（GET /dispense-plans?m04OrderNo=&amp;wardId=&amp;status=）：病区工作台
@@ -125,6 +127,19 @@ public interface IDispensePlanService extends IService<DispensePlan> {
      * @throws BizException PH-1023（404 缺单）/ PH-1024（409 非 PIVAS 链无贴签数据面）
      */
     DispensePlanLabelVO label(String planNo);
+
+    /**
+     * 住院可退明细读面（GET /dispense-plans/{no}/returnable，W-66/D-30：退药弹窗多行化
+     * 的后端数据源）：仅 DELIVERED 调剂行可读（与 acceptInpatientReturn 写面同守卫——未签收/
+     * 已退 PH-1013 拒，防已退行误读），明细=NORMAL 行全列（住院退药一次性受理，缺行守卫
+     * 要求逐行交代），逐行携可退净量 returnableQty=实发-已退（前端禁输上限）。
+     *
+     * @param planNo 摆药计划号（uk 唯一），非空；来源：病区退药发起弹窗
+     * @return 可退明细读面（头面携计划/调剂单/患者/病区锚+明细行集），非空
+     * @throws BizException PH-1023（404 计划缺单）/ PH-1008（404 计划已出库但调剂行缺行
+     *                      ——数据不一致面）/ PH-1013（409 调剂行非 DELIVERED 可退态）
+     */
+    DispensePlanReturnableVO returnable(String planNo);
 
     /**
      * 住院退药受理（POST /dispense-returns 住院形态，req.dispensePlanNo 非空分流）：

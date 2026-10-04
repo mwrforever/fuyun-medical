@@ -39,6 +39,7 @@ import com.fuyun.pharmacy.mapper.ReviewTaskMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.service.IDispensePlanService;
 import com.fuyun.pharmacy.vo.DispensePlanLabelVO;
+import com.fuyun.pharmacy.vo.DispensePlanReturnableVO;
 import com.fuyun.pharmacy.vo.DispensePlanVO;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -472,8 +473,10 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
 
     @Override
     @Transactional
-    public void receive(String planNo, long receivedBy) {
+    public void receive(String planNo) {
         DispensePlan plan = requireByNo(planNo);
+        // W-72：签收人=令牌身份（请求体 receivedBy 兼容保留忽略——pick:291/verify:329 同款先例）
+        long receivedBy = contextOperatorId();
         // 未配送不可签收（deliver 半步为签收必要前置——issued_at 时间线缺位 PH-1026）
         if (plan.getIssuedAt() == null) {
             throw new BizException(
@@ -590,6 +593,54 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
                                 line.route(),
                                 line.quantity()))
                         .toList());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>实现口径：读面与写面同守卫同序——缺行/非 DELIVERED 判定与明细装载（orderByAsc(id)）
+     * 均循 acceptInpatientReturn，保证弹窗展示行集与受理校验行集逐行对齐。
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public DispensePlanReturnableVO returnable(String planNo) {
+        DispensePlan plan = requireByNo(planNo);
+        Dispense dispense =
+                dispenseMapper.selectOne(Wrappers.<Dispense>lambdaQuery().eq(Dispense::getDispensePlanNo, planNo));
+        if (dispense == null) {
+            // 数据库读操作缺行守卫：与 acceptInpatientReturn 同口径显式暴露（未出库不可退）
+            throw new BizException(
+                    PharmacyErrorCode.DISPENSE_NOT_FOUND, HttpStatus.NOT_FOUND, "摆药计划调剂行不存在（未出库不可退药）：" + planNo);
+        }
+        // 读面与写面同守卫：仅病区签收后可退（W-66 弹窗数据源与受理面一致，防已退行误读）
+        if (!"DELIVERED".equals(dispense.getStatus())) {
+            throw new BizException(
+                    PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "住院退药状态不允许（仅病区签收后可退）：" + dispense.getDispenseNo() + "，status=" + dispense.getStatus());
+        }
+        // 数据库读操作：NORMAL 明细行全列（orderByAsc(id) 与 acceptInpatientReturn 同序——提交缺行校验按行对齐）
+        List<DispenseItem> items = dispenseItemMapper.selectList(Wrappers.<DispenseItem>lambdaQuery()
+                .eq(DispenseItem::getDispenseId, dispense.getId())
+                .eq(DispenseItem::getItemStatus, "NORMAL")
+                .orderByAsc(DispenseItem::getId));
+        List<DispensePlanReturnableVO.ReturnableItem> lines = items.stream()
+                .map(item -> new DispensePlanReturnableVO.ReturnableItem(
+                        String.valueOf(item.getPrescriptionItemId()),
+                        item.getItemCode(),
+                        item.getBatchNo(),
+                        item.getIssuedQty().toPlainString(),
+                        item.getReturnedQty().toPlainString(),
+                        item.getIssuedQty().subtract(item.getReturnedQty()).toPlainString()))
+                .toList();
+        return new DispensePlanReturnableVO(
+                plan.getPlanNo(),
+                dispense.getDispenseNo(),
+                dispense.getStatus(),
+                dispense.getPatientId(),
+                dispense.getVisitId(),
+                plan.getWardId(),
+                lines);
     }
 
     /**
@@ -868,17 +919,32 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
     }
 
     /**
-     * 退药数量解析守卫（PH-1016，W-22⑦ 门诊同源形态）。
+     * 退药数量解析守卫（PH-1016，W-22⑦ 门诊同源形态；scale≤3 守卫为 PR-4B 五路评审 C-F1 补钉）。
      *
-     * @throws BizException PH-1016（400）：非数字串
+     * <p>scale 上限 3 与 dispense_item.issued_qty/returned_qty 列 DECIMAL(12,3) 精度对齐：超 3 位
+     * 小数会被 PG 静默舍入，致 PART/FULL 终态判定与 returned_qty、事件载荷勾稽漂移，须在应用层
+     * 显式拒绝（400）。
+     *
+     * @param returnQuantity 退药数量 DECIMAL string，来源前端退药弹窗逐行录入
+     * @return 解析后的退药数量（小数位 ≤3，尾零形态如 "1.500" 放行）
+     * @throws BizException PH-1016（400）：非数字串；或 stripTrailingZeros 后小数位超 3 位
      */
     private static BigDecimal parseReturnQuantity(String returnQuantity) {
+        BigDecimal qty;
         try {
-            return new BigDecimal(returnQuantity);
+            qty = new BigDecimal(returnQuantity);
         } catch (NumberFormatException e) {
             throw new BizException(
                     PharmacyErrorCode.NUMERIC_FIELD_MALFORMED, HttpStatus.BAD_REQUEST, "退药数量须为数字串：" + returnQuantity);
         }
+        // scale 守卫（评审 C-F1）：剥尾零后小数位 >3 即拒——"1.500"（有效 1 位）放行、"0.1234" 拒
+        if (qty.stripTrailingZeros().scale() > 3) {
+            throw new BizException(
+                    PharmacyErrorCode.NUMERIC_FIELD_MALFORMED,
+                    HttpStatus.BAD_REQUEST,
+                    "退药数量小数位超限（最多 3 位，列 DECIMAL(12,3)）：" + returnQuantity);
+        }
+        return qty;
     }
 
     /**

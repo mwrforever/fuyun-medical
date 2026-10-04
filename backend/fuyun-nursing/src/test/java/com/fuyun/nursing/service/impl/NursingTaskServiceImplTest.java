@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -127,7 +128,8 @@ class NursingTaskServiceImplTest {
         ReflectionTestUtils.setField(service, "baseMapper", taskMapper);
         // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
         ReflectionTestUtils.setField(service, "entityClass", NursingTask.class);
-        OperatorContextHolder.set("nurse-01");
+        // W-72：认领留痕经 contextOperatorId 数字校验，setup 令牌改数字串
+        OperatorContextHolder.set("1001");
     }
 
     @AfterEach
@@ -203,7 +205,7 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("任务完成：CAS 1 行置 COMPLETED 并盖章 completedAt、发布完成事件；重复完成拒 NS-1011")
     void completeTransitionsAndStampsCompletedAt() {
-        when(taskMapper.casComplete(TASK_NO, null, "nurse-01")).thenReturn(1, 0);
+        when(taskMapper.casComplete(TASK_NO, null, "1001")).thenReturn(1, 0);
         when(taskMapper.selectOne(any())).thenReturn(completedRow());
 
         NursingTaskVO vo = service.complete(TASK_NO, null);
@@ -249,7 +251,7 @@ class NursingTaskServiceImplTest {
         verify(taskMapper, never()).casCancel(any(), any(), any());
 
         // 非空原因：CAS 命中 → CANCELLED + 原因落库 + 终态事件（cancel 同发 task.completed）
-        when(taskMapper.casCancel(TASK_NO, "患者病情好转", "nurse-01")).thenReturn(1);
+        when(taskMapper.casCancel(TASK_NO, "患者病情好转", "1001")).thenReturn(1);
         when(taskMapper.selectOne(any())).thenReturn(cancelledRow());
 
         NursingTaskVO vo = service.cancel(TASK_NO, new NursingTaskCancelRequest("患者病情好转"));
@@ -472,7 +474,7 @@ class NursingTaskServiceImplTest {
         assertThat(row.getTaskType()).isEqualTo(TaskType.PATROL.getCode());
         assertThat(row.getSource()).isEqualTo(TaskSource.MANUAL.getCode());
         assertThat(row.getStatus()).isEqualTo(TaskStatus.COMPLETED.getCode());
-        assertThat(row.getAssignedNurse()).isEqualTo("nurse-01");
+        assertThat(row.getAssignedNurse()).isEqualTo("1001");
         // planTime = 打卡时刻（服务器时间，GC25），completedAt 同刻盖章（生而终态）
         assertThat(row.getPlanTime()).isCloseTo(patrolledAt, within(2, ChronoUnit.SECONDS));
         assertThat(row.getCompletedAt()).isCloseTo(patrolledAt, within(2, ChronoUnit.SECONDS));
@@ -520,7 +522,7 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("完成回读缺失：CAS 命中后行被并发逻辑删（selectOne 空）拒 NS-1016，不发事件")
     void completeFailsWhenRowVanishesAfterCas() {
-        when(taskMapper.casComplete(TASK_NO, null, "nurse-01")).thenReturn(1);
+        when(taskMapper.casComplete(TASK_NO, null, "1001")).thenReturn(1);
         when(taskMapper.selectOne(any())).thenReturn(null);
 
         assertThatThrownBy(() -> service.complete(TASK_NO, null)).isInstanceOfSatisfying(BizException.class, e -> {
@@ -533,7 +535,7 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("取消状态违例：CAS 0 行（不存在或已终态）拒 NS-1011，零后续副作用")
     void cancelRejectsAlreadyTerminalTask() {
-        when(taskMapper.casCancel(TASK_NO, "患者病情好转", "nurse-01")).thenReturn(0);
+        when(taskMapper.casCancel(TASK_NO, "患者病情好转", "1001")).thenReturn(0);
 
         assertThatThrownBy(() -> service.cancel(TASK_NO, new NursingTaskCancelRequest("患者病情好转")))
                 .isInstanceOfSatisfying(BizException.class, e -> {
@@ -582,16 +584,17 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("任务认领：PENDING→IN_PROGRESS CAS 迁移、assignee 落 assigned_nurse、零事件发布（非终态无广播）")
     void claimTransitionsPendingToInProgressWithAssignee() {
-        when(taskMapper.casClaim(TASK_NO, "9001", "nurse-01")).thenReturn(1);
+        // W-72：assignee=令牌身份十进制串（请求体 9001 差异值忽略），operator 同为令牌串
+        when(taskMapper.casClaim(TASK_NO, "1001", "1001")).thenReturn(1);
         NursingTask claimed =
                 taskRow(TASK_NO, TaskStatus.IN_PROGRESS, OffsetDateTime.now().plusHours(1));
-        claimed.setAssignedNurse("9001");
+        claimed.setAssignedNurse("1001");
         when(taskMapper.selectOne(any())).thenReturn(claimed);
 
         NursingTaskVO vo = service.claim(TASK_NO, new TaskClaimRequest(9001L));
 
         assertThat(vo.status()).isEqualTo(TaskStatus.IN_PROGRESS.getCode());
-        assertThat(vo.assignedNurse()).isEqualTo("9001");
+        assertThat(vo.assignedNurse()).isEqualTo("1001");
         // 认领为在途态内部迁移（非终态）：不发任务事件（终态广播语义归 complete/cancel）
         verifyNoInteractions(events);
         // GC26 可执行锚：认领必须为 @Update 注解 SQL 条件更新（仅 PENDING 可认领 + deleted=0）
@@ -605,10 +608,26 @@ class NursingTaskServiceImplTest {
     }
 
     @Test
-    @DisplayName("任务认领违例：assigneeId 空拒 NS-1019；CAS 0 行（非 PENDING 或不存在）拒 NS-1011")
-    void claimRejectsBlankAssigneeAndNonPendingState() {
-        // assigneeId 空：服务面强制校验（Web 层 @NotNull 兜底），零副作用
-        assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(null)))
+    @DisplayName("W-72 认领：assignee 一律令牌身份（请求体 assigneeId 差异值忽略）")
+    void claimUsesTokenAssigneeIgnoringRequestBody() {
+        when(taskMapper.casClaim(eq(TASK_NO), any(), any())).thenReturn(1);
+        NursingTask claimed =
+                taskRow(TASK_NO, TaskStatus.IN_PROGRESS, OffsetDateTime.now().plusHours(1));
+        claimed.setAssignedNurse("1001");
+        when(taskMapper.selectOne(any())).thenReturn(claimed);
+
+        service.claim(TASK_NO, new TaskClaimRequest(9001L)); // 请求体 9001，令牌 1001
+
+        // assigned_nurse=令牌十进制串（W-72 锁定锚——请求体差异值不落库）
+        verify(taskMapper).casClaim(eq(TASK_NO), eq("1001"), any());
+    }
+
+    @Test
+    @DisplayName("W-72 认领守卫：操作者上下文缺失/非数字拒 NS-1019（fail-closed——认领人须可定位）")
+    void claimRejectsMissingOrNonNumericOperatorContext() {
+        // 缺失路径：clear() 后无令牌
+        OperatorContextHolder.clear();
+        assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(9001L)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
                     assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
@@ -616,8 +635,23 @@ class NursingTaskServiceImplTest {
                 });
         verify(taskMapper, never()).casClaim(any(), any(), any());
 
-        // CAS 0 行：任务不存在或已非 PENDING（IN_PROGRESS/终态均不可重复认领）
-        when(taskMapper.casClaim(TASK_NO, "9001", "nurse-01")).thenReturn(0);
+        // 非空非数字路径（评审 E-1 补覆盖：DisplayName 原只实跑缺失面虚报非数字，本块补齐后如实）
+        OperatorContextHolder.set("operator-x");
+        assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(9001L)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+                });
+        verify(taskMapper, never()).casClaim(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("任务认领违例：CAS 0 行（非 PENDING 或不存在）拒 NS-1011")
+    void claimRejectsNonPendingState() {
+        // CAS 0 行：任务不存在或已非 PENDING（IN_PROGRESS/终态均不可重复认领）——
+        // 请求体 assigneeId 空守卫已随 W-72 服务端令牌化删除（消费面不存在）
+        when(taskMapper.casClaim(TASK_NO, "1001", "1001")).thenReturn(0);
         assertThatThrownBy(() -> service.claim(TASK_NO, new TaskClaimRequest(9001L)))
                 .isInstanceOfSatisfying(BizException.class, e -> {
                     assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.TASK_STATE_NOT_ALLOWED);
@@ -631,7 +665,7 @@ class NursingTaskServiceImplTest {
     @Test
     @DisplayName("完成扩参回写关联单据：relatedExecutionNo 非空随 CAS 落 source_ref（空值保持原引用零覆盖）")
     void completeWritesRelatedExecutionNoIntoSourceRef() {
-        when(taskMapper.casComplete(TASK_NO, "EX2026100200001", "nurse-01")).thenReturn(1);
+        when(taskMapper.casComplete(TASK_NO, "EX2026100200001", "1001")).thenReturn(1);
         NursingTask completed = completedRow();
         completed.setSourceRef("EX2026100200001");
         when(taskMapper.selectOne(any())).thenReturn(completed);

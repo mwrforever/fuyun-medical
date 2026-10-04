@@ -100,13 +100,14 @@ public class NursingTaskController {
     }
 
     /**
-     * 护理任务认领（PENDING → IN_PROGRESS，assignee 落 assigned_nurse——任务工作台认领面）。
+     * 护理任务认领（PENDING → IN_PROGRESS，任务工作台认领面）：认领人=当前登录人令牌身份
+     * 落 assigned_nurse（W-72——请求体 assigneeId 兼容保留忽略）。
      *
      * @param taskNo 任务业务号（路径参数）
-     * @param req    认领入参（assigneeId 必填），非空
+     * @param req    认领入参（assigneeId 兼容保留——服务端以令牌身份落值），非空
      * @return 认领后任务出参（IN_PROGRESS 态）
      */
-    @Operation(summary = "护理任务认领（待执行 → 执行中）")
+    @Operation(summary = "护理任务认领（待执行 → 执行中，认领人=登录令牌身份）")
     @PostMapping("/api/v1/nursing/tasks/{taskNo}/claim")
     @AuditLog(actionType = AuditActionType.WRITE)
     public NursingTaskVO claim(@PathVariable("taskNo") String taskNo, @Valid @RequestBody TaskClaimRequest req) {

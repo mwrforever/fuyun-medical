@@ -134,8 +134,14 @@ export function useExecutions(options: UseExecutionsOptions) {
     }
   }
 
+  /** 看板加载请求序号（D-3 慢回包守卫：发起时占位、回包时比对在位序号判过期） */
+  let boardSeq = 0;
+
   /** 看板加载：执行单清单 + 遥测组合源并行刷新（遥测失败不阻塞清单） */
   async function loadBoard(): Promise<void> {
+    // D-3 慢回包守卫：递增请求序号，回包落地前比对在位序号——病区/班次/日期快速切换时
+    // 旧慢回包后到即丢弃，不得覆盖新看板
+    const seq = ++boardSeq;
     boardLoading.value = true;
     try {
       const page = await executions.list({
@@ -145,12 +151,18 @@ export function useExecutions(options: UseExecutionsOptions) {
         page: 0,
         size: 200,
       });
+      if (seq !== boardSeq) {
+        return; // 过期回包丢弃：病区/班次/日期已切换，旧回包不得覆盖新看板
+      }
       boardRows.value = page.content ?? [];
       await loadInfusionSources();
     } catch {
       // 失败弹错归响应拦截器；驻留旧看板
     } finally {
-      boardLoading.value = false;
+      // 仅最新请求复位 loading：旧请求晚归不得提前撤掉新请求的加载态
+      if (seq === boardSeq) {
+        boardLoading.value = false;
+      }
     }
   }
 

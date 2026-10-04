@@ -2,7 +2,8 @@
 // 分组、终态行不进列、LONG 锚行（m04PlanNo 为空）标记；②操作在途守卫——acting 互斥双击
 // 零二次出网、动作成功后 trace+看板重拉；③扫码校验——PDA 同款正则（腕带 I+13 位/执行单
 // EX+13 位）非法拦截零出网、合法出网核对；④换行不串台——换行清空旧 trace 数据源降级
-// selected、慢回包竞态过期回包丢弃（EX-45 形态）。api mock 承载，不打真实网络。
+// selected、慢回包竞态过期回包丢弃（EX-45 形态）；⑤看板慢回包守卫（D-3）——病区切换
+// 旧清单回包后到丢弃、新请求在途时 loading 不被旧请求收尾误复位。api mock 承载，不打真实网络。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
@@ -253,5 +254,39 @@ describe('useExecutions', () => {
     releaseA({ executionNo: 'EA', signedAt: '2026-10-01T08:05:00' });
     await openA;
     expect(state.trace.value?.executionNo).toBe('EB');
+  });
+
+  /* ==================== 第⑤组：看板慢回包守卫（D-3） ==================== */
+
+  it('D-3 loadBoard 慢回包守卫：病区切换后旧回包丢弃且 loading 不误复位', async () => {
+    // 手动闸门两段式：按调用序捕获各次清单回包 resolve 器，测试侧控制回包先后（模拟慢回包晚到）
+    const gates: Array<(page: Awaited<ReturnType<typeof executions.list>>) => void> = [];
+    vi.mocked(executions.list).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          gates.push(resolve);
+        }),
+    );
+    // 独立病区 ref：切换病区触发第二次 loadBoard，不污染共享用例病区
+    const wardRef = ref('W01');
+    const state = useExecutions({ wardId: wardRef, getExecutorId: () => 'u1' });
+    const boardOld = state.loadBoard(); // 旧病区 W01 清单在途
+    wardRef.value = 'W02';
+    const boardNew = state.loadBoard(); // 病区已切 W02，更新请求在途
+    // 旧病区回包后到：过期丢弃，看板不得落 W01 行
+    gates[0]?.({ content: [rowMock({ executionNo: 'OLD', status: 'CREATED' })], total: '1' });
+    await boardOld;
+    expect(
+      state.columns.value.flatMap((column) => column.rows.map((row) => row.executionNo)),
+    ).toEqual([]);
+    // 新请求仍在途：旧请求收尾不得提前撤掉新请求的加载态
+    expect(state.boardLoading.value).toBe(true);
+    // 新病区回包：最新请求正常落值并复位加载态
+    gates[1]?.({ content: [rowMock({ executionNo: 'NEW', status: 'CREATED' })], total: '1' });
+    await boardNew;
+    expect(
+      state.columns.value.flatMap((column) => column.rows.map((row) => row.executionNo)),
+    ).toEqual(['NEW']);
+    expect(state.boardLoading.value).toBe(false);
   });
 });

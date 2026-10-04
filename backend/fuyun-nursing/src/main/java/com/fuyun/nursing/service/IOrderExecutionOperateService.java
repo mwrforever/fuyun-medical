@@ -83,27 +83,30 @@ public interface IOrderExecutionOperateService extends IService<OrderExecution> 
     /**
      * 开始执行（CHECKED→EXECUTING）：时间窗校验（计划时间 ± ward_config.
      * execute_time_window_minutes，缺省 30）——窗外且未破码放行（行 override_flag 或请求
-     * overrideTimeWindow 三源合流）NS-1027 拒绝。INFUSION 型建/激活监测挂接与
-     * infusion.started 事件归 Task 6 在本方法 CAS 成功后段扩展。
+     * overrideTimeWindow 三源合流）NS-1027 拒绝。执行护士一律令牌身份落库（W-72——请求体
+     * executorId 兼容保留忽略）。INFUSION 型建/激活监测挂接与 infusion.started 事件归
+     * Task 6 在本方法 CAS 成功后段扩展。
      *
      * @param executionNo 执行单号，非空；来源：路径参数
-     * @param req         开始入参（executorId 必填/deviceId 可空/overrideTimeWindow 可空），非空
+     * @param req         开始入参（executorId 兼容保留忽略/deviceId 可空/overrideTimeWindow 可空），非空
      * @return 开始后执行单出参，非空
      * @throws com.fuyun.common.exception.BizException NS-1020（404）/ NS-1027（409 计划时间
-     *                 窗外未破码）/ NS-1021（409 非 CHECKED 态）
+     *                 窗外未破码）/ NS-1021（409 非 CHECKED 态）/ NS-1019（400 操作者上下文
+     *                 缺失或非数字——令牌身份定位失败 fail-closed）
      */
     OrderExecutionVO start(String executionNo, StartRequest req);
 
     /**
      * 执行完成（EXECUTING→COMPLETED + 双路回签）：事务内发布 nursing.order-execution.
      * completed（辅路径）+ 事务提交后进程内调回签端口（主路径，失败置 COMPENSATING 不抛出）。
-     * INFUSION 型完成由 Task 6 拔针端点承接（本端点 Task 5 期按普通执行路径放行）。
+     * 回执与回签执行人一律令牌身份（W-72——请求体 executorId 兼容保留忽略）。INFUSION 型
+     * 完成由 Task 6 拔针端点承接。
      *
      * @param executionNo 执行单号，非空；来源：路径参数
-     * @param req         完成入参（executorId 必填/routeCheckResult 可空回签透传），非空
+     * @param req         完成入参（executorId 兼容保留忽略/routeCheckResult 可空回签透传），非空
      * @return 完成后执行单出参，非空
      * @throws com.fuyun.common.exception.BizException NS-1020（404）/ NS-1021（409 非
-     *                 EXECUTING 态）
+     *                 EXECUTING 态）/ NS-1019（400 操作者上下文缺失或非数字）
      */
     OrderExecutionVO finish(String executionNo, FinishRequest req);
 
@@ -113,15 +116,16 @@ public interface IOrderExecutionOperateService extends IService<OrderExecution> 
      * COMPLETED CAS（needle_out_at/finished_at 同刻）→ 挂接收口 ENDED（非 MONITORING
      * NS-1024）→ 自动入量行（INFUSION_AUTO/IV_FLUID，quantity=actualVolumeMl）→ 事务内
      * 发布 nursing.infusion.completed（id 63，iot 停监测/ward 呼叫复位消费）→ 回签同 finish
-     * 双路（辅路径 id 64 事件 + 主路径事务提交后回签端口）。
+     * 双路（辅路径 id 64 事件 + 主路径事务提交后回签端口）。全链留痕人一律令牌身份（W-72
+     * ——请求体 executorId 兼容保留忽略）。
      *
      * @param executionNo 执行单号，非空；来源：路径参数
-     * @param req         拔针入参（executorId 必填/actualVolumeMl 必填 0~5000/wristbandCode 必填），非空
+     * @param req         拔针入参（executorId 兼容保留忽略/actualVolumeMl 必填 0~5000/wristbandCode 必填），非空
      * @return 拔针后执行单出参
      * @throws com.fuyun.common.exception.BizException NS-1020（404）/ NS-1021（409 GENERIC 型
      *                 走 finish 端点/非 EXECUTING 态）/ NS-1022（409 腕带核对不符，FAIL 流水落行）/
-     *                 NS-1019（400 实际输注量越界）/ NS-1024（409 无在途输注监测挂接）/
-     *                 NS-1004（409 患者不在区——自动入量守卫，事务整体回滚）
+     *                 NS-1019（400 实际输注量越界/操作者上下文缺失或非数字）/ NS-1024（409 无在途
+     *                 输注监测挂接）/ NS-1004（409 患者不在区——自动入量守卫，事务整体回滚）
      */
     OrderExecutionVO needleOut(String executionNo, NeedleOutRequest req);
 
@@ -161,14 +165,16 @@ public interface IOrderExecutionOperateService extends IService<OrderExecution> 
     OrderExecutionTraceVO trace(String executionNo);
 
     /**
-     * 破码放行双授权（pda/override-check）：两人不同 + 操作者角色 ∈ override_roles（第二
+     * 破码放行双授权（pda/override-check）：两人不同（W-72/A-4：服务端比较令牌身份 vs 第二
+     * 授权人——请求体 primaryAuthorizerId 兼容保留忽略）+ 操作者角色 ∈ override_roles（第二
      * 授权人角色面无 system 查询 api——当前操作者角色近似 + 审计留痕降级）；通过→
-     * override_flag=true + OVERRIDE 流水落行，放行后续 start 跳过时间窗校验。
+     * override_flag=true + OVERRIDE 流水落行（operator_id=令牌身份），放行后续 start 跳过
+     * 时间窗校验。
      *
      * @param req 放行入参（executionNo/双授权人/理由），非空
      * @return 放行后执行单出参，非空
      * @throws com.fuyun.common.exception.BizException NS-1020（404）/ NS-1023（409 双授权
-     *                 同一人或角色不在 override_roles）
+     *                 同一人或角色不在 override_roles）/ NS-1019（400 操作者上下文缺失或非数字）
      */
     OrderExecutionVO overrideCheck(OverrideCheckRequest req);
 

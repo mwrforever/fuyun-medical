@@ -12,14 +12,15 @@ import jakarta.validation.constraints.Size;
  * + 自动入量 + 双路回签。actualVolumeMl 业务边界 0~5000（服务层显式守卫 NS-1019，
  * Bean Validation 双保险——W-22⑦ 禁裸值口径）。
  *
- * @param executorId     拔针护士员工 ID（必填，回签执行主体），非空；来源：PDA 当前登录护士
+ * @param executorId     拔针护士员工 ID（兼容保留——服务端一律以令牌身份落值，W-72，
+ *                       2026-10-03 裁决；本字段不再消费），可空；来源：PDA 当前登录护士
  * @param actualVolumeMl 实际输注量 ml（必填 0~5000——护士确认值，自动入量行数量来源），非空；
  *                       来源：拔针确认表单
  * @param wristbandCode  患者腕带码（必填 ≤64——三向核对同款语义：腕带维=visitId 匹配），非空；
  *                       来源：PDA 腕带扫码
  */
 public record NeedleOutRequest(
-        @NotNull(message = "拔针护士员工ID必填（executorId）") Long executorId,
+        Long executorId,
 
         @NotNull(message = "实际输注量必填（actualVolumeMl）")
         @Min(value = 0, message = "实际输注量下界 0 ml")

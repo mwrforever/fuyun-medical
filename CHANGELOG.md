@@ -2,6 +2,42 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-04 · PR-4B 五路评审修复环：两门槛项收口 + W-88/W-89 登记
+
+- **C-F1（85）**：退药数量 scale≤3 前后端双钉——后端 DispensePlanServiceImpl.parseReturnQuantity
+  stripTrailingZeros 后 scale>3 抛 PH-1016（对齐 dispense_item DECIMAL(12,3)，防 PG 静默舍入致
+  PART/FULL 终态与 returned_qty、事件载荷勾稽漂移，单测三面：>3 拒/恰 3 过/整数过）；前端
+  InpatientDispenseView isValidReturnQty 正则收紧 `^\d+(\.\d{1,3})?$`（文件头与 D-8 注释同步）。
+- **E-1（85）**：contextOperatorId「令牌身份非空非数字」守卫分支补覆盖——AdverseEventServiceImplTest
+  与 NursingTaskServiceImplTest 各补 NS-1019 零写库用例；NursingTaskServiceImplTest 认领守卫
+  DisplayName 原虚报「缺失/非数字」实未跑非数字面，补齐分支后如实（方法名同步扩语义）。
+- **D-21 申报（前端 D-8 用例族新增非法形态断言=收紧非放宽）**：badQty 族增 '0.1234'（4 位小数），
+  warning 计数断言 (4)→(5)——新增非法形态、严格度提升；正则收紧实现+断言修订+回归锚同笔交付。
+- **工单登记**：W-88（破码副授权人工号无存在性校验与服务层 null 不设防，评审 A-2[70]/A-3 合并）、
+  W-89（D-3 族 loading/error 语义一致性收口，评审 B-2[60]+D-F1/D-F2 合并）。
+
+## 2026-10-04 · P2 PR-4B 收口（临床操作面语义包）
+
+- **W-72**：四域操作人服务端强制（方案 A 字段保留+令牌覆盖+匿名通道保留）+A-4 破码 primary 收敛
+  （两人不同改服务端比较）+InpatientDispenseView 去手输+PdaView 双授权主授权人展示回显。
+- **W-66（D-30）**：可退明细读面端点+退药弹窗多行化（含 D-8 数量正则/范围双验收口、住院追溯码必拒输入面删除注记）。
+- **D-31 顺手包**：D-3 分页慢回包守卫（usePagedList/useExecutions 序号守卫三消费面收口）+D-11 patientId 死字段清理。
+- **契约**：gen:api 再生成（八身份字段可空化+returnable 读面）；迁移零新增。
+- **D-21 申报汇总**：UT 执行人断言令牌化（EXECUTOR→NURSE 差异锁定用例新增）；IT 回签 executor_id="66"→登录管理员身份；
+  claim assigneeId 空守卫用例随消费面删除（同笔新增令牌锁定用例）；收口终验另修 InpatientDailyDecomposeIT
+  捕获帧按医嘱号分拣（终验暴露既有欠账：候选查询无 ORDER BY 致分解帧消息序不确定，去序依赖、断言严格度不降）。
+- **终验与 e2e**：后端全量 verify BUILD SUCCESS（两轮，第二轮 44:30 含 IT 修复）；前端六连绿（pnpm audit 本地受
+  TLS 拦截阻断、归 PR CI frontend job 权威承载）；真机 e2e 五面全 PASS（PDA 执行链/摆药签收/多明细退药/
+  不良事件双路匿名/D-3 弱网竞态，证据 `.superpowers/sdd/p2-pr4b/probe/`）；e2e 新发现 W-86/W-87 工单登记。
+
+## 2026-10-04 · P2 PR-4B 立项（临床操作面语义包）启动
+
+- **范围**：W-72 服务端强制四域（执行单 start/finish/needleOut+破码 primary 收敛/摆药 receive/任务认领/
+  不良事件 report·handle·close·return——方案 A 字段保留服务端覆盖，匿名上报通道保留）+InpatientDispenseView
+  去手输+gen:api 再生成+W-66 多明细退药（读面+弹窗多行化，D-30）+D-3 分页慢回包守卫+D-8/D-11 前端小修对（D-31）。
+- **移交判断**：M-2 已随 PR-4A 修复环 ce11b2a 收口；M-4/W-81 扩面走独立工单——均不并入本册。
+- **迁移**：预计零迁移（如需即回计划裁决，号段 V1114+）。
+
 ## 2026-10-03 · Flyway 号段登记：V1112/V1113 补课索引（C-4/C-5，先记再改）
 
 - **号段登记（先记再改，PR-4A Task 6 落盘）**：通用段 V1112/V1113 两件——撰写期实测全局最大

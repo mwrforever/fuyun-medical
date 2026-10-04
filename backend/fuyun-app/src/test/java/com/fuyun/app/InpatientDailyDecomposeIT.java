@@ -290,13 +290,23 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
         throw new IllegalStateException("捕获队列未收到帧：" + eventType);
     }
 
-    /** 轮询等待指定事件且 planDate 匹配的帧（日切/补偿两批同型帧按计划日期分拣）。 */
-    private EventEnvelope awaitCapturedForPlanDate(String eventType, LocalDate planDate) throws InterruptedException {
+    /**
+     * 轮询等待指定事件、计划日期且医嘱号匹配的帧（日切/补偿两批同型帧按计划日期分拣）。
+     * 生产候选查询无 ORDER BY（PG 返回序不确定）——bid/qd 两条医嘱的分解帧发布序随之不定，
+     * 故再按医嘱号分拣使帧唯一，get(0) 不依赖消息到达序。
+     *
+     * @param m04OrderNo 目标医嘱号（开单链生成的业务医嘱号，非空）
+     */
+    private EventEnvelope awaitCapturedForPlanDate(String eventType, LocalDate planDate, String m04OrderNo)
+            throws InterruptedException {
         for (int i = 0; i < 100; i++) {
             List<EventEnvelope> matched = ItCaptureConfig.CAPTURED.stream()
                     .filter(e -> e.eventType().equals(eventType))
                     .filter(e -> planDate.toString()
                             .equals(e.payload().path("planDate").asText()))
+                    // 候选查询无序——按医嘱号分拣，规避消息到达序不确定性
+                    .filter(e ->
+                            m04OrderNo.equals(e.payload().path("m04OrderNo").asText()))
                     .toList();
             if (!matched.isEmpty()) {
                 return matched.get(0);
@@ -400,11 +410,11 @@ class InpatientDailyDecomposeIT extends FuyunStackITBase {
         assertThat(evening.get("shift")).as("16:00 计划落小夜班").isEqualTo("EVENING");
 
         // order-plan.generated 真实投递帧（V800 id 43）：planNos 数组与落库一致、planTimes 下标对齐
-        // （按 planDate 定位次日帧——转抄链补偿面同日早先已发过 planDate=当日的同型帧）
+        // （按 planDate+医嘱号定位次日 bid 帧——转抄链补偿面同日早先已发过 planDate=当日的同型帧；
+        // 医嘱号过滤后即同义反复，原 m04OrderNo 断言不再保留，见方法 javadoc 分拣说明）
         EventEnvelope generated =
-                awaitCapturedForPlanDate(InpatientMessagingConstants.EVENT_ORDER_PLAN_GENERATED, tomorrow);
+                awaitCapturedForPlanDate(InpatientMessagingConstants.EVENT_ORDER_PLAN_GENERATED, tomorrow, bidOrderNo);
         JsonNode payload = generated.payload();
-        assertThat(payload.path("m04OrderNo").asText()).isEqualTo(bidOrderNo);
         assertThat(payload.path("visitId").asText()).isEqualTo(visitId);
         assertThat(payload.path("planDate").asText()).isEqualTo(tomorrow.toString());
         List<String> dbPlanNos = jdbcTemplate.queryForList(

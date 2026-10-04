@@ -63,14 +63,16 @@ public interface INursingTaskService extends IService<NursingTask> {
 
     /**
      * 护理任务认领（P2 PR-3 Task 9 任务工作台面，PENDING → IN_PROGRESS）：@Update CAS 单语句
-     * （GC26，仅 PENDING 可认领，0 行 → NS-1011），assigneeId 落 assigned_nurse（文本承载）。
-     * 在途态内部迁移非终态——不发任务事件（终态广播语义归 complete/cancel）。
+     * （GC26，仅 PENDING 可认领，0 行 → NS-1011），assignee 一律登录令牌身份落 assigned_nurse
+     * （文本承载，W-72，2026-10-03 裁决——请求体 assigneeId 兼容保留忽略）。在途态内部迁移
+     * 非终态——不发任务事件（终态广播语义归 complete/cancel）。
      *
      * @param taskNo 任务业务号，非空；来源：路径参数
-     * @param req    认领入参（assigneeId 必填），非空；来源：任务工作台认领动作
+     * @param req    认领入参（assigneeId 兼容保留——服务端不消费），非空；来源：任务工作台认领动作
      * @return 认领后任务出参（IN_PROGRESS 态），非空
-     * @throws BizException NS-1019（400 assigneeId 为空）/ NS-1011（409 任务不存在、非 PENDING
-     *                      或已被逻辑删，禁止认领）/ NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
+     * @throws BizException NS-1019（400 操作者上下文缺失或非数字——无法定位认领主体，W-72）/
+     *                      NS-1011（409 任务不存在、非 PENDING 或已被逻辑删，禁止认领）/
+     *                      NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
      */
     NursingTaskVO claim(String taskNo, TaskClaimRequest req);
 

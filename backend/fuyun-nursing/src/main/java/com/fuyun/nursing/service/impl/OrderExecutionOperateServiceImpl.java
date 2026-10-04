@@ -75,6 +75,11 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
  * 承接：腕带核对+实际输注量守卫+挂接收口 ENDED+自动入量行+infusion.completed 事件+回签同
  * finish 双路）。
  *
+ * <p>P2 PR-4B W-72 操作人服务端强制（2026-10-03 裁决，方案 A）：start/finish/needleOut 的
+ * 执行护士与 overrideCheck 的主授权人一律取令牌身份（contextOperatorId），请求体身份字段
+ * 兼容保留忽略；破码「两人不同」改服务端比较（令牌 vs 第二授权人，A-4 收敛）。cancel 输注
+ * 中断回签取行库值 executor_id（历史执行人），不属冒名面。
+ *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口。
  */
 @Slf4j
@@ -301,6 +306,8 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
     public OrderExecutionVO start(String executionNo, StartRequest req) {
         OrderExecution row = requireByNo(executionNo);
         OffsetDateTime now = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
+        // W-72 操作人服务端强制：执行护士一律令牌身份落库（请求体 executorId 兼容保留忽略）
+        long executorId = contextOperatorId();
         // 时间窗校验：破码三源合流（行 override_flag / 请求 overrideTimeWindow——口头医嘱现场确认面）
         boolean override = Boolean.TRUE.equals(row.getOverrideFlag()) || Boolean.TRUE.equals(req.overrideTimeWindow());
         int windowMinutes = windowMinutesOf(row.getWardId());
@@ -316,22 +323,23 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
                     HttpStatus.CONFLICT,
                     "计划时间窗外（±" + windowMinutes + " 分钟）禁止开始执行，需破码放行：executionNo=" + executionNo);
         }
-        // 数据库写操作：开始执行 CAS（CHECKED 限定；0 行=未核对/执行中/终态）
-        if (baseMapper.casStart(executionNo, now, req.executorId(), operator()) == 0) {
+        // 数据库写操作：开始执行 CAS（CHECKED 限定；0 行=未核对/执行中/终态；executor_id=令牌身份 W-72）
+        if (baseMapper.casStart(executionNo, now, executorId, operator()) == 0) {
             throw stateNotAllowed(executionNo, row.getStatus(), "开始执行");
         }
         row.setStatus(ExecutionStatus.EXECUTING.getCode());
         row.setStartedAt(now);
-        row.setExecutorId(req.executorId());
+        row.setExecutorId(executorId);
         // INFUSION 分支扩展点（Task 6 接入）：监测挂接建/激活 + 事务内发布 infusion.started
         // （挂接缺行/非 MONITORING NS-1024 fail-closed——建链唯一正规入口=摆药签收 PIVAS 升格）
         if (ExecutionType.INFUSION.getCode().equals(row.getExecutionType())) {
             infusionService.startInfusion(row, req.deviceId());
         }
+        // W-72：executorId=令牌身份（请求体 executorId 兼容保留忽略）
         log.info(
                 "执行单开始执行：executionNo={}，executorId={}，executionType={}，deviceId={}，override={}",
                 executionNo,
-                req.executorId(),
+                executorId,
                 row.getExecutionType(),
                 req.deviceId(),
                 override);
@@ -352,6 +360,8 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
             throw stateNotAllowed(executionNo, row.getStatus(), "完成（INFUSION 型完成由拔针端点 needle-out 承接）");
         }
         OffsetDateTime finishedAt = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
+        // W-72 操作人服务端强制：回执/回签执行人一律令牌身份（请求体 executorId 兼容保留忽略）
+        long executorId = contextOperatorId();
         // 数据库写操作：完成 CAS（EXECUTING 限定；0 行=未开始/终态）
         if (baseMapper.casFinish(executionNo, finishedAt, operator()) == 0) {
             throw stateNotAllowed(executionNo, row.getStatus(), "完成");
@@ -359,10 +369,11 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
         row.setStatus(ExecutionStatus.COMPLETED.getCode());
         row.setFinishedAt(finishedAt);
         // 辅路径：回执事件事务内发布（AFTER_COMMIT 出 MQ——仅长期计划拆分行有对账锚）
-        publishCompletedReceipt(row, req.executorId());
+        publishCompletedReceipt(row, executorId);
         // 主路径：事务提交后进程内回签（无事务环境直调——单测形态）
-        registerConfirmAfterCommit(row, req.executorId(), req.routeCheckResult());
-        log.info("执行单完成（双路回签编排）：executionNo={}，executorId={}", executionNo, req.executorId());
+        registerConfirmAfterCommit(row, executorId, req.routeCheckResult());
+        // W-72：executorId=令牌身份（请求体 executorId 兼容保留忽略）
+        log.info("执行单完成（双路回签编排）：executionNo={}，executorId={}", executionNo, executorId);
         return OrderExecutionVO.from(row);
     }
 
@@ -391,14 +402,17 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
         // 腕带三向核对（同 check 端点腕带维语义：患者腕带=visitId 匹配；FAIL 流水落行 NS-1022）
         boolean wristbandPass = row.getVisitId() != null && row.getVisitId().equals(req.wristbandCode());
         OffsetDateTime needleOutAt = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
-        // 数据库写操作：核对流水只增落行（PASS/FAIL 双落——拔针腕带核对审计底座）
+        // W-72 操作人服务端强制：拔针全链留痕（核对流水/自动入量/双路回签）一律令牌身份
+        // （请求体 executorId 兼容保留忽略）
+        long executorId = contextOperatorId();
+        // 数据库写操作：核对流水只增落行（PASS/FAIL 双落——拔针腕带核对审计底座；operator_id=令牌身份）
         checkLogMapper.insert(checkLogRow(
-                executionNo, CheckType.WRISTBAND, wristbandPass, req.wristbandCode(), req.executorId(), needleOutAt));
+                executionNo, CheckType.WRISTBAND, wristbandPass, req.wristbandCode(), executorId, needleOutAt));
         if (!wristbandPass) {
             log.warn(
                     "拔针腕带核对失败：executionNo={}，executorId={}，failType={}",
                     executionNo,
-                    req.executorId(),
+                    executorId,
                     CheckType.WRISTBAND.failType());
             throw new BizException(
                     NursingErrorCode.EXECUTION_CHECK_FAILED,
@@ -421,8 +435,8 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
                     "拔针时无在途输注监测挂接（MONITORING）：executionNo=" + executionNo);
         }
         // 自动入量行（INFUSION_AUTO/IV_FLUID——quantity=实际输注量，occurredAt=拔针时点；
-        // 患者不在区 NS-1004 上抛整体回滚 fail-closed）
-        ioRecordService.appendInfusionIntake(row.getVisitId(), executionNo, volume, needleOutAt, req.executorId());
+        // 患者不在区 NS-1004 上抛整体回滚 fail-closed；recorder=令牌身份 W-72）
+        ioRecordService.appendInfusionIntake(row.getVisitId(), executionNo, volume, needleOutAt, executorId);
         // 消息发送：事务内发布拔针事件（id 63——iot 停止监测/ward 呼叫复位消费；deviceId/
         // 计划锚不进契约，患者维度消费面）
         events.publishEvent(new NursingDomainEvent(
@@ -430,12 +444,14 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
                 new InfusionCompletedPayload(
                         executionNo, row.getPatientId(), row.getVisitId(), needleOutAt.toInstant())));
         // 回签同 finish 双路：辅路径 id 64 回执事件（长期计划拆分行）+ 主路径事务提交后回签端口
-        publishCompletedReceipt(row, req.executorId());
-        registerConfirmAfterCommit(row, req.executorId(), null);
+        // （执行人一律令牌身份 W-72）
+        publishCompletedReceipt(row, executorId);
+        registerConfirmAfterCommit(row, executorId, null);
+        // W-72：executorId=令牌身份（请求体 executorId 兼容保留忽略）
         log.info(
                 "执行单拔针完成（挂接收口+自动入量+双路回签编排）：executionNo={}，executorId={}，actualVolumeMl={}",
                 executionNo,
-                req.executorId(),
+                executorId,
                 volume);
         return OrderExecutionVO.from(row);
     }
@@ -532,12 +548,17 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
      * 破码放行双授权：两人不同 + 操作者角色 ∈ override_roles（第二授权人角色面无 system
      * 查询 api——当前操作者角色近似 + 审计留痕降级注记，RBAC 完整面归 PR-4 W-37）→
      * override_flag 置位 + OVERRIDE 流水落行。
+     *
+     * <p>W-72/A-4 收敛（2026-10-03 裁决）：主授权人=服务端令牌身份（在场授权人），两人不同
+     * 改服务端比较（令牌 vs 第二授权人）；请求体 primaryAuthorizerId 兼容保留忽略。
      */
     @Override
     @Transactional
     public OrderExecutionVO overrideCheck(OverrideCheckRequest req) {
         OrderExecution row = requireByNo(req.executionNo());
-        if (Objects.equals(req.primaryAuthorizerId(), req.secondaryAuthorizerId())) {
+        // A-4/W-72：主授权人=令牌身份，两人不同改服务端比较（请求体 primaryAuthorizerId 不参与）
+        Long primary = contextOperatorId();
+        if (Objects.equals(primary, req.secondaryAuthorizerId())) {
             throw new BizException(
                     NursingErrorCode.OVERRIDE_CHECK_INVALID,
                     HttpStatus.CONFLICT,
@@ -548,13 +569,14 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
         OffsetDateTime occurredAt = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
         // 数据库写操作：破码放行置位 CAS（false→true；0 行=已放行幂等，不构成失败）
         int marked = baseMapper.casMarkOverride(req.executionNo(), operator());
-        // 数据库写操作：放行流水落行（operator_id=主授权人，code_digest=放行理由脱敏摘要）
-        checkLogMapper.insert(checkLogRow(
-                req.executionNo(), CheckType.OVERRIDE, true, req.reason(), req.primaryAuthorizerId(), occurredAt));
+        // 数据库写操作：放行流水落行（operator_id=令牌身份 W-72，code_digest=放行理由脱敏摘要）
+        checkLogMapper.insert(
+                checkLogRow(req.executionNo(), CheckType.OVERRIDE, true, req.reason(), primary, occurredAt));
+        // W-72：primary 输出令牌值——请求体 primaryAuthorizerId 兼容保留忽略
         log.info(
-                "执行单破码放行：executionNo={}，primaryAuthorizerId={}，secondaryAuthorizerId={}，重复置位={}，operator={}",
+                "执行单破码放行：executionNo={}，primaryAuthorizerId={}（令牌身份，请求体字段兼容保留忽略 W-72），secondaryAuthorizerId={}，重复置位={}，operator={}",
                 req.executionNo(),
-                req.primaryAuthorizerId(),
+                primary,
                 req.secondaryAuthorizerId(),
                 marked == 0,
                 operator());
@@ -621,7 +643,7 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
      * 不发（差异注记见类注释）。
      *
      * @param row        终态迁移后执行单行（时点集已内存同步），非空
-     * @param executorId 回执载荷执行护士（finish 请求承载/中断取行执行护士），非空
+     * @param executorId 回执载荷执行护士（W-72：=令牌身份；中断撤销取行库值执行护士），非空
      */
     private void publishCompletedReceipt(OrderExecution row, Long executorId) {
         if (row.getM04PlanNo() == null) {
@@ -650,7 +672,8 @@ public class OrderExecutionOperateServiceImpl extends ServiceImpl<OrderExecution
      * confirm_status=COMPENSATING 不抛出（床旁不阻塞），成功置 CONFIRMED。
      *
      * @param row              终态迁移后执行单行，非空
-     * @param executorId       回签执行护士（计划行 executor_id 落值），非空
+     * @param executorId       回签执行护士（计划行 executor_id 落值；W-72：=令牌身份，中断撤销
+     *                         取行库值执行护士），非空
      * @param routeCheckResult 给药途径核对结论/中断入量留痕（可空），可空
      */
     private void registerConfirmAfterCommit(OrderExecution row, Long executorId, String routeCheckResult) {

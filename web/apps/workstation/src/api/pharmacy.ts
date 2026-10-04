@@ -34,10 +34,12 @@ export type DispensePlanPage = components['schemas']['PageResultDispensePlanVO']
 export type DispensePlanGenerateRequest = components['schemas']['DispensePlanGenerateRequest'];
 /** 配送交接入参（carrier 可空——无落列载体，后端日志留痕承载） */
 export type DispensePlanDeliverRequest = components['schemas']['DispensePlanDeliverRequest'];
-/** 病区签收入参（receivedBy 必填纯数字——签收主体为病区侧责任人，与药房操作者分权留痕） */
+/** 病区签收入参（receivedBy 兼容保留——服务端一律以令牌身份落值，W-72；原『与药房操作者分权留痕』语义随服务端强制收敛） */
 export type DispensePlanReceiveRequest = components['schemas']['DispensePlanReceiveRequest'];
 /** PIVAS 贴签数据面出参（脱敏患者名/病区/排批/调配核对双人/药品明细；打印归 M01 降级注记） */
 export type DispensePlanLabelVO = components['schemas']['DispensePlanLabelVO'];
+/** 住院可退明细读面出参（W-66：退药弹窗多行化数据源；数量 DECIMAL string 承载——可退净量=已发-已退） */
+export type DispensePlanReturnableVO = components['schemas']['DispensePlanReturnableVO'];
 
 /** 审方任务状态选项（工作台状态过滤词表：待审/已通过/已驳回） */
 export const REVIEW_TASK_STATUS_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
@@ -224,8 +226,8 @@ export const dispensePlans = {
     }
     await http.post(`/v1/pharmacy/dispense-plans/${no}/deliver`, payload);
   },
-  /** 病区签收（CHECKED→DELIVERED CAS+completed 事件住院载荷；receivedBy 必填纯数字
-   * ——string 契约承载 Long，签收主体为病区侧责任人与药房操作者分权留痕）。 */
+  /** 病区签收（CHECKED→DELIVERED CAS+completed 事件住院载荷；receivedBy 兼容保留
+   * ——服务端一律以令牌身份落值，W-72，原『与药房操作者分权留痕』语义随服务端强制收敛）。 */
   receive: async (no: string, payload: DispensePlanReceiveRequest): Promise<void> => {
     await http.post(`/v1/pharmacy/dispense-plans/${no}/receive`, payload);
   },
@@ -233,6 +235,14 @@ export const dispensePlans = {
    * 409 拒——调用方按 planType 门控）。 */
   label: async (no: string): Promise<DispensePlanLabelVO> => {
     const resp = await http.get<DispensePlanLabelVO>(`/v1/pharmacy/dispense-plans/${no}/label`);
+    return resp.data;
+  },
+  /** 可退明细读面（DELIVERED 计划的 NORMAL 明细与可退净量——退药弹窗打开拉取，
+   * 非 DELIVERED 409 归失败弹错）。 */
+  returnable: async (no: string): Promise<DispensePlanReturnableVO> => {
+    const resp = await http.get<DispensePlanReturnableVO>(
+      `/v1/pharmacy/dispense-plans/${no}/returnable`,
+    );
     return resp.data;
   },
 };
