@@ -10,6 +10,7 @@ import com.fuyun.pharmacy.dto.VerifyCredentialRequest;
 import com.fuyun.pharmacy.service.IDispensePlanService;
 import com.fuyun.pharmacy.service.IDispenseService;
 import com.fuyun.pharmacy.vo.DispensePlanLabelVO;
+import com.fuyun.pharmacy.vo.DispensePlanReturnableVO;
 import com.fuyun.pharmacy.vo.DispensePlanVO;
 import com.fuyun.pharmacy.vo.DispenseVO;
 import com.fuyun.pharmacy.vo.OccupancyVO;
@@ -32,8 +33,8 @@ import org.springframework.web.bind.annotation.RestController;
  * Spec :171 顶层路径）：pick/verify/issue 调剂三段、退药受理两时点与工作台按处方号回显；
  * 三段与退药受理为法定留痕操作全量审计（WRITE）。调用方：M06 药师工作站 / IT 直调模拟 / M05 病区退药发起。
  * P2 PR-3 Task 8 扩住院摆药面（/api/v1/pharmacy/dispense-plans 族）：计划生成/摆药流五步/
- * 分页查询/PIVAS 贴签数据面——摆药五步为法定留痕操作全量审计（WRITE），GET 两端点按
- * Task 5/6 minor 口径不挂审计注记（查询面 W-47 统一收口，最终审查裁定）。
+ * 分页查询/PIVAS 贴签数据面——摆药五步为法定留痕操作全量审计（WRITE），GET 端点（分页/
+ * 贴签/可退明细读面）按 Task 5/6 minor 口径不挂审计注记（查询面 W-47 统一收口，最终审查裁定）。
  * 类级 @RequestMapping 不承载（dispense-returns/dispense-plans 为 dispenses 的兄弟顶层路径），
  * 各方法携全路径。
  */
@@ -241,5 +242,17 @@ public class DispenseController {
     @GetMapping("/api/v1/pharmacy/dispense-plans/{no}/label")
     public DispensePlanLabelVO label(@PathVariable("no") String no) {
         return dispensePlanService.label(no);
+    }
+
+    /**
+     * 住院可退明细读面（W-66：退药弹窗多行化数据源——DELIVERED 计划的 NORMAL 明细与可退净量）。
+     *
+     * @param no 摆药计划号（路径参数）
+     * @return 可退明细读面，非空
+     */
+    @Operation(summary = "住院可退明细读面")
+    @GetMapping("/api/v1/pharmacy/dispense-plans/{no}/returnable")
+    public DispensePlanReturnableVO returnable(@PathVariable("no") String no) {
+        return dispensePlanService.returnable(no);
     }
 }

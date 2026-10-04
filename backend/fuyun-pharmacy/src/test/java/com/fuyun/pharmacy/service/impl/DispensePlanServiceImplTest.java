@@ -46,6 +46,7 @@ import com.fuyun.pharmacy.mapper.OrderMedicationMapper;
 import com.fuyun.pharmacy.mapper.ReviewTaskMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.vo.DispensePlanLabelVO;
+import com.fuyun.pharmacy.vo.DispensePlanReturnableVO;
 import com.fuyun.pharmacy.vo.DispensePlanVO;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -856,6 +857,81 @@ class DispensePlanServiceImplTest {
                 .hasMessageContaining("仅 PIVAS 链")
                 .extracting(ex -> ((BizException) ex).getErrorCode())
                 .isEqualTo(PharmacyErrorCode.DISPENSE_PLAN_STATE_NOT_ALLOWED);
+    }
+
+    // ===================== W-66：住院可退明细读面（正常/边界/异常三态） =====================
+
+    @Test
+    @DisplayName("W-66 returnable：DELIVERED 行直出 NORMAL 明细与可退净量（itemSeq/数量 string 承载）")
+    void returnableListsNormalItemsWithReturnableQuantity() {
+        DispensePlanServiceImpl impl = newService();
+        // plan/dispense(DELIVERED)/items(NORMAL 两行) stub 循既有 receive 用例夹具形态
+        when(planMapper.selectOne(any())).thenReturn(plan("DELIVERED", "SINGLE_DOSE"));
+        when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("DELIVERED"));
+        // 第二行已部分退 1——可退净量=issued-returned 的映射锚（首退行 returnedQty 恒 0）
+        DispenseItem second = inpatientItem(new BigDecimal("2"), new BigDecimal("1"));
+        second.setId(2L);
+        second.setPrescriptionItemId(2L);
+        second.setItemCode("D-IT-002");
+        second.setBatchNo("B20260602");
+        when(dispenseItemMapper.selectList(any()))
+                .thenReturn(List.of(inpatientItem(new BigDecimal("3"), BigDecimal.ZERO), second));
+
+        DispensePlanReturnableVO vo = impl.returnable("DP2026100200001");
+
+        // 头面：计划/调剂单/患者/病区锚（退药弹窗标题与提交锚）
+        assertThat(vo.planNo()).isEqualTo("DP2026100200001");
+        assertThat(vo.dispenseNo()).isEqualTo("D20261002000001");
+        assertThat(vo.dispenseStatus()).isEqualTo("DELIVERED");
+        assertThat(vo.patientId()).isEqualTo(700101L);
+        assertThat(vo.visitId()).isEqualTo(VISIT);
+        assertThat(vo.wardId()).isEqualTo(WARD);
+        // 明细：NORMAL 行全列直出（itemSeq 医嘱明细锚 string 化；数量 DECIMAL string 承载）
+        assertThat(vo.items()).hasSize(2);
+        assertThat(vo.items().get(0).itemSeq()).isEqualTo("1");
+        assertThat(vo.items().get(0).itemCode()).isEqualTo("D-IT-001");
+        assertThat(vo.items().get(0).batchNo()).isEqualTo("B20260601");
+        assertThat(vo.items().get(0).issuedQty()).isEqualTo("3");
+        assertThat(vo.items().get(0).returnedQty()).isEqualTo("0");
+        assertThat(vo.items().get(0).returnableQty()).isEqualTo("3"); // issued 3 - returned 0
+        assertThat(vo.items().get(1).itemSeq()).isEqualTo("2");
+        assertThat(vo.items().get(1).returnableQty()).isEqualTo("1"); // issued 2 - returned 1
+    }
+
+    @Test
+    @DisplayName("W-66 returnable：非 DELIVERED（未签收/已退）409 RETURN_STATE_NOT_ALLOWED（读写面同守卫）")
+    void returnableRejectsNonDeliveredDispense() {
+        DispensePlanServiceImpl impl = newService();
+        when(planMapper.selectOne(any())).thenReturn(plan("DELIVERED", "SINGLE_DOSE"));
+        // 未签收（dispense.status=CHECKED）——守卫锚定调剂行状态而非计划行，同 acceptInpatientReturn 写面
+        when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("CHECKED"));
+        assertThatThrownBy(() -> impl.returnable("DP2026100200001"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("仅病区签收后可退")
+                .extracting(ex -> ((BizException) ex).getErrorCode())
+                .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED);
+
+        // 已退终态（FULL_RETURNED）同拒——防已退行误读
+        when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("FULL_RETURNED"));
+        assertThatThrownBy(() -> impl.returnable("DP2026100200001"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("仅病区签收后可退")
+                .extracting(ex -> ((BizException) ex).getErrorCode())
+                .isEqualTo(PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED);
+    }
+
+    @Test
+    @DisplayName("W-66 returnable：计划已出库但调剂行缺行（数据不一致）404 显式暴露")
+    void returnableSurfacesMissingDispenseRow() {
+        DispensePlanServiceImpl impl = newService();
+        when(planMapper.selectOne(any())).thenReturn(plan("DELIVERED", "SINGLE_DOSE"));
+        when(dispenseMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> impl.returnable("DP2026100200001"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("未出库不可退药")
+                .extracting(ex -> ((BizException) ex).getErrorCode())
+                .isEqualTo(PharmacyErrorCode.DISPENSE_NOT_FOUND);
     }
 
     // ===================== 覆盖收口：查询/并发窗口/脏数据守卫分支（LINE=1.00 名单义务） =====================

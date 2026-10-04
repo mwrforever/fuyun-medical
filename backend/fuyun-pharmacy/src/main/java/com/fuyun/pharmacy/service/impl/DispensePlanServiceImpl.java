@@ -39,6 +39,7 @@ import com.fuyun.pharmacy.mapper.ReviewTaskMapper;
 import com.fuyun.pharmacy.service.IBatchSelectService;
 import com.fuyun.pharmacy.service.IDispensePlanService;
 import com.fuyun.pharmacy.vo.DispensePlanLabelVO;
+import com.fuyun.pharmacy.vo.DispensePlanReturnableVO;
 import com.fuyun.pharmacy.vo.DispensePlanVO;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -592,6 +593,54 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
                                 line.route(),
                                 line.quantity()))
                         .toList());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>实现口径：读面与写面同守卫同序——缺行/非 DELIVERED 判定与明细装载（orderByAsc(id)）
+     * 均循 acceptInpatientReturn，保证弹窗展示行集与受理校验行集逐行对齐。
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public DispensePlanReturnableVO returnable(String planNo) {
+        DispensePlan plan = requireByNo(planNo);
+        Dispense dispense =
+                dispenseMapper.selectOne(Wrappers.<Dispense>lambdaQuery().eq(Dispense::getDispensePlanNo, planNo));
+        if (dispense == null) {
+            // 数据库读操作缺行守卫：与 acceptInpatientReturn 同口径显式暴露（未出库不可退）
+            throw new BizException(
+                    PharmacyErrorCode.DISPENSE_NOT_FOUND, HttpStatus.NOT_FOUND, "摆药计划调剂行不存在（未出库不可退药）：" + planNo);
+        }
+        // 读面与写面同守卫：仅病区签收后可退（W-66 弹窗数据源与受理面一致，防已退行误读）
+        if (!"DELIVERED".equals(dispense.getStatus())) {
+            throw new BizException(
+                    PharmacyErrorCode.RETURN_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "住院退药状态不允许（仅病区签收后可退）：" + dispense.getDispenseNo() + "，status=" + dispense.getStatus());
+        }
+        // 数据库读操作：NORMAL 明细行全列（orderByAsc(id) 与 acceptInpatientReturn 同序——提交缺行校验按行对齐）
+        List<DispenseItem> items = dispenseItemMapper.selectList(Wrappers.<DispenseItem>lambdaQuery()
+                .eq(DispenseItem::getDispenseId, dispense.getId())
+                .eq(DispenseItem::getItemStatus, "NORMAL")
+                .orderByAsc(DispenseItem::getId));
+        List<DispensePlanReturnableVO.ReturnableItem> lines = items.stream()
+                .map(item -> new DispensePlanReturnableVO.ReturnableItem(
+                        String.valueOf(item.getPrescriptionItemId()),
+                        item.getItemCode(),
+                        item.getBatchNo(),
+                        item.getIssuedQty().toPlainString(),
+                        item.getReturnedQty().toPlainString(),
+                        item.getIssuedQty().subtract(item.getReturnedQty()).toPlainString()))
+                .toList();
+        return new DispensePlanReturnableVO(
+                plan.getPlanNo(),
+                dispense.getDispenseNo(),
+                dispense.getStatus(),
+                dispense.getPatientId(),
+                dispense.getVisitId(),
+                plan.getWardId(),
+                lines);
     }
 
     /**
