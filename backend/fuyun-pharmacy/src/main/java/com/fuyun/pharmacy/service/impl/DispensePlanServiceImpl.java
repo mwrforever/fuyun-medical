@@ -472,8 +472,10 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
 
     @Override
     @Transactional
-    public void receive(String planNo, long receivedBy) {
+    public void receive(String planNo) {
         DispensePlan plan = requireByNo(planNo);
+        // W-72：签收人=令牌身份（请求体 receivedBy 兼容保留忽略——pick:291/verify:329 同款先例）
+        long receivedBy = contextOperatorId();
         // 未配送不可签收（deliver 半步为签收必要前置——issued_at 时间线缺位 PH-1026）
         if (plan.getIssuedAt() == null) {
             throw new BizException(

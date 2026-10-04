@@ -610,7 +610,7 @@ class DispensePlanServiceImplTest {
         DispensePlan notDelivered = plan("CHECKED", "SINGLE_DOSE");
         notDelivered.setIssuedAt(null);
         when(planMapper.selectOne(any())).thenReturn(notDelivered);
-        assertThatThrownBy(() -> impl.receive("DP2026100200001", 2001L))
+        assertThatThrownBy(() -> impl.receive("DP2026100200001"))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("未配送不可签收")
                 .extracting(ex -> ((BizException) ex).getErrorCode())
@@ -624,17 +624,18 @@ class DispensePlanServiceImplTest {
         DispensePlan checked = plan("CHECKED", "PIVAS");
         checked.setIssuedAt(OffsetDateTime.now(BEIJING_TZ));
         when(planMapper.selectOne(any())).thenReturn(checked);
-        when(planMapper.markDelivered(eq(900L), eq(2001L), any(OffsetDateTime.class)))
+        // W-72：签收人=令牌身份（setup 令牌 1001），请求体差异值不再入参
+        when(planMapper.markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class)))
                 .thenReturn(1);
         when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("CHECKED"));
         when(dispenseMapper.casStatus(800L, "CHECKED", "DELIVERED")).thenReturn(1);
         when(dispenseItemMapper.selectList(any()))
                 .thenReturn(List.of(inpatientItem(new BigDecimal("2"), BigDecimal.ZERO)));
 
-        impl.receive("DP2026100200001", 2001L);
+        impl.receive("DP2026100200001");
 
-        // 签收 CAS + 调剂行同步迁移
-        verify(planMapper).markDelivered(eq(900L), eq(2001L), any(OffsetDateTime.class));
+        // 签收 CAS + 调剂行同步迁移（receivedBy 落值=令牌 1001）
+        verify(planMapper).markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class));
         verify(dispenseMapper).casStatus(800L, "CHECKED", "DELIVERED");
         // 事务内发布 completed：id 28 + V1111 住院四字段全量载荷逐字段断言（M05 签收衔接读面）
         ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
@@ -656,6 +657,28 @@ class DispensePlanServiceImplTest {
         assertThat(payload.lines().get(0).batchNo()).isEqualTo("B20260601");
         assertThat(payload.lines().get(0).quantity()).isEqualTo("2");
         assertThat(payload.lines().get(0).traceCodes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("W-72 receive：签收人一律令牌身份（markDelivered receivedBy=令牌）")
+    void receiveUsesTokenReceiver() {
+        DispensePlanServiceImpl impl = newService();
+        // 行/调剂行/明细 stub 循既有 receive 主用例同款（setup 已 set("1001")）
+        DispensePlan checked = plan("CHECKED", "SINGLE_DOSE");
+        checked.setIssuedAt(OffsetDateTime.now(BEIJING_TZ));
+        when(planMapper.selectOne(any())).thenReturn(checked);
+        when(planMapper.markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class)))
+                .thenReturn(1);
+        when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("CHECKED"));
+        when(dispenseMapper.casStatus(800L, "CHECKED", "DELIVERED")).thenReturn(1);
+        when(dispenseItemMapper.selectList(any()))
+                .thenReturn(List.of(inpatientItem(new BigDecimal("2"), BigDecimal.ZERO)));
+
+        impl.receive("DP2026100200001");
+
+        // D-21 锁定：签收人落值=令牌身份 1001（非请求体历史差异值 2001）——服务端强制不可回退
+        verify(planMapper).markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class));
+        verify(planMapper, never()).markDelivered(eq(900L), eq(2001L), any(OffsetDateTime.class));
     }
 
     // ===================== Step 3：退药回补与作废（TDD 三组） =====================
@@ -948,23 +971,23 @@ class DispensePlanServiceImplTest {
                 .extracting(ex -> ((BizException) ex).getErrorCode())
                 .isEqualTo(PharmacyErrorCode.DISPENSE_PLAN_STATE_NOT_ALLOWED);
 
-        // receive：markDelivered 0 行（签收 CAS 被抢）
+        // receive：markDelivered 0 行（签收 CAS 被抢）——签收人=令牌 1001
         DispensePlan handedOver = plan("CHECKED", "SINGLE_DOSE");
         handedOver.setIssuedAt(OffsetDateTime.now(BEIJING_TZ));
         when(planMapper.selectOne(any())).thenReturn(handedOver);
-        when(planMapper.markDelivered(eq(900L), eq(2001L), any(OffsetDateTime.class)))
+        when(planMapper.markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class)))
                 .thenReturn(0);
-        assertThatThrownBy(() -> impl.receive("DP2026100200001", 2001L))
+        assertThatThrownBy(() -> impl.receive("DP2026100200001"))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("状态不允许签收")
                 .extracting(ex -> ((BizException) ex).getErrorCode())
                 .isEqualTo(PharmacyErrorCode.DISPENSE_PLAN_STATE_NOT_ALLOWED);
 
         // receive：计划已出库但调剂行缺行（数据不一致面显式暴露——PH-1008）
-        when(planMapper.markDelivered(eq(900L), eq(2001L), any(OffsetDateTime.class)))
+        when(planMapper.markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class)))
                 .thenReturn(1);
         when(dispenseMapper.selectOne(any())).thenReturn(null);
-        assertThatThrownBy(() -> impl.receive("DP2026100200001", 2001L))
+        assertThatThrownBy(() -> impl.receive("DP2026100200001"))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("调剂行缺行")
                 .extracting(ex -> ((BizException) ex).getErrorCode())
@@ -973,7 +996,7 @@ class DispensePlanServiceImplTest {
         // receive：调剂行状态同步 CAS 0 行（并发被抢）——PH-1009
         when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("CHECKED"));
         when(dispenseMapper.casStatus(800L, "CHECKED", "DELIVERED")).thenReturn(0);
-        assertThatThrownBy(() -> impl.receive("DP2026100200001", 2001L))
+        assertThatThrownBy(() -> impl.receive("DP2026100200001"))
                 .isInstanceOf(BizException.class)
                 .hasMessageContaining("签收同步并发被抢")
                 .extracting(ex -> ((BizException) ex).getErrorCode())
@@ -987,7 +1010,7 @@ class DispensePlanServiceImplTest {
         DispensePlan checked = plan("CHECKED", "PIVAS");
         checked.setIssuedAt(OffsetDateTime.now(BEIJING_TZ));
         when(planMapper.selectOne(any())).thenReturn(checked);
-        when(planMapper.markDelivered(eq(900L), eq(2001L), any(OffsetDateTime.class)))
+        when(planMapper.markDelivered(eq(900L), eq(1001L), any(OffsetDateTime.class)))
                 .thenReturn(1);
         when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("CHECKED"));
         when(dispenseMapper.casStatus(800L, "CHECKED", "DELIVERED")).thenReturn(1);
@@ -995,7 +1018,7 @@ class DispensePlanServiceImplTest {
         corrupted.setTraceCodes("not-json");
         when(dispenseItemMapper.selectList(any())).thenReturn(List.of(corrupted));
 
-        assertThatThrownBy(() -> impl.receive("DP2026100200001", 2001L))
+        assertThatThrownBy(() -> impl.receive("DP2026100200001"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("追溯码数据损坏");
     }

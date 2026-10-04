@@ -197,15 +197,17 @@ public class DispenseController {
 
     /**
      * 病区签收（CHECKED→DELIVERED CAS+事务内发布 pharmacy.dispense.completed 住院四字段载荷）。
+     * W-72：签收人=登录令牌身份（服务端强制落值）；请求体保留解析（receivedBy 字段兼容期
+     * 可传可不传，服务端不消费）。
      *
      * @param no  摆药计划号（路径参数）
-     * @param req 签收入参（receivedBy 必填），非空
+     * @param req 签收入参（receivedBy 兼容保留——忽略），非空
      */
-    @Operation(summary = "摆药病区签收")
+    @Operation(summary = "摆药病区签收（签收人=登录令牌身份）")
     @PostMapping("/api/v1/pharmacy/dispense-plans/{no}/receive")
     @AuditLog(actionType = AuditActionType.WRITE)
     public void receivePlan(@PathVariable("no") String no, @Valid @RequestBody DispensePlanReceiveRequest req) {
-        dispensePlanService.receive(no, req.receivedBy());
+        dispensePlanService.receive(no);
     }
 
     /**
