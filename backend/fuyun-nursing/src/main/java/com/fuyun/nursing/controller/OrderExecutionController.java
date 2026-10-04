@@ -75,8 +75,9 @@ public class OrderExecutionController {
 
     /**
      * 人工补签收（CREATED→SIGNED）：药品类主入口为摆药签收衔接（dispense 事件自动 SIGNED），
-     * 本端点仅非药品类人工补签（receivedNote 审计留痕不落表）——应用日志按审计红线 ≥6 个月
-     * 留存（deploy 日志卷策略承载）；结构化留痕承载留等保评审触发再立项。
+     * 本端点仅非药品类人工补签（receivedNote 审计留痕不落表）——应用日志 ≥6 个月留存的
+     * 卷/轮转承载当前未落（现状 console-only 无落盘），随等保评审立项实装（工单 W-82）；
+     * 结构化留痕承载留等保评审触发再立项。
      *
      * @param no  执行单号（路径参数 {no}），非空
      * @param req 补签收入参（receivedNote 可空），非空

@@ -1,5 +1,6 @@
 // 出院管理单测（/inpatient/discharge，M04 FU-M04-07 前端面）：四态 tab 渲染、出院申请
-// 出网（携预出院时间/离院方式）、BLOCKED 清理预审面板欠费额渲染与挂账引导、离院确认
+// 出网（携预出院时间/离院方式；预出院时间边界=空值/非法串 warning 零出网、跨日界北京
+// 钟面 02:00 出网精确 ISO 前一日）、BLOCKED 清理预审面板欠费额渲染与挂账引导、离院确认
 // 双条件禁用（预审 READY+结算完成，后端 GC19 前置同语义）与放行出网。
 // 说明：冻结 REST 面无出院申请列表 GET 端点，列表由本会话发起的申请单承载（Concern 已登记）。
 // api mock 承载零出网（vi.mock('@/api/inpatient') 整模块替身），不打真实网络；
@@ -173,6 +174,55 @@ describe('出院管理', () => {
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
     // 申请单落会话列表（自动切至返回态 tab 可见）
     expect(wrapper.text()).toContain('DC20260925001');
+  });
+
+  it('预出院时间空值边界：warning 提示且零出网（必填守卫不依赖后端兜底）', async () => {
+    const wrapper = mount(DischargeManageView);
+    await flushPromises();
+    await clickButton(wrapper, '发起出院申请');
+    await wrapper.find('input[aria-label="在院就诊号"]').setValue('I2026092500001');
+    // 预出院时间保持空串（弹窗复位态），提交即被显式校验拦截
+    await clickButton(wrapper, '提交申请');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('请选择预出院时间');
+    expect(discharge.create).not.toHaveBeenCalled();
+  });
+
+  it('预出院时间非法串边界：+08:00 钉面解析 NaN 同样 warning 零出网', async () => {
+    const wrapper = mount(DischargeManageView);
+    await flushPromises();
+    await clickButton(wrapper, '发起出院申请');
+    await wrapper.find('input[aria-label="在院就诊号"]').setValue('I2026092500001');
+    // 非法串经 new Date(`abc+08:00`) 解析为 Invalid Date——钉面解析失败与空值同走显式
+    // 校验拦截，不出网半解析产物
+    await wrapper.find('input[aria-label="预出院时间"]').setValue('abc');
+    await wrapper.find('select[aria-label="离院方式"]').setValue('1');
+    await clickButton(wrapper, '提交申请');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('请选择预出院时间');
+    expect(discharge.create).not.toHaveBeenCalled();
+  });
+
+  it('预出院时间跨日界边界：北京钟面 02:00 墙钟出网精确 ISO 前一日（+08:00 钉面恒 UTC 前移 8h）', async () => {
+    vi.mocked(discharge.create).mockResolvedValue(requestMock({ status: 'REQUESTED' }));
+    const wrapper = mount(DischargeManageView);
+    await flushPromises();
+    await clickButton(wrapper, '发起出院申请');
+    await wrapper.find('input[aria-label="在院就诊号"]').setValue('I2026092500001');
+    // 北京钟面 2026-09-26T02:00 墙钟：+08:00 钉面解析后 UTC 时刻回落至前一日 18:00——
+    // 跨日界正负向都不随运行环境本地时区漂移
+    await wrapper.find('input[aria-label="预出院时间"]').setValue('2026-09-26T02:00');
+    await wrapper.find('select[aria-label="离院方式"]').setValue('1');
+    await clickButton(wrapper, '提交申请');
+    await flushPromises();
+    expect(discharge.create).toHaveBeenCalledWith(
+      'I2026092500001',
+      expect.objectContaining({
+        expectDischargeAt: '2026-09-25T18:00:00.000Z',
+        dischargeWay: '1',
+      }),
+    );
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
   });
 
   it('BLOCKED 清理预审面板渲染欠费额与挂账审批引导', async () => {

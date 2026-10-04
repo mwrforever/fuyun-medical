@@ -144,7 +144,7 @@ class SmokeStackIT {
         assertThat(indexDef)
                 .as("C-4：摆药计划号部分索引必须存在且部分谓词含 IS NOT NULL 与 deleted = 0")
                 .isNotBlank()
-                .contains("dispense_plan_no")
+                .contains("(dispense_plan_no)")
                 .contains("IS NOT NULL")
                 .contains("deleted = 0");
     }

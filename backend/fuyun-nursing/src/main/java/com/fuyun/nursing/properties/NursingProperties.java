@@ -9,10 +9,12 @@ import org.springframework.validation.annotation.Validated;
 /**
  * 护理域通用参数（env 注入兜底，BillingProperties 同款 record 构造器绑定形态；Bean 注册归
  * NursingWebConfig @EnableConfigurationProperties——BillingWebConfig 先例）。类级 @Validated
- * 激活 JSR-303 启动期校验（B-2）：taskOverdue 参数组零/负值启动即拒，防逾期阈值语义反转
+ * 激活 JSR-303 启动期校验（B-2）：taskOverdueMinutes 与 taskOverdue 参数组零/负值启动即
+ * 拒，防逾期阈值语义反转
  * （remindAfterMinutes 负值会令「未来计划时间被判逾期」——契约层校验替代使用点逐处防御）。
  *
- * @param taskOverdueMinutes 护理任务逾期判定阈值（分钟），默认 30——查询侧惰性判定基准：
+ * @param taskOverdueMinutes 护理任务逾期判定阈值（分钟），默认 30，下界 1（@Min 启动期
+ *                           拒绝零/负值——零阈值令全部在途任务恒逾期）——查询侧惰性判定基准：
  *                           plan_time 早于「当前时间 − 该阈值」的在途任务计逾期并单次递增
  *                           升级计数（Spec :127 动作式逾期 + §12-3）；发布 nursing.task.overdue
  *                           归 P2 延迟队列，本参数 P2 复用为延迟投递时距
@@ -23,7 +25,9 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties(prefix = "fuyun.nursing")
 public record NursingProperties(
-        @DefaultValue("30") int taskOverdueMinutes,
+        @DefaultValue("30") @Min(value = 1, message = "逾期判定阈值必须为正整数（分钟）")
+        int taskOverdueMinutes,
+
         @DefaultValue @Valid TaskOverdue taskOverdue) {
 
     /**

@@ -9,4 +9,6 @@ import { enableAutoUnmount } from '@vue/test-utils';
 import { afterEach } from 'vitest';
 
 // 注册用例级收尾钩子：库侧对每个挂载实例统一 wrapper.unmount()
+// 注：用例体内已手动 unmount 的实例经 Vue isMounted 守卫幂等吸收（VTU unmount 无守卫、
+// Vue app.unmount 有守卫——版本升级时双卸载行为列入回归观察）
 enableAutoUnmount(afterEach);

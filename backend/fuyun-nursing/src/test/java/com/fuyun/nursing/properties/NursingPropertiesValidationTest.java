@@ -9,8 +9,9 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * NursingProperties 配置校验单测（B-2/A.2-2）：TaskOverdue 参数组负值/零值启动期即拒——
- * remindAfterMinutes 负值会令逾期阈值语义反转（未来计划时间被判逾期），契约层校验替代使用点逐处防御。
+ * NursingProperties 配置校验单测（B-2/A.2-2）：taskOverdueMinutes 与 TaskOverdue 参数组
+ * 零/负值启动期即拒——remindAfterMinutes 负值会令逾期阈值语义反转（未来计划时间被判逾期），
+ * 契约层校验替代使用点逐处防御。
  *
  * <p>经 ApplicationContextRunner 走真实构造器绑定 + @Validated 校验链（非反射直构造），
  * 参数全部经 fuyun.nursing.task-overdue.* 配置注入（SecurityPropertiesTest 同型先例）；
@@ -25,6 +26,15 @@ class NursingPropertiesValidationTest {
 
     private final ApplicationContextRunner runner =
             new ApplicationContextRunner().withUserConfiguration(TestConfig.class);
+
+    @Test
+    @DisplayName("taskOverdueMinutes 为 0：@Min 下界拒绝，启动失败（零阈值令全部在途任务恒逾期）")
+    void taskOverdueMinutes为零时绑定失败() {
+        runner.withPropertyValues("fuyun.nursing.task-overdue-minutes=0").run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure()).hasStackTraceContaining("taskOverdueMinutes");
+        });
+    }
 
     @Test
     @DisplayName("remindAfterMinutes 低于 1：@Min 下界拒绝，启动失败（防逾期阈值语义反转）")
