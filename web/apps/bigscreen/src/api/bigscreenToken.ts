@@ -92,9 +92,7 @@ export async function ensureBigscreenToken(wardId?: string): Promise<boolean> {
       // 缺失/非数值（Number→NaN）兜底为「不可缓存」（到期时刻归零使命中判定恒 false）——
       // 下次连接尝试立即重签（安全方向：宁可多签发一次，不静默持有未知有效期的令牌）
       const expiresInSeconds = Number(granted.expiresIn);
-      tokenExpiresAt = Number.isFinite(expiresInSeconds)
-        ? Date.now() + expiresInSeconds * 1000
-        : 0;
+      tokenExpiresAt = Number.isFinite(expiresInSeconds) ? Date.now() + expiresInSeconds * 1000 : 0;
       // info 仅留痕有效期原文与病区锚点（令牌值禁入日志，web A.6 红线）
       info(
         '大屏订阅令牌已获取（运行期签发）',

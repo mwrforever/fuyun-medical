@@ -374,7 +374,9 @@ function reconcileFirstSeen(map: Map<string, number>, liveKeys: Set<string>): vo
  */
 function purgeExpiredRows(now: number): void {
   // ④ 逾期看板 wsOnly 行：超 10 分钟宽限窗退役
-  if (overdueRows.value.some((row) => expired(wsRowFirstSeen.get(row.taskNo), now, WS_ROW_GRACE_MS))) {
+  if (
+    overdueRows.value.some((row) => expired(wsRowFirstSeen.get(row.taskNo), now, WS_ROW_GRACE_MS))
+  ) {
     overdueRows.value = overdueRows.value.filter(
       (row) => !expired(wsRowFirstSeen.get(row.taskNo), now, WS_ROW_GRACE_MS),
     );
@@ -400,7 +402,10 @@ function purgeExpiredRows(now: number): void {
     callRowFirstSeen,
     new Set(alertRows.value.filter((row) => row.kind === 'CALL').map((row) => row.key)),
   );
-  reconcileFirstSeen(escalationFirstSeen, new Set(escalationRows.value.map((row) => row.executionNo)));
+  reconcileFirstSeen(
+    escalationFirstSeen,
+    new Set(escalationRows.value.map((row) => row.executionNo)),
+  );
 }
 
 /* ---------- ⑤ 出入院动态滚动条（board admissions 段近 24h 时间线） ---------- */

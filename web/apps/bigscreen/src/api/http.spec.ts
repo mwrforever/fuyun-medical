@@ -50,7 +50,9 @@ describe('bigscreen 请求拦截器（Authorization 附调 + traceId 注入）',
     // TypeError 令全部请求失败；降级时间戳+随机串保持 traceId 链路可用
     Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true });
     try {
-      const config = httpMod.requestInterceptor({ headers: {} as AxiosHeaders } as InternalAxiosRequestConfig);
+      const config = httpMod.requestInterceptor({
+        headers: {} as AxiosHeaders,
+      } as InternalAxiosRequestConfig);
       expect(String(config.headers['X-Trace-Id'])).not.toBe('');
     } finally {
       // 恢复原型链真实实现：删除实例遮蔽（configurable）即回落 Crypto.prototype
