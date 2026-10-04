@@ -19,7 +19,8 @@ import org.springframework.web.servlet.handler.MappedInterceptor;
  * 系统模块 Web 装配单元测试（401 白名单策略与认证链路 Bean 装配，BRIEF-PR3-01 §1.5）。
  *
  * <p>白名单是免认证攻击面的唯一声明点：仅 login/refresh 可免认证（logout 需令牌），
- * 常量清单经本测试冻结，防"顺手加白"引入未认证面。拦截器注册、令牌服务与 bcrypt
+ * 常量清单经本测试冻结，防"顺手加白"引入未认证面；哨兵令牌 REST allowlist（W-39 限行面）同为匿名暴露面声明点，
+ * 镜像冻结（PR-4C 评审 Important）。拦截器注册、令牌服务与 bcrypt
  * 编码器 Bean 的装配可用性一并验证。
  */
 class SystemWebConfigTest {
@@ -47,6 +48,18 @@ class SystemWebConfigTest {
                         "/api/v1/outpatient/portal/**",
                         "/api/v1/outpatient/queues/*/tickets");
         assertThat(whitelist).noneMatch(path -> path.contains("logout"));
+    }
+
+    @Test
+    @DisplayName("哨兵 allowlist 冻结：仅三只读看板端点（board/infusion-board 前缀 + iot/alarms 精确），写面路径不得混入")
+    void sentinelAllowlistFrozenToThreeReadOnlyBoardEndpoints() {
+        List<String> allowlist = SystemWebConfig.SENTINEL_ALLOWLIST;
+
+        assertThat(allowlist)
+                .containsExactlyInAnyOrder(
+                        "/api/v1/nursing/board/", "/api/v1/ward/infusion-board/", "/api/v1/iot/alarms");
+        // 写面路径混入即扩大匿名令牌暴露面（W-39 收敛失效）：冻结断言阻断"顺手加白"
+        assertThat(allowlist).noneMatch(path -> path.contains("assignments"));
     }
 
     @Test

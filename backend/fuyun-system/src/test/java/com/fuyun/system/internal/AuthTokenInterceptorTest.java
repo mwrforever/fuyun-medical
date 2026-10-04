@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.context.OperatorContextHolder;
+import com.fuyun.common.context.RoleContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
 import com.fuyun.system.constants.SecurityConstants;
@@ -168,6 +169,10 @@ class AuthTokenInterceptorTest {
         assertThat(interceptor.preHandle(request("POST", "/api/v1/nursing/assignments"), response, handler))
                 .isFalse();
         verifyForbidden(SystemErrorCode.SENTINEL_ACCESS_DENIED);
+        // 403 分支手动清理效果断言：preHandle 返回 false 时 Spring 不回调本拦截器 afterCompletion，
+        // 已注入的操作人/角色上下文须在拒绝分支内清理完毕（防线程复用串号；角色上下文空态归一空清单）
+        assertThat(OperatorContextHolder.get()).isNull();
+        assertThat(RoleContextHolder.get()).isEmpty();
     }
 
     @Test
