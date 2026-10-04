@@ -8,6 +8,7 @@ import com.fuyun.nursing.dto.OverrideCheckRequest;
 import com.fuyun.nursing.dto.SignReceiveRequest;
 import com.fuyun.nursing.dto.StartRequest;
 import com.fuyun.nursing.service.IOrderExecutionOperateService;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.OrderExecutionTraceVO;
 import com.fuyun.nursing.vo.OrderExecutionVO;
 import com.fuyun.system.api.AuditActionType;
@@ -46,9 +47,12 @@ public class OrderExecutionController {
 
     private final IOrderExecutionOperateService operateService;
 
+    private final IWardAccessService wardAccessService;
+
     /**
      * 执行工作台分组清单：病区+日期窗口（缺省北京钟面当日）分页，班次（DAY/EVENING/NIGHT）
      * 按计划时间落班映射过滤，状态可选，计划时间升序。
+     * W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）。
      *
      * @param wardId 病区编码（必填过滤键），非空；来源：查询参数
      * @param date   计划日期（可空=北京钟面当日），可空；来源：查询参数
@@ -58,7 +62,7 @@ public class OrderExecutionController {
      * @param size   单页条数（1-200），缺省 20
      * @return 执行单分页出参（计划时间升序）
      * @throws com.fuyun.common.exception.BizException NS-1019（400 wardId 缺失/shift/status
-     *                 code 非法）
+     *                 code 非法）/ NS-1028（403 病区不在当班绑定集或无有效绑定）
      */
     @Operation(summary = "执行工作台分组清单（病区+日期+班次+状态，计划时间升序）", operationId = "listOrderExecutions")
     @GetMapping("/api/v1/nursing/executions")
@@ -70,6 +74,8 @@ public class OrderExecutionController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "page", defaultValue = "0") @Min(0) int page,
             @RequestParam(value = "size", defaultValue = "20") @Min(1) @Max(200) int size) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）
+        wardAccessService.assertWardAllowed(wardId);
         return operateService.listWorkbench(wardId, date, shift, status, page, size);
     }
 

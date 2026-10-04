@@ -10,6 +10,7 @@ import com.fuyun.nursing.dto.TaskClaimRequest;
 import com.fuyun.nursing.enums.TaskStatus;
 import com.fuyun.nursing.service.INursingTaskService;
 import com.fuyun.nursing.service.IRoutineTaskGenerator;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.NursingTaskVO;
 import com.fuyun.nursing.vo.RoutineTaskGenerateVO;
 import com.fuyun.system.api.AuditActionType;
@@ -46,6 +47,8 @@ public class NursingTaskController {
 
     private final IRoutineTaskGenerator routineTaskGenerator;
 
+    private final IWardAccessService wardAccessService;
+
     /**
      * 护理任务创建（手工开立；默认 PENDING 态，发布 nursing.task.created）。
      *
@@ -61,11 +64,14 @@ public class NursingTaskController {
 
     /**
      * 病区任务清单（wardId 必选，status/date 可选，计划时间升序；读时惰性逾期判定）。
+     * W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）。
      *
      * @param wardId 病区编码，必填
      * @param status 状态过滤 code（TaskStatus 词表，可空，非法值 NS-1019）
      * @param date   计划日期过滤（ISO yyyy-MM-dd，可空）
      * @return 任务出参清单（计划时间升序）
+     * @throws com.fuyun.common.exception.BizException NS-1019（400 状态 code 非法）/ NS-1028
+     *                 （403 病区不在当班绑定集或无有效绑定）
      */
     @Operation(summary = "病区任务清单")
     @GetMapping("/api/v1/nursing/tasks")
@@ -74,6 +80,8 @@ public class NursingTaskController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
                     LocalDate date) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）
+        wardAccessService.assertWardAllowed(wardId);
         // 状态 code 显式格式校验（W-22⑦ 禁裸转换——Spring 枚举直绑词表外值会被吞成通用 400，此处显式 NS-1019）
         TaskStatus statusEnum = status == null ? null : TaskStatus.fromCode(status);
         if (status != null && statusEnum == null) {

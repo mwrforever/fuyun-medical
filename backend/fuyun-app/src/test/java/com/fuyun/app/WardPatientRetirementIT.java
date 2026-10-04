@@ -44,6 +44,10 @@ import org.testcontainers.utility.MountableFile;
  * 后无 status 列，在区谓词由逻辑删承载）。
  *
  * <p>容器三件套类级独占（GC9 红线，InpatientOrderFlowIT :74-88 逐字同型）。
+ *
+ * <p><b>PR-4C Task 6（W-40）适配</b>：一览 GET /ward-patients 挂病区守卫（fail-closed）——
+ * admin 的 V1114 种子绑定只覆盖 W01，本 IT 锚 W-IT-9005/W-IT-9006 双病区，Order(2) 夹具段
+ * 补双病区当班绑定行（brief 预检之外的实况新增，D-21 申报见任务报告）。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -236,6 +240,20 @@ class WardPatientRetirementIT extends FuyunStackITBase {
     @Order(2)
     @DisplayName("admitted 事件链：入院四步→投影在区行（wardId/bedNo/nursingLevel/admittedAt）+一览 GC39 六字段")
     void admittedEventDrivesProjectionRow() {
+        // W-40 守卫适配：admin 调一览 GET 须有目标病区当班绑定行（V1114 种子只覆盖 W01）——
+        // 照 Task 5 种子行形态直插双病区绑定（长期有效窗当日命中）
+        jdbcTemplate.update(
+                "INSERT INTO nursing.nurse_assignment"
+                        + " (id, ward_id, nurse_id, assignment_type, shift_code, bed_no, patient_id,"
+                        + " valid_from, valid_to, status, created_by, updated_by, deleted)"
+                        + " VALUES (?, ?, '1', 'PRIMARY', 'DAY', NULL, NULL,"
+                        + " DATE '2026-01-01', NULL, 'ACTIVE', 'IT', 'IT', 0),"
+                        + " (?, ?, '1', 'PRIMARY', 'DAY', NULL, NULL,"
+                        + " DATE '2026-01-01', NULL, 'ACTIVE', 'IT', 'IT', 0)",
+                9114000000000000102L,
+                WARD_FROM,
+                9114000000000000103L,
+                WARD_TO);
         jdbcTemplate.update(
                 "INSERT INTO patient.patient (patient_id, name, sex, status, register_channel)"
                         + " VALUES (?, ?, '1', 'NORMAL', 'WINDOW')",

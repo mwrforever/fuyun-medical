@@ -8,6 +8,7 @@ import com.fuyun.nursing.dto.AdverseEventReturnRequest;
 import com.fuyun.nursing.vo.AdverseEventStatsVO;
 import com.fuyun.nursing.vo.AdverseEventVO;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * 护理不良事件域服务（P2 PR-3 Task 10，M05 FU-M05-09）：上报（匿名通道+I/II 级 24 小时
@@ -43,17 +44,24 @@ public interface IAdverseEventService {
      * 分页查询（处置工作清单）：类别/病区/状态/发生日（occurred_at 当日窗口）可选过滤，
      * 发生时点降序（最新事件优先）。date 缺省不限时段（在途处置队列跨日存续——与工作台
      * 「缺省当日」口径不同，处置清单须可见往日未结事件）。
+     * W-40 病区过滤双轨（PR-4C Task 6）：wardId 非空时按单值等值过滤（调用方守卫已校验
+     * wardId ∈ 当班绑定集）；wardId 空且 wardScope 非空时按绑定集 in 过滤（wardScope=null
+     * =不过滤[内部/哨兵语义]）；wardScope 为空清单时直接返回空页（fail-closed 防御——
+     * 无可见病区不放大查询）。
      *
-     * @param category 事件类别过滤（AdverseEventCategory code，可空），可空；来源：查询参数
-     * @param wardId   病区过滤（可空），可空；来源：查询参数
-     * @param status   处置状态过滤（AdverseEventStatus code，可空），可空；来源：查询参数
-     * @param date     发生日期过滤（北京钟面当日窗口，可空=不限时段），可空；来源：查询参数
-     * @param page     页码（0 基），非负
-     * @param size     单页条数（1-200），正数
+     * @param category  事件类别过滤（AdverseEventCategory code，可空），可空；来源：查询参数
+     * @param wardId    病区过滤（可空），可空；来源：查询参数（非空时归属已由 controller 守卫校验）
+     * @param status    处置状态过滤（AdverseEventStatus code，可空），可空；来源：查询参数
+     * @param date      发生日期过滤（北京钟面当日窗口，可空=不限时段），可空；来源：查询参数
+     * @param page      页码（0 基），非负
+     * @param size      单页条数（1-200），正数
+     * @param wardScope 操作者当班绑定病区集（null=不过滤，非空=wardId ∈ 集合过滤，空清单=返回
+     *                  空页），可空；来源：controller 经 IWardAccessService.activeBoundWardIds
      * @return 不良事件分页出参（非惩罚面），非空
      * @throws com.fuyun.common.exception.BizException NS-1019（400 category/status 词表外值）
      */
-    PageResult<AdverseEventVO> list(String category, String wardId, String status, LocalDate date, int page, int size);
+    PageResult<AdverseEventVO> list(
+            String category, String wardId, String status, LocalDate date, int page, int size, List<String> wardScope);
 
     /**
      * 受理处置（REPORTED→HANDLING）：落处置责任人与处置记录（可空保留上报时记录）；
@@ -99,14 +107,19 @@ public interface IAdverseEventService {
     /**
      * 分类统计（统计日窗口按类别/病区/等级双维度/班次时段聚合计数 + I/II 级时限合规面）：
      * date 缺省北京钟面当日；类别/病区前置过滤。词表维度零填充（稳定契约形态）。
+     * W-40 病区过滤双轨（PR-4C Task 6）：与 {@link #list} 同款——wardId 非空单值等值
+     * （守卫已校验归属）；wardId 空按 wardScope 非空 in 过滤；空清单短路零填充空统计
+     * （词表维度契约不破）。
      *
      * @param category 类别前置过滤（可空），可空；来源：查询参数
-     * @param wardId   病区前置过滤（可空），可空；来源：查询参数
+     * @param wardId   病区前置过滤（可空），可空；来源：查询参数（非空时归属已由 controller 守卫校验）
      * @param date     统计日（北京钟面，可空=当日），可空；来源：查询参数
+     * @param wardScope 操作者当班绑定病区集（null=不过滤，非空=wardId ∈ 集合过滤，空清单=零填充
+     *                  空统计），可空；来源：controller 经 IWardAccessService.activeBoundWardIds
      * @return 统计聚合出参（纯计数零个人面），非空
      * @throws com.fuyun.common.exception.BizException NS-1019（400 category 词表外值）
      */
-    AdverseEventStatsVO stats(String category, String wardId, LocalDate date);
+    AdverseEventStatsVO stats(String category, String wardId, LocalDate date, List<String> wardScope);
 
     /**
      * tick 超时提醒扫描段（TaskOverdueTickListener 挂接，只读不改状态）：扫描 REPORTED

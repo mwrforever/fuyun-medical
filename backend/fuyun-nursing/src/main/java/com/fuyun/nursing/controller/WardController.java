@@ -1,6 +1,7 @@
 package com.fuyun.nursing.controller;
 
 import com.fuyun.nursing.dto.NurseAssignmentRequest;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.service.IWardMetaService;
 import com.fuyun.nursing.vo.NurseAssignmentVO;
 import com.fuyun.nursing.vo.WardPatientDetailVO;
@@ -39,15 +40,21 @@ public class WardController {
 
     private final IWardMetaService wardMetaService;
 
+    private final IWardAccessService wardAccessService;
+
     /**
      * 病区在区患者一览（床位序）。
+     * W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）。
      *
      * @param wardId 病区编码，必填
      * @return 在区行出参清单（床位序）
+     * @throws com.fuyun.common.exception.BizException NS-1028（403 病区不在当班绑定集或无有效绑定）
      */
     @Operation(summary = "病区在区患者一览")
     @GetMapping("/api/v1/nursing/ward-patients")
     public List<WardPatientVO> listByWard(@RequestParam("wardId") String wardId) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）
+        wardAccessService.assertWardAllowed(wardId);
         return wardMetaService.listByWard(wardId);
     }
 
