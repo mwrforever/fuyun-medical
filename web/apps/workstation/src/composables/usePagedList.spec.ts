@@ -1,7 +1,8 @@
 // 三段式分页列表范式单测（EX-49 范式沉淀）：fetcher 注入桩函数承载（无 api mock 面），覆盖
 // 正常（快照合并出网/行集总数赋值）、边界（1↔0 基转换、search 回首页、content/total 缺失
 // 兜底、string 总数归一、默认页宽 20）、异常（失败驻留旧值、onError 注入、onSuccess 时机）
-// 三类场景。fetcher 桩用 Promise.resolve 直构（非 async 箭头），与被测 await 语义等价。
+// 三类场景，另含 D-3 慢回包守卫（筛选切换/翻页往返旧回包丢弃）。fetcher 桩用 Promise.resolve
+// 直构（非 async 箭头），与被测 await 语义等价；慢回包用例以手动闸门两段式 resolve 控制回包先后。
 import { describe, expect, it, vi } from 'vitest';
 import { ref } from 'vue';
 import { usePagedList } from './usePagedList';
@@ -107,5 +108,51 @@ describe('usePagedList', () => {
     expect(list.loading.value).toBe(false);
     expect(list.error.value).toBe(cause);
     expect(onError).toHaveBeenCalledExactlyOnceWith(cause);
+  });
+
+  it('D-3 慢回包守卫：筛选切换后旧回包后到被丢弃（rows 不被旧筛选覆盖）', async () => {
+    const filter = ref('x');
+    // 手动闸门两段式：按调用序捕获各次回包 resolve 器，测试侧控制回包先后（模拟慢回包晚到）
+    const gates: Array<(result: PageResult<Row>) => void> = [];
+    const fetcher = vi.fn(
+      () =>
+        new Promise<PageResult<Row>>((resolve) => {
+          gates.push(resolve);
+        }),
+    );
+    const list = usePagedList({ params: () => ({ filter: filter.value }), fetcher });
+    const fetchA = list.fetch(); // 请求 A：旧筛选 filter='x'
+    filter.value = 'y';
+    const fetchB = list.fetch(); // 请求 B：新筛选 filter='y'（后发起，回包前后均晚于 A 落地）
+    // 旧请求 A 慢回包先 resolve（B 仍在途）：A 已过期必须丢弃，rows 不得落旧筛选内容
+    gates[0]?.(pageOf([{ id: 'A1' }], 1));
+    await fetchA;
+    expect(list.rows.value).toEqual([]);
+    // 新请求 B 回包：最新请求正常落值
+    gates[1]?.(pageOf([{ id: 'B1' }], 1));
+    await fetchB;
+    expect(list.rows.value).toEqual([{ id: 'B1' }]);
+  });
+
+  it('D-3 慢回包守卫：翻页快速往返旧页回包丢弃', async () => {
+    // 手动闸门两段式：翻到第 2 页后立即回第 1 页，第 2 页慢回包晚到不得落值
+    const gates: Array<(result: PageResult<Row>) => void> = [];
+    const fetcher = vi.fn(
+      () =>
+        new Promise<PageResult<Row>>((resolve) => {
+          gates.push(resolve);
+        }),
+    );
+    const list = usePagedList({ params: () => ({}), fetcher });
+    const page2 = list.goToPage(2); // 快速翻到第 2 页后立即返回第 1 页
+    const page1 = list.goToPage(1);
+    // 第 2 页慢回包先 resolve（第 1 页在途）：过期丢弃，rows 不得落第 2 页内容
+    gates[0]?.(pageOf([{ id: 'p2' }], 1));
+    await page2;
+    expect(list.rows.value).toEqual([]);
+    // 第 1 页回包：最新请求正常落值
+    gates[1]?.(pageOf([{ id: 'p1' }], 1));
+    await page1;
+    expect(list.rows.value).toEqual([{ id: 'p1' }]);
   });
 });

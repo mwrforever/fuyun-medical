@@ -10,8 +10,9 @@
  * 态闲置无害。失败分支默认静默（弹错归响应拦截器）、行集驻留旧值，与既有样板一致；成功
  * 后追加副作用（如 searched 置位、勾选集清空）经 onSuccess 注入。
  *
- * 每组件实例独立状态（B.2-7）；仅 setup 同步调用；无 onUnmounted 清理面。并发语义与被
- * 替换样板逐字一致：不设在途互斥，慢回包竞态由各视图按需另行锚定。
+ * 每组件实例独立状态（B.2-7）；仅 setup 同步调用；无 onUnmounted 清理面。并发语义（D-3
+ * 收口）：统一请求序号守卫承载慢回包竞态，视图层免另行锚定；loading 态仍归 useAsyncTask
+ * 逐次翻转（旧请求收尾即复位，不构成在途互斥——分页列表无按序消费 loading 的场景）。
  */
 import { ref } from 'vue';
 import type { Ref } from 'vue';
@@ -97,15 +98,23 @@ export function usePagedList<Q extends object, R>(
   const rows = ref<R[]>([]) as Ref<R[]>;
   const total = ref(0);
   const currentPage = ref(1);
+  /** 递增请求序号（D-3 慢回包守卫：发起时占位、回包时比对在位序号判过期） */
+  let requestSeq = 0;
 
   const task = useAsyncTask(
     async () => {
+      // D-3 慢回包守卫：递增请求序号，回包落地前比对在位序号——筛选/翻页快速连续触发时
+      // 旧慢回包后到即丢弃（防旧行集覆盖新结果，三消费面一次收口）
+      const seq = ++requestSeq;
       const result = await options.fetcher({
         ...options.params(),
         // 边界转换：组件 currentPage 1 基 → 契约 page 0 基（api 层保持纯透传）
         page: currentPage.value - 1,
         size: pageSize,
       });
+      if (seq !== requestSeq) {
+        return; // 过期回包丢弃：发起后已有更新的请求在途/落地
+      }
       rows.value = result.content ?? [];
       total.value = toTotalNumber(result.total);
       options.onSuccess?.(result);
