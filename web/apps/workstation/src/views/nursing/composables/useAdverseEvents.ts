@@ -21,7 +21,6 @@ export interface AdverseEventFormModel {
   eventSummary: string;
   handlingNote: string;
   visitId: string;
-  patientId: string;
   isAnonymous: boolean;
 }
 
@@ -35,7 +34,6 @@ const EMPTY_FORM: AdverseEventFormModel = {
   eventSummary: '',
   handlingNote: '',
   visitId: '',
-  patientId: '',
   isAnonymous: false,
 };
 
@@ -128,7 +126,6 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         eventSummary: form.eventSummary.trim(),
         handlingNote: form.handlingNote.trim() === '' ? undefined : form.handlingNote.trim(),
         visitId: form.visitId.trim() === '' ? undefined : form.visitId.trim(),
-        patientId: form.patientId.trim() === '' ? undefined : form.patientId.trim(),
         isAnonymous: form.isAnonymous,
       });
       void ElMessage.success(`已上报：${created.eventNo ?? ''}（非惩罚通道，感谢主动报告）`);

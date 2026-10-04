@@ -92,7 +92,6 @@ describe('useAdverseEvents', () => {
       eventSummary: '病房走廊跌倒',
       handlingNote: '',
       visitId: '',
-      patientId: '',
       isAnonymous: true,
     };
     await state.onReport();
@@ -117,7 +116,6 @@ describe('useAdverseEvents', () => {
       eventSummary: '病房走廊跌倒',
       handlingNote: '',
       visitId: '',
-      patientId: '',
       isAnonymous: false,
     };
     await state.onReport();
@@ -126,6 +124,23 @@ describe('useAdverseEvents', () => {
     // W-70① 出网钉面后解析不依赖运行环境本地时区，绝对时刻唯一（北京钟面 10:00 = UTC
     // 02:00）——原「双跑必翻车」前提消失，D-21 同步收紧：形态正则升级为精确 ISO 值断言
     expect(payload?.occurredAt).toBe('2026-10-01T02:00:00.000Z');
+  });
+
+  it('D-11 patientId 死字段清理：表单模型与上报载荷均不含 patientId（无录入面字段不透传）', async () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    state.openReport();
+    // 表单初始态不得携带 patientId 键（无录入面的字段不得进入表单模型）
+    expect('patientId' in state.reportForm.value).toBe(false);
+    // 逐项属性赋值填必填面（该形态在删字段前后均类型合法），上报后断言出网载荷不含 patientId 键
+    state.reportForm.value.category = 'FALL';
+    state.reportForm.value.severityClass = 'II';
+    state.reportForm.value.severityGrade = 'B';
+    state.reportForm.value.wardId = 'W01';
+    state.reportForm.value.occurredAt = '2026-10-01T08:00';
+    state.reportForm.value.eventSummary = '病房走廊跌倒';
+    await state.onReport();
+    const payload = vi.mocked(adverseEvents.report).mock.calls[0]?.[0];
+    expect(payload !== undefined && 'patientId' in payload).toBe(false);
   });
 
   it('处理操作：操作人留痕出网（handlerId=会话 userId）且成功后重拉', async () => {
