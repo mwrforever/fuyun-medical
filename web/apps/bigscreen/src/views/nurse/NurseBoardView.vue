@@ -10,6 +10,9 @@
 // 运营大屏同键面）订 alarm/telemetry/device-status 三主题。WS 断连 REST 10s 轮询降级
 // （护理/设备双通道独立门控）+ 页面隐藏暂停消费（EX-41：轮询与信号帧零出网，恢复可见立刷）。
 // 本组件只做组装与编排（DashboardView 同款先例），帧收窄在 utils/nursingMessage。
+// WS 派生行 TTL 退役（D-4）：快照无「解除」帧，长时值守大屏的 WS 前插行按首见时间戳
+// 在快照/帧入口统一清理——逾期 wsOnly 行 10 分钟宽限窗/呼叫行 5 分钟/升级行 30 分钟，
+// 防过期行永久驻留误导值守（快照行自带生命周期不入册，不受 TTL 管）。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { alarms } from '@/api/iot';
@@ -62,6 +65,15 @@ const ESCALATION_LIST_CAPACITY = 20;
 
 /** 帧驱动刷新最小间隔（毫秒）：信号帧 2s 窗口合并，短窗内多帧只触发一次拉取（工作站先例） */
 const FRAME_REFRESH_MIN_INTERVAL_MS = 2000;
+
+/** D-4：逾期看板 WS 前插行宽限窗（毫秒，裁决固化 10 分钟）——快照持续未确认的 wsOnly 行首见后超窗退役 */
+const WS_ROW_GRACE_MS = 10 * 60 * 1000;
+
+/** D-4：WS 呼叫行 TTL（毫秒，裁决固化 5 分钟）——呼叫无确认回执帧，超时自动退役防驻留 */
+const CALL_ROW_TTL_MS = 5 * 60 * 1000;
+
+/** D-4：输注升级行 TTL（毫秒，裁决固化 30 分钟）——升级无解除帧，超时自动退役防驻留 */
+const ESCALATION_TTL_MS = 30 * 60 * 1000;
 
 /* ---------- 词表（code → 展示词 + 语义 tone；词表外 code 原样展示不炸渲染） ---------- */
 
@@ -180,6 +192,10 @@ function levelMetaOf(level: string | undefined): { text: string; tone: string } 
 
 /** 告警行前插（按 key 去重：重复帧先移除旧行再置顶，容量截断防内存无界） */
 function prependAlertRow(row: AlertRowVM): void {
+  // D-4：WS 呼叫行入首见册（TTL 退役锚点，首见后不随重复呼叫帧重置）；IOT 告警行走快照生命周期不入册
+  if (row.kind === 'CALL' && !callRowFirstSeen.has(row.key)) {
+    callRowFirstSeen.set(row.key, Date.now());
+  }
   alertRows.value = [row, ...alertRows.value.filter((existing) => existing.key !== row.key)].slice(
     0,
     ALARM_LIST_CAPACITY,
@@ -202,12 +218,17 @@ function toAlertRow(alarm: AlarmVO): AlertRowVM {
 
 /** REST 兜底装载：替换设备告警行、保留 WS 呼叫行在前（呼叫通道独立于 iot 连接态） */
 function mergeAlertSnapshot(rows: AlertRowVM[]): void {
-  const callRows = alertRows.value.filter((existing) => existing.kind === 'CALL');
-  const callKeys = new Set(callRows.map((row) => row.key));
-  alertRows.value = [...callRows, ...rows.filter((row) => !callKeys.has(row.key))].slice(
-    0,
-    ALARM_LIST_CAPACITY,
+  // D-4 统一清理入口：过期 WS 呼叫行先出清（快照 IOT 行无册记，随快照全量替换自生灭）
+  purgeExpiredRows(Date.now());
+  const snapshotKeys = new Set(rows.map((row) => row.key));
+  // 快照覆盖到的 WS 呼叫行注销册记转快照生命周期（行随快照段自生灭，TTL 不再管辖）
+  for (const key of snapshotKeys) {
+    callRowFirstSeen.delete(key);
+  }
+  const callRows = alertRows.value.filter(
+    (existing) => existing.kind === 'CALL' && !snapshotKeys.has(existing.key),
   );
+  alertRows.value = [...callRows, ...rows].slice(0, ALARM_LIST_CAPACITY);
 }
 
 /* ---------- ③ 输液动态条（infusion-board REST + 遥测/设备状态信号刷新 + 升级行） ---------- */
@@ -230,10 +251,19 @@ function infusionLevelMeta(code: string | undefined): { text: string; tone: stri
  * 幂等去重，重复帧先移除旧行再置顶，容量截断防内存无界）
  */
 function prependEscalationRows(payload: InfusionEscalationPayload): void {
+  // D-4 统一清理入口：升级行唯一 WS 入口，帧到达先清过期行
+  purgeExpiredRows(Date.now());
   const incoming = payload.executionNos.map((executionNo) => ({
     executionNo,
     alarmNo: payload.alarmNo,
   }));
+  // 新升级行入首见册（TTL 退役锚点，首见后不随重复帧重置）
+  const now = Date.now();
+  for (const row of incoming) {
+    if (!escalationFirstSeen.has(row.executionNo)) {
+      escalationFirstSeen.set(row.executionNo, now);
+    }
+  }
   const incomingKeys = new Set(incoming.map((row) => row.executionNo));
   escalationRows.value = [
     ...incoming,
@@ -276,6 +306,10 @@ function escalationText(count: number): string {
 
 /** WS 逾期帧装载：同号行覆盖并移顶（重复首标/升档刷新，防同号双行） */
 function upsertOverdueFromFrame(payload: OverdueTaskPayload): void {
+  // D-4：新 WS 逾期行入首见册（宽限窗退役锚点，首见后不随升档重复帧重置）
+  if (!wsRowFirstSeen.has(payload.taskNo)) {
+    wsRowFirstSeen.set(payload.taskNo, Date.now());
+  }
   const rest = overdueRows.value.filter((row) => row.taskNo !== payload.taskNo);
   overdueRows.value = [
     {
@@ -290,6 +324,8 @@ function upsertOverdueFromFrame(payload: OverdueTaskPayload): void {
 
 /** REST 快照逾期段装载：同号行取升级档更高者，WS 前插行（快照未覆盖）保留在前 */
 function mergeOverdueSnapshot(rows: OverdueTaskRow[]): void {
+  // D-4 统一清理入口：超宽限窗的 wsOnly 行先出清（快照持续未确认视为后端已解除）
+  purgeExpiredRows(Date.now());
   const snapshot = rows.map((row) => ({
     taskNo: row.taskNo ?? '',
     taskType: row.taskType ?? '',
@@ -297,12 +333,74 @@ function mergeOverdueSnapshot(rows: OverdueTaskRow[]): void {
     escalationCount: row.escalationCount ?? 0,
   }));
   const snapshotKeys = new Set(snapshot.map((row) => row.taskNo));
-  const wsOnly = overdueRows.value.filter((row) => !snapshotKeys.has(row.taskNo));
+  // 快照覆盖行注销册记转快照生命周期（下一轮快照无此行即自然消失，不受宽限窗误伤）
+  for (const taskNo of snapshotKeys) {
+    wsRowFirstSeen.delete(taskNo);
+  }
+  // wsOnly=仍在册的 WS 派生行（未入册=快照生命周期行或已被快照接管后撤销的行，不保留）
+  const wsOnly = overdueRows.value.filter(
+    (row) => !snapshotKeys.has(row.taskNo) && wsRowFirstSeen.has(row.taskNo),
+  );
   const merged = snapshot.map((row) => {
     const fromWs = overdueRows.value.find((existing) => existing.taskNo === row.taskNo);
     return fromWs !== undefined && fromWs.escalationCount > row.escalationCount ? fromWs : row;
   });
   overdueRows.value = [...wsOnly, ...merged];
+}
+
+/* ---------- D-4 WS 派生行 TTL 退役（三族统一清理——快照无「解除」帧的驻留兜底） ---------- */
+/** WS 派生行首见册（毫秒时间戳，键=行去重键：taskNo/告警行 key/executionNo）——只登记 WS 前插行，快照行自带生命周期不入册 */
+const wsRowFirstSeen = new Map<string, number>();
+const callRowFirstSeen = new Map<string, number>();
+const escalationFirstSeen = new Map<string, number>();
+
+/** 首见时间戳是否已过档位时限（无册记=快照生命周期行，不受 TTL 管） */
+function expired(firstSeen: number | undefined, now: number, ttl: number): boolean {
+  return firstSeen !== undefined && now - firstSeen > ttl;
+}
+
+/** 册记对账：行已不在数组的册记条目删除（覆盖过期清除/容量截断/快照接管三路，防 Map 无界增长） */
+function reconcileFirstSeen(map: Map<string, number>, liveKeys: Set<string>): void {
+  for (const key of map.keys()) {
+    if (!liveKeys.has(key)) {
+      map.delete(key);
+    }
+  }
+}
+
+/**
+ * 三族统一清理入口（mergeOverdueSnapshot/mergeAlertSnapshot/prependEscalationRows 三入口调用）：
+ * 过期 WS 派生行从数组出清 + 册记对账双清。无变化时不重赋值（避免无谓响应性触发）。
+ */
+function purgeExpiredRows(now: number): void {
+  // ④ 逾期看板 wsOnly 行：超 10 分钟宽限窗退役
+  if (overdueRows.value.some((row) => expired(wsRowFirstSeen.get(row.taskNo), now, WS_ROW_GRACE_MS))) {
+    overdueRows.value = overdueRows.value.filter(
+      (row) => !expired(wsRowFirstSeen.get(row.taskNo), now, WS_ROW_GRACE_MS),
+    );
+  }
+  // ② 告警列 WS 呼叫行：超 5 分钟 TTL 退役（快照 IOT 行无册记不在此列）
+  if (alertRows.value.some((row) => expired(callRowFirstSeen.get(row.key), now, CALL_ROW_TTL_MS))) {
+    alertRows.value = alertRows.value.filter(
+      (row) => !expired(callRowFirstSeen.get(row.key), now, CALL_ROW_TTL_MS),
+    );
+  }
+  // ③ 输注升级行：超 30 分钟 TTL 退役
+  if (
+    escalationRows.value.some((row) =>
+      expired(escalationFirstSeen.get(row.executionNo), now, ESCALATION_TTL_MS),
+    )
+  ) {
+    escalationRows.value = escalationRows.value.filter(
+      (row) => !expired(escalationFirstSeen.get(row.executionNo), now, ESCALATION_TTL_MS),
+    );
+  }
+  reconcileFirstSeen(wsRowFirstSeen, new Set(overdueRows.value.map((row) => row.taskNo)));
+  reconcileFirstSeen(
+    callRowFirstSeen,
+    new Set(alertRows.value.filter((row) => row.kind === 'CALL').map((row) => row.key)),
+  );
+  reconcileFirstSeen(escalationFirstSeen, new Set(escalationRows.value.map((row) => row.executionNo)));
 }
 
 /* ---------- ⑤ 出入院动态滚动条（board admissions 段近 24h 时间线） ---------- */

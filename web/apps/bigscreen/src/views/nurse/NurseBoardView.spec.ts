@@ -4,8 +4,10 @@
 // 增量（nursing board 五类型帧分发：BED_PATIENT 快照刷新/TASK_OVERDUE 前插升级闪烁/
 // INFUSION_ESCALATION 执行单号幂等/CALL_TRIGGERED 呼叫行/ADVERSE_EVENT_REMIND 超时提醒；
 // iot alarm 帧前插去重）与 REST 10s 轮询降级（nursing/iot 双通道独立门控、页面隐藏暂停
-// EX-41、恢复可见立刷）及卸载全量清理（订阅退订/双断连/轮询停摆）。fake timers 承载轮询
-// 断言，禁真实等待。
+// EX-41、恢复可见立刷）、卸载全量清理（订阅退订/双断连/轮询停摆）及 D-4 WS 派生行 TTL
+// 退役（逾期 wsOnly 行 10 分钟宽限窗/呼叫行 5 分钟/输注升级行 30 分钟——快照无「解除」帧，
+// 前插行按首见时间戳在快照/帧入口统一清除，断言走渲染行为面经 fake timers 快进承载）。
+// fake timers 承载轮询断言，禁真实等待。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createMemoryHistory, createRouter } from 'vue-router';
@@ -561,5 +563,129 @@ describe('护士站大屏（双端点订阅与五区视图）', () => {
     const wrapper = await mountNurseBoard('?wardId=1001');
     expect(wrapper.text()).toContain('令牌获取失败');
     wrapper.unmount();
+  });
+
+  it('D-4 TTL：wsOnly 逾期行超 10 分钟宽限窗退役，快照逾期行不受影响', async () => {
+    // 档位值=裁决固化（10 分钟），测试以字面量锚定档位防擅自调档
+    vi.useFakeTimers();
+    try {
+      const wrapper = await mountNurseBoard('?wardId=1001');
+      // WS 逾期帧前插新任务号（快照 mock 不含该号——wsOnly 保留语义的成立前提）
+      h.onNursingFrame?.({
+        type: 'TASK_OVERDUE',
+        payload: {
+          taskNo: 'TK2026100300003',
+          taskType: 'PATROL',
+          planTime: '2026-10-03T05:00:00+08:00',
+          escalationCount: 1,
+          wardId: '1001',
+        },
+        occurredAt: '2026-10-03T06:00:00Z',
+      });
+      await flushPromises();
+      const overduePanel = () => wrapper.find('[aria-label="任务逾期看板"]');
+      expect(overduePanel().text()).toContain('TK2026100300003');
+
+      // 宽限窗内（1 分钟）：多轮快照合并（10s 轮询）均未获快照确认，wsOnly 行保留不误伤
+      await vi.advanceTimersByTimeAsync(60 * 1000);
+      expect(overduePanel().text()).toContain('TK2026100300003');
+
+      // 快进越过 10 分钟宽限窗：下一轮快照合并触发统一清理，WS 前插行退役；
+      // 快照行 TK2026100300001 生命周期归快照，恒在列不受 TTL 管
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      expect(overduePanel().text()).not.toContain('TK2026100300003');
+      expect(overduePanel().text()).toContain('TK2026100300001');
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('D-4 TTL：WS 呼叫行超 5 分钟 TTL 从告警列退役，快照告警行不受影响', async () => {
+    // 档位值=裁决固化（5 分钟），测试以字面量锚定档位防擅自调档
+    vi.useFakeTimers();
+    try {
+      const wrapper = await mountNurseBoard('?wardId=1001');
+      h.onNursingFrame?.({
+        type: 'CALL_TRIGGERED',
+        payload: {
+          callNo: 'CALL2026100300002',
+          deviceId: 'dev-call-02',
+          callType: 'NURSE_CALL',
+          bedId: '12',
+          wardId: '1001',
+          triggeredAt: '2026-10-03T05:58:00Z',
+        },
+        occurredAt: '2026-10-03T05:58:00Z',
+      });
+      await flushPromises();
+      const alertPanel = () => wrapper.find('[aria-label="未确认告警"]');
+      expect(alertPanel().text()).toContain('CALL2026100300002');
+
+      // TTL 内（4 分钟）：多轮告警快照合并不清除呼叫行
+      await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
+      expect(alertPanel().text()).toContain('CALL2026100300002');
+
+      // 快进越过 5 分钟 TTL（累计 6 分钟）：呼叫行从告警列退役；
+      // REST 快照告警行 AL20261003001 随每轮快照重装载，不受 TTL 管
+      await vi.advanceTimersByTimeAsync(2 * 60 * 1000);
+      expect(alertPanel().text()).not.toContain('CALL2026100300002');
+      expect(alertPanel().text()).toContain('AL20261003001');
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('D-4 TTL：输注升级行超 30 分钟退役，容量截断语义保持', async () => {
+    // 档位值=裁决固化（30 分钟），测试以字面量锚定档位防擅自调档
+    vi.useFakeTimers();
+    try {
+      const wrapper = await mountNurseBoard('?wardId=1001');
+      h.onNursingFrame?.({
+        type: 'INFUSION_ESCALATION',
+        payload: {
+          alarmNo: 'AL20261003005',
+          executionNos: ['EX20261003011', 'EX20261003012'],
+          escalatedCount: 2,
+          taskEscalatedCount: 1,
+        },
+        occurredAt: '2026-10-03T06:00:00Z',
+      });
+      await flushPromises();
+      expect(wrapper.findAll('.nurse-escalation')).toHaveLength(2);
+
+      // 快进越过 30 分钟 TTL：轮询驱动的统一清理使升级行退役（清单空则整列不渲染）
+      await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 30 * 1000);
+      expect(wrapper.findAll('.nurse-escalation')).toHaveLength(0);
+      expect(wrapper.find('[aria-label="输液动态"]').text()).not.toContain('EX20261003011');
+
+      // 新升级帧到达：过期行先清、新行前插，容量 20 截断语义保持（25 个执行单号只保留前 20）
+      const executionNos: string[] = [];
+      for (let i = 1; i <= 25; i += 1) {
+        executionNos.push(`EX20261003${100 + i}`);
+      }
+      h.onNursingFrame?.({
+        type: 'INFUSION_ESCALATION',
+        payload: {
+          alarmNo: 'AL20261003006',
+          executionNos,
+          escalatedCount: 25,
+          taskEscalatedCount: 1,
+        },
+        occurredAt: '2026-10-03T06:40:00Z',
+      });
+      await flushPromises();
+      const rows = wrapper.findAll('.nurse-escalation');
+      expect(rows).toHaveLength(20);
+      expect(rows[0]?.text()).toContain('EX20261003101');
+      expect(rows[19]?.text()).toContain('EX20261003120');
+      // 容量外（第 21~25 个）与已退役旧行均不出渲染面
+      expect(wrapper.text()).not.toContain('EX20261003125');
+      expect(wrapper.text()).not.toContain('EX20261003012');
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
