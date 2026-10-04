@@ -5,7 +5,8 @@
 // 为准）、行内动作在途互斥守卫、贴签弹窗数据面、医嘱检索审方状态与生成计划前置、病区
 // 签收弹窗零手输（W-72：签收人=会话身份展示回显，receivedBy 携会话 userId 出网、服务端
 // 一律以令牌身份落值；会话缺身份零出网拦截）、退药弹窗多行化（W-66：打开拉 returnable
-// 可退明细读面、逐行数量正则+可退净量双验 D-8、缺行零出网前置拦截、换行旧回包丢弃
+// 可退明细读面、逐行数量正则（小数位≤3，评审 C-F1——DECIMAL(12,3) 精度对齐）+可退净量
+// 双验 D-8、缺行零出网前置拦截、换行旧回包丢弃
 // EX-45 同族）。api mock 承载零出网（vi.mock 整模块替身），不打真实网络；断言业务结果
 // 不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -556,7 +557,7 @@ describe('药房住院摆药页', () => {
     wrapper.unmount();
   });
 
-  it('D-8 数量校验收口：负数/科学计数/Infinity/超可退净量形态零出网拒绝', async () => {
+  it('D-8 数量校验收口：负数/科学计数/Infinity/4 位小数/超可退净量形态零出网拒绝', async () => {
     vi.mocked(dispensePlans.list).mockResolvedValue({
       content: [planMock({ planNo: 'DP6', status: 'DELIVERED' })],
       page: '0',
@@ -564,7 +565,7 @@ describe('药房住院摆药页', () => {
       total: '1',
     });
     vi.mocked(dispensePlans.returnable).mockResolvedValue(
-      // 单行明细（可退净量 3）：四非法形态逐次录入提交，均须拦在出网前
+      // 单行明细（可退净量 3）：五非法形态逐次录入提交，均须拦在出网前
       returnableMock({
         items: [
           {
@@ -583,15 +584,16 @@ describe('药房住院摆药页', () => {
     await clickButton(wrapper, '退药');
     await flushPromises();
     const qtyInput = wrapper.find('.plan-return-qty');
-    // '-2'/'1e3'/'Infinity' 败于数字正则，'9.9' 过正则但超可退净量 3——四形态全拦
-    for (const badQty of ['-2', '1e3', 'Infinity', '9.9']) {
+    // '-2'/'1e3'/'Infinity' 败于数字正则，'0.1234' 败于小数位≤3 正则（评审 C-F1——DECIMAL(12,3)
+    // 精度对齐，后端 parseReturnQuantity scale 守卫同口径），'9.9' 过正则但超可退净量 3——五形态全拦
+    for (const badQty of ['-2', '1e3', 'Infinity', '0.1234', '9.9']) {
       await qtyInput.setValue(badQty);
       await clickButton(wrapper, '提交退药');
     }
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
       '明细 1 退药数量须为不超过可退净量 3 的正数',
     );
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledTimes(4);
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledTimes(5);
     // 零出网：受理端点零调用、看板仅初载一次
     expect(createDispenseReturn).not.toHaveBeenCalled();
     expect(dispensePlans.list).toHaveBeenCalledTimes(1);

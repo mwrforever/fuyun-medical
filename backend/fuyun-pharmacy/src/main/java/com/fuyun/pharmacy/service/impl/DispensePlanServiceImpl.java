@@ -919,17 +919,32 @@ public class DispensePlanServiceImpl extends ServiceImpl<DispensePlanMapper, Dis
     }
 
     /**
-     * 退药数量解析守卫（PH-1016，W-22⑦ 门诊同源形态）。
+     * 退药数量解析守卫（PH-1016，W-22⑦ 门诊同源形态；scale≤3 守卫为 PR-4B 五路评审 C-F1 补钉）。
      *
-     * @throws BizException PH-1016（400）：非数字串
+     * <p>scale 上限 3 与 dispense_item.issued_qty/returned_qty 列 DECIMAL(12,3) 精度对齐：超 3 位
+     * 小数会被 PG 静默舍入，致 PART/FULL 终态判定与 returned_qty、事件载荷勾稽漂移，须在应用层
+     * 显式拒绝（400）。
+     *
+     * @param returnQuantity 退药数量 DECIMAL string，来源前端退药弹窗逐行录入
+     * @return 解析后的退药数量（小数位 ≤3，尾零形态如 "1.500" 放行）
+     * @throws BizException PH-1016（400）：非数字串；或 stripTrailingZeros 后小数位超 3 位
      */
     private static BigDecimal parseReturnQuantity(String returnQuantity) {
+        BigDecimal qty;
         try {
-            return new BigDecimal(returnQuantity);
+            qty = new BigDecimal(returnQuantity);
         } catch (NumberFormatException e) {
             throw new BizException(
                     PharmacyErrorCode.NUMERIC_FIELD_MALFORMED, HttpStatus.BAD_REQUEST, "退药数量须为数字串：" + returnQuantity);
         }
+        // scale 守卫（评审 C-F1）：剥尾零后小数位 >3 即拒——"1.500"（有效 1 位）放行、"0.1234" 拒
+        if (qty.stripTrailingZeros().scale() > 3) {
+            throw new BizException(
+                    PharmacyErrorCode.NUMERIC_FIELD_MALFORMED,
+                    HttpStatus.BAD_REQUEST,
+                    "退药数量小数位超限（最多 3 位，列 DECIMAL(12,3)）：" + returnQuantity);
+        }
+        return qty;
     }
 
     /**

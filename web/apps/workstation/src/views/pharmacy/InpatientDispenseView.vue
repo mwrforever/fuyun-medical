@@ -7,7 +7,8 @@
 // 态不进列——退药态由调剂行承载，计划行不迁）③操作流（行内按状态出下一动作按钮五步在途
 // 互斥；PIVAS 行出贴签查看弹窗[label 数据面，床号无 pharmacy 侧数据源恒空——展示即所得]；
 // DELIVERED 行退药弹窗=可退明细多行表[W-66：打开拉 returnable 读面——非 DELIVERED 409 归
-// 失败弹错；逐行数量数字正则+可退净量双验 D-8，提交全 NORMAL 行逐行 returnLines 直调
+// 失败弹错；逐行数量数字正则（小数位≤3，DECIMAL(12,3) 精度对齐——评审 C-F1）+可退净量双验
+// D-8，提交全 NORMAL 行逐行 returnLines 直调
 // pharmacy dispense-returns 住院扩展形态——nursing 侧退药开关校验端点未建，Task 8 minor③
 // 注记，前端注记不越界实现]）。摆药五步状态机以后端 DispenseStatus 住院链实测词表为准；
 // deliver 为 CHECKED 态内配送交接时间线半步不迁状态（Task 8 裁决）——行内动作成功后一律
@@ -365,11 +366,12 @@ const returnLoading = ref(false);
 
 /**
  * 退药数量行级校验（D-8 收口，循 PdaView isValidNeedleVolume 正则+范围双验先例）：
- * 数字正则拦负数/科学计数/Infinity/多小数点形态，范围比对可退净量（已发-已退）——
- * 0 不允许（零量退药无业务意义），后端服务层同口径兜底。
+ * 数字正则拦负数/科学计数/Infinity/多小数点形态，且小数位 ≤3（DECIMAL(12,3) 列精度对齐——
+ * 超 3 位后端必拒且 PG 会静默舍入致勾稽漂移，评审 C-F1 前后端双钉）；范围比对可退净量
+ * （已发-已退）——0 不允许（零量退药无业务意义），后端服务层同口径兜底。
  */
 function isValidReturnQty(raw: string, returnableQty: string): boolean {
-  if (!/^\d+(\.\d+)?$/.test(raw)) {
+  if (!/^\d+(\.\d{1,3})?$/.test(raw)) {
     return false;
   }
   const qty = Number(raw);

@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -749,6 +750,59 @@ class DispensePlanServiceImplTest {
         verify(events).publishEvent(eventCaptor.capture());
         assertThat(((DispenseReturnedPayload) ((PharmacyDomainEvent) eventCaptor.getValue()).payload()).fullReturn())
                 .isTrue();
+    }
+
+    @Test
+    @DisplayName("退药·数量 scale 守卫（评审 C-F1）：恰 3 位小数过、整数过、超 3 位拒 PH-1016（禁 PG 静默舍入）")
+    void inpatientReturnQuantityScaleGuardRejectsOverThreeDecimals() {
+        DispensePlanServiceImpl impl = newService();
+        when(planMapper.selectOne(any())).thenReturn(plan("DELIVERED", "SINGLE_DOSE"));
+        when(dispenseMapper.selectOne(any())).thenReturn(inpatientDispense("DELIVERED"));
+        when(dispenseItemMapper.selectList(any()))
+                .thenReturn(List.of(inpatientItem(new BigDecimal("2"), BigDecimal.ZERO)));
+        when(dispenseMapper.casStatus(800L, "DELIVERED", "PART_RETURNED")).thenReturn(1);
+
+        // 恰 3 位小数（DECIMAL(12,3) 精度内）：放行——回补量逐位原值（勾稽锚）
+        when(drugBatchMapper.restock(55L, new BigDecimal("0.125"))).thenReturn(1);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptInpatientReturn(new DispenseReturnRequest(
+                    null,
+                    null,
+                    null,
+                    "DP2026100200001",
+                    List.of(new DispenseReturnRequest.InpatientReturnLine("1", "0.125", null))));
+            verify(drugBatchMapper).restock(55L, new BigDecimal("0.125"));
+        }
+
+        // 整数：放行（既有全量退同款形态——回归锚）
+        when(drugBatchMapper.restock(55L, new BigDecimal("1"))).thenReturn(1);
+        try (MockedStatic<Db> mockedDb = Mockito.mockStatic(Db.class)) {
+            impl.acceptInpatientReturn(new DispenseReturnRequest(
+                    null,
+                    null,
+                    null,
+                    "DP2026100200001",
+                    List.of(new DispenseReturnRequest.InpatientReturnLine("1", "1", null))));
+            verify(drugBatchMapper).restock(55L, new BigDecimal("1"));
+        }
+
+        // 超 3 位小数：PH-1016 显式拒（否则 PG 按 DECIMAL(12,3) 静默舍入——PART/FULL 判定与
+        // returned_qty、事件载荷勾稽漂移）；且解析守卫先于超余额守卫——回补/事件仍各恰 2 次（拒绝面零追加）
+        assertThatThrownBy(() -> impl.acceptInpatientReturn(new DispenseReturnRequest(
+                        null,
+                        null,
+                        null,
+                        "DP2026100200001",
+                        List.of(new DispenseReturnRequest.InpatientReturnLine("1", "0.1234", null)))))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("小数位超限")
+                .extracting(ex -> ((BizException) ex).getErrorCode())
+                .isEqualTo(PharmacyErrorCode.NUMERIC_FIELD_MALFORMED);
+        verify(drugBatchMapper, times(2)).restock(eq(55L), any());
+        // ApplicationEventPublisher 双重载陷阱：裸 any() 解析到 publishEvent(ApplicationEvent) 分支
+        // （恒未调用），须以 Object 型捕获器锚定 publishEvent(Object) 真实调用面（循 :716 先例）
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(events, times(2)).publishEvent(eventCaptor.capture());
     }
 
     @Test
