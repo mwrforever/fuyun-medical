@@ -93,6 +93,14 @@ public class SystemWebConfig implements WebMvcConfigurer {
             "/api/v1/outpatient/portal/**",
             "/api/v1/outpatient/queues/*/tickets");
 
+    /**
+     * 哨兵令牌 REST 只读 allowlist（W-39 限行面）：前两条按前缀匹配+尾段 wardId 一致性，
+     * 第三条精确+query 一致性（消费方 AuthTokenInterceptor 跨包引用，故与 AUTH_WHITELIST
+     * 同为 public；任何新增端点即扩大匿名令牌暴露面，变更须经安全评审）。
+     */
+    public static final List<String> SENTINEL_ALLOWLIST =
+            List.of("/api/v1/nursing/board/", "/api/v1/ward/infusion-board/", "/api/v1/iot/alarms");
+
     /** 认证拦截拦截路径：全部业务 API（含未来模块，P0 只做认证 401 不做 403 鉴权） */
     private static final String INTERCEPT_PATH_PATTERN = "/api/v1/**";
 

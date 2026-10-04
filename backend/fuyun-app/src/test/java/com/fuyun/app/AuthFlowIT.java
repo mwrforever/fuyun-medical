@@ -44,13 +44,15 @@ import org.testcontainers.utility.MountableFile;
  * 会话删除（旧令牌失效）、连续失败触发锁定（SYS-1002）、审计切面落库断言（LOGIN 行含
  * traceId 与脱敏后的 fail_reason/detail，B3.3 审计链路的端到端留证载体）、大屏候诊榜快照
  * 匿名可达而动作端点仍 401（步骤8，Task 15 Step6 D-2 白名单只读放行的面界断言）、
- * bigscreen-token 携 wardId 匿名签发面（步骤9，PR-4C W-39 通道锚点；限行行为面归第 10 步）。
+ * bigscreen-token 携 wardId 匿名签发面（步骤9，PR-4C W-39 通道锚点；限行行为面归第 10 步）、
+ * 哨兵令牌 REST 限行行为面（步骤10，PR-4C W-39/A-1 收敛——写面与非 allowlist 读面均 403
+ * SYS-1032，board 三端点 200 断言归 NurseBoardWsIT）。
  *
  * <p>容器三件套与 {@link SmokeStackIT} 完全同款（tag 与 deploy compose 严格一致 + it/rabbitmq.conf
  * 挂载 + static 类级共享 + @ServiceConnection）；HMAC 密钥经 @DynamicPropertySource 注入测试资产
  * 假密钥（非真实凭证，真实密钥只经环境变量注入）。审计落库经 JdbcTemplate 查 system.audit_log 断言。
  *
- * <p>九步断言按序执行（@Order 串联，登录状态与失败计数跨步累积属业务链路语义）；令牌经静态
+ * <p>十步断言按序执行（@Order 串联，登录状态与失败计数跨步累积属业务链路语义）；令牌经静态
  * 持有器跨用例传递（JUnit 默认每方法新实例，静态字段承载链路状态，同 MessagingGovernanceIT 姿态）。
  */
 @Testcontainers
@@ -338,10 +340,29 @@ class AuthFlowIT {
     @DisplayName("步骤9：bigscreen-token 携 wardId 匿名签发 200，accessToken 非空（W-39 通道锚定签发面）")
     void bigscreenTokenCarriesWardIdAndIssuesAnonymousAccess() {
         // 携 wardId 签发：匿名 POST 成功、响应 accessToken 非空（wardId 经会话承载，本步锚定签发面；
-        // 限行行为面归 Task 3 的第 10 步）
+        // 限行行为面归第 10 步）
         ResponseEntity<String> resp = postJson("/api/v1/system/auth/bigscreen-token?wardId=1001", null, null);
         assertThat(resp.getStatusCode().value()).isEqualTo(200);
         assertThat(JsonPath.<String>read(resp.getBody(), "$.accessToken")).isNotBlank();
+    }
+
+    @Test
+    @Order(10)
+    @DisplayName("步骤10：哨兵令牌调写面与非 allowlist 读面均 403 SYS-1032（W-39/A-1 暴露面收敛）")
+    void sentinelTokenRestrictedToBoardAllowlist() {
+        String token = JsonPath.<String>read(
+                postJson("/api/v1/system/auth/bigscreen-token?wardId=1001", null, null)
+                        .getBody(),
+                "$.accessToken");
+        // 哨兵调写面 → 403 SYS-1032（W-39 收敛主断言：拦截器层拒绝，请求体不达 controller，"{}" 仅占位）
+        ResponseEntity<String> denied = bearerJson("/api/v1/nursing/assignments", HttpMethod.POST, token, "{}");
+        assertThat(denied.getStatusCode().value()).isEqualTo(403);
+        assertThat(denied.getBody()).contains("SYS-1032");
+        // 哨兵调非 allowlist 读面 → 403（A-1 暴露面收窄；system/users 端点不存在，以 dicts 登录态读面代替）
+        assertThat(bearerJson("/api/v1/system/dicts/gender", HttpMethod.GET, token, null)
+                        .getStatusCode()
+                        .value())
+                .isEqualTo(403);
     }
 
     /**
@@ -359,6 +380,22 @@ class AuthFlowIT {
             headers.set("X-Trace-Id", traceIdAnchor);
         }
         return restTemplate.exchange(uri, HttpMethod.POST, new HttpEntity<>(jsonBody, headers), String.class);
+    }
+
+    /**
+     * 发送携带 Bearer 令牌的 JSON 请求（第 10 步哨兵限行断言通道：POST 写面与 GET 读面共用）。
+     *
+     * @param uri      目标 URI，非空
+     * @param method   HTTP 方法，非空
+     * @param token    Bearer 令牌原文，非空；经 Authorization 头注入（禁入日志）
+     * @param jsonBody 请求体 JSON 字符串，可空；GET 传 null，403 场景请求体在拦截器层即被拒不参与校验
+     * @return 原始 HTTP 响应（状态码与响应体可断言），非空
+     */
+    private ResponseEntity<String> bearerJson(String uri, HttpMethod method, String token, String jsonBody) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set(HttpHeaders.AUTHORIZATION, "Bearer " + token);
+        return restTemplate.exchange(uri, method, new HttpEntity<>(jsonBody, headers), String.class);
     }
 
     /**

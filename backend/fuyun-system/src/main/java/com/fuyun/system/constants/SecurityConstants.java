@@ -57,6 +57,12 @@ public final class SecurityConstants {
     /** traceId 的 MDC 键名：与 TraceIdFilter 默认键、fuyun.trace.mdc-key 默认值保持一致 */
     public static final String TRACE_ID_MDC_KEY = "traceId";
 
+    /** 大屏哨兵登录名（哨兵会话判定锚点——AuthTokenInterceptor 限行与 WS 防线共用） */
+    public static final String BIGSCREEN_LOGIN_NAME = "bigscreen";
+
+    /** 哨兵操作者注入值（userId=0 十进制字符串化——WardAccessService 豁免判定锚点） */
+    public static final String BIGSCREEN_SENTINEL_OPERATOR_ID = "0";
+
     /** 纯常量类，禁止实例化（backend 宪法 A.2-6） */
     private SecurityConstants() {}
 }

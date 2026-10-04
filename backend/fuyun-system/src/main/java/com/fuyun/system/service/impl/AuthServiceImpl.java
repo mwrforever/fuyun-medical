@@ -48,9 +48,6 @@ public class AuthServiceImpl implements IAuthService {
     /** 登录失败防枚举文案：账号不存在与口令错误共用（安全红线 §8-11，禁差异文案探测账号存在性） */
     private static final String LOGIN_FAIL_DETAIL = "登录名或密码错误";
 
-    /** 大屏匿名会话哨兵登录名：会话标记（W-39 P2 演进为专用匿名只读通道的锚点），不对应 sys_user 行 */
-    private static final String BIGSCREEN_LOGIN_NAME = "bigscreen";
-
     /** 大屏匿名会话哨兵显示名：审计/排障可读载体（脱敏出网，非敏感字段） */
     private static final String BIGSCREEN_DISPLAY_NAME = "候诊大屏";
 
@@ -226,10 +223,11 @@ public class AuthServiceImpl implements IAuthService {
      */
     @Override
     public BigscreenTokenVO issueBigscreenToken(String wardId) {
-        // 哨兵会话末参透传 wardId 原样：携病区=病区屏专用，null=泛哨兵（REST 限行与 WS 订阅防线的比对源）
+        // 哨兵会话末参透传 wardId 原样：携病区=病区屏专用，null=泛哨兵（REST 限行与 WS 订阅防线的比对源）；
+        // 登录名引用公共常量（限行拦截器同源判定锚点，禁散落字面量）
         SessionUser screen = new SessionUser(
                 BIGSCREEN_SENTINEL_USER_ID,
-                BIGSCREEN_LOGIN_NAME,
+                SecurityConstants.BIGSCREEN_LOGIN_NAME,
                 BIGSCREEN_DISPLAY_NAME,
                 null,
                 null,
@@ -238,7 +236,7 @@ public class AuthServiceImpl implements IAuthService {
         String accessToken = tokenService.issueAccess(screen, BIGSCREEN_TOKEN_TTL);
         log.info(
                 "大屏订阅令牌已签发：loginName={}，wardId={}，ttl={}s（匿名哨兵会话，令牌值禁入日志）",
-                BIGSCREEN_LOGIN_NAME,
+                SecurityConstants.BIGSCREEN_LOGIN_NAME,
                 wardId,
                 BIGSCREEN_TOKEN_TTL.toSeconds());
         return new BigscreenTokenVO(
