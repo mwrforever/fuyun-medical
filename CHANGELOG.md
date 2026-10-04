@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-04 · PR-4B 五路评审修复环：两门槛项收口 + W-88/W-89 登记
+
+- **C-F1（85）**：退药数量 scale≤3 前后端双钉——后端 DispensePlanServiceImpl.parseReturnQuantity
+  stripTrailingZeros 后 scale>3 抛 PH-1016（对齐 dispense_item DECIMAL(12,3)，防 PG 静默舍入致
+  PART/FULL 终态与 returned_qty、事件载荷勾稽漂移，单测三面：>3 拒/恰 3 过/整数过）；前端
+  InpatientDispenseView isValidReturnQty 正则收紧 `^\d+(\.\d{1,3})?$`（文件头与 D-8 注释同步）。
+- **E-1（85）**：contextOperatorId「令牌身份非空非数字」守卫分支补覆盖——AdverseEventServiceImplTest
+  与 NursingTaskServiceImplTest 各补 NS-1019 零写库用例；NursingTaskServiceImplTest 认领守卫
+  DisplayName 原虚报「缺失/非数字」实未跑非数字面，补齐分支后如实（方法名同步扩语义）。
+- **D-21 申报（前端 D-8 用例族新增非法形态断言=收紧非放宽）**：badQty 族增 '0.1234'（4 位小数），
+  warning 计数断言 (4)→(5)——新增非法形态、严格度提升；正则收紧实现+断言修订+回归锚同笔交付。
+- **工单登记**：W-88（破码副授权人工号无存在性校验与服务层 null 不设防，评审 A-2[70]/A-3 合并）、
+  W-89（D-3 族 loading/error 语义一致性收口，评审 B-2[60]+D-F1/D-F2 合并）。
+
 ## 2026-10-04 · P2 PR-4B 收口（临床操作面语义包）
 
 - **W-72**：四域操作人服务端强制（方案 A 字段保留+令牌覆盖+匿名通道保留）+A-4 破码 primary 收敛
