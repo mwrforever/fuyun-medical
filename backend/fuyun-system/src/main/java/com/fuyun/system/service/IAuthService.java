@@ -57,7 +57,10 @@ public interface IAuthService {
      * 校验链属已知过渡态，P2 WS 通道演进开大屏专用匿名只读通道（订阅级最小授权）后收敛；
      * 过渡期以 5 分钟 TTL 收窄误用窗口（「缩短 TTL」裁决口径）。
      *
+     * @param wardId 病区编码，可 null（泛哨兵令牌=候诊屏 useQueueStomp 无病区概念，仅够 WS CONNECT
+     *               的 queue 屏使用；来源：controller 层已将空白归一 null）；REST 三端点与 nursing
+     *               订阅均要求非 null 才能过校验（Task 3 限行防线比对源）
      * @return 大屏订阅令牌出参（令牌值 + Bearer 方案名 + 有效期秒数），非空
      */
-    BigscreenTokenVO issueBigscreenToken();
+    BigscreenTokenVO issueBigscreenToken(String wardId);
 }

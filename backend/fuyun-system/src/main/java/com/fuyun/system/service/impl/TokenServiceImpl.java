@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
+import com.fuyun.system.api.TokenPrincipal;
 import com.fuyun.system.api.TokenVerifier;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.properties.SecurityProperties;
@@ -159,6 +160,32 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
     }
 
     /**
+     * 访问令牌主体校验（TokenVerifier 契约实现，PR-4C W-39/A-2 通道锚点）：内部复用既有校验链
+     * （typ 强制 access），成功返回最小主体三元组、任何校验失败返回 null。
+     *
+     * <p>语义边界：仅捕获 BizException（校验链的全部失败形态）收敛为 null——失败不区分原因
+     * （防枚举口径与 {@link #verifyAccessToken} 一致，消费方禁止透出细分差异）；基础设施异常
+     * （Redis 不可达等）不在此吞掉，原样上抛交调用方 fail-closed 处置。wardId 经会话承载而非
+     * 令牌体（令牌线格式冻结，GC1），故从校验链返回的 SessionData 取值。
+     *
+     * @param rawToken 访问令牌原文（Bearer 方案后的值），允许为空或空白（一律 null）
+     * @return 主体摘要（userId/loginName/wardId），非空；null=校验链任一环节失败
+     */
+    @Override
+    public TokenPrincipal verifyAccessPrincipal(String rawToken) {
+        if (rawToken == null || rawToken.isBlank()) {
+            return null;
+        }
+        try {
+            SessionData session = verify(rawToken, SecurityConstants.TOKEN_TYPE_ACCESS);
+            return new TokenPrincipal(session.userId(), session.loginName(), session.wardId());
+        } catch (BizException ex) {
+            // 校验链任一环节失败归 null（防枚举口径与 verifyAccessToken 一致）
+            return null;
+        }
+    }
+
+    /**
      * 刷新换发：typ=refresh 校验链通过后，以原 sid 签发新 access 令牌（会话不重建、refresh 不轮换）。
      *
      * <p>失败统一映射 SYS-1005/401（刷新端点错误码口径，BRIEF-PR3-01 §1.3），不透出
@@ -294,7 +321,14 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
     private String writeSession(SessionUser user, Duration ttl) {
         String sid = UUID.randomUUID().toString();
         SessionData session = new SessionData(
-                user.userId(), user.loginName(), user.displayName(), user.employeeId(), user.orgId(), user.roles());
+                user.userId(),
+                user.loginName(),
+                user.displayName(),
+                user.employeeId(),
+                user.orgId(),
+                user.roles(),
+                // wardId 透传入会话：哨兵限行与 WS 订阅防线的比对源（登录态恒 null；令牌线格式不动，GC1）
+                user.wardId());
         String sessionJson;
         try {
             sessionJson = objectMapper.writeValueAsString(session);

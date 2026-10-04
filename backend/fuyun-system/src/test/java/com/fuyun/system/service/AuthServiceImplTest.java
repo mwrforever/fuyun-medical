@@ -251,7 +251,7 @@ class AuthServiceImplTest {
     @Test
     @DisplayName("刷新换发：新 access + 原 refresh 值回填（P0 不轮换）+ 会话身份还原")
     void refreshReturnsMintedAccessWithOriginalRefreshToken() {
-        SessionData session = new SessionData(123L, LOGIN_NAME, "系统管理员", 456L, null, List.of("ADMIN"));
+        SessionData session = new SessionData(123L, LOGIN_NAME, "系统管理员", 456L, null, List.of("ADMIN"), null);
         when(tokenService.refreshAccessToken(REFRESH_TOKEN)).thenReturn(new RefreshedAccess(ACCESS_TOKEN, session));
 
         LoginResponse response = authService.refresh(new RefreshRequest(REFRESH_TOKEN));
@@ -279,7 +279,7 @@ class AuthServiceImplTest {
         when(tokenService.issueAccess(any(SessionUser.class), any(Duration.class)))
                 .thenReturn(ACCESS_TOKEN);
 
-        BigscreenTokenVO response = authService.issueBigscreenToken();
+        BigscreenTokenVO response = authService.issueBigscreenToken(null);
 
         // 哨兵身份：loginName=bigscreen 会话标记（W-39 P2 匿名只读通道演进锚点），不查库零权限面
         verify(tokenService).issueAccess(sessionUserCaptor.capture(), ttlCaptor.capture());
@@ -296,6 +296,26 @@ class AuthServiceImplTest {
         assertThat(response.accessToken()).isEqualTo(ACCESS_TOKEN);
         assertThat(response.tokenType()).isEqualTo("Bearer");
         assertThat(response.expiresIn()).isEqualTo(Duration.ofMinutes(5).toSeconds());
+    }
+
+    @Test
+    @DisplayName("携病区签发大屏令牌：哨兵会话 wardId 透传（W-39 通道锚点——REST 限行与 WS 订阅防线的比对源）")
+    void issueBigscreenTokenCarriesWardIdIntoSentinelSession() {
+        // 携病区签发：哨兵会话 wardId 透传（W-39 通道锚点——REST 限行与 WS 订阅防线的比对源）
+        authService.issueBigscreenToken("1001");
+        ArgumentCaptor<SessionUser> captor = ArgumentCaptor.forClass(SessionUser.class);
+        verify(tokenService).issueAccess(captor.capture(), any());
+        assertThat(captor.getValue().wardId()).isEqualTo("1001");
+    }
+
+    @Test
+    @DisplayName("无病区签发大屏令牌：泛哨兵会话 wardId 归一 null（候诊屏无病区概念，空串会过字符串等值误匹配）")
+    void issueBigscreenTokenWithoutWardIdYieldsNullWardSession() {
+        // 泛哨兵（候诊屏 useQueueStomp 无病区概念）：wardId 归一 null 而非空串（空串会过字符串等值误匹配）
+        authService.issueBigscreenToken(null);
+        ArgumentCaptor<SessionUser> captor = ArgumentCaptor.forClass(SessionUser.class);
+        verify(tokenService).issueAccess(captor.capture(), any());
+        assertThat(captor.getValue().wardId()).isNull();
     }
 
     /** 构造 ACTIVE 状态的账号实体样本（含口令哈希与零失败计数） */

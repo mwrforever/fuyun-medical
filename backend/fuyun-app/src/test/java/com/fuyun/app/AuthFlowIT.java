@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jayway.jsonpath.JsonPath;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -42,13 +43,14 @@ import org.testcontainers.utility.MountableFile;
  * 无令牌 401（SYS-1003）与 traceId 双通道一致、携带令牌访问受保护端点、refresh 换发与登出后
  * 会话删除（旧令牌失效）、连续失败触发锁定（SYS-1002）、审计切面落库断言（LOGIN 行含
  * traceId 与脱敏后的 fail_reason/detail，B3.3 审计链路的端到端留证载体）、大屏候诊榜快照
- * 匿名可达而动作端点仍 401（步骤8，Task 15 Step6 D-2 白名单只读放行的面界断言）。
+ * 匿名可达而动作端点仍 401（步骤8，Task 15 Step6 D-2 白名单只读放行的面界断言）、
+ * bigscreen-token 携 wardId 匿名签发面（步骤9，PR-4C W-39 通道锚点；限行行为面归第 10 步）。
  *
  * <p>容器三件套与 {@link SmokeStackIT} 完全同款（tag 与 deploy compose 严格一致 + it/rabbitmq.conf
  * 挂载 + static 类级共享 + @ServiceConnection）；HMAC 密钥经 @DynamicPropertySource 注入测试资产
  * 假密钥（非真实凭证，真实密钥只经环境变量注入）。审计落库经 JdbcTemplate 查 system.audit_log 断言。
  *
- * <p>八步断言按序执行（@Order 串联，登录状态与失败计数跨步累积属业务链路语义）；令牌经静态
+ * <p>九步断言按序执行（@Order 串联，登录状态与失败计数跨步累积属业务链路语义）；令牌经静态
  * 持有器跨用例传递（JUnit 默认每方法新实例，静态字段承载链路状态，同 MessagingGovernanceIT 姿态）。
  */
 @Testcontainers
@@ -329,6 +331,17 @@ class AuthFlowIT {
         // 反向断言（Task 15 Step6 D-2 防面扩大）：同前缀动作端点不在白名单，匿名仍 401
         ResponseEntity<String> callAction = postJson("/api/v1/outpatient/queue/call", "{}", null);
         assertThat(callAction.getStatusCode().value()).isEqualTo(401);
+    }
+
+    @Test
+    @Order(9)
+    @DisplayName("步骤9：bigscreen-token 携 wardId 匿名签发 200，accessToken 非空（W-39 通道锚定签发面）")
+    void bigscreenTokenCarriesWardIdAndIssuesAnonymousAccess() {
+        // 携 wardId 签发：匿名 POST 成功、响应 accessToken 非空（wardId 经会话承载，本步锚定签发面；
+        // 限行行为面归 Task 3 的第 10 步）
+        ResponseEntity<String> resp = postJson("/api/v1/system/auth/bigscreen-token?wardId=1001", null, null);
+        assertThat(resp.getStatusCode().value()).isEqualTo(200);
+        assertThat(JsonPath.<String>read(resp.getBody(), "$.accessToken")).isNotBlank();
     }
 
     /**

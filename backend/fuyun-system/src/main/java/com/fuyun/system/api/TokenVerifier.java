@@ -29,4 +29,19 @@ public interface TokenVerifier {
      * @return true=令牌全链有效；false=校验链任一环节失败（不区分原因、不抛异常）
      */
     boolean verifyAccessToken(String rawToken);
+
+    /**
+     * 校验访问令牌全链并返回最小主体摘要（WS SUBSCRIBE 防线等消费方需 wardId/哨兵锚点而布尔面不足）。
+     *
+     * <p>校验链与 {@link #verifyAccessToken} 完全同源：两段格式 → 常量时间签名比对 → exp 未过 →
+     * typ=access 严格匹配 → Redis 会话存在；校验成功执行滑动续期副作用（与 HTTP 认证口径一致）。
+     * 成功返回主体三元组（userId/loginName/wardId，经会话承载而非令牌体），失败返回 null 不区分
+     * 原因——消费方禁止透出细分差异（防枚举口径与 verifyAccessToken 一致）。
+     *
+     * @param rawToken 访问令牌原文（Bearer 方案后的值），允许为空或空白（一律 null 不抛异常）；
+     *                 来源：调用方从 WS CONNECT/STOMP 帧或 HTTP 头提取
+     * @return 主体摘要，非空（wardId 可 null——登录态恒 null，哨兵令牌为绑定病区或泛哨兵 null）；
+     *         null=校验链任一环节失败
+     */
+    TokenPrincipal verifyAccessPrincipal(String rawToken);
 }

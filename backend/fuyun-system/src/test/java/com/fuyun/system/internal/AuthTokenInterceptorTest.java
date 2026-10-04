@@ -88,7 +88,7 @@ class AuthTokenInterceptorTest {
         request.addHeader("Authorization", "Bearer good-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(tokenService.verify("good-token", "access"))
-                .thenReturn(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN")));
+                .thenReturn(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
 
         boolean proceed = interceptor.preHandle(request, response, new Object());
 

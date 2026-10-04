@@ -9,11 +9,14 @@ import com.fuyun.system.service.IAuthService;
 import com.fuyun.system.vo.BigscreenTokenVO;
 import com.fuyun.system.vo.LoginResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Pattern;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -24,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
  * AuthTokenInterceptor 保护（缺令牌/令牌无效在拦截器层 401）。
  */
 @RestController
+@Validated
 @RequestMapping("/api/v1/system/auth")
 public class AuthController {
 
@@ -83,7 +87,7 @@ public class AuthController {
     }
 
     /**
-     * 大屏订阅令牌签发（匿名，BUG-19）：候诊叫号大屏 WS 链路凭证的运行期获取入口。
+     * 大屏订阅令牌签发（匿名，BUG-19，可携病区编码收窄授权面）：候诊叫号大屏 WS 链路凭证的运行期获取入口。
      *
      * <p>白名单免认证（大屏无登录态设备直开，同队列快照匿名只读口径）：返回 5 分钟短期单
      * access 令牌，前端注入 /ws/outpatient STOMP CONNECT 帧鉴权——替代已删除的构建期
@@ -93,10 +97,16 @@ public class AuthController {
      * <p>不落 @AuditLog：匿名高频机器签发（断线重连每次连接尝试重签），审计行会随重连风暴
      * 刷表；签发留痕经令牌服务 info 日志（sid）承载，限流/风控随 M18 治理（裁决 13 注记同口径）。
      *
+     * @param wardId 病区编码，可空；携病区收窄授权面（病区屏专用，W-39 通道锚点），空白归一 null
+     *               （泛哨兵=候诊屏无病区概念）；仅允许字母数字下划线连字符，长度 1-64
      * @return 大屏订阅令牌出参（令牌值 + Bearer 方案名 + 有效期秒数），非空
      */
     @PostMapping("/bigscreen-token")
-    public BigscreenTokenVO bigscreenToken() {
-        return authService.issueBigscreenToken();
+    public BigscreenTokenVO bigscreenToken(
+            @RequestParam(value = "wardId", required = false)
+                    @Pattern(regexp = "^[A-Za-z0-9_-]{1,64}$", message = "病区编码仅允许字母数字下划线连字符，长度 1-64")
+                    String wardId) {
+        // 空白 wardId 归一 null：泛哨兵会话 wardId 恒 null（空串会过字符串等值误匹配限行防线）
+        return authService.issueBigscreenToken(wardId == null || wardId.isBlank() ? null : wardId.trim());
     }
 }
