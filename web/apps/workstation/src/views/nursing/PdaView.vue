@@ -213,9 +213,10 @@ const checkErrors = ref<Record<CheckCodeType, string>>({
 });
 const checking = ref(false);
 
-/** 破码放行双授权表单（核对 FAIL 后弹出：两工号+原因必填，两人不同）。 */
+/** 破码放行双授权表单（核对 FAIL 后弹出：主授权人=当前登录人会话身份展示回显无录入面，
+ * 副授权人工号+原因必填，副授权人与登录人不同——W-72 主授权人服务端一律以令牌身份落值）。 */
 const overrideVisible = ref(false);
-const overrideForm = ref({ primaryAuthorizerId: '', secondaryAuthorizerId: '', reason: '' });
+const overrideForm = ref({ secondaryAuthorizerId: '', reason: '' });
 const overriding = ref(false);
 
 /** 核对面复位（换患者/换单共用：扫码原文、贴字段错误与破码表单一并清空）。 */
@@ -223,7 +224,7 @@ function resetCheckFace(): void {
   checkForm.value = { WRISTBAND: '', BAG_LABEL: '', DEVICE: '' };
   checkErrors.value = { WRISTBAND: '', BAG_LABEL: '', DEVICE: '' };
   overrideVisible.value = false;
-  overrideForm.value = { primaryAuthorizerId: '', secondaryAuthorizerId: '', reason: '' };
+  overrideForm.value = { secondaryAuthorizerId: '', reason: '' };
 }
 
 /** 扫码核对 FAIL 判定：409 冲突=后端 NS-1022 核对不匹配；其余 4xx 为格式/状态错误不弹破码。 */
@@ -273,22 +274,22 @@ async function onCheck(codeType: CheckCodeType): Promise<void> {
 }
 
 /**
- * 破码放行提交（双授权校验前置零出网：两工号必填、两人不同、原因必填——后端同口径兜底）。
- * 放行置位 override_flag 供后续开始执行越过时间窗；扫码原文保留供重新核对。
+ * 破码放行提交（双授权校验前置零出网：主授权人=当前登录人会话身份无录入面——W-72 服务端
+ * 一律以令牌身份落值；副授权人必填且不得与登录人相同（前端比对会话工号）、原因必填——
+ * 后端同口径兜底）。放行置位 override_flag 供后续开始执行越过时间窗；扫码原文保留供重新核对。
  */
 async function onSubmitOverride(): Promise<void> {
   if (overriding.value || selectedExecution.value === null) {
     return;
   }
-  const primary = overrideForm.value.primaryAuthorizerId.trim();
   const secondary = overrideForm.value.secondaryAuthorizerId.trim();
   const reason = overrideForm.value.reason.trim();
-  if (primary === '' || secondary === '') {
-    void ElMessage.warning('两位授权人工号均不能为空');
+  if (secondary === '') {
+    void ElMessage.warning('副授权人工号不能为空');
     return;
   }
-  if (primary === secondary) {
-    void ElMessage.warning('破码放行双授权两人不得相同');
+  if (secondary === (auth.user?.userId ?? '')) {
+    void ElMessage.warning('破码放行双授权两人不得相同（主授权人=当前登录人）');
     return;
   }
   if (reason === '') {
@@ -300,7 +301,8 @@ async function onSubmitOverride(): Promise<void> {
   try {
     await pda.overrideCheck({
       executionNo: no,
-      primaryAuthorizerId: primary,
+      // 主授权人携会话 userId 出网（兼容保留——服务端一律以令牌身份落值，W-72）
+      primaryAuthorizerId: auth.user?.userId ?? '',
       secondaryAuthorizerId: secondary,
       reason,
     });
@@ -769,19 +771,14 @@ async function onPatrol(): Promise<void> {
               {{ checkErrors[input.codeType] }}
             </p>
           </label>
-          <!-- 破码放行双授权表单（FAIL 后出现：两工号+原因必填，全原生控件） -->
+          <!-- 破码放行双授权表单（FAIL 后出现：主授权人=当前登录人展示回显，副授权人+原因录入） -->
           <div v-if="overrideVisible" class="pda-override" aria-label="破码放行双授权">
             <h3 class="pda-override-title">破码放行（双授权）</h3>
-            <label class="pda-field">
-              <span class="pda-field-label">主授权人工号</span>
-              <input
-                v-model="overrideForm.primaryAuthorizerId"
-                class="pda-input"
-                type="text"
-                autocomplete="off"
-                placeholder="主授权人工号"
-              />
-            </label>
+            <p class="pda-override-primary fuy-num">
+              主授权人：{{ auth.user?.displayName ?? auth.user?.userId ?? '—' }}（{{
+                auth.user?.userId ?? '—'
+              }}）——当前登录人，服务端留痕
+            </p>
             <label class="pda-field">
               <span class="pda-field-label">副授权人工号</span>
               <input
@@ -1234,6 +1231,16 @@ async function onPatrol(): Promise<void> {
   color: var(--fuy-color-danger-text);
   font-size: var(--fuy-font-size-md);
   font-weight: 600;
+}
+/* 主授权人展示行（零手输：会话身份回显只读态，白底描边示不可编辑） */
+.pda-override-primary {
+  margin: 0;
+  padding: 8px var(--fuy-space-2);
+  border: var(--fuy-border-hairline);
+  border-radius: var(--fuy-radius-md);
+  background: #fff;
+  font-size: 16px;
+  color: var(--fuy-color-text-emphasis);
 }
 .pda-button-plain {
   border: var(--fuy-border-hairline);

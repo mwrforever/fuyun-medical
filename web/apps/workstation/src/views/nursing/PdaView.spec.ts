@@ -6,7 +6,8 @@
 // PR-3 Task 15 扩（住院执行六段流）：在途执行单清单按当前患者前端侧过滤（他患者与终态行
 // 剔除）、扫码核对三输入 codeType 分段提交与 FAIL（409）分支（破码双授权表单弹出、扫码
 // 原文保留重试）、给药 start→finish 按状态切换、输液设备码携 start 与拔针量 0~5000 校验、
-// 双授权表单必填/两人不同校验、换单竞态过期回包丢弃（EX-45/FE-A1-04 同族纪律）。
+// 双授权表单主授权人=当前登录人展示回显/副授权人必填且不得与登录人相同（W-72）、换单竞态
+// 过期回包丢弃（EX-45/FE-A1-04 同族纪律）。
 // api mock 承载，不打真实网络。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
@@ -602,7 +603,7 @@ describe('PDA 移动护理页', () => {
     wrapper.unmount();
   });
 
-  it('破码放行双授权表单校验：必填缺失/两人相同零出网，合法载荷提交一次', async () => {
+  it('破码放行双授权：主授权人=当前登录人展示回显（无输入框），副授权人必填且不得与登录人相同，合法载荷提交一次', async () => {
     execListRows = [executionRowMock({ executionNo: 'EX2026100200041', status: 'SIGNED' })];
     vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
     vi.mocked(executions.check).mockRejectedValue(checkFailError());
@@ -618,6 +619,10 @@ describe('PDA 移动护理页', () => {
     await wristbandInput.trigger('keyup.enter');
     await flushPromises();
     expect(wrapper.find('.pda-override').exists()).toBe(true);
+    // 主授权人零输入面：当前登录人会话身份展示回显（displayName+userId，服务端留痕 W-72）
+    expect(wrapper.find('input[placeholder="主授权人工号"]').exists()).toBe(false);
+    expect(wrapper.find('.pda-override-primary').text()).toContain('李护士');
+    expect(wrapper.find('.pda-override-primary').text()).toContain('u1');
     const submitOverride = async (): Promise<void> => {
       await wrapper
         .findAll('button')
@@ -625,28 +630,31 @@ describe('PDA 移动护理页', () => {
         ?.trigger('click');
       await flushPromises();
     };
-    // 工号必填：全空提交拦截零出网
+    // 副授权人必填：留空提交拦截零出网（主授权人=会话身份无录入面）
+    await wrapper.find('input[placeholder="放行原因"]').setValue('腕带破损无法扫码');
     await submitOverride();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('两位授权人工号均不能为空');
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('副授权人工号不能为空');
     expect(vi.mocked(pda.overrideCheck)).not.toHaveBeenCalled();
-    // 两人不同：同工号提交拦截零出网
-    await wrapper.find('input[placeholder="主授权人工号"]').setValue('1001');
-    await wrapper.find('input[placeholder="副授权人工号"]').setValue('1001');
+    // 两人不同：副授权人=登录人工号提交拦截零出网（前端比对会话工号）
+    await wrapper.find('input[placeholder="副授权人工号"]').setValue('u1');
     await submitOverride();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('破码放行双授权两人不得相同');
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
+      '破码放行双授权两人不得相同（主授权人=当前登录人）',
+    );
     expect(vi.mocked(pda.overrideCheck)).not.toHaveBeenCalled();
     // 原因必填：缺原因拦截零出网
     await wrapper.find('input[placeholder="副授权人工号"]').setValue('1002');
+    await wrapper.find('input[placeholder="放行原因"]').setValue('');
     await submitOverride();
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('放行原因不能为空');
     expect(vi.mocked(pda.overrideCheck)).not.toHaveBeenCalled();
-    // 合法载荷：执行单号 + 两授权人 + 原因一次出网，成功后表单收起
+    // 合法载荷：执行单号+主授权人（会话 userId 兼容保留）+副授权人+原因一次出网，表单收起
     await wrapper.find('input[placeholder="放行原因"]').setValue('腕带破损无法扫码');
     await submitOverride();
     expect(vi.mocked(pda.overrideCheck)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(pda.overrideCheck).mock.calls[0]?.[0]).toEqual({
       executionNo: 'EX2026100200041',
-      primaryAuthorizerId: '1001',
+      primaryAuthorizerId: 'u1',
       secondaryAuthorizerId: '1002',
       reason: '腕带破损无法扫码',
     });

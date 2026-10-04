@@ -34,7 +34,7 @@ export type DispensePlanPage = components['schemas']['PageResultDispensePlanVO']
 export type DispensePlanGenerateRequest = components['schemas']['DispensePlanGenerateRequest'];
 /** 配送交接入参（carrier 可空——无落列载体，后端日志留痕承载） */
 export type DispensePlanDeliverRequest = components['schemas']['DispensePlanDeliverRequest'];
-/** 病区签收入参（receivedBy 必填纯数字——签收主体为病区侧责任人，与药房操作者分权留痕） */
+/** 病区签收入参（receivedBy 兼容保留——服务端一律以令牌身份落值，W-72；原『与药房操作者分权留痕』语义随服务端强制收敛） */
 export type DispensePlanReceiveRequest = components['schemas']['DispensePlanReceiveRequest'];
 /** PIVAS 贴签数据面出参（脱敏患者名/病区/排批/调配核对双人/药品明细；打印归 M01 降级注记） */
 export type DispensePlanLabelVO = components['schemas']['DispensePlanLabelVO'];
@@ -224,8 +224,8 @@ export const dispensePlans = {
     }
     await http.post(`/v1/pharmacy/dispense-plans/${no}/deliver`, payload);
   },
-  /** 病区签收（CHECKED→DELIVERED CAS+completed 事件住院载荷；receivedBy 必填纯数字
-   * ——string 契约承载 Long，签收主体为病区侧责任人与药房操作者分权留痕）。 */
+  /** 病区签收（CHECKED→DELIVERED CAS+completed 事件住院载荷；receivedBy 兼容保留
+   * ——服务端一律以令牌身份落值，W-72，原『与药房操作者分权留痕』语义随服务端强制收敛）。 */
   receive: async (no: string, payload: DispensePlanReceiveRequest): Promise<void> => {
     await http.post(`/v1/pharmacy/dispense-plans/${no}/receive`, payload);
   },

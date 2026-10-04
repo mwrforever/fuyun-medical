@@ -27,6 +27,7 @@ import {
 import type { DispensePlanLabelVO, DispensePlanVO, ReviewTaskVO } from '@/api/pharmacy';
 import { WARD_OPTIONS } from '@/api/nursing';
 import { usePagedList } from '@/composables/usePagedList';
+import { useAuthStore } from '@/stores/auth';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
@@ -267,37 +268,41 @@ function onRowAction(row: DispensePlanVO, action: PlanAction): void {
   }
 }
 
-/* ==================== 病区签收弹窗 ==================== */
+/* ==================== 病区签收弹窗（零手输——签收人=会话身份） ==================== */
+const auth = useAuthStore();
 const receiveVisible = ref(false);
 const receiving = ref(false);
 /** 签收目标行（弹窗期间行锚） */
 const receiveTarget = ref<DispensePlanVO | null>(null);
-/** 签收人工号录入（病区侧责任人，纯数字——string 契约承载 Long） */
-const receiveBy = ref('');
 
-/** 打开签收弹窗（复位录入） */
+/** 签收人展示文案（当前登录人 displayName 优先、缺省回退 userId——W-72 签收人取会话身份） */
+const receiverText = computed(
+  () => auth.user?.displayName ?? auth.user?.userId ?? '—（未登录）',
+);
+
+/** 打开签收弹窗（零手输：签收人以会话身份展示回显，无录入面） */
 function openReceive(row: DispensePlanVO): void {
   receiveTarget.value = row;
-  receiveBy.value = '';
   receiveVisible.value = true;
 }
 
 /**
- * 确认签收：工号纯数字必填显式校验（零出网；后端 Long 承载同口径）→ 出网 receive →
- * 关窗重拉看板。入口在途早退守卫防双击重复签收。
+ * 确认签收：签收人取会话身份（W-72——服务端一律以令牌身份落值，无手输面）；会话缺
+ * 身份显式拦截零出网（循 PdaView requireExecutorId 同款口径）→ 出网 receive（receivedBy
+ * 携会话 userId 兼容保留）→ 关窗重拉看板。入口在途早退守卫防双击重复签收。
  */
 async function onReceive(): Promise<void> {
   if (receiving.value) {
     return;
   }
-  const value = receiveBy.value.trim();
-  if (!/^\d+$/.test(value)) {
-    void ElMessage.warning('签收人工号须为纯数字（病区护士员工 ID）');
+  const receivedBy = auth.user?.userId ?? '';
+  if (receivedBy === '') {
+    void ElMessage.warning('会话缺少签收人身份，无法签收（请重新登录后再试）');
     return;
   }
   receiving.value = true;
   try {
-    await dispensePlans.receive(receiveTarget.value?.planNo ?? '', { receivedBy: value });
+    await dispensePlans.receive(receiveTarget.value?.planNo ?? '', { receivedBy });
     void ElMessage.success(`病区已签收：${receiveTarget.value?.planNo ?? ''}`);
     receiveVisible.value = false;
     await loadBoard();
@@ -514,19 +519,13 @@ onMounted(() => {
       />
     </div>
 
-    <!-- ③ 病区签收弹窗（工号必填纯数字——签收主体为病区侧责任人） -->
+    <!-- ③ 病区签收弹窗（零手输——签收人=当前登录人会话身份，服务端令牌留痕） -->
     <el-dialog v-model="receiveVisible" title="摆药病区签收" width="420px">
       <p class="plan-dialog-target fuy-num">计划 {{ receiveTarget?.planNo ?? '' }}</p>
-      <label class="plan-field-label">签收人工号（必填，病区护士员工 ID）</label>
-      <input
-        v-model="receiveBy"
-        class="plan-dialog-input plan-receive-input"
-        type="text"
-        inputmode="numeric"
-        autocomplete="off"
-        placeholder="纯数字工号"
-        aria-label="签收人工号"
-      />
+      <label class="plan-field-label">签收人</label>
+      <p class="plan-receive-receiver fuy-num">
+        {{ receiverText }}（{{ auth.user?.userId ?? '—' }}）——当前登录人，服务端留痕
+      </p>
       <p class="plan-dialog-hint">未配送不可签收（配送交接为签收必要前置，后端 PH-1026 把守）</p>
       <template #footer>
         <el-button size="small" @click="receiveVisible = false">取消</el-button>
@@ -834,6 +833,16 @@ onMounted(() => {
 }
 .plan-dialog-input + .plan-field-label {
   margin-top: var(--fuy-space-2);
+}
+/* 签收人展示行（零手输：会话身份回显只读态，浅灰底示不可编辑） */
+.plan-receive-receiver {
+  margin: 0;
+  padding: 5px var(--fuy-space-2);
+  border: 1px solid var(--el-border-color);
+  border-radius: var(--fuy-radius-md);
+  font-size: var(--fuy-font-size-sm);
+  color: var(--fuy-color-text-emphasis);
+  background: var(--fuy-palette-gray-50);
 }
 .plan-dialog-hint {
   margin: var(--fuy-space-2) 0 0;

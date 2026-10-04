@@ -2,8 +2,10 @@
 // 断言（路由=权限点清单）、五列看板渲染锚点（列名/行卡计划号/患者号面/给药时点/类型标签/
 // PIVAS 排批）、五步按钮状态机（CREATED→摆药开始/PICKING→药师核对/PICKED→出库交接/
 // CHECKED 配送半步与签收分位/DELIVERED→退药）、deliver 不迁状态钉死（重拉后以服务端回包
-// 为准）、行内动作在途互斥守卫、贴签弹窗数据面、医嘱检索审方状态与生成计划前置。api mock
-// 承载零出网（vi.mock 整模块替身），不打真实网络；断言业务结果不绑定实现细节。
+// 为准）、行内动作在途互斥守卫、贴签弹窗数据面、医嘱检索审方状态与生成计划前置、病区
+// 签收弹窗零手输（W-72：签收人=会话身份展示回显，receivedBy 携会话 userId 出网、服务端
+// 一律以令牌身份落值；会话缺身份零出网拦截）。api mock 承载零出网（vi.mock 整模块替身），
+// 不打真实网络；断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -118,6 +120,27 @@ function emptyPlans() {
   return { content: [], page: '0', size: '200', total: '0' };
 }
 
+/**
+ * 会话种子（auth store 从 sessionStorage 恢复：签收人=登录用户 u1/王药师——PdaView.spec
+ * seedAuthSession 同款形态；userId 置空用于「会话缺身份」拦截分支）。
+ */
+function seedAuthSession(userId = 'u1', displayName = '王药师'): void {
+  sessionStorage.setItem(
+    'fy:workstation:auth',
+    JSON.stringify({
+      token: 'test-token',
+      refreshToken: 'test-refresh',
+      user: {
+        userId,
+        loginName: 'pharmacistdemo',
+        displayName,
+        orgId: null,
+        roles: ['pharmacist'],
+      },
+    }),
+  );
+}
+
 /** 按按钮文案点击（el-button 通用） */
 async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
   const button = wrapper.findAll('button').find((b) => b.text() === text);
@@ -132,6 +155,7 @@ describe('药房住院摆药页', () => {
 
   beforeEach(() => {
     sessionStorage.clear();
+    seedAuthSession();
     pinia = createPinia();
     setActivePinia(pinia);
     for (const fn of [
@@ -404,7 +428,7 @@ describe('药房住院摆药页', () => {
     wrapper.unmount();
   });
 
-  it('病区签收弹窗：签收人工号必填数字校验零出网，合法出网 receive 并重拉', async () => {
+  it('病区签收弹窗零手输：展示当前登录人，确认即出网 receivedBy=会话 userId 并重拉；会话缺身份零出网拦截', async () => {
     vi.mocked(dispensePlans.list).mockResolvedValue({
       content: [
         planMock({
@@ -422,17 +446,32 @@ describe('药房住院摆药页', () => {
     await flushPromises();
     await clickButton(wrapper, '病区签收');
     await flushPromises();
-    // 工号留空提交：显式校验拦截（零出网）
-    await clickButton(wrapper, '确认签收');
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalled();
-    expect(dispensePlans.receive).not.toHaveBeenCalled();
-    // 合法工号提交：出网携 receivedBy（string 契约承载 Long）
-    await wrapper.find('.plan-receive-input').setValue('1001');
+    // 零手输：弹窗无工号输入面，签收人以会话身份展示回显（displayName+userId）
+    expect(wrapper.find('.plan-receive-input').exists()).toBe(false);
+    expect(wrapper.find('input[aria-label="签收人工号"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain('王药师');
+    expect(wrapper.text()).toContain('u1');
+    expect(wrapper.text()).toContain('当前登录人');
+    // 确认即出网：receivedBy=会话 userId（兼容保留字段，服务端一律以令牌身份落值 W-72）
     await clickButton(wrapper, '确认签收');
     await flushPromises();
-    expect(dispensePlans.receive).toHaveBeenCalledWith('DP5', { receivedBy: '1001' });
+    expect(dispensePlans.receive).toHaveBeenCalledWith('DP5', { receivedBy: 'u1' });
     expect(dispensePlans.list).toHaveBeenCalledTimes(2);
     wrapper.unmount();
+    // 会话缺身份：确认签收显式拦截零出网（会话 userId 空=无签收主体）
+    seedAuthSession('');
+    vi.mocked(dispensePlans.receive).mockClear();
+    const barePinia = createPinia();
+    setActivePinia(barePinia);
+    const bareWrapper = mount(InpatientDispenseView, { global: { plugins: [barePinia] } });
+    await flushPromises();
+    await clickButton(bareWrapper, '病区签收');
+    await clickButton(bareWrapper, '确认签收');
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
+      '会话缺少签收人身份，无法签收（请重新登录后再试）',
+    );
+    expect(dispensePlans.receive).not.toHaveBeenCalled();
+    bareWrapper.unmount();
   });
 
   it('退药弹窗：DELIVERED 行调 dispense-returns 住院扩展形态（dispensePlanNo+returnLines）', async () => {
