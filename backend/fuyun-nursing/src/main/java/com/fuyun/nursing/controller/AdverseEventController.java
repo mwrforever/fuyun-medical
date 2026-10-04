@@ -1,11 +1,13 @@
 package com.fuyun.nursing.controller;
 
+import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.nursing.dto.AdverseEventCloseRequest;
 import com.fuyun.nursing.dto.AdverseEventHandleRequest;
 import com.fuyun.nursing.dto.AdverseEventReportRequest;
 import com.fuyun.nursing.dto.AdverseEventReturnRequest;
 import com.fuyun.nursing.service.IAdverseEventService;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.AdverseEventStatsVO;
 import com.fuyun.nursing.vo.AdverseEventVO;
 import com.fuyun.system.api.AuditActionType;
@@ -17,6 +19,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDate;
+import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.validation.annotation.Validated;
@@ -43,6 +46,8 @@ public class AdverseEventController {
 
     private final IAdverseEventService adverseEventService;
 
+    private final IWardAccessService wardAccessService;
+
     /**
      * 上报不良事件：I/II 级 report_deadline=occurredAt+24h 落库并上报即判定 deadline_met；
      * 落库后事务内发布 nursing.adverse-event.reported（id 83，M19 消费缺位登记）；
@@ -64,6 +69,8 @@ public class AdverseEventController {
     /**
      * 不良事件分页查询：类别/病区/状态/发生日可选过滤（发生时点降序）；date 缺省不限时段
      * （在途处置队列跨日存续）。非惩罚红线：出参零惩罚字段。
+     * W-40：携 wardId 时校验归属（须 ∈ 操作者当班绑定集，fail-closed，NS-1028）；不携时按
+     * 当班绑定集过滤（单病区绑定=默认本病区视角，页面行为不变）。
      *
      * @param category 事件类别过滤（八类词表，可空），可空；来源：查询参数
      * @param wardId   病区过滤（可空），可空；来源：查询参数
@@ -72,7 +79,8 @@ public class AdverseEventController {
      * @param page     页码（0 基），缺省 0
      * @param size     单页条数（1-200），缺省 20
      * @return 不良事件分页出参
-     * @throws com.fuyun.common.exception.BizException NS-1019（400 category/status 词表外值）
+     * @throws com.fuyun.common.exception.BizException NS-1019（400 category/status 词表外值）/
+     *                 NS-1028（403 携 wardId 越区/无有效绑定——fail-closed）
      */
     @Operation(summary = "不良事件分页查询（非惩罚红线：出参零惩罚字段）", operationId = "listAdverseEvents")
     @GetMapping("/api/v1/nursing/adverse-events")
@@ -84,7 +92,14 @@ public class AdverseEventController {
                     LocalDate date,
             @RequestParam(value = "page", defaultValue = "0") @Min(0) int page,
             @RequestParam(value = "size", defaultValue = "20") @Min(1) @Max(200) int size) {
-        return adverseEventService.list(category, wardId, status, date, page, size);
+        // W-40：携 wardId 时校验归属（越区 403，单病区视角不取绑定集）；不携时按当班绑定集过滤
+        // （单病区绑定=默认本病区视角，页面行为不变）
+        if (wardId != null && !wardId.isBlank()) {
+            wardAccessService.assertWardAllowed(wardId);
+            return adverseEventService.list(category, wardId, status, date, page, size, null);
+        }
+        List<String> scope = wardAccessService.activeBoundWardIds(operator());
+        return adverseEventService.list(category, wardId, status, date, page, size, scope);
     }
 
     /**
@@ -145,12 +160,15 @@ public class AdverseEventController {
     /**
      * 分类统计（统计日窗口按类别/病区/等级双维度/班次时段聚合计数+I/II 级时限合规面）：
      * 供 M19 护理质量指标消费（缺位注记）。非惩罚红线：纯计数聚合零个人面。
+     * W-40：携 wardId 时校验归属（须 ∈ 操作者当班绑定集，fail-closed，NS-1028）；不携时按
+     * 当班绑定集过滤（与 list 同款双轨）。
      *
      * @param category 类别前置过滤（可空），可空；来源：查询参数
      * @param wardId   病区前置过滤（可空），可空；来源：查询参数
      * @param date     统计日（北京钟面，可空=当日），可空；来源：查询参数
      * @return 统计聚合出参
-     * @throws com.fuyun.common.exception.BizException NS-1019（400 category 词表外值）
+     * @throws com.fuyun.common.exception.BizException NS-1019（400 category 词表外值）/
+     *                 NS-1028（403 携 wardId 越区/无有效绑定——fail-closed）
      */
     @Operation(summary = "分类统计趋势（类别/病区/等级/时段聚合计数，M19 消费缺位注记）", operationId = "statsAdverseEvents")
     @GetMapping("/api/v1/nursing/stats/adverse-events")
@@ -159,6 +177,21 @@ public class AdverseEventController {
             @RequestParam(value = "wardId", required = false) String wardId,
             @RequestParam(value = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
                     LocalDate date) {
-        return adverseEventService.stats(category, wardId, date);
+        // W-40：与 list 同款双轨——携 wardId 校验归属单病区统计；不携按当班绑定集过滤
+        if (wardId != null && !wardId.isBlank()) {
+            wardAccessService.assertWardAllowed(wardId);
+            return adverseEventService.stats(category, wardId, date, null);
+        }
+        List<String> scope = wardAccessService.activeBoundWardIds(operator());
+        return adverseEventService.stats(category, wardId, date, scope);
+    }
+
+    /**
+     * 操作者取值（登录令牌身份——ThreadLocal 直传绑定集查询；大屏哨兵不达本端点[非 allowlist]）。
+     *
+     * @return 当前线程操作者标识（userId 十进制字符串），可空——绑定集查询侧按空集 fail-closed
+     */
+    private String operator() {
+        return OperatorContextHolder.get();
     }
 }

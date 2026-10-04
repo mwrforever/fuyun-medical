@@ -3,6 +3,7 @@ package com.fuyun.nursing.controller;
 import com.fuyun.nursing.dto.NeedleOutRequest;
 import com.fuyun.nursing.service.IInfusionService;
 import com.fuyun.nursing.service.IOrderExecutionOperateService;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.ActiveInfusionVO;
 import com.fuyun.nursing.vo.OrderExecutionVO;
 import com.fuyun.system.api.AuditActionType;
@@ -38,6 +39,8 @@ public class InfusionController {
 
     private final IInfusionService infusionService;
 
+    private final IWardAccessService wardAccessService;
+
     /**
      * 输液拔针（EXECUTING 输液执行单完成形态）：腕带三向核对（FAIL NS-1022 流水留痕）+
      * 实际输注量确认（0~5000 越界 400）+ 监测挂接收口（无在途监测 NS-1024）+ 自动入量行
@@ -61,14 +64,18 @@ public class InfusionController {
     /**
      * 病区在途输注清单：EXECUTING 输液执行单 × MONITORING 监测挂接聚合（开始输注时点升序），
      * 供大屏/工作台输液看板与告警挂单定位。
+     * W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）。
      *
      * @param wardId 病区编码（必填过滤键），非空；来源：查询参数
      * @return 在途输注出参清单（无在途返回空清单）
-     * @throws com.fuyun.common.exception.BizException NS-1019（400 wardId 缺失）
+     * @throws com.fuyun.common.exception.BizException NS-1019（400 wardId 缺失）/ NS-1028
+     *                 （403 病区不在当班绑定集或无有效绑定）
      */
     @Operation(summary = "病区在途输注清单（监测挂接聚合，开始时点升序）", operationId = "listActiveInfusions")
     @GetMapping("/api/v1/nursing/infusions/active")
     public List<ActiveInfusionVO> active(@RequestParam("wardId") @NotBlank String wardId) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）
+        wardAccessService.assertWardAllowed(wardId);
         return infusionService.listActive(wardId);
     }
 }

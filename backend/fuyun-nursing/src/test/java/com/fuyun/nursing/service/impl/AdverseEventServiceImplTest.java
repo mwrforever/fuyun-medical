@@ -11,6 +11,8 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fuyun.common.context.OperatorContextHolder;
@@ -53,9 +55,10 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
- * 不良事件域单测（Task 10 brief 冻结用例组①–⑤ + 红线锚）：上报（I 级 deadline 落库+id 83
- * 事件发布/匿名通道/III-IV 级无时限/超时补报留痕/词表与未来时刻守卫）、handle/close/return
- * 状态机三路+非法迁移 NS-1026、stats 聚合、tick 超时提醒扫描段（只读不改状态）；
+ * 不良事件域单测（Task 10 brief 冻结用例组①–⑤ + 红线锚 + PR-4C Task 6 W-40 绑定集过滤组）：
+ * 上报（I 级 deadline 落库+id 83 事件发布/匿名通道/III-IV 级无时限/超时补报留痕/词表与未来时刻
+ * 守卫）、handle/close/return 状态机三路+非法迁移 NS-1026、stats 聚合、tick 超时提醒扫描段
+ * （只读不改状态）、list/stats wardScope 过滤（携 wardId 单值/绑定集 in/空集防御短路）；
  * 非惩罚红线反射锚（VO/统计出参零 reporter 字段）。MP 3.5.17 单测范式：lambdaQuery 触达
  * 实体 @BeforeAll 手工注册表信息。
  */
@@ -406,7 +409,7 @@ class AdverseEventServiceImplTest {
         night.setDeadlineMet(null);
         when(mapper.selectList(any())).thenReturn(List.of(morning, evening, night));
 
-        AdverseEventStatsVO stats = service.stats(null, null, LocalDate.of(2026, 10, 2));
+        AdverseEventStatsVO stats = service.stats(null, null, LocalDate.of(2026, 10, 2), null);
 
         assertThat(stats.date()).isEqualTo(LocalDate.of(2026, 10, 2));
         assertThat(stats.total()).isEqualTo(3L);
@@ -441,7 +444,7 @@ class AdverseEventServiceImplTest {
     @Test
     @DisplayName("④b stats 词表守卫：类别 code 词表外 NS-1019 显式拒绝")
     void statsRejectsInvalidCategory() {
-        assertThatThrownBy(() -> service.stats("FOO", null, null))
+        assertThatThrownBy(() -> service.stats("FOO", null, null, null))
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID));
         verifyNoInteractions(mapper);
@@ -533,19 +536,91 @@ class AdverseEventServiceImplTest {
         pageResult.setTotal(1);
         when(mapper.selectPage(any(), any())).thenReturn(pageResult);
 
-        PageResult<AdverseEventVO> vo =
-                service.list("FALL", WARD, AdverseEventStatus.REPORTED.getCode(), LocalDate.of(2026, 10, 2), 0, 20);
+        PageResult<AdverseEventVO> vo = service.list(
+                "FALL", WARD, AdverseEventStatus.REPORTED.getCode(), LocalDate.of(2026, 10, 2), 0, 20, null);
 
         assertThat(vo.content()).hasSize(1);
         assertThat(vo.content().get(0).eventNo()).isEqualTo(AE_NO);
         assertThat(vo.total()).isEqualTo(1L);
         // 词表守卫：类别/状态词表外值显式拒绝（NS-1019）
-        assertThatThrownBy(() -> service.list("FOO", null, null, null, 0, 20))
+        assertThatThrownBy(() -> service.list("FOO", null, null, null, 0, 20, null))
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID));
-        assertThatThrownBy(() -> service.list(null, null, "FOO", null, 0, 20))
+        assertThatThrownBy(() -> service.list(null, null, "FOO", null, 0, 20, null))
                 .satisfies(e ->
                         assertThat(((BizException) e).getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID));
+    }
+
+    @Test
+    @DisplayName("W-40 list 携 wardId：按单值等值过滤且不叠加绑定集 in（wardScope=null 不过滤）")
+    void listWithWardIdFiltersBySingleValueWithoutScopeIn() {
+        Page<AdverseEvent> pageResult = new Page<>(0, 20);
+        pageResult.setRecords(List.of(row(AdverseEventStatus.REPORTED)));
+        pageResult.setTotal(1);
+        when(mapper.selectPage(any(), any())).thenReturn(pageResult);
+
+        service.list(null, WARD, null, null, 0, 20, null);
+
+        // 查询 SQL 守卫：ward_id 等值参数在位且无 IN 段（守卫已校验归属，单病区视角零绑定集叠加）
+        ArgumentCaptor<Wrapper<AdverseEvent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(mapper).selectPage(any(), wrapperCaptor.capture());
+        LambdaQueryWrapper<AdverseEvent> wrapper = (LambdaQueryWrapper<AdverseEvent>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("ward_id").doesNotContain("IN");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains(WARD);
+    }
+
+    @Test
+    @DisplayName("W-40 list 无 wardId：按当班绑定集 in 过滤（wardScope 逐值入参）")
+    void listWithoutWardIdFiltersByScopeIn() {
+        Page<AdverseEvent> pageResult = new Page<>(0, 20);
+        pageResult.setRecords(List.of());
+        pageResult.setTotal(0);
+        when(mapper.selectPage(any(), any())).thenReturn(pageResult);
+
+        service.list(null, null, null, null, 0, 20, List.of("W01", "W02"));
+
+        // 查询 SQL 守卫：ward_id IN 段生成且绑定集两病区逐值入参
+        ArgumentCaptor<Wrapper<AdverseEvent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(mapper).selectPage(any(), wrapperCaptor.capture());
+        LambdaQueryWrapper<AdverseEvent> wrapper = (LambdaQueryWrapper<AdverseEvent>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("ward_id IN");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("W01", "W02");
+    }
+
+    @Test
+    @DisplayName("W-40 list 空绑定集：直接返回空页零 DB 交互（fail-closed 防御——无可见病区不放大查询）")
+    void listWithEmptyScopeShortCircuitsToEmptyPage() {
+        PageResult<AdverseEventVO> vo = service.list(null, null, null, null, 0, 20, List.of());
+
+        assertThat(vo.content()).isEmpty();
+        assertThat(vo.total()).isZero();
+        verifyNoInteractions(mapper);
+    }
+
+    @Test
+    @DisplayName("W-40 stats 无 wardId：按当班绑定集 in 过滤（wardScope 逐值入参）")
+    void statsWithoutWardIdFiltersByScopeIn() {
+        when(mapper.selectList(any())).thenReturn(List.of(row(AdverseEventStatus.REPORTED)));
+
+        service.stats(null, null, LocalDate.of(2026, 10, 2), List.of("W01"));
+
+        ArgumentCaptor<Wrapper<AdverseEvent>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(mapper).selectList(wrapperCaptor.capture());
+        LambdaQueryWrapper<AdverseEvent> wrapper = (LambdaQueryWrapper<AdverseEvent>) wrapperCaptor.getValue();
+        assertThat(wrapper.getSqlSegment()).contains("ward_id IN");
+        assertThat(wrapper.getParamNameValuePairs().values()).contains("W01");
+    }
+
+    @Test
+    @DisplayName("W-40 stats 空绑定集：零填充空统计零 DB 交互（词表维度稳定契约不破）")
+    void statsWithEmptyScopeShortCircuitsToZeroFilledStats() {
+        AdverseEventStatsVO vo = service.stats(null, null, null, List.of());
+
+        assertThat(vo.total()).isZero();
+        assertThat(vo.byCategory()).as("八类词表零填充契约保持").hasSize(8);
+        assertThat(vo.byCategory().values()).allMatch(v -> v == 0L);
+        assertThat(vo.byShift()).hasSize(3);
+        verifyNoInteractions(mapper);
     }
 
     // ===================== 构造辅助 =====================

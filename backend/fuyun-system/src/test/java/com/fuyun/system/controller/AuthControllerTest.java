@@ -1,6 +1,7 @@
 package com.fuyun.system.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -85,14 +86,29 @@ class AuthControllerTest {
     }
 
     @Test
-    @DisplayName("大屏订阅令牌端点：委派认证服务签发（匿名白名单端点无入参），服务响应直返")
+    @DisplayName("大屏订阅令牌端点：携 wardId 透传认证服务签发，服务响应直返")
     void bigscreenTokenDelegatesToServiceAndReturnsResponse() {
         BigscreenTokenVO expected = new BigscreenTokenVO("access-token", "Bearer", 300L);
-        when(authService.issueBigscreenToken()).thenReturn(expected);
+        when(authService.issueBigscreenToken("1001")).thenReturn(expected);
 
-        BigscreenTokenVO actual = controller.bigscreenToken();
+        BigscreenTokenVO actual = controller.bigscreenToken("1001");
 
-        verify(authService).issueBigscreenToken();
+        verify(authService).issueBigscreenToken("1001");
         assertThat(actual).isSameAs(expected);
+    }
+
+    @Test
+    @DisplayName("大屏订阅令牌端点：空白 wardId 归一 null（泛哨兵），带首尾空白的 wardId 先 trim 再透传")
+    void bigscreenTokenNormalizesBlankWardIdAndTrimsBeforeDelegation() {
+        BigscreenTokenVO expected = new BigscreenTokenVO("access-token", "Bearer", 300L);
+        // 桩 any()：null 与 trim 后的 "1001" 两次调用均直返同一出参（归一断言由下方 verify 精确承载）
+        when(authService.issueBigscreenToken(any())).thenReturn(expected);
+
+        // 空白 wardId 归一 null：泛哨兵会话 wardId 恒 null（空串会过字符串等值误匹配限行防线）
+        assertThat(controller.bigscreenToken("   ")).isSameAs(expected);
+        verify(authService).issueBigscreenToken(null);
+        // 带首尾空白的有效 wardId 先 trim 再透传（query 参数拼接容错）
+        assertThat(controller.bigscreenToken(" 1001 ")).isSameAs(expected);
+        verify(authService).issueBigscreenToken("1001");
     }
 }

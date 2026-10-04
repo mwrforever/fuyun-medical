@@ -21,7 +21,7 @@ class AuthConverterTest {
     @Test
     @DisplayName("会话身份转用户出参：身份字段同名映射，employeeId 不出参，permissions 空集合占位（P1-authz 前契约锚定）")
     void toUserVoMapsSessionIdentity() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
 
         UserVO vo = converter.toUserVO(user);
 

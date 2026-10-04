@@ -3,6 +3,7 @@ package com.fuyun.nursing.controller;
 import com.fuyun.nursing.dto.VitalSignRecordRequest;
 import com.fuyun.nursing.dto.VitalSignRejectRequest;
 import com.fuyun.nursing.service.IVitalSignService;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.VitalSignVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -33,6 +34,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class VitalSignController {
 
     private final IVitalSignService vitalSignService;
+
+    private final IWardAccessService wardAccessService;
 
     /**
      * 体征录入（手工/PDA 点测，录入即 CONFIRMED；生理极限越界拒收 NS-1005）。
@@ -68,13 +71,17 @@ public class VitalSignController {
 
     /**
      * 病区待复核体征清单（复核工作台数据源，仅 PENDING_REVIEW 行）。
+     * W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）。
      *
      * @param wardId 病区编码，必填
      * @return 待复核出参清单（测量时点升序）
+     * @throws com.fuyun.common.exception.BizException NS-1028（403 病区不在当班绑定集或无有效绑定）
      */
     @Operation(summary = "病区待复核体征清单")
     @GetMapping("/api/v1/nursing/vital-signs/pending-review")
     public List<VitalSignVO> pendingReview(@RequestParam("wardId") String wardId) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）
+        wardAccessService.assertWardAllowed(wardId);
         return vitalSignService.pendingReview(wardId);
     }
 

@@ -137,6 +137,6 @@ class TokenServiceFaultInjectionTest {
 
     /** 登录会话输入夹具：字段值与主测试类口径一致 */
     private static SessionUser adminUser() {
-        return new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"));
+        return new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
     }
 }

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.MissingNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
+import com.jayway.jsonpath.JsonPath;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
@@ -16,8 +17,10 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
@@ -32,6 +35,8 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.simp.stomp.StompFrameHandler;
 import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
@@ -65,6 +70,14 @@ import org.testcontainers.utility.MountableFile;
  * +TASK_OVERDUE 帧；等待窗 150s 覆盖完整档位周期。
  *
  * <p>容器三件套类级独占（GC9 红线，IotTelemetryPipelineIT :134-150 逐字同型）。
+ *
+ * <p><b>PR-4C Task 6（W-40）适配</b>：board REST 端点挂病区守卫（fail-closed）——admin 登录态
+ * 用例补当班绑定行夹具（V1114 种子只覆盖 W01，本 IT 锚 W-IT-9006）；另增哨兵令牌 REST 场景
+ * （@Order(4)：区内 200+越区 403——W-68 闭合与 A-2 HTTP 面锚定，写面 403 归 AuthFlowIT 第 10 步）。
+ *
+ * <p><b>PR-4C Task 7（A-2 WS SUBSCRIBE 病区防线）适配</b>：@Order(5) 增哨兵令牌 WS 全链——
+ * 匿名令牌 CONNECT（携主体缓存）后区内订阅可达收帧、越区订阅 ERROR 帧拒绝且连接被服务端关闭
+ * （e2e 前置 IT 锚；登录态绑定集分支归单测承载，@Order(2) 既有绑定行即区内放行旁证）。
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -113,7 +126,10 @@ class NurseBoardWsIT extends FuyunStackITBase {
 
     private static final long TICK_TASK_ROW_ID = 920613L;
 
-    /** WS 推送触发夹具就诊（admitted 信封注入锚） */
+    /** W-40 当班绑定行夹具主键（V1114 种子段外保留段——雪花 19 位量级永不冲突） */
+    private static final long ADMIN_BINDING_ROW_ID = 9114000000000000101L;
+
+    /** WS 推送触发夹具就诊（admitted 信封注入锚——@Order(2) 首投与 @Order(5) 幂等重放共用） */
     private static final long PUSH_PATIENT_ID = 920602L;
 
     private static final String PUSH_VISIT_ID = "I2026100300011";
@@ -203,6 +219,20 @@ class NurseBoardWsIT extends FuyunStackITBase {
      * @throws Exception 连接超时或被拒绝（正路径不应发生）
      */
     private StompSession connectStompSession(String accessToken) throws Exception {
+        return connectStompSession(accessToken, new StompSessionHandlerAdapter() {});
+    }
+
+    /**
+     * 建立 STOMP 会话（自定义会话处理器版）：越区拒绝用例经定制 {@link StompSessionHandlerAdapter}
+     * 捕获服务端 ERROR 帧（DefaultStompSession 对 ERROR 帧调用会话处理器 handleFrame——
+     * spring-messaging 6.2.19 字节码同源）。
+     *
+     * @param accessToken access 令牌原文，非空；来源：登录或哨兵令牌签发
+     * @param handler     STOMP 会话处理器，非空
+     * @return 已完成 CONNECT 的会话，非空
+     * @throws Exception 连接超时或被拒绝（正路径不应发生）
+     */
+    private StompSession connectStompSession(String accessToken, StompSessionHandlerAdapter handler) throws Exception {
         WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
         ThreadPoolTaskScheduler taskScheduler = new ThreadPoolTaskScheduler();
         taskScheduler.setThreadNamePrefix("it-nurse-board-sched-");
@@ -218,7 +248,7 @@ class NurseBoardWsIT extends FuyunStackITBase {
                 "ws://localhost:" + localServerPort + "/ws/nursing",
                 new WebSocketHttpHeaders(),
                 connectHeaders,
-                new StompSessionHandlerAdapter() {});
+                handler);
         try {
             return future.get(STOMP_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
         } catch (ExecutionException e) {
@@ -251,8 +281,21 @@ class NurseBoardWsIT extends FuyunStackITBase {
         return frames;
     }
 
-    /** 注入 admitted 上游帧（nursing 消费→投影 upsert→BED_PATIENT 推送全链触发面）。 */
+    /** 注入 admitted 上游帧（nursing 消费→投影 upsert→BED_PATIENT 推送全链触发面；eventId 固定首投）。 */
     private void publishAdmitted(String visitId, long patientId) {
+        publishAdmitted("it-board-admitted", visitId, patientId);
+    }
+
+    /**
+     * 注入 admitted 上游帧（自定义 eventId 版）：消费侧按 eventId+模块幂等去重，同 visitId 重放
+     * 须换 eventId（@Order(5) 哨兵场景重放 @Order(2) 夹具就诊——走投影幂等刷新路径，避免
+     * uk_ward_patient_bed 空占位床号唯一冲突）。
+     *
+     * @param eventId   事件去重标识，非空（同一 JVM 内每次注入须互异）
+     * @param visitId   夹具就诊号，非空
+     * @param patientId 夹具患者 ID
+     */
+    private void publishAdmitted(String eventId, String visitId, long patientId) {
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("visitId", visitId)
                 .put("patientId", patientId)
@@ -267,7 +310,7 @@ class NurseBoardWsIT extends FuyunStackITBase {
                         Clock.systemUTC(),
                         "inpatient",
                         "inpatient.visit.admitted",
-                        "it-board-admitted",
+                        eventId,
                         objectMapper.convertValue(payload, Map.class)));
     }
 
@@ -275,6 +318,15 @@ class NurseBoardWsIT extends FuyunStackITBase {
     @Order(1)
     @DisplayName("夹具与大屏 REST 快照四段：床位墙行/逾期清单段/出入院 ADMIT 动态/危急值空段占位")
     void boardRestSnapshotFourSections() {
+        // W-40 守卫适配（D-21 申报）：admin 登录态调 board 须有当班绑定行（V1114 种子只覆盖 W01，
+        // 本 IT 锚 W-IT-9006——照 Task 5 种子行形态直插，长期有效窗当日命中）
+        jdbcTemplate.update("""
+                INSERT INTO nursing.nurse_assignment
+                  (id, ward_id, nurse_id, assignment_type, shift_code, bed_no, patient_id,
+                   valid_from, valid_to, status, created_by, updated_by, deleted)
+                VALUES (?, 'W-IT-9006', '1', 'PRIMARY', 'DAY', NULL, NULL,
+                   DATE '2026-01-01', NULL, 'ACTIVE', 'IT', 'IT', 0)
+                """, ADMIN_BINDING_ROW_ID);
         jdbcTemplate.update(
                 "INSERT INTO nursing.nursing_ward_patient"
                         + " (id, ward_id, bed_no, patient_id, visit_id, patient_name, nursing_level, allergy_flag,"
@@ -398,6 +450,138 @@ class NurseBoardWsIT extends FuyunStackITBase {
         assertThat(((Number) row.get("escalation_count")).intValue())
                 .as("首标档位 1")
                 .isEqualTo(1);
+    }
+
+    @Test
+    @Order(4)
+    @DisplayName("哨兵令牌 REST 面：区内 board 快照 200+越区 403（W-68 闭合主断言+A-2 HTTP 面一致性）")
+    void sentinelTokenReadsBoardWithinBoundWardOnly() {
+        // 匿名签发哨兵令牌（AUTH_WHITELIST 通道，携 wardId 绑定——W-39 签发面）
+        String sentinelToken = issueSentinelToken(WARD_ID);
+        // 区内：board 快照 200（W-68 闭合主断言——哨兵令牌附调后匿名大屏恢复；守卫内哨兵豁免直通）
+        assertThat(bearerJson("/api/v1/nursing/board/" + WARD_ID, HttpMethod.GET, sentinelToken, null)
+                        .getStatusCode()
+                        .value())
+                .as("区内 board 快照应 200")
+                .isEqualTo(200);
+        // 越区：路径尾段 != 令牌病区 → 403（A-2 HTTP 面——拦截器层限行拒绝，不达 controller）
+        assertThat(bearerJson("/api/v1/nursing/board/W01", HttpMethod.GET, sentinelToken, null)
+                        .getStatusCode()
+                        .value())
+                .as("越区 board 请求应 403")
+                .isEqualTo(403);
+    }
+
+    /**
+     * 匿名签发哨兵令牌（AUTH_WHITELIST 通道，W-39 签发面——REST @Order(4) 与 WS @Order(5) 共用）。
+     *
+     * @param wardId 令牌绑定病区编码，非空（尾段比对源——REST 一致性校验与 WS 订阅防线同源）
+     * @return 哨兵 access 令牌原文，非空（禁入日志与断言消息）
+     */
+    private String issueSentinelToken(String wardId) {
+        HttpHeaders issueHeaders = new HttpHeaders();
+        issueHeaders.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> tokenResp = restTemplate.exchange(
+                "/api/v1/system/auth/bigscreen-token?wardId=" + wardId,
+                HttpMethod.POST,
+                new HttpEntity<>(null, issueHeaders),
+                String.class);
+        assertThat(tokenResp.getStatusCode().value()).as("哨兵令牌签发应 200").isEqualTo(200);
+        return JsonPath.<String>read(tokenResp.getBody(), "$.accessToken");
+    }
+
+    /**
+     * 哨兵令牌 WS 面（PR-4C Task 7 A-2 e2e 锚）：匿名令牌经 CONNECT 帧鉴权（主体缓存）后，
+     * 区内订阅真实建立（BED_PATIENT 帧可达为订阅落位的最小可靠证据）；越区订阅被
+     * NursingSubscribeWardInterceptor 拒——客户端收 ERROR 帧（message=固定摘要）且服务端以
+     * PROTOCOL_ERROR 关闭连接（spring-websocket 6.2.19 字节码同源：ERROR 帧先发、连接随后关闭，
+     * DefaultStompSession 对 ERROR 帧调用会话处理器 handleFrame——经定制 handler 捕获）。
+     */
+    @Test
+    @Order(5)
+    @DisplayName("哨兵令牌 WS 面：区内订阅可达收帧+越区订阅 ERROR 帧拒绝且连接被服务端关闭（A-2 e2e 锚）")
+    void sentinelWsSubscribeRestrictedToBoundWard() throws Exception {
+        String sentinelToken = issueSentinelToken(WARD_ID);
+
+        // ① 区内：CONNECT 成功 + 订阅真实落位（帧可达——被拒订阅无帧，收帧即防线放行的行为证据）；
+        // 重放 @Order(2) 夹具就诊（幂等刷新路径）——换 eventId 避消费侧去重，同 ward 二次 admitted
+        // 新插行会撞 uk_ward_patient_bed 空占位床号唯一索引（床号待 bed.changed 补齐口径）
+        StompSession inWard = connectStompSession(sentinelToken);
+        try {
+            BlockingQueue<String> frames = subscribeForFrames(inWard, "/topic/nursing/board/" + WARD_ID);
+            publishAdmitted("it-board-admitted-sentinel", PUSH_VISIT_ID, PUSH_PATIENT_ID);
+            String frame = frames.poll(PUSH_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+            assertThat(frame).as("哨兵区内订阅应可收床位动态帧").isNotNull();
+            assertThat(objectMapper.readTree(frame).path("type").asText())
+                    .as("帧类型=BED_PATIENT（订阅落位旁证）")
+                    .isEqualTo("BED_PATIENT");
+        } finally {
+            inWard.disconnect();
+        }
+
+        // ② 越区：尾段 != 令牌绑定病区 → ERROR 帧（固定摘要，不含令牌）+ 连接被服务端关闭
+        CountDownLatch errorLatch = new CountDownLatch(1);
+        AtomicReference<String> errorMessage = new AtomicReference<>();
+        StompSession outWard = connectStompSession(sentinelToken, new StompSessionHandlerAdapter() {
+            @Override
+            public Type getPayloadType(StompHeaders headers) {
+                return byte[].class;
+            }
+
+            @Override
+            public void handleFrame(StompHeaders headers, Object payload) {
+                // ERROR 帧抵达即服务端拒绝证据（订阅级帧不会到达——连接关闭前仅此一帧）；
+                // message 头承载服务端固定摘要（StompHeaders 无 getMessage 便捷器，经 getFirst 取原生头）
+                errorMessage.set(headers.getFirst("message"));
+                errorLatch.countDown();
+            }
+        });
+        try {
+            // 越层订阅 W01（V303 种子病区，非令牌绑定 W-IT-9006）：订阅处理器不会被调用，占位即可
+            StompHeaders subscribeHeaders = new StompHeaders();
+            subscribeHeaders.setDestination("/topic/nursing/board/W01");
+            outWard.subscribe(subscribeHeaders, new StompFrameHandler() {
+                @Override
+                public Type getPayloadType(StompHeaders headers) {
+                    return byte[].class;
+                }
+
+                @Override
+                public void handleFrame(StompHeaders headers, Object payload) {
+                    // 被拒订阅无帧回调（占位实现，断言语义在会话级 ERROR 帧）
+                }
+            });
+            assertThat(errorLatch.await(PUSH_TIMEOUT.toSeconds(), TimeUnit.SECONDS))
+                    .as("越区订阅应收到服务端 ERROR 帧")
+                    .isTrue();
+            assertThat(errorMessage.get())
+                    .as("ERROR 帧消息=防线固定摘要（不含令牌与绑定差异——防枚举）")
+                    .isEqualTo("大屏匿名令牌仅可访问绑定病区的看板主题");
+            // 服务端发 ERROR 后关闭连接（PROTOCOL_ERROR）——会话终将被置为非连接态
+            awaitUntil("越区被拒后连接应被服务端关闭", PUSH_TIMEOUT.toMillis(), () -> !outWard.isConnected());
+        } finally {
+            // 连接已被服务端以 PROTOCOL_ERROR 关闭（DefaultStompSession 对已关闭会话 disconnect
+            // 抛 IllegalStateException——isConnected 守卫跳过，断言失败路径同样不因清理噪音遮蔽）
+            if (outWard.isConnected()) {
+                outWard.disconnect();
+            }
+        }
+    }
+
+    /**
+     * 携 Bearer 令牌的原始响应请求助手（AuthFlowIT bearerJson 同款——哨兵 REST 场景状态码断言通道）。
+     *
+     * @param path     目标 URI（/api/v1 前缀），非空
+     * @param method   HTTP 方法，非空
+     * @param token    Bearer 令牌原文，非空；经 Authorization 头注入（禁入日志）
+     * @param jsonBody 请求体 JSON 字符串，可空；GET 传 null
+     * @return 原始 HTTP 响应（状态码可断言），非空
+     */
+    private ResponseEntity<String> bearerJson(String path, HttpMethod method, String token, String jsonBody) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(token);
+        return restTemplate.exchange(path, method, new HttpEntity<>(jsonBody, headers), String.class);
     }
 
     /** 大屏快照逾期清单段包含判定（taskNo 维度——清单行组件化断言承载）。 */

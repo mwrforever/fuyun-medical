@@ -93,7 +93,7 @@
 | --- | --- | --- |
 | 全自建 | M05 自建 WebSocket 重建告警/遥测推送 | 与 M14 主题功能重复，两处推流不一致风险；重复消费遥测浪费（遥测摘要已 2 秒节流）；M14 已按病区主题化并处理断连补齐 |
 | 全复用 | 大屏只订 M14 主题 | 呼叫（M16）、任务逾期、危急值（M07）、床位动态（M04）非 IoT 域，M14 主题不承载，覆盖不了 FU-M05-08 全部内容 |
-| **IoT 主题复用+护理域自建主题（选定）** | web-bigscreen 前端双端点订阅：**直订 M14 端点** `/ws/iot` 的 `/topic/iot/alarm/{wardId}`（输液/设备告警触发/升级/关闭）、`/topic/iot/telemetry/{wardId}`（输液余量/体征摘要）、`/topic/iot/device-status/{wardId}`（设备状态）——IoT 域主题一律复用不重建；**订阅 M05 自建端点** `/ws/nursing` 的 `/topic/nursing/board/{wardId}`（呼叫转发/任务逾期/危急值提醒/床位患者动态）——M05 后端订阅 MQ 事件（M16 呼叫、M07 危急值、M04 床位与患者变更、本模块任务逾期）聚合后经自建主题推送；REST 快照 `GET /board/{wardId}` 兜底（聚合 M14 快照接口+本模块数据） | 职责按域切分：IoT 数据通道零重复建设，护理业务事件有单一归属；两主题刷新均满足 ≤2s（总 Spec 8）；断连补齐沿用 M14 既有机制，自建主题按同规范实现 |
+| **IoT 主题复用+护理域自建主题（选定）** | web-bigscreen 前端双端点订阅：**直订 M14 端点** `/ws/iot` 的 `/topic/iot/alarm/{wardId}`（输液/设备告警触发/升级/关闭）、`/topic/iot/telemetry/{wardId}`（输液余量/体征摘要）、`/topic/iot/device-status/{wardId}`（设备状态）——IoT 域主题一律复用不重建；**订阅 M05 自建端点** `/ws/nursing` 的 `/topic/nursing/board/{wardId}`（呼叫转发/任务逾期/危急值提醒/床位患者动态）——M05 后端订阅 MQ 事件（M16 呼叫、M07 危急值、M04 床位与患者变更、本模块任务逾期）聚合后经自建主题推送；REST 快照 `GET /board/{wardId}` 兜底（聚合 M14 快照接口+本模块数据）；快照读面与主题订阅均受病区访问防线约束（PR-4C，见第 15 节） | 职责按域切分：IoT 数据通道零重复建设，护理业务事件有单一归属；两主题刷新均满足 ≤2s（总 Spec 8）；断连补齐沿用 M14 既有机制，自建主题按同规范实现 |
 
 **结论**：IoT 主题复用 M14、护理域自建 `/ws/nursing`、前端双端点订阅、REST 快照兜底。
 
@@ -104,7 +104,7 @@
 | 实体 | 关键字段 | 说明 |
 | --- | --- | --- |
 | nursing_ward_config 病区护理配置 | ward_id（唯一）、体征默认测量频次（按护理级别：特级 q1h/病重 q4h 等参数组）、iot_autocast_enabled（IoT 自动落卡开关）、iot_sync_interval（拉取周期）、conflict_window（双通道冲突时间窗）、execute_time_window（执行时间窗阈值）、overdue_escalate_threshold/escalate_chain（任务逾期升级阈值与链路）、override_roles（破码授权角色集）、routine_task_templates（翻身/巡视常规模板引用）、shift_definitions（班次定义）、退药开关 | 病区级护理策略唯一配置点；ICU 等专科病区经此关闭通用通道（与 M11/M16 边界联动） |
-| nurse_assignment 责任护士分配 | ward_id、nurse_id、assignment_type（责任组/管床）、bed 集合或患者集合、shift_code、valid_from/valid_to | FU-M05-01 责任分配载体；大屏"护士管床"与任务自动派发依据；同一床位同一班次唯一 |
+| nurse_assignment 责任护士分配 | ward_id、nurse_id、assignment_type（责任组/管床）、bed 集合或患者集合、shift_code、valid_from/valid_to | FU-M05-01 责任分配载体；大屏"护士管床"与任务自动派发依据；同一床位同一班次唯一；PR-4C 起兼承载「当班绑定集=病区访问授权锚」第二语义（双语义声明见第 15 节） |
 | vital_sign_record 体征记录 | patient_id、visit_id、measured_at（测量时点）、体温（值+部位：口/腋/肛）、脉搏、呼吸、血压（收缩/舒张）、血氧、体重、身高、疼痛评分引用、source（MANUAL/PDA/IOT）、review_status（PENDING_REVIEW/CONFIRMED/REJECTED，自动转正直落 CONFIRMED）、conflict_ref（冲突对参照记录）、iot_quality（GOOD/SUSPECT/BAD，IoT 源填写）、复核人/复核时间 | 三源归一权威记录；(visit_id, measured_at, 体温部位) 唯一约束防双写重复；冲突双值经 conflict_ref 互链可溯 |
 | temperature_chart_page 体温单页 | visit_id、chart_month（住院月页）、页状态（进行中/已归档）、手术后天数序列（依据 M10 手术事件标注） | 体温单页面维度（调研依据 1 内容要素：住院天数/术后天数/页码） |
 | temperature_chart_entry 体温单条目 | page_id、entry_time、entry_type（VITAL 体征引用/SPECIAL_EVENT 特殊事件/DAILY_VALUE 日行值）、vital_ref（体征引用）、special_event_type（入院/手术/分娩/转科/出院/死亡/物理降温/脉搏短绌起止/呼吸心跳停止等）、daily_value_type（大便次数/出入量小结/体重/身高/皮试结果等）、符号提示（腋温×/口温●/肛温〇/红圈/红虚线由渲染端按规则绘制）、记录人 | 体温单数据点权威；特殊事件符号规则对齐调研依据 2；(page_id, entry_time, entry_type, 类型键) 唯一 |
@@ -149,7 +149,7 @@
 | FU-M05-05 移动护理 PDA（P0） | 三向扫码核对（方案 3.3 全套：腕带↔瓶签↔医嘱项，5R 服务端集中校验，五类拦截，破码双人授权+事后审查）；给药/输液执行（流程见 FU-M05-04/06）；标本采集执行：经 M07 接口获取待采集标本与试管条码清单，床旁扫腕带+试管条码双向核对，采集记录回传 M07（标本状态权威与送检流转在 M07，P1）；巡视打卡（扫腕带/床头卡记录巡视时间与执行人）；体征采集上传（PDA 录入/一体机直采）；患者查询（基本信息/医嘱执行/体征趋势/费用欠费，脱敏输出）；PDA 弱网本地缓存补传（补传标记） |
 | FU-M05-06 输液闭环（P0） | 任务基座+告警升级（方案 3.4 全套）：药房签收生成输液执行单 → 三向核对（腕带/输液袋瓶签，核对输液袋与患者匹配方可输注，调研依据 5）→ 开始输注（挂接 M14 输液传感器经绑定查询，发布 infusion.started）→ 输注监控视图（全病区输液一览：余量/滴速/剩余时间，数据调 M14 遥测）→ 余量告急 iot.alarm 联动升级动作（不新建任务，逐级 15/10/5ml 告警均挂同一执行单累计升级）→ 拔针确认（needle-out：核对腕带后确认，通知 M14 停止监测、生成入量行、执行单 COMPLETED 回签）；异常处理：滴速异常/阻塞告警同挂执行单提醒；破码场景（袋签损坏）按 3.3 放行规则 |
 | FU-M05-07 护理任务管理（P1） | 任务来源四路：医嘱执行计划（给药/输液/标本等执行单联动生成）、输液告急联动（升级挂单）、IoT 联动规则（M14 linkage 调本模块创建任务 API：离床确认/设备断流确认等）、护理常规（翻身 q2h/巡视等模板按频次批量生成）；任务工作台（按班次/责任组/状态分组，认领/完成/取消全留痕）；定时提醒（PDA+工作站，经 M01 通知通道）；逾期动作式升级（延迟队列驱动，阈值与升级链病区参数化）；任务完成回写关联单据（执行单/评估单） |
-| FU-M05-08 护士站大屏（P0） | 聚合架构（方案 3.5）：web-bigscreen 双端点订阅——复用 M14 `/ws/iot` 三主题（告警/遥测摘要/设备状态）+自建 `/ws/nursing` 的 `/topic/nursing/board/{wardId}`（呼叫转发[M16 事件订阅]、任务逾期、危急值提醒[M07 事件订阅]、床位患者动态[M04 事件订阅]）；展示视图：床位总览墙（护理级别/风险/责任护士）、未确认告警列表、输液动态（余量倒计时）、任务逾期看板、危急值待处理、出入院动态；REST 快照 `GET /board/{wardId}` 兜底（聚合 M14 快照+本模块数据）；刷新 ≤2s；断连重连按 REST 增量补齐（沿用 M14 规范） |
+| FU-M05-08 护士站大屏（P0） | 聚合架构（方案 3.5）：web-bigscreen 双端点订阅——复用 M14 `/ws/iot` 三主题（告警/遥测摘要/设备状态）+自建 `/ws/nursing` 的 `/topic/nursing/board/{wardId}`（呼叫转发[M16 事件订阅]、任务逾期、危急值提醒[M07 事件订阅]、床位患者动态[M04 事件订阅]）；展示视图：床位总览墙（护理级别/风险/责任护士）、未确认告警列表、输液动态（余量倒计时）、任务逾期看板、危急值待处理、出入院动态；REST 快照 `GET /board/{wardId}` 兜底（聚合 M14 快照+本模块数据）；刷新 ≤2s；断连重连按 REST 增量补齐（沿用 M14 规范）；病区访问防线（PR-4C）：REST 快照与 board 主题 SUBSCRIBE 按令牌身份限行——大屏哨兵限单病区、登录态限当班绑定集，越区 403 NS-1028/订阅拒绝（见第 15 节） |
 | FU-M05-09 护理不良事件上报（P1） | 上报：结构化表单（类别/经过/处置/当事人，支持匿名鼓励上报通道）；分级：I 警告/II 不良/III 未造成后果/IV 隐患四类+A~E 严重程度（调研依据 8），I/II 级强制上报（严重事件即时口头上报+24h 内系统补报，时限合规标记）；非惩罚文化：报表不含个人惩罚字段，仅流程改进导向；处理：护士长初处理→护理部定性→RCA 原因分析→整改措施与责任人→审签关闭，超时提醒升级；关联：事件后回评（评估单引用）、涉事执行单/告警引用追溯；分类统计与趋势（按类别/病区/时段/等级）供 M19 护理质量指标；发布 `nursing.adverse-event.reported` |
 
 ## 7. 对外接口
@@ -200,7 +200,7 @@
 - `patient.health-summary.updated`（过敏标识刷新）、`patient.merged`（历史文书读侧经 EMPI 归一）/ `patient.split`（拆分逆映射刷新，与 patient.merged 成对订阅）
 - `system.dict.published` / `system.org.changed` / `system.user.changed` / `system.param.changed`（M01 主数据广播缓存刷新）
 
-**WebSocket**：自建端点 `/ws/nursing`（STOMP，握手鉴权）：`/topic/nursing/board/{wardId}`（大屏与护士站聚合：任务逾期/呼叫转发/危急值提醒/床位患者动态）；IoT 域主题复用 M14 端点（见方案 3.5），不自建重复主题；PDA 任务与告警提醒经 M01 通知通道投递。
+**WebSocket**：自建端点 `/ws/nursing`（STOMP，CONNECT 帧鉴权）：`/topic/nursing/board/{wardId}`（大屏与护士站聚合：任务逾期/呼叫转发/危急值提醒/床位患者动态）；board 主题族 SUBSCRIBE 病区限行（PR-4C）：哨兵令牌仅可订阅令牌绑定病区（泛哨兵一律拒）、登录态订阅尾段病区须在当班绑定集内（fail-closed），拒绝经 ERROR 帧回送并按协议错误关闭连接（防线声明见第 15 节）；IoT 域主题复用 M14 端点（见方案 3.5），不自建重复主题；PDA 任务与告警提醒经 M01 通知通道投递。
 
 ## 8. 集成点
 
@@ -331,3 +331,25 @@
    `InpatientVisitEventListener.handleDischargeRequested` 维持提示占位日志形态（不改状态
    红线保持），WS board 推送与在途任务 remark 追加不落（出院床位动态帧经 discharged 逻辑删
    前行回读路由已承载），代码 TODO(P3) 在位。
+
+## 15. P2 PR-4C 落地注记（2026-10-05，feat/p2-pr4c-board-ward）
+
+> 本节为 P2 PR-4C（大屏通道与病区防线包）交付面相对本 Spec 的界定与裁决声明；
+> PR-4C 口径以本节为准，Spec 正文不回改（正文相关行仅补防线锚）。
+
+1. **nurse_assignment 双语义声明（W-40 方案 A，D-29 裁决 fail-closed）**：本表既有语义为「责任分配载体」（FU-M05-01，§4 原语义不动）；PR-4C 起新增第二语义「当班绑定集=病区访问授权锚」——操作者的病区数据面访问授权以其当日窗口内 ACTIVE 绑定行为唯一依据（当日窗口按北京钟面医疗日计算：valid_from≤当日≤valid_to，valid_to 空=长期有效），集外或无绑定一律拒绝且 **ADMIN 角色无豁免**；唯一豁免=大屏哨兵令牌操作者（其授权锚在 M01 哨兵限行与 WS 防线，本模块守卫对哨兵直通属 HTTP 面防御纵深、非二次授权）。
+2. **九读端点 403 NS-1028 病区守卫（W-40 落地面）**：下列病区读端点入口挂当班绑定集校验，越区或无绑定一律 403 NS-1028：
+
+   | 读端点 | 守卫语义 |
+   | --- | --- |
+   | 病区患者一览 `GET /ward-patients?wardId=` | 请求病区须在当班绑定集内 |
+   | 护理板快照 `GET /board/{wardId}` | 同上 |
+   | 任务列表 `GET /tasks?wardId=` | 同上 |
+   | 执行列表 `GET /executions?wardId=` | 同上 |
+   | 输注中一览 `GET /infusions/active?wardId=` | 同上 |
+   | 交接班列表 `GET /handovers?wardId=` | 同上 |
+   | 体征待复核 `GET /vital-signs/pending-review?wardId=` | 同上 |
+   | 不良事件列表 `GET /adverse-events` / 统计 `GET /stats/adverse-events` | wardScope 双轨：携 wardId=单值校验（须在绑定集内）；不携=按绑定集 in 过滤；空绑定集=返回空结果集（列表过滤语义不 403，与单点访问语义分界） |
+
+3. **V1114 种子行语义（fail-closed 同批配套）**：演示环境为两运维/演示账号（admin、doctordemo）种 W01 绑定行——assignment_type 取 PRIMARY 但患者/床位列为空，**非护理责任分配、仅承载访问授权**（应用层分配端点的类型一致性校验不适用于种子通道，防 fail-closed 上线锁死演示账号）；生产语义=护士绑定行随排班/责任分配数据自然存在，无种子通道。
+4. **WS SUBSCRIBE 病区防线（PR #63 评审 A-2 门槛项收口）**：`/ws/nursing` 客户端入站通道双拦截器序——CONNECT 帧鉴权在前（令牌校验+访问主体摘要缓存进会话）、board 主题族 SUBSCRIBE 限行在后：哨兵令牌仅可订阅令牌绑定病区（泛哨兵一律拒）；登录态订阅尾段病区须在当班绑定集内（fail-closed）；无已鉴权主体（未 CONNECT 即订阅）一律拒；拒绝以 ERROR 帧回送并按协议错误关闭连接。§7 WebSocket 节、方案 3.5 与 FU-M05-08 主题描述行已同步补防线锚。

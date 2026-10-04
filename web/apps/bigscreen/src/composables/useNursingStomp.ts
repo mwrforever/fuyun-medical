@@ -10,12 +10,13 @@
  *    onWebSocketClose/onStompError 先将在册句柄置 null 作废——useIotStomp PR-5 Finding 2
  *    同款，防「徽标已连接、零帧流入」假连接）；换病区重订阅先退订旧订阅再落地新主题；
  * 4. 【匿名短期令牌运行期获取经 beforeConnect 动态填 connectHeaders】凭证=后端匿名签发的
- *    5 分钟短期单 access 令牌（POST /v1/system/auth/bigscreen-token，useQueueStomp 先例
- *    同源端点——NursingConnectAuthInterceptor 两态通吃：登录 access 与匿名令牌同构同链
- *    校验）。初始建连取不到令牌时 connect() 拒建连（tokenFailed 置位，页面承载「护理实时
- *    链路令牌获取失败」横幅 + 零 WS 出网）；令牌缓存到期由 beforeConnect 按次重签，重签
- *    失败本次尝试无凭证交服务端拒绝（库内建周期重连时再次尝试）；令牌值禁入任何日志
- *    （web A.6）；
+ *    5 分钟短期单 access 令牌（POST /v1/system/auth/bigscreen-token?wardId=，按病区签发
+ *    单病区哨兵会话——NursingConnectAuthInterceptor 两态通吃：登录 access 与匿名令牌同构
+ *    同链校验）。初始建连取不到令牌时 connect() 拒建连（tokenFailed 置位，页面承载「护理
+ *    实时链路令牌获取失败」横幅 + 零 WS 出网）；令牌缓存到期/换病区重签由 beforeConnect
+ *    按次把关，重签失败本次尝试无凭证交服务端拒绝（库内建周期重连时再次尝试）；令牌值
+ *    禁入任何日志（web A.6）；令牌缓存收敛至 api/bigscreenToken.ts 单源（W-68 附调改造
+ *    ——HTTP 请求拦截器与 CONNECT 帧共用同一份缓存，本模块不再自持缓存字段）；
  * 5. 【onStompError / onWebSocketClose 统一挂接】经 utils/logger 输出（含主题与 traceId）。
  *
  * <p>帧载荷：后端 NurseBoardPushFrame 统一信封 {type, payload, occurredAt}（五值冻结词表
@@ -30,7 +31,7 @@ import { Client } from '@stomp/stompjs';
 import type { IMessage, StompSubscription } from '@stomp/stompjs';
 import { ref } from 'vue';
 import type { Ref } from 'vue';
-import { fetchBigscreenToken } from '@/api/bigscreenToken';
+import { ensureBigscreenToken, getCachedBigscreenToken } from '@/api/bigscreenToken';
 import { parseNursingBoardFrame } from '@/utils/nursingMessage';
 import type { NursingBoardFrame } from '@/utils/nursingMessage';
 import { error as logError, info, warn } from '@/utils/logger';
@@ -44,21 +45,12 @@ const RECONNECT_DELAY_MS = 10000;
 /** 双向心跳间隔（毫秒，与后端 STOMP 心跳协商的宪法数值） */
 const HEARTBEAT_MS = 10000;
 
-/** 令牌缓存到期安全余量（毫秒）：早于令牌 exp 重签，防「临界有效令牌被服务端判过期」 */
-const TOKEN_REFRESH_SKEW_MS = 30000;
-
 /**
- * 大屏订阅令牌缓存（运行期经 fetchBigscreenToken 匿名签发；空=未持有）。仅模块内存缓存
- * 不入 sessionStorage——短期凭证随标签页周期即弃，缩小驻留面（useQueueStomp 同款；护士站
- * 大屏与叫号大屏页面互斥使用，各自模块缓存不共享）。
+ * 当前建连/订阅病区编码（connect/subscribeBoard 双入口更新）：令牌按病区签发，重连路径
+ * beforeConnect 据此透传当前病区给 ensure 把关——换病区强制重签裁决在 api 层命中条件承载
+ * （W-68 收敛），本模块零缓存字段。
  */
-let nursingToken = '';
-
-/** 缓存令牌到期时刻（epoch 毫秒；0=无缓存），到期前 TOKEN_REFRESH_SKEW_MS 即重签 */
-let tokenExpiresAt = 0;
-
-/** 在飞令牌签发 Promise（并发 connect/换病区去重——防重复签发与并发竞态双写） */
-let tokenFetchInFlight: Promise<boolean> | null = null;
+let currentWardId: string | undefined;
 
 /** 初始建连令牌获取失败态可写源（模块内部翻转专用，禁止外泄） */
 const tokenFailedRef = ref(false);
@@ -102,58 +94,6 @@ export const connectionState: Readonly<Ref<NursingConnectionState>> = connection
  */
 function isValidWardId(wardId: string): boolean {
   return wardId.trim() !== '';
-}
-
-/**
- * 确保 nursing board 订阅令牌未过期（运行期获取唯一入口）：缓存未到期直接复用；否则经
- * fetchBigscreenToken 重签并缓存（在飞请求去重）。获取失败清缓存返回 false，不抛出。
- *
- * @return true=已持有有效令牌（nursingToken 非空）；false=签发失败（connect 入口据此拒建连，
- *         beforeConnect 路径据此放弃凭证交服务端拒绝）
- */
-async function ensureNursingToken(): Promise<boolean> {
-  if (nursingToken !== '' && Date.now() < tokenExpiresAt - TOKEN_REFRESH_SKEW_MS) {
-    return true;
-  }
-  if (tokenFetchInFlight !== null) {
-    return tokenFetchInFlight;
-  }
-  tokenFetchInFlight = (async () => {
-    try {
-      const granted = await fetchBigscreenToken();
-      // 畸形载荷防御（生成物字段全可选）：缺令牌值视同签发失败——空值拼 Bearer 头必被服务端
-      // 拒绝，交 catch 清缓存走拒建连/重签语义，防 undefined 混入凭证头
-      if (granted.accessToken === undefined || granted.accessToken === '') {
-        throw new Error('签发载荷缺少 accessToken');
-      }
-      nursingToken = granted.accessToken;
-      // expiresIn 出网为字符串（后端 Long→String 全局序列化）：显式收窄禁隐式乘法强转；
-      // 缺失/非数值（Number→NaN）兜底为「不可缓存」——下次连接尝试立即重签（安全方向：
-      // 宁可多签发一次，不静默持有未知有效期的令牌）
-      const expiresInSeconds = Number(granted.expiresIn);
-      tokenExpiresAt = Number.isFinite(expiresInSeconds) ? Date.now() + expiresInSeconds * 1000 : 0;
-      // info 仅留痕有效期原文（令牌值禁入日志，web A.6 红线）
-      info(
-        '护理大屏订阅令牌已获取（运行期签发）',
-        `expiresIn=${granted.expiresIn ?? '缺省'}s`,
-        traceTag(),
-      );
-      return true;
-    } catch (fetchError) {
-      // 签发失败：清缓存（下次连接尝试整体重签）；失败详情不含令牌值，可安全留痕
-      nursingToken = '';
-      tokenExpiresAt = 0;
-      warn(
-        '护理大屏订阅令牌运行期获取失败',
-        fetchError instanceof Error ? fetchError.message : String(fetchError),
-        traceTag(),
-      );
-      return false;
-    } finally {
-      tokenFetchInFlight = null;
-    }
-  })();
-  return tokenFetchInFlight;
 }
 
 /**
@@ -217,15 +157,19 @@ function getOrCreateClient(): Client {
     reconnectDelay: RECONNECT_DELAY_MS,
     heartbeatIncoming: HEARTBEAT_MS,
     heartbeatOutgoing: HEARTBEAT_MS,
-    // 每次连接尝试（含断线自动重连）先确保令牌未过期（到期重签，stompjs await 异步回调），
-    // 再拼 Bearer 头进 CONNECT 帧——运行期获取实时读取不固化（useQueueStomp 范式）
+    // 每次连接尝试（含断线自动重连）先经 api 层单源 ensure 按当前病区把关（到期/换病区
+    // 重签），再同步读缓存拼 Bearer 头进 CONNECT 帧——运行期获取实时读取不固化
     beforeConnect: async () => {
       if (client === null) {
         return;
       }
-      const tokenReady = await ensureNursingToken();
+      const tokenReady = await ensureBigscreenToken(currentWardId);
       if (tokenReady) {
-        client.connectHeaders = { Authorization: `Bearer ${nursingToken}` };
+        const token = getCachedBigscreenToken();
+        // ensure=true 契约上缓存必非空，空值防御仅防拼出「Bearer 」裸方案头被服务端误读
+        if (token !== '') {
+          client.connectHeaders = { Authorization: `Bearer ${token}` };
+        }
       } else {
         // 重签失败（仅重连路径可达——connect 入口失败不激活）：本次尝试无凭证，预期被后端
         // CONNECT 帧鉴权拒绝后按库内建周期重试（重试时再次签发）；warn 不含键值
@@ -315,12 +259,14 @@ export function connect(
     info('STOMP 已连接，保持连接并按新参数切换订阅', buildBrokerUrl(), traceTag());
     return;
   }
+  // 病区锚点更新：后续重连路径 beforeConnect 据此透传当前病区签发（换病区强制重签）
+  currentWardId = wardId;
   // 先行进入 connecting（覆盖令牌签发阶段，页面呼吸点承载过渡）；令牌就绪后才创建 Client
   // 并激活——异步链内聚，调用方（页面）无需感知
   setConnectionState('connecting');
   // 代际快照：本链以发起时刻的代际为准，取令牌在飞期间 disconnect 递增代际即判失配作废
   const generation = connectGeneration;
-  void ensureNursingToken().then((tokenReady) => {
+  void ensureBigscreenToken(wardId).then((tokenReady) => {
     // 代际失配=发起后已发生 disconnect（组件卸载/切换）：本次建连链整体作废——不建 Client
     // 不激活不置失败态，防「卸载后 WS 被激活且永不再断开」的连接泄漏
     if (generation !== connectGeneration) {
@@ -356,6 +302,8 @@ export function subscribeBoard(
     throw new Error('病区编码不得为空，已拒绝订阅');
   }
   const destination = boardTopicPath(wardId);
+  // 病区锚点更新：换病区重订阅后重连路径必须按新病区签发（禁复用旧病区令牌订新病区）
+  currentWardId = wardId;
   // 换病区重订阅：先退订在册订阅，防旧主题帧继续流入页面
   unsubscribeBoard();
   const record = { destination, onFrame, handle: null as StompSubscription | null };

@@ -293,14 +293,20 @@ class WardMetaServiceImplTest {
         when(allergyChecker.listActiveAllergies(7L))
                 .thenReturn(List.of(
                         new AllergyItem(1L, "PENICILLIN", "青霉素", "SEVERE"), new AllergyItem(2L, null, "海鲜", "MILD")));
-        when(assignmentMapper.selectList(any())).thenReturn(List.of(assignmentRow(11L, "nurse-09", "BED", "01")));
+        // V1114 访问授权种子行（PRIMARY 型 patient/bed 双 NULL）混入清单——详情卡分配段须排除（评审 C-F1）
+        when(assignmentMapper.selectList(any()))
+                .thenReturn(List.of(
+                        assignmentRow(11L, "nurse-09", "BED", "01"),
+                        assignmentRow(9114000000000000101L, "admin", "PRIMARY", null)));
         // 在途任务段：详情卡经 INursingTaskService#inFlightByVisit 实时填充
         when(taskService.inFlightByVisit(VISIT)).thenReturn(List.of(inFlightTaskVO()));
 
         WardPatientDetailVO detail = service.detail(VISIT);
 
         assertThat(detail.allergies()).hasSize(2);
+        // 双 NULL 种子行被消费侧过滤——分配清单仅保留真实责任分配行（评审 C-F1）
         assertThat(detail.assignments()).hasSize(1);
+        assertThat(detail.assignments().get(0).nurseId()).isEqualTo("nurse-09");
         // W-34 后展示名来源锚：patient api 嵌查出参（脱敏展示名），非投影行占位列
         assertThat(detail.patientName()).isEqualTo("张*");
         verify(patientNameQuery).displayNamesOf(List.of(7L));

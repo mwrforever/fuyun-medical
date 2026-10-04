@@ -1,6 +1,7 @@
 package com.fuyun.nursing.controller;
 
 import com.fuyun.nursing.service.INurseBoardService;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.NurseBoardVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,6 +26,8 @@ public class BoardController {
 
     private final INurseBoardService boardService;
 
+    private final IWardAccessService wardAccessService;
+
     /**
      * 病区大屏快照（四段聚合 + Redis TTL 5s read-through）：床位总览墙（投影行+护理级别+责任
      * 护士+风险标记）、任务逾期清单、近 24h 出入院动态、危急值段（固定空数组——M07 缺位降级
@@ -32,11 +35,15 @@ public class BoardController {
      *
      * @param wardId 病区编码（路径参数，大屏书签 query.wardId 承载），非空
      * @return 大屏快照（generatedAt=北京钟面），非空
-     * @throws com.fuyun.common.exception.BizException NS-1019（400 wardId 空白）
+     * @throws com.fuyun.common.exception.BizException NS-1019（400 wardId 空白）/ NS-1028
+     *                 （403 病区不在当班绑定集——登录态 fail-closed；大屏哨兵经守卫豁免直通，
+     *                 匿名面限行归 HTTP 层 allowlist）
      */
     @Operation(summary = "病区大屏四段快照（REST 兜底，WS 主通道增量）", operationId = "getNursingBoard")
     @GetMapping("/api/v1/nursing/board/{wardId}")
     public NurseBoardVO board(@PathVariable("wardId") @NotBlank String wardId) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028；哨兵 "0" 守卫内部豁免）
+        wardAccessService.assertWardAllowed(wardId);
         return boardService.board(wardId);
     }
 }

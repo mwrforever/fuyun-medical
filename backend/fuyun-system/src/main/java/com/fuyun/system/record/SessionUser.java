@@ -14,6 +14,13 @@ import java.util.List;
  * @param employeeId  员工 ID（sys_employee.id），可 null（系统/接口账号无员工）
  * @param orgId       主归属机构 ID，可 null（P0 种子不建 org 行）
  * @param roles       角色编码清单（如 ["ADMIN"]），非 null（无角色为空清单）；来源：user_role→role 两步单表查询
+ * @param wardId      大屏哨兵令牌绑定的病区编码，可 null（登录态恒 null；哨兵经 bigscreen-token?wardId= 透传，REST 限行与 WS 订阅防线比对源）
  */
 public record SessionUser(
-        Long userId, String loginName, String displayName, Long employeeId, Long orgId, List<String> roles) {}
+        Long userId,
+        String loginName,
+        String displayName,
+        Long employeeId,
+        Long orgId,
+        List<String> roles,
+        String wardId) {}

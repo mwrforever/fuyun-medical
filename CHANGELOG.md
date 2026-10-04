@@ -2,6 +2,49 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-05 · P2 PR-4C 收口（大屏通道与病区防线包）
+
+- 交付：11 任务全落地（立项→wardId 携带→哨兵 REST 限行→WardAccessService→V1114 种子→九端点守卫→
+  WS SUBSCRIBE 防线→前端令牌附调+D-5+gen:api→D-4 WS 行 TTL→Spec 注记销项→收口），分支
+  feat/p2-pr4c-board-ward 共 12 笔（3542697→59b20e6 含修复环）。
+- 终验：后端 21 模块全量 verify BUILD SUCCESS+前端六连全绿（lint/type-check/test/build；audit 归 CI
+  权威——本地 registry TLS 拦截在案）；真机 e2e 三面取证（匿名三端点 200/越区订阅 ERROR 帧/写面 403
+  SYS-1032，证据留 SDD 工作区 probe/）；五路评审（A 安全 85/B 架构 86/C 数据 88/D 前端 85/E 测试 88）
+  全 APPROVE with findings，must-fix 四项修复环 R1 收口（59b20e6）。
+- 修复环 R1（Important 四项去重后）：①A-1 WS SEND 帧跨病区注入封堵（防线扩 SEND 帧，拒绝摘要
+  「仅可订阅」→「仅可访问」同步 IT 锚）②C-F1 V1114 种子行从患者详情卡责任分配清单排除
+  （WardMetaServiceImpl.detail 消费侧双判过滤，同 NurseBoardServiceImpl 先例）③D-1/E-F1 前端令牌缓存
+  到期重签时间维度覆盖回补（bigscreenToken.spec fake timers 用例，承接随 W-68 收敛删除的原
+  useNursingStomp/useQueueStomp 时间维度用例）④A-2 iot WS 订阅面缺口登记 TASK.md W-90（WS 面注记）。
+- D-21 断言纪律申报（本册全部）：AuthFlowIT 第 9/10 步新增；哨兵 allowlist 冻结镜像断言+403 分支
+  上下文清理效果断言（338b7f7→9397b74）；**WardPatientRetirementIT 适配**（W-IT-9005/9006 双锚
+  +补绑定行 9114000000000000102/0103——fail-closed 上线后既有 IT 红为预期行为变更，同步造绑定行
+  收紧，Task 6 审查点名补记）；NursingConnectAuthInterceptorTest 三态口径变更（「不触达校验器」→
+  「null 入校验契约归一返 null」，换链 verifyAccessPrincipal 必要适配）；NurseBoardWsIT 哨兵 REST
+  @Order(4)+WS @Order(5) 新增；useNursingStomp/useQueueStomp spec 缓存用例改写（缓存本体迁移
+  bigscreenToken.spec 语义等价承接+R1 补时间维度）；NursingSubscribeWardInterceptorTest SEND 用例
+  收紧（「SEND 直通」→「SEND 到 board 同受限行」，评审 A-1）；WardMetaServiceImplTest 详情卡
+  分配断言扩种子行排除。
+- 工单登记：W-90（iot/ward Long 型端点+iot WS 订阅面留 PR-4D 收敛——收口评审 A-2 补 WS 面）；W-91
+  （nurse_assignment 生产化收尾：nurse_id 索引+V1114 种子环境门控+幂等谓词窄化——评审 C-F2/A-5/B-2
+  合并登记）。W-39/W-40/W-68 ✅ 销项+D-4/D-5 随册收口（TASK.md）。
+- Minor 留档不阻断（五路）：B-1 allowlist startsWith 语义宽于声明（无现实暴露）/A-3 allowlist 未约束
+  HTTP 方法（路由 405 兜底）/A-4 哨兵常量镜像双源失配窗口/C-F3 空操作者双轨不对称（不可达）/
+  D-2 in-flight 不区分 wardId（单病区不可达）/D-3 已连接态换病区重签（当前编排不可达）/D-4 泛哨兵
+  跨页令牌耦合注释缺/E-F2 infusion-board 尾段一致性无专测/E-F3 泛哨兵拒未断言 verifyForbidden——
+  均登记于评审档案 `.superpowers/code-review-pr4c/findings-*.md`，随 W-90/W-91 或 PR-4D/E 批量收敛。
+
+## 2026-10-04 · P2 PR-4C 立项（大屏通道与病区防线包）
+
+- 占用迁移号 V1114（nurse_assignment 演示/运维账号绑定行种子——先记再占，全局最大 V1113）。
+- 范围：W-39 哨兵 REST 限行（三端点 allowlist+wardId 一致性+SYS-1032）+令牌携 wardId
+  （SessionData/SessionUser 扩展+TokenPrincipal api 面）+W-68 bigscreen 令牌附调+A-2 WS
+  SUBSCRIBE 病区防线（哨兵单病区+登录态绑定集）+W-40 方案 A fail-closed（九读端点守卫
+  NS-1028+绑定行种子同批）+D-5 三 app randomUUID 降级+D-4 大屏 WS 增量行 TTL。
+- 裁决依据：总纲 D-29/D-31 与评审 A-5（组合①+②，禁白名单化）；r1 §3.4 灰度语义已被 D-29 推翻
+  （无 ACTIVE 绑定行一律 403）；范围边界=iot/ward 域 Long 型 wardId 端点不挂守卫（双标识空间
+  W-74 在案，留 PR-4D/W-74 收敛）。
+
 ## 2026-10-04 · PR-4B 五路评审修复环：两门槛项收口 + W-88/W-89 登记
 
 - **C-F1（85）**：退药数量 scale≤3 前后端双钉——后端 DispensePlanServiceImpl.parseReturnQuantity

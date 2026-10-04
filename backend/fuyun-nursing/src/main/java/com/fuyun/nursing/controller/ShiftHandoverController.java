@@ -4,6 +4,7 @@ import com.fuyun.common.constants.TimeConstants;
 import com.fuyun.nursing.dto.HandoverCompleteRequest;
 import com.fuyun.nursing.dto.HandoverGenerateRequest;
 import com.fuyun.nursing.service.IShiftHandoverService;
+import com.fuyun.nursing.service.IWardAccessService;
 import com.fuyun.nursing.vo.ShiftHandoverVO;
 import com.fuyun.system.api.AuditActionType;
 import com.fuyun.system.api.AuditLog;
@@ -33,6 +34,8 @@ import org.springframework.web.bind.annotation.RestController;
 public class ShiftHandoverController {
 
     private final IShiftHandoverService handoverService;
+
+    private final IWardAccessService wardAccessService;
 
     /**
      * 交接班单生成（系统按本班业务数据自动汇总患者摘要/SBAR 初稿/待续事项，
@@ -66,10 +69,12 @@ public class ShiftHandoverController {
 
     /**
      * 病区交接班清单（按日检索，班次升序；date 缺省当日——列表按日检索语义）。
+     * W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）。
      *
      * @param wardId 病区编码，必填
      * @param date   交接班日期（ISO yyyy-MM-dd，可空，缺省当日）
      * @return 交接班出参清单（班次升序）
+     * @throws com.fuyun.common.exception.BizException NS-1028（403 病区不在当班绑定集或无有效绑定）
      */
     @Operation(summary = "病区交接班清单（按日检索）")
     @GetMapping("/api/v1/nursing/handovers")
@@ -77,6 +82,8 @@ public class ShiftHandoverController {
             @RequestParam("wardId") String wardId,
             @RequestParam(value = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
                     LocalDate date) {
+        // W-40：请求病区须 ∈ 操作者当班绑定集（fail-closed，NS-1028）
+        wardAccessService.assertWardAllowed(wardId);
         // 日期缺省取北京钟面当日（时区纪律专项 A 类）：按日检索的医疗日界不随容器时区漂移
         return handoverService.listByWard(wardId, date == null ? LocalDate.now(TimeConstants.HEALTHCARE_TZ) : date);
     }

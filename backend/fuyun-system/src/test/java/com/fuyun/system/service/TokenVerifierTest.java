@@ -76,7 +76,8 @@ class TokenVerifierTest {
     @Test
     @DisplayName("有效 access 令牌校验通过返回 true（签发→布尔校验全链往返）")
     void validAccessTokenVerifiesTrue() throws Exception {
-        TokenPair pair = tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN")));
+        TokenPair pair =
+                tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
         stubSessionJson(readSid(pair.accessToken()));
 
         assertThat(tokenService.verifyAccessToken(pair.accessToken())).isTrue();
@@ -85,7 +86,8 @@ class TokenVerifierTest {
     @Test
     @DisplayName("篡改签名令牌返回 false：布尔语义不抛异常不区分原因")
     void tamperedTokenVerifiesFalse() {
-        TokenPair pair = tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN")));
+        TokenPair pair =
+                tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
         // 篡改签名段末尾两个字符（仍为合法 base64url 字符，触发签名比对失败而非格式错误）
         String tampered = pair.accessToken().substring(0, pair.accessToken().length() - 2) + "xx";
 
@@ -105,7 +107,8 @@ class TokenVerifierTest {
     @Test
     @DisplayName("typ 不符返回 false：refresh 令牌不得当 access 令牌通过帧级鉴权（防跨类型复用）")
     void refreshTokenTypedAsAccessVerifiesFalse() throws Exception {
-        TokenPair pair = tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN")));
+        TokenPair pair =
+                tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
         stubSessionJson(readSid(pair.refreshToken()));
 
         assertThat(tokenService.verifyAccessToken(pair.refreshToken())).isFalse();
@@ -114,7 +117,8 @@ class TokenVerifierTest {
     @Test
     @DisplayName("会话已删返回 false：登出后原 access 令牌即行失效（删除即全端失效）")
     void evictedSessionVerifiesFalse() throws Exception {
-        TokenPair pair = tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN")));
+        TokenPair pair =
+                tokenService.issue(new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
         String sid = readSid(pair.accessToken());
         stubSessionJson(sid);
         // 真实登出链路删会话键（logout 内部走完整校验链后 evict）
@@ -140,7 +144,8 @@ class TokenVerifierTest {
         lenient()
                 .when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid))
                 .thenReturn(new ObjectMapper()
-                        .writeValueAsString(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"))));
+                        .writeValueAsString(
+                                new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null)));
     }
 
     /** 读取令牌 claims 内的 sid（会话桩定位用） */

@@ -82,6 +82,31 @@ describe('Axios 单例拦截器', () => {
     expect(authorization).toBeUndefined();
   });
 
+  it('generateTraceId 降级：非安全上下文（randomUUID 缺失）不抛且产出非空 X-Trace-Id', async () => {
+    let traceId = '';
+    http.defaults.adapter = (config) => {
+      traceId = String(config.headers?.['X-Trace-Id'] ?? '');
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      } as AxiosResponse);
+    };
+    // D-5 改造点：HTTP 内网部署（无 TLS）crypto.randomUUID 为 undefined，旧实现直调必抛
+    // TypeError 令全部请求失败；降级时间戳+随机串保持 traceId 全链路贯穿
+    Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true });
+    try {
+      await expect(http.get('/ping')).resolves.toBeDefined();
+      expect(traceId).not.toBe('');
+    } finally {
+      // 恢复原型链真实实现：删除实例遮蔽（configurable）即回落 Crypto.prototype
+      Reflect.deleteProperty(crypto, 'randomUUID');
+    }
+    expect(typeof crypto.randomUUID).toBe('function');
+  });
+
   it('非 2xx 响应统一提示 ProblemDetail.detail 且不触发未授权回调', async () => {
     const onUnauthorized = vi.fn();
     setUnauthorizedHandler(onUnauthorized);

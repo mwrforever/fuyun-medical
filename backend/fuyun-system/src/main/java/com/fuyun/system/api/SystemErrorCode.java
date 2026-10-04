@@ -55,7 +55,10 @@ public enum SystemErrorCode implements ErrorCode {
      * 全部枚举 fromCode 未知 code 统一抛出（外部入参转枚举失败按非法请求处置，禁散落裸
      * IllegalArgumentException）。
      */
-    ENUM_VALUE_INVALID("SYS-1031");
+    ENUM_VALUE_INVALID("SYS-1031"),
+
+    /** 大屏匿名令牌越权访问只读看板白名单外端点或病区不匹配（403；PR-4C W-39 哨兵 REST 限行） */
+    SENTINEL_ACCESS_DENIED("SYS-1032");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

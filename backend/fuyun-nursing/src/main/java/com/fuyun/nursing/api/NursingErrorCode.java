@@ -10,7 +10,8 @@ import com.fuyun.common.exception.ErrorCode;
  * （NS-1017/NS-1018 预留不分配；NS-1019 承接入参格式语义位，形态照 OutpatientErrorCode 先例）。
  * P2 PR-3 执行域续号 NS-1020 起（CHANGELOG 2026-10-01 立项③排定全集 NS-1020~1027；Task 5
  * 落执行单操作面五码，Task 6 落 NS-1024 输液面，Task 10 落 NS-1025/1026 不良事件面
- * ——立项排定全集 NS-1020~1027 至此在位）。
+ * ——立项排定全集 NS-1020~1027 至此在位；P2 PR-4C Task 4 续号 NS-1028 病区归属校验面
+ * （W-40 方案 A））。
  * 业务异常抛 {@code BizException(NursingErrorCode.XXX, HttpStatus, message)}，由全局渲染器
  * 输出 RFC 9457 ProblemDetail（properties.errorCode/traceId），禁止「全 200 + 错误码」。
  */
@@ -89,7 +90,10 @@ public enum NursingErrorCode implements ErrorCode {
     ADVERSE_EVENT_STATE_NOT_ALLOWED("NS-1026"),
 
     /** 计划时间窗外执行（409；±execute_time_window_minutes 窗外且未经破码放行） */
-    EXECUTION_TIME_WINDOW("NS-1027");
+    EXECUTION_TIME_WINDOW("NS-1027"),
+
+    /** 病区访问被拒（403；请求病区不在操作者当班 ACTIVE 绑定集或无有效绑定行——W-40 fail-closed，哨兵 "0" 豁免） */
+    WARD_ACCESS_DENIED("NS-1028");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

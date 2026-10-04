@@ -199,11 +199,11 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         return AdverseEventVO.from(row);
     }
 
-    /** 分页查询：发生时点降序；date 缺省不限时段（在途处置队列跨日存续）。 */
+    /** 分页查询：发生时点降序；date 缺省不限时段（在途处置队列跨日存续）。W-40 病区双轨：见接口注。 */
     @Override
     @Transactional(readOnly = true)
     public PageResult<AdverseEventVO> list(
-            String category, String wardId, String status, LocalDate date, int page, int size) {
+            String category, String wardId, String status, LocalDate date, int page, int size, List<String> wardScope) {
         // 词表收口（NS-1019——查询入参禁词表外值透传 SQL）
         AdverseEventCategory categoryEnum =
                 category == null || category.isBlank() ? null : AdverseEventCategory.fromCode(category);
@@ -214,6 +214,11 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         if (status != null && !status.isBlank() && statusEnum == null) {
             throw paramInvalid("处置状态 code 非法（REPORTED/HANDLING/CLOSED）：" + status);
         }
+        // W-40 空绑定集防御短路：fail-closed 下 controller 不会传空清单，此处为防御纵深——
+        // 无可见病区直接返回空页，禁以空集合 in 段生成非法 SQL 或放大为全量查询
+        if (wardScope != null && wardScope.isEmpty()) {
+            return PageResult.of(List.of(), page, size, 0L);
+        }
         OffsetDateTime windowStart = null;
         OffsetDateTime windowEnd = null;
         if (date != null) {
@@ -222,13 +227,16 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
             windowStart = date.atStartOfDay().atOffset(offset);
             windowEnd = date.plusDays(1).atStartOfDay().atOffset(offset);
         }
-        // 数据库读操作：可选过滤分页查询（发生时点降序——最新事件优先）
+        // 数据库读操作：可选过滤分页查询（发生时点降序——最新事件优先）；
+        // W-40 病区双轨互斥：wardId 非空时 wardScope 恒 null（controller 守卫已校验归属，单值等值），
+        // wardId 空且 scope 非空时按绑定集 in 过滤（null=不过滤——内部/哨兵语义）
         Page<AdverseEvent> result = this.lambdaQuery()
                 .eq(
                         categoryEnum != null,
                         AdverseEvent::getCategory,
                         categoryEnum == null ? null : categoryEnum.getCode())
                 .eq(wardId != null && !wardId.isBlank(), AdverseEvent::getWardId, wardId)
+                .in(wardScope != null && !wardScope.isEmpty(), AdverseEvent::getWardId, wardScope)
                 .eq(statusEnum != null, AdverseEvent::getStatus, statusEnum == null ? null : statusEnum.getCode())
                 .ge(windowStart != null, AdverseEvent::getOccurredAt, windowStart)
                 .lt(windowEnd != null, AdverseEvent::getOccurredAt, windowEnd)
@@ -325,10 +333,10 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         return AdverseEventVO.from(row);
     }
 
-    /** 分类统计：统计日窗口（缺省北京当日）按类别/病区/等级双维度/班次聚合计数+时限合规面。 */
+    /** 分类统计：统计日窗口（缺省北京当日）按类别/病区/等级双维度/班次聚合计数+时限合规面。W-40 病区双轨：见接口注。 */
     @Override
     @Transactional(readOnly = true)
-    public AdverseEventStatsVO stats(String category, String wardId, LocalDate date) {
+    public AdverseEventStatsVO stats(String category, String wardId, LocalDate date, List<String> wardScope) {
         // 词表收口（NS-1019——前置过滤禁词表外值透传 SQL）
         AdverseEventCategory categoryEnum =
                 category == null || category.isBlank() ? null : AdverseEventCategory.fromCode(category);
@@ -340,16 +348,21 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         ZoneOffset offset = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ).getOffset();
         OffsetDateTime windowStart = statDate.atStartOfDay().atOffset(offset);
         OffsetDateTime windowEnd = statDate.plusDays(1).atStartOfDay().atOffset(offset);
-        // 数据库读操作：统计窗口行集（类别/病区前置过滤）
-        List<AdverseEvent> rows = this.lambdaQuery()
-                .eq(
-                        categoryEnum != null,
-                        AdverseEvent::getCategory,
-                        categoryEnum == null ? null : categoryEnum.getCode())
-                .eq(wardId != null && !wardId.isBlank(), AdverseEvent::getWardId, wardId)
-                .ge(AdverseEvent::getOccurredAt, windowStart)
-                .lt(AdverseEvent::getOccurredAt, windowEnd)
-                .list();
+        // 数据库读操作：统计窗口行集（类别/病区前置过滤）；
+        // W-40 空绑定集防御短路（fail-closed 防御纵深）：零行聚合走原零填充逻辑，词表维度契约不破
+        List<AdverseEvent> rows = wardScope != null && wardScope.isEmpty()
+                ? List.of()
+                : this.lambdaQuery()
+                        .eq(
+                                categoryEnum != null,
+                                AdverseEvent::getCategory,
+                                categoryEnum == null ? null : categoryEnum.getCode())
+                        .eq(wardId != null && !wardId.isBlank(), AdverseEvent::getWardId, wardId)
+                        // wardId 非空时 wardScope 恒 null（controller 守卫已校验归属）；scope 非空按绑定集 in
+                        .in(wardScope != null && !wardScope.isEmpty(), AdverseEvent::getWardId, wardScope)
+                        .ge(AdverseEvent::getOccurredAt, windowStart)
+                        .lt(AdverseEvent::getOccurredAt, windowEnd)
+                        .list();
         // 词表维度零填充（稳定契约形态——前端图表/M19 消费免判空；LinkedHashMap 键序稳定）
         Map<String, Long> byCategory = new LinkedHashMap<>();
         for (AdverseEventCategory value : AdverseEventCategory.values()) {
