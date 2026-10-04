@@ -161,10 +161,14 @@
 - 护理记录：`GET/POST /records`、`POST /records/{no}/submit`、`POST /records/{no}/revise`
 - 评估：`GET /assessment-scales`、`POST /assessments`、`GET /assessments?visitId=&scaleType=`
 - 任务：`GET /tasks?wardId=&status=&date=`、`POST /tasks`（手工/系统联动创建，调用方：M14 联动动作、M16 紧急呼叫自动转任务[幂等键=call_no]）、`POST /tasks/{no}/claim|complete|cancel`
+  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决；破码双授权 primary=在场授权人令牌身份，secondary 客户端承载+审计留痕——第二授权人角色核验归 W-37 后续）
 - 执行：`GET /executions?wardId=&date=&shift=`、`POST /executions/{no}/sign-receive|check|start|finish|needle-out`、`GET /executions/occupancy?patientId=&m04OrderNo=`（执行占用查询，供 M13 退费前置校验）
+  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决；破码双授权 primary=在场授权人令牌身份，secondary 客户端承载+审计留痕——第二授权人角色核验归 W-37 后续）
 - 输液监控：`GET /infusions/active?wardId=`（全病区输注中一览：余量/滴速/剩余时间，数据调 M14 遥测查询）
 - PDA：`GET /pda/patient-summary?patientId=`、`GET /pda/pending-executions?visitId=`（腕带扫码唤起）、`POST /pda/patrol`（巡视打卡）、`POST /pda/override-check`（破码放行申请，双授权）
+  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决；破码双授权 primary=在场授权人令牌身份，secondary 客户端承载+审计留痕——第二授权人角色核验归 W-37 后续）
 - 不良事件：`GET/POST /adverse-events`、`POST /adverse-events/{no}/handle|close`
+  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决；破码双授权 primary=在场授权人令牌身份，secondary 客户端承载+审计留痕——第二授权人角色核验归 W-37 后续）
 - 交接班：`POST /handovers/generate`、`POST /handovers/{no}/complete`、`GET /handovers?wardId=`
 - 大屏与取数：`GET /board/{wardId}`（快照兜底）、`GET /patient-nursing-view?patientId=`（供 M09 患者全景，只读）、`GET /stats/nursing-workload?wardId=&date=`（供 M19，只读）、`GET /stats/override-rate?wardId=&date=`（破码率统计，供 M19 护理质量指标，只读）、`GET /stats/adverse-events?category=&wardId=&date=`（不良事件分类统计，供 M19，只读）
 
@@ -229,7 +233,7 @@
 - 正常：临时给药全链路（转抄事件→执行单→摆药签收→腕带唤起→逐条扫码→高危双签→完成→M04 计划 EXECUTED/医嘱头 COMPLETED→`inpatient.order.executed` 供 M13 费用确认）；长期医嘱次日执行单数量与计划时点一致、首次回签转 EXECUTING、末次回签转 COMPLETED；输液闭环全链（签收→三向核对→开始输注→15/10/5ml 告急逐级升级挂单→拔针→M14 停监测→入量行生成）；体征三源落卡与体温单渲染（腋温×、物理降温红圈红虚线、脉搏短绌短红线、24h 出入量红双线）；Braden 高危→防范任务+床旁标识+按期复评提醒；SBAR 交接班自动汇总（在途任务/输注/告警齐全）+双签；不良事件 I 级上报→RCA→整改→关闭→分类统计。
 - 边界：双通道同窗冲突（点测入权威栏、IoT 值留参考互链可溯）；IoT GOOD 无冲突按参数自动转正、SUSPECT 进待复核、BAD 不入卡；执行时间窗边界（窗内放行、超窗拦截需护士长权限+理由）；停嘱瞬间在途核对被拦截（已 CHECKED 执行单置 CANCELLED、EXECUTING 提示人工终止）；输注中断（EXECUTING→CANCELLED）回签：计划按部分执行回签携实际输注量、医嘱头经停嘱终态、M13 按实际量计费、已入量照记；转科后执行单重定向新病区且计划时间不变；出院终清未执行任务全部 CANCELLED；同一 plan_no 重复回签/重复事件仅计一次；破码缺任一授权人被拒；毒麻类破码请求一律拒绝；患者合并后历史文书经 EMPI 归一可查。
 - 异常：M04 回签超时→暂存重试+`nursing.order-execution.completed` 对账补投、M04 侧幂等仅计一次；`pharmacy.dispense.completed` 重复投递仅签收一次；`iot.alarm.triggered` 重复投递升级动作不重复累计告警任务（告警号幂等）；M14 不可用降级手工体征通道且恢复后自动续采；PDA 断网补传不产生重复执行确认；M06 不可用时核对走缓存量效标识；交接班 DRAFT 未完成不影响任务执行。
-- 安全：跨病区 PDA 查询患者 403 且留审计；无破码权限放行被拒且审计；执行人自任第二核对人被拦截；文书提交后原值不可改、修订走留痕链；日志/事件载荷患者敏感字段脱敏抽验；无资质护士（执业授权失效）执行确认被拒。
+- 安全：跨病区 PDA 查询患者 403 且留审计；无破码权限放行被拒且审计；执行人自任第二核对人被拦截（W-72 服务端化：执行人=登录令牌身份，同人判定由服务端令牌与第二核对人比较，2026-10-03 裁决）；文书提交后原值不可改、修订走留痕链；日志/事件载荷患者敏感字段脱敏抽验；无资质护士（执业授权失效）执行确认被拒。
 
 ## 11. 自审记录
 

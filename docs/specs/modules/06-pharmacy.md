@@ -168,7 +168,8 @@
 - 药品字典：`GET/POST/PUT /drugs`、`POST /drugs/{id}/insurance-mapping`（医保编码对照）、`GET /drugs/search`（选药查询：名称/拼音/医保码/基药/分级过滤，供 M03/M04/M05/M18）
 - 处方：`POST /prescriptions`（开方，同步返回处方号 + 审方预检结果，调用方：M03/M04 出院带药/M18（P2））、`POST /prescriptions/{no}/cancel`（作废：未缴费作废与已缴费未发药退费的处方侧入口，必填原因，联动 M13 费用作废/退费与 M03 引用状态收敛）、`GET /prescriptions?visitId=|patientId=|rxNo=`
 - 审方：`GET /review-tasks`、`POST /review-tasks/{id}/accept|approve|reject`、`GET/POST/PUT /audit-rules`
-- 调剂：`POST /dispenses/{no}/pick|verify|issue`（配药/核对/发药签名）、`POST /dispense-returns`（退药受理）、`GET /dispenses?rxNo=|m04OrderNo=`、`POST /dispense-plans/generate`（按医嘱生成摆药计划）、`POST /dispense-plans/{id}/deliver|receive`（配送/病区签收）
+- 调剂：`POST /dispenses/{no}/pick|verify|issue`（配药/核对/发药签名）、`POST /dispense-returns`（退药受理）、`GET /dispenses?rxNo=|m04OrderNo=`、`POST /dispense-plans/generate`（按医嘱生成摆药计划）、`POST /dispense-plans/{id}/deliver|receive`（配送/病区签收）、`GET /dispense-plans/{no}/returnable`（可退明细读面——W-66 多明细退药数据源）
+  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决；破码双授权 primary=在场授权人令牌身份，secondary 客户端承载+审计留痕——第二授权人角色核验归 W-37 后续）
 - 占用查询（供 M13）：`GET /medication-occupancy?patientId=&visitId=&itemCode=`（是否已发药/是否退药受理）
 - 药库药房：`GET/POST /purchase-orders`、`POST /purchase-ins/{id}/accept`（入库验收）、`GET/POST /transfer-orders`、`POST /transfer-orders/{id}/outbound|receive`、`GET/POST/PUT /stocktakes`、`POST /stocktakes/{id}/approve`、`GET/POST/PUT /suppliers`、`GET /stock/batches?drugId=&storehouse=`、`GET /stock/summaries?storehouse=`
 - 基数药：`GET/POST/PUT /base-stocks`、`POST /base-stocks/{id}/replenish`（补药）
@@ -235,7 +236,7 @@
 - **M03（处方与发药边界契约，双向对齐其 Spec）**：① 开方：M03 医生站调本模块开方同步 API（开立动作入口在 M03，处方主数据在本模块，M03 红线 3"处方引用不复制"由本模块红线 1 对称保障）；② 计费行：`pharmacy.prescription.created` 携带（M03 澄清 3 的落地方）；③ 放行：消费 `outpatient.order.charged` 进入调配；④ 回执：`pharmacy.dispense.completed/returned` 供 M03 visit 状态聚合；⑤ 退药时序收敛：已发药退费的**实物退药先行**（本模块药房窗口受理，对齐 M13"已发药先退药"硬前置），`outpatient.order.cancelled` 在本模块承担**终态确认**职责（未发药处方作废 / 已退药单据终态，不再承担退药指令），两模块与 M13 三方时序以"退药受理 → 退费审批 → 终态收敛"单向链为准（统一审查 B-3 已裁决落定）；调剂作业实体与界面归本模块（M03 不建调剂表）。
 - **M13（计费与退费契约）**：药品收费项目与价格权威在 M13（本模块 drug 以 item_code 关联、不存价格版本）；药品国家医保编码对照权威在本模块（M13 引用）；PENDING 费用由本模块处方事件驱动生成，本模块订阅 `billing.fee.created` 驱动处方 APPROVED → PENDING_FEE 迁移；出院带药放行订阅 `billing.settlement.completed`（结算类型=出院结算分支）；执行占用查询 API 供退费前置校验；退药退费严格"先退药（本模块）后退费（M13）"；住院摆药完成事件供 M13 执行占用标记。
 - **M04（住院用药衔接）**：住院在院用药权威载体为 M04 医嘱，本模块经 order_medication 引用（不建医嘱表、不复制医嘱内容）；订阅 M04 医嘱审核/变更/停止事件驱动审方与摆药；出院带药医嘱审核通过后由 M04 调本模块开方 API 生成 DISCHARGE 处方（引用医嘱号）进入同款调配管线（放行不经 `outpatient.order.charged`，由本模块订阅 `billing.settlement.completed` 出院结算分支驱动转 PENDING_DISPENSE，见方案 3.1）；本模块审方驳回意见回流 M04 医生站。
-- **M05（摆药-给药衔接）**：摆药单病区签收后 M05 获得摆药结果（`pharmacy.dispense.completed` 订阅）供其给药任务核对；M05 PDA 给药核对经本模块药品查询 API 获取药品主数据/批次效期/高警示标识；病区退药由 M05 发起、本模块受理回补；具体事件名衔接以 M05 Spec 登记为准。
+- **M05（摆药-给药衔接）**：摆药单病区签收后 M05 获得摆药结果（`pharmacy.dispense.completed` 订阅）供其给药任务核对；M05 PDA 给药核对经本模块药品查询 API 获取药品主数据/批次效期/高警示标识；病区退药由 M05 发起、本模块受理回补——多明细住院计划退药 UI 已可达（PR-4B）；具体事件名衔接以 M05 Spec 登记为准。
 - **M09**：处方、发药/摆药记录、ADR 报告作为患者全景用药域数据源（经取数 API，只读）。
 - **M10**：手术室麻醉用药借用/退回/空安瓿核销在本模块毒麻专册登记（双人签名），麻醉给药记录在 M10，两模块以批号与借用单号互引。
 - **M18（P2 预留）**：互联网处方经 rx_type=INTERNET 复用审方引擎与处方模型（处方流转对外接口预留位，本期不实现）；预留外配终态 `FLOWED_EXTERNAL`（由 M18 流转回执事件驱动，事件名 P2 登记），并约定"费用作废≠处方作废"——外配场景院内 PENDING 费用作废时处方转 FLOWED_EXTERNAL 而非 CANCELLED。
