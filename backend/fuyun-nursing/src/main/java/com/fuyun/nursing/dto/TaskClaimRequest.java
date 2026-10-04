@@ -1,12 +1,10 @@
 package com.fuyun.nursing.dto;
 
-import jakarta.validation.constraints.NotNull;
-
 /**
  * 护理任务认领入参（POST /api/v1/nursing/tasks/{taskNo}/claim，P2 PR-3 Task 9 任务工作台面）：
- * assigneeId 必填（认领后落 assigned_nurse 文本承载）。
+ * assigneeId 兼容保留——认领人一律登录令牌身份落 assigned_nurse（W-72，2026-10-03 裁决）。
  *
- * @param assigneeId 认领护士员工 ID，必填；来源：任务工作台认领动作（当前责任组指派）
+ * @param assigneeId 认领护士员工 ID（兼容保留——服务端一律以令牌身份落值，本字段不再消费），
+ *                   可空；来源：任务工作台认领动作
  */
-public record TaskClaimRequest(
-        @NotNull(message = "认领护士员工ID必填（assigneeId）") Long assigneeId) {}
+public record TaskClaimRequest(Long assigneeId) {}

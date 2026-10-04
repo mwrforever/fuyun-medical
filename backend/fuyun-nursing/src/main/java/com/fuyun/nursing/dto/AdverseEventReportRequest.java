@@ -23,10 +23,11 @@ import java.time.OffsetDateTime;
  * @param eventSummary  事件经过（≤2000 必填），非空；来源：上报表单
  * @param handlingNote  处置情况（≤1000 可空——上报时初步处置记录，缺省落空串），可空；
  *                      来源：上报表单
- * @param reporterId    上报人员工 ID（可空——匿名通道；isAnonymous=true 时强制置空），
- *                      可空；来源：上报表单
- * @param isAnonymous   匿名上报标识（缺省 false；reporterId 未携带时归一为 true——
- *                      reporter NULL 与 is_anonymous=true 配对落库），可空；来源：上报表单
+ * @param reporterId    上报人员工 ID（兼容保留忽略——归属由 isAnonymous+令牌承载，W-72，
+ *                      2026-10-03 裁决；本字段不再消费），可空；来源：上报表单
+ * @param isAnonymous   匿名上报标识（显式 true 走匿名通道——reporter_id 落 NULL 不取令牌；
+ *                      缺省 false 默认令牌实名，与前端默认一致，「reporterId==null 即匿名」
+ *                      归一随 W-72 作废），可空；来源：上报表单
  */
 public record AdverseEventReportRequest(
         @NotBlank(message = "事件类别必填（category）") String category,

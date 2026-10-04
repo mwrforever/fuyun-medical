@@ -178,22 +178,81 @@ class AdverseEventServiceImplTest {
     }
 
     @Test
-    @DisplayName("② 匿名通道：isAnonymous=true 携 reporter 仍强制置空；reporter 未携归一匿名")
-    void anonymousChannelNullsReporterBothDirections() {
+    @DisplayName("② 匿名通道：显式 isAnonymous=true 携 reporter 仍强制置空；未声明匿名默认令牌实名（W-72 归一取消）")
+    void anonymousChannelNullsReporterOnlyWhenExplicit() {
         when(seqGate.nextNo("AE")).thenReturn(AE_NO);
         OffsetDateTime occurredAt = OffsetDateTime.now(BEIJING).minusHours(1);
 
-        // 显式匿名携上报人：强制置空（非惩罚红线——匿名通道不留个人面）
+        // 显式匿名携上报人：强制置空（非惩罚红线——匿名通道不留个人面，不取令牌）
         service.report(report("FALL", "I", "C", occurredAt, REPORTER, true));
         verify(mapper, org.mockito.Mockito.times(1)).insert(rowCaptor.capture());
         assertThat(rowCaptor.getValue().getReporterId()).isNull();
         assertThat(rowCaptor.getValue().getIsAnonymous()).isTrue();
 
-        // 未携上报人未声明匿名：归一为匿名（V1107 列注释 reporter NULL 配对 is_anonymous=true 口径）
+        // 未携上报人未声明匿名：默认实名落令牌（W-72 取消「reporterId==null 即匿名」归一——
+        // 身份已转令牌承载，未声明匿名不再隐式归一）
         service.report(report("FALL", "I", "C", occurredAt, null, null));
         verify(mapper, org.mockito.Mockito.times(2)).insert(rowCaptor.capture());
-        assertThat(rowCaptor.getValue().getReporterId()).isNull();
-        assertThat(rowCaptor.getValue().getIsAnonymous()).isTrue();
+        assertThat(rowCaptor.getValue().getReporterId()).isEqualTo(REPORTER);
+        assertThat(rowCaptor.getValue().getIsAnonymous()).isFalse();
+    }
+
+    @Test
+    @DisplayName("W-72 上报：显式匿名走通道（reporter NULL、不取令牌）；非匿名一律令牌实名")
+    void reportAttributionFollowsAnonymousFlagAndToken() {
+        when(seqGate.nextNo("AE")).thenReturn(AE_NO);
+
+        // 非匿名：请求体 reporterId 携带差异值 999 → 落令牌 REPORTER（差异值忽略）
+        AdverseEventVO vo = service.report(reportRequest(999L, false));
+        assertThat(vo.isAnonymous()).isFalse();
+        // 匿名：显式 isAnonymous=true → reporter_id 落 NULL（通道语义保留，不调用令牌取值）
+        AdverseEventVO anon = service.report(reportRequest(999L, true));
+        assertThat(anon.isAnonymous()).isTrue();
+
+        verify(mapper, org.mockito.Mockito.times(2)).insert(rowCaptor.capture());
+        // 落库锁定锚：非匿名行 reporter_id=令牌身份、匿名行 reporter_id=NULL（请求体 999 两路均不落库）
+        assertThat(rowCaptor.getAllValues().get(0).getReporterId()).isEqualTo(REPORTER);
+        assertThat(rowCaptor.getAllValues().get(1).getReporterId()).isNull();
+    }
+
+    @Test
+    @DisplayName("W-72 实名守卫：操作者上下文缺失时非匿名上报拒 NS-1019（fail-closed——实名主体须可定位）")
+    void reportRejectsMissingOperatorContextForRealName() {
+        OperatorContextHolder.clear();
+
+        assertThatThrownBy(() -> service.report(
+                        report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), REPORTER, false)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PARAM_FORMAT_INVALID);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
+                });
+        // 实名主体不可定位即拒绝：零落库零事件（匿名通道不受影响——不取令牌）
+        verify(mapper, never()).insert(any(AdverseEvent.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("W-72 处置/关闭/退回：留痕人一律令牌身份（请求体差异值忽略）")
+    void handleCloseReturnUseTokenIdentity() {
+        // 处置：请求体 handlerId=888（差异值），handler_id=令牌 REPORTER
+        when(mapper.selectOne(any())).thenReturn(row(AdverseEventStatus.REPORTED));
+        when(mapper.casHandle(eq(AE_NO), eq(REPORTER), any(), any(), any())).thenReturn(1);
+
+        AdverseEventVO handled = service.handle(AE_NO, new AdverseEventHandleRequest(888L, "已处置"));
+
+        assertThat(handled.handlerId()).isEqualTo(REPORTER);
+        verify(mapper).casHandle(eq(AE_NO), eq(REPORTER), eq("已处置"), any(), any());
+
+        // 关闭：请求体 closedBy=888（差异值），updated_by 文本=令牌十进制串
+        when(mapper.selectOne(any())).thenReturn(row(AdverseEventStatus.HANDLING));
+        when(mapper.casClose(any(), any(), any(), any())).thenReturn(1);
+        service.close(AE_NO, new AdverseEventCloseRequest(null, null, 888L));
+        verify(mapper).casClose(eq(AE_NO), any(), any(), eq(String.valueOf(REPORTER)));
+
+        // 退回：请求体 returnerId=888（差异值），updated_by 文本=令牌十进制串
+        when(mapper.casReturn(any(), any(), any())).thenReturn(1);
+        service.returnEvent(AE_NO, new AdverseEventReturnRequest("处置不充分", 888L));
+        verify(mapper).casReturn(eq(AE_NO), eq("处置不充分"), eq(String.valueOf(REPORTER)));
     }
 
     @Test
@@ -203,14 +262,15 @@ class AdverseEventServiceImplTest {
         target.setReportDeadline(OffsetDateTime.now(BEIJING).minusHours(1));
         target.setDeadlineMet(true);
         when(mapper.selectOne(any())).thenReturn(target);
-        when(mapper.casHandle(eq(AE_NO), eq(HANDLER), any(), any(), any())).thenReturn(1);
+        // W-72：处置人=令牌身份（请求体 HANDLER 差异值忽略）
+        when(mapper.casHandle(eq(AE_NO), eq(REPORTER), any(), any(), any())).thenReturn(1);
 
         AdverseEventVO vo = service.handle(AE_NO, new AdverseEventHandleRequest(HANDLER, "已到场处置"));
 
         assertThat(vo.status()).isEqualTo(AdverseEventStatus.HANDLING.getCode());
-        assertThat(vo.handlerId()).isEqualTo(HANDLER);
+        assertThat(vo.handlerId()).isEqualTo(REPORTER);
         // 超时留痕断言：deadline 已过→CAS 收到 false（非惩罚：不阻断，仅 deadline_met 落 false）
-        verify(mapper).casHandle(eq(AE_NO), eq(HANDLER), eq("已到场处置"), eq(Boolean.FALSE), any());
+        verify(mapper).casHandle(eq(AE_NO), eq(REPORTER), eq("已到场处置"), eq(Boolean.FALSE), any());
     }
 
     @Test
@@ -220,12 +280,12 @@ class AdverseEventServiceImplTest {
         target.setReportDeadline(OffsetDateTime.now(BEIJING).plusHours(10));
         target.setDeadlineMet(true);
         when(mapper.selectOne(any())).thenReturn(target);
-        when(mapper.casHandle(eq(AE_NO), eq(HANDLER), any(), any(), any())).thenReturn(1);
+        when(mapper.casHandle(eq(AE_NO), eq(REPORTER), any(), any(), any())).thenReturn(1);
 
         service.handle(AE_NO, new AdverseEventHandleRequest(HANDLER, null));
 
         // 未超时+处置记录可空：CAS 收到行原值 true、handlingNote null 透传（COALESCE 保留上报时记录）
-        verify(mapper).casHandle(eq(AE_NO), eq(HANDLER), eq(null), eq(Boolean.TRUE), any());
+        verify(mapper).casHandle(eq(AE_NO), eq(REPORTER), eq(null), eq(Boolean.TRUE), any());
     }
 
     @Test
@@ -280,8 +340,9 @@ class AdverseEventServiceImplTest {
         assertThat(vo.status()).isEqualTo(AdverseEventStatus.CLOSED.getCode());
         assertThat(vo.rcaNote()).isEqualTo("根因：巡视间隔过长");
         assertThat(vo.correctiveAction()).isEqualTo("整改：q2h 巡视落地");
-        // 动作主体断言：V1107 无 closed_by 列——closedBy 文本经 updated_by 审计列承载
-        verify(mapper).casClose(eq(AE_NO), eq("根因：巡视间隔过长"), eq("整改：q2h 巡视落地"), eq(String.valueOf(CLOSER)));
+        // 动作主体断言：V1107 无 closed_by 列——closedBy 文本经 updated_by 审计列承载；
+        // W-72：一律令牌身份（请求体 CLOSER 差异值忽略）
+        verify(mapper).casClose(eq(AE_NO), eq("根因：巡视间隔过长"), eq("整改：q2h 巡视落地"), eq(String.valueOf(REPORTER)));
     }
 
     @Test
@@ -295,7 +356,8 @@ class AdverseEventServiceImplTest {
 
         assertThat(vo.status()).isEqualTo(AdverseEventStatus.REPORTED.getCode());
         assertThat(vo.handlingNote()).isEqualTo("处置记录不完整需补充");
-        verify(mapper).casReturn(eq(AE_NO), eq("处置记录不完整需补充"), eq(String.valueOf(CLOSER)));
+        // 动作主体断言：returnerId 文本经 updated_by 承载；W-72：一律令牌身份（请求体 CLOSER 差异值忽略）
+        verify(mapper).casReturn(eq(AE_NO), eq("处置记录不完整需补充"), eq(String.valueOf(REPORTER)));
     }
 
     @Test
@@ -501,6 +563,18 @@ class AdverseEventServiceImplTest {
                 null,
                 reporterId,
                 anonymous);
+    }
+
+    /**
+     * 上报入参快捷构造（W-72 归属锁定用例）：词表/时点取用例基准值，身份面（reporterId/
+     * isAnonymous）按用例定制——请求体身份差异值与令牌分置表达的入口。
+     *
+     * @param reporterId 上报人请求体值（差异值载体，可空）
+     * @param anonymous  匿名标识（显式 true 走匿名通道）
+     * @return 上报入参
+     */
+    private static AdverseEventReportRequest reportRequest(Long reporterId, Boolean anonymous) {
+        return report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), reporterId, anonymous);
     }
 
     /**

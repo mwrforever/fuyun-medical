@@ -16,8 +16,8 @@ import java.time.LocalDate;
  * （M19 消费缺位注记）与 tick 超时提醒扫描段（TaskOverdueTickListener 挂接——只读
  * 不改状态）。
  *
- * <p>非惩罚文化红线：匿名上报通道（reporter_id NULL）+查询/统计出参不含个人惩罚字段
- * （仅流程改进面）；超时只留痕不拒绝。
+ * <p>非惩罚文化红线：匿名上报通道（显式 isAnonymous=true → reporter_id 落 NULL 不取令牌；
+ * 非匿名一律令牌实名，W-72）+查询/统计出参不含个人惩罚字段（仅流程改进面）；超时只留痕不拒绝。
  *
  * <p>线程安全：无状态 singleton；写操作 @Transactional 收口（实现侧）。
  */
@@ -27,11 +27,12 @@ public interface IAdverseEventService {
      * 上报不良事件：词表校验（八类/四级/五等）→ 发号（AE+yyyyMMdd+5 位）→ I/II 级
      * report_deadline=occurredAt+24h 落库并上报即判定 deadline_met=（now≤deadline）→
      * 落库后事务内发布 nursing.adverse-event.reported（id 83 五字段——匿名行载荷不含
-     * reporter，载荷契约本无该字段天然合规）。匿名归一：isAnonymous=true 或 reporterId
-     * 未携带 → reporter_id 落 NULL + is_anonymous=true 配对。
+     * reporter，载荷契约本无该字段天然合规）。归属口径（W-72）：默认实名（reporter_id=
+     * 登录令牌身份，与前端默认 isAnonymous=false 一致）、显式匿名（isAnonymous=true →
+     * reporter_id 落 NULL 不取令牌）——「reporterId==null 即匿名」归一随身份令牌化作废。
      *
      * @param req 上报入参（category/severityClass/severityGrade/wardId/occurredAt/
-     *            eventSummary 必填），非空
+     *            eventSummary 必填；reporterId 兼容保留忽略），非空
      * @return 上报后出参（非惩罚面——无上报人字段），非空
      * @throws com.fuyun.common.exception.BizException NS-1019（400 词表外值）/ NS-1016
      *                 （409 occurredAt 晚于当前时间+容差——禁未来时刻倒灌）
@@ -56,10 +57,12 @@ public interface IAdverseEventService {
 
     /**
      * 受理处置（REPORTED→HANDLING）：落处置责任人与处置记录（可空保留上报时记录）；
-     * I/II 级 REPORTED 态已超 24h 处置时 deadline_met=false 留痕（不阻断——非惩罚原则）。
+     * 处置人=登录令牌身份（W-72——请求体 handlerId 兼容保留忽略）；I/II 级 REPORTED 态
+     * 已超 24h 处置时 deadline_met=false 留痕（不阻断——非惩罚原则）。
      *
      * @param no  不良事件号（路径参数 {no}），非空
-     * @param req 处置入参（handlerId 必填/handlingNote 可空），非空
+     * @param req 处置入参（handlerId 兼容保留——服务端以令牌身份落值；handlingNote 可空），
+     *            非空
      * @return 处置后出参，非空
      * @throws com.fuyun.common.exception.BizException NS-1025（404 事件不存在）/ NS-1026
      *                 （409 非 REPORTED 态——已处置/已关闭）
@@ -68,10 +71,12 @@ public interface IAdverseEventService {
 
     /**
      * 关闭（HANDLING→CLOSED）：RCA 根因分析与整改措施随关闭落库（可空保留行原值）；
-     * closedBy 经 updated_by 审计列承载（V1107 无独立 closed_by 列）。
+     * 关闭动作主体=登录令牌身份（W-72——请求体 closedBy 兼容保留忽略），经 updated_by
+     * 审计列承载（V1107 无独立 closed_by 列）。
      *
      * @param no  不良事件号，非空
-     * @param req 关闭入参（closedBy 必填/rcaNote/correctiveAction 可空），非空
+     * @param req 关闭入参（closedBy 兼容保留——服务端以令牌身份落值；rcaNote/correctiveAction
+     *            可空），非空
      * @return 关闭后出参，非空
      * @throws com.fuyun.common.exception.BizException NS-1025（404）/ NS-1026（409 非
      *                 HANDLING 态——未处置不可关闭/已关闭）
@@ -80,10 +85,11 @@ public interface IAdverseEventService {
 
     /**
      * 处置退回（HANDLING→REPORTED，独立 return 端点承载）：退回原因覆写处置记录
-     * （必填留痕）；returnerId 经 updated_by 审计列承载。
+     * （必填留痕）；退回动作主体=登录令牌身份（W-72——请求体 returnerId 兼容保留忽略），
+     * 经 updated_by 审计列承载。
      *
      * @param no  不良事件号，非空
-     * @param req 退回入参（reason/returnerId 必填），非空
+     * @param req 退回入参（reason 必填；returnerId 兼容保留——服务端以令牌身份落值），非空
      * @return 退回后出参（回 REPORTED 态可再处置），非空
      * @throws com.fuyun.common.exception.BizException NS-1025（404）/ NS-1026（409 非
      *                 HANDLING 态——未处置无退回面/已关闭）

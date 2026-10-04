@@ -46,10 +46,10 @@ public class AdverseEventController {
     /**
      * 上报不良事件：I/II 级 report_deadline=occurredAt+24h 落库并上报即判定 deadline_met；
      * 落库后事务内发布 nursing.adverse-event.reported（id 83，M19 消费缺位登记）；
-     * 匿名通道（isAnonymous=true）不落上报人。
+     * 归属（W-72）：非匿名 reporter_id=登录令牌身份；显式匿名（isAnonymous=true）不落上报人。
      *
      * @param req 上报入参（category 八类/severityClass I~IV/severityGrade A~E/wardId/
-     *            occurredAt/eventSummary 必填），非空
+     *            occurredAt/eventSummary 必填；reporterId 兼容保留忽略），非空
      * @return 上报后出参（非惩罚面）
      * @throws com.fuyun.common.exception.BizException NS-1019（400 词表外值）/ NS-1016
      *                 （409 occurredAt 超容差未来时刻）
@@ -88,15 +88,16 @@ public class AdverseEventController {
     }
 
     /**
-     * 受理处置（REPORTED→HANDLING）：落处置责任人与处置记录；I/II 级 REPORTED 态已超
-     * 24h 处理时 deadline_met=false 留痕（不阻断——非惩罚原则）。
+     * 受理处置（REPORTED→HANDLING）：落处置责任人与处置记录；处置人=登录令牌身份
+     * （W-72——请求体 handlerId 兼容保留忽略）；I/II 级 REPORTED 态已超 24h 处理时
+     * deadline_met=false 留痕（不阻断——非惩罚原则）。
      *
      * @param no  不良事件号（路径参数 {no}），非空
-     * @param req 处置入参（handlerId 必填/handlingNote 可空），非空
+     * @param req 处置入参（handlerId 兼容保留——服务端以令牌身份落值；handlingNote 可空），非空
      * @return 处置后出参
      * @throws com.fuyun.common.exception.BizException NS-1025（404）/ NS-1026（409 非 REPORTED 态）
      */
-    @Operation(summary = "受理处置（REPORTED→HANDLING；I/II 级超时留痕不阻断）", operationId = "handleAdverseEvent")
+    @Operation(summary = "受理处置（REPORTED→HANDLING；处置人=登录令牌身份；I/II 级超时留痕不阻断）", operationId = "handleAdverseEvent")
     @PostMapping("/api/v1/nursing/adverse-events/{no}/handle")
     @AuditLog(actionType = AuditActionType.WRITE)
     public AdverseEventVO handle(
@@ -105,10 +106,12 @@ public class AdverseEventController {
     }
 
     /**
-     * 关闭（HANDLING→CLOSED）：RCA 根因分析与整改措施随关闭落库（流程改进面）。
+     * 关闭（HANDLING→CLOSED）：RCA 根因分析与整改措施随关闭落库（流程改进面）；关闭动作
+     * 主体=登录令牌身份（W-72——请求体 closedBy 兼容保留忽略）。
      *
      * @param no  不良事件号（路径参数 {no}），非空
-     * @param req 关闭入参（closedBy 必填/rcaNote/correctiveAction 可空），非空
+     * @param req 关闭入参（closedBy 兼容保留——留痕经 updated_by 承载令牌身份；rcaNote/
+     *            correctiveAction 可空），非空
      * @return 关闭后出参
      * @throws com.fuyun.common.exception.BizException NS-1025（404）/ NS-1026（409 非 HANDLING 态）
      */
@@ -122,10 +125,12 @@ public class AdverseEventController {
 
     /**
      * 处置退回（HANDLING→REPORTED，独立 return 端点承载）：退回原因覆写处置记录，
-     * 行回 REPORTED 态可再处置。
+     * 行回 REPORTED 态可再处置；退回动作主体=登录令牌身份（W-72——请求体 returnerId
+     * 兼容保留忽略）。
      *
      * @param no  不良事件号（路径参数 {no}），非空
-     * @param req 退回入参（reason/returnerId 必填），非空
+     * @param req 退回入参（reason 必填；returnerId 兼容保留——留痕经 updated_by 承载令牌身份），
+     *            非空
      * @return 退回后出参
      * @throws com.fuyun.common.exception.BizException NS-1025（404）/ NS-1026（409 非 HANDLING 态）
      */

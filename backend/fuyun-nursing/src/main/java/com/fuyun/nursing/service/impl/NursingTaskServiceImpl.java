@@ -200,27 +200,26 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
     }
 
     /**
-     * 护理任务认领（PENDING → IN_PROGRESS，P2 PR-3 Task 9）：assigneeId 强制非空（NS-1019）
-     * → @Update CAS 单语句（仅 PENDING 可认领，0 行 → NS-1011；IN_PROGRESS/终态重复认领均拒）
-     * → 回读行数据。在途态内部迁移非终态——不发任务事件。
+     * 护理任务认领（PENDING → IN_PROGRESS，P2 PR-3 Task 9）：认领人一律登录令牌身份
+     * （W-72，2026-10-03 裁决——请求体 assigneeId 兼容保留忽略，assigned_nurse 落令牌
+     * 身份十进制串）→ @Update CAS 单语句（仅 PENDING 可认领，0 行 → NS-1011；
+     * IN_PROGRESS/终态重复认领均拒）→ 回读行数据。在途态内部迁移非终态——不发任务事件。
      *
      * @param taskNo 任务业务号，非空；来源：路径参数
-     * @param req    认领入参（assigneeId 必填），非空；来源：任务工作台认领动作
+     * @param req    认领入参（assigneeId 兼容保留——服务端不消费），非空；来源：任务工作台认领动作
      * @return 认领后任务出参（IN_PROGRESS 态），非空
-     * @throws BizException NS-1019（400 assigneeId 为空）/ NS-1011（409 任务不存在、非 PENDING
-     *                      或已被逻辑删，禁止认领）/ NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
+     * @throws BizException NS-1019（400 操作者上下文缺失或非数字——无法定位认领主体，W-72）/
+     *                      NS-1011（409 任务不存在、非 PENDING 或已被逻辑删，禁止认领）/
+     *                      NS-1016（409 CAS 命中后行被并发逻辑删，回读缺失）
      */
     @Override
     @Transactional
     public NursingTaskVO claim(String taskNo, TaskClaimRequest req) {
-        // 守卫链①：认领人强制非空（服务面校验覆盖模块内直调场景，Web 层由 @NotNull 兜底）
-        if (req.assigneeId() == null) {
-            throw new BizException(
-                    NursingErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "认领护士员工ID不能为空：taskNo=" + taskNo);
-        }
         String operator = operator();
+        // W-72：认领人一律令牌身份（请求体 assigneeId 兼容保留忽略）——assigned_nurse 落令牌十进制串
+        String assignee = String.valueOf(contextOperatorId());
         // 数据库写操作：认领 CAS（仅 PENDING 可认领；assignee 以文本落 assigned_nurse；并发重复认领由行数判定兜底）
-        if (baseMapper.casClaim(taskNo, req.assigneeId().toString(), operator) == 0) {
+        if (baseMapper.casClaim(taskNo, assignee, operator) == 0) {
             throw new BizException(
                     NursingErrorCode.TASK_STATE_NOT_ALLOWED,
                     HttpStatus.CONFLICT,
@@ -228,10 +227,10 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
         }
         NursingTask row = requireByTaskNo(taskNo);
         log.info(
-                "护理任务认领：taskNo={}，visitId={}，assigneeId={}，operator={}",
+                "护理任务认领：taskNo={}，visitId={}，assigneeId={}（令牌身份，W-72——请求体值忽略），operator={}",
                 taskNo,
                 row.getVisitId(),
-                req.assigneeId(),
+                assignee,
                 operator);
         return NursingTaskVO.from(row);
     }
@@ -534,5 +533,18 @@ public class NursingTaskServiceImpl extends ServiceImpl<NursingTaskMapper, Nursi
     private String operator() {
         String operator = OperatorContextHolder.get();
         return operator == null || operator.isBlank() ? SYSTEM_OPERATOR : operator;
+    }
+
+    /**
+     * 操作者上下文解析为员工 ID（W-72 推广——留痕主体令牌解析，照 OrderExecutionOperateServiceImpl
+     * 同款）：缺失/非数字 NS-1019 拒绝（REST 链路操作者=登录护士——fail-closed）。
+     */
+    private static long contextOperatorId() {
+        String operator = OperatorContextHolder.get();
+        if (operator == null || !operator.matches("\\d+")) {
+            throw new BizException(
+                    NursingErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "操作者标识缺失或非数字（无法定位核对/签收主体）");
+        }
+        return Long.parseLong(operator);
     }
 }

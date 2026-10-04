@@ -47,9 +47,10 @@ import org.springframework.transaction.annotation.Transactional;
  * 状态机三支 CAS 经 AdverseEventMapper 注解 SQL（GC26：@Update + 影响行数判定 + 显式
  * deleted=0）。
  *
- * <p>非惩罚文化红线：匿名通道（isAnonymous=true 或 reporterId 未携带→reporter_id 落 NULL
- * 与 is_anonymous=true 配对归一）；查询/统计出参零惩罚字段（AdverseEventVO 无 reporterId
- * 映射，统计纯计数聚合）；超时只留痕不拒绝（deadline_met=false 承载，无任何阻断分支）。
+ * <p>非惩罚文化红线：匿名通道（显式 isAnonymous=true → reporter_id 落 NULL，不取令牌——
+ * 通道不强制身份；非匿名一律令牌实名，W-72）；查询/统计出参零惩罚字段（AdverseEventVO
+ * 无 reporterId 映射，统计纯计数聚合）；超时只留痕不拒绝（deadline_met=false 承载，
+ * 无任何阻断分支）。
  *
  * <p>id 83 事件：落库后事务内发布（NursingEventPublisher AFTER_COMMIT 出 MQ，GC8 红线）
  * ——载荷五字段（eventNo/category/severityClass/wardId/occurredAt）契约冻结，匿名行
@@ -116,7 +117,12 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         this.events = events;
     }
 
-    /** 上报：守卫链见接口注；I/II 级 deadline 落库+上报即判定，落库后事务内发布 id 83 事件。 */
+    /**
+     * 上报：守卫链见接口注；I/II 级 deadline 落库+上报即判定，落库后事务内发布 id 83 事件。
+     * 归属口径（W-72）：默认实名（reporter_id=登录令牌身份，与前端默认 isAnonymous=false
+     * 一致）、显式匿名（isAnonymous=true → reporter_id 落 NULL 不取令牌）——「reporterId==null
+     * 即匿名」归一随身份令牌化作废（身份已转令牌承载，未声明匿名不再隐式归一）。
+     */
     @Override
     @Transactional
     public AdverseEventVO report(AdverseEventReportRequest req) {
@@ -141,8 +147,9 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
                     HttpStatus.CONFLICT,
                     "事件发生时点不得晚于当前时间（含 5 分钟容差）：occurredAt=" + req.occurredAt());
         }
-        // 匿名归一：显式匿名或未携上报人→reporter NULL + is_anonymous=true 配对（V1107 列注释口径）
-        boolean anonymous = Boolean.TRUE.equals(req.isAnonymous()) || req.reporterId() == null;
+        // 归属口径（W-72）：仅显式 isAnonymous=true 走匿名通道（reporter NULL、不取令牌——通道不强制身份）；
+        // 「reporterId==null 即匿名」归一随身份令牌化作废——默认实名（与前端默认 isAnonymous=false 一致）
+        boolean anonymous = Boolean.TRUE.equals(req.isAnonymous());
         String operator = operator();
         // I/II 级强制上报时限落库：report_deadline=occurredAt+24h；III/IV 级不预置（NULL）
         OffsetDateTime deadline =
@@ -161,7 +168,8 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         row.setEventSummary(req.eventSummary());
         // handling_note NOT NULL（V1107 列形态）——未携处置记录空串承载
         row.setHandlingNote(req.handlingNote() == null ? EMPTY_NOTE : req.handlingNote());
-        row.setReporterId(anonymous ? null : req.reporterId());
+        // 非匿名一律令牌实名（W-72——请求体 reporterId 兼容保留忽略）；匿名分支不取令牌（通道不强制身份）
+        row.setReporterId(anonymous ? null : contextOperatorId());
         row.setIsAnonymous(anonymous);
         row.setReportDeadline(deadline);
         row.setDeadlineMet(deadlineMet);
@@ -231,7 +239,10 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         return PageResult.of(content, page, size, result.getTotal());
     }
 
-    /** 受理处置：REPORTED→HANDLING CAS；I/II 级超时行 deadline_met=false 留痕（非惩罚不阻断）。 */
+    /**
+     * 受理处置：REPORTED→HANDLING CAS；I/II 级超时行 deadline_met=false 留痕（非惩罚不阻断）。
+     * 处置责任人一律登录令牌身份（W-72——请求体 handlerId 兼容保留忽略）。
+     */
     @Override
     @Transactional
     public AdverseEventVO handle(String no, AdverseEventHandleRequest req) {
@@ -241,33 +252,40 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         Boolean deadlineMet = row.getReportDeadline() != null && now.isAfter(row.getReportDeadline())
                 ? Boolean.FALSE
                 : row.getDeadlineMet();
+        // W-72：处置责任人一律令牌身份（请求体 handlerId 兼容保留忽略）
+        long handlerId = contextOperatorId();
         // 数据库写操作：受理处置 CAS（REPORTED 限定；0 行=已处置/已关闭/退回中）
-        if (baseMapper.casHandle(no, req.handlerId(), req.handlingNote(), deadlineMet, operator()) == 0) {
+        if (baseMapper.casHandle(no, handlerId, req.handlingNote(), deadlineMet, operator()) == 0) {
             throw stateNotAllowed(no, row.getStatus(), "受理处置");
         }
         row.setStatus(AdverseEventStatus.HANDLING.getCode());
-        row.setHandlerId(req.handlerId());
+        row.setHandlerId(handlerId);
         if (req.handlingNote() != null) {
             row.setHandlingNote(req.handlingNote());
         }
         row.setDeadlineMet(deadlineMet);
         log.info(
-                "不良事件受理处置：eventNo={}，handlerId={}，超时留痕={}，deadline={}",
+                "不良事件受理处置：eventNo={}，handlerId={}（令牌身份，W-72），超时留痕={}，deadline={}",
                 no,
-                req.handlerId(),
+                handlerId,
                 Boolean.FALSE.equals(deadlineMet),
                 row.getReportDeadline());
         return AdverseEventVO.from(row);
     }
 
-    /** 关闭：HANDLING→CLOSED CAS；RCA 与整改措施随关闭落库（可空保留原值）。 */
+    /**
+     * 关闭：HANDLING→CLOSED CAS；RCA 与整改措施随关闭落库（可空保留原值）。关闭动作主体
+     * 一律登录令牌身份（W-72——请求体 closedBy 兼容保留忽略）。
+     */
     @Override
     @Transactional
     public AdverseEventVO close(String no, AdverseEventCloseRequest req) {
         AdverseEvent row = requireByNo(no);
-        // closedBy 动作主体经 updated_by 审计列承载（V1107 无独立 closed_by 列）
+        // closedBy 动作主体经 updated_by 审计列承载（V1107 无独立 closed_by 列）；
+        // W-72：一律令牌身份十进制串（请求体 closedBy 兼容保留忽略）
+        String closedBy = String.valueOf(contextOperatorId());
         // 数据库写操作：关闭 CAS（HANDLING 限定；0 行=未处置不可关闭/已关闭）
-        if (baseMapper.casClose(no, req.rcaNote(), req.correctiveAction(), String.valueOf(req.closedBy())) == 0) {
+        if (baseMapper.casClose(no, req.rcaNote(), req.correctiveAction(), closedBy) == 0) {
             throw stateNotAllowed(no, row.getStatus(), "关闭");
         }
         row.setStatus(AdverseEventStatus.CLOSED.getCode());
@@ -278,27 +296,32 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
             row.setCorrectiveAction(req.correctiveAction());
         }
         log.info(
-                "不良事件关闭（RCA 与整改措施随关闭落库）：eventNo={}，closedBy={}，rcaNote 携带={}，correctiveAction 携带={}",
+                "不良事件关闭（RCA 与整改措施随关闭落库）：eventNo={}，closedBy={}（令牌身份，W-72），rcaNote 携带={}，correctiveAction 携带={}",
                 no,
-                req.closedBy(),
+                closedBy,
                 req.rcaNote() != null,
                 req.correctiveAction() != null);
         return AdverseEventVO.from(row);
     }
 
-    /** 处置退回：HANDLING→REPORTED 侧支 CAS；退回原因覆写处置记录（必填留痕）。 */
+    /**
+     * 处置退回：HANDLING→REPORTED 侧支 CAS；退回原因覆写处置记录（必填留痕）。退回动作
+     * 主体一律登录令牌身份（W-72——请求体 returnerId 兼容保留忽略）。
+     */
     @Override
     @Transactional
     public AdverseEventVO returnEvent(String no, AdverseEventReturnRequest req) {
         AdverseEvent row = requireByNo(no);
-        // returnerId 动作主体经 updated_by 审计列承载（V1107 无独立退回列）
+        // returnerId 动作主体经 updated_by 审计列承载（V1107 无独立退回列）；
+        // W-72：一律令牌身份十进制串（请求体 returnerId 兼容保留忽略）
+        String returnerId = String.valueOf(contextOperatorId());
         // 数据库写操作：处置退回 CAS（HANDLING 限定；0 行=未处置无退回面/已关闭）
-        if (baseMapper.casReturn(no, req.reason(), String.valueOf(req.returnerId())) == 0) {
+        if (baseMapper.casReturn(no, req.reason(), returnerId) == 0) {
             throw stateNotAllowed(no, row.getStatus(), "处置退回");
         }
         row.setStatus(AdverseEventStatus.REPORTED.getCode());
         row.setHandlingNote(req.reason());
-        log.info("不良事件处置退回（回 REPORTED 可再处置）：eventNo={}，returnerId={}", no, req.returnerId());
+        log.info("不良事件处置退回（回 REPORTED 可再处置）：eventNo={}，returnerId={}（令牌身份，W-72）", no, returnerId);
         return AdverseEventVO.from(row);
     }
 
@@ -464,6 +487,19 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
     private String operator() {
         String operator = OperatorContextHolder.get();
         return operator == null || operator.isBlank() ? SYSTEM_OPERATOR : operator;
+    }
+
+    /**
+     * 操作者上下文解析为员工 ID（W-72 推广——留痕主体令牌解析，照 OrderExecutionOperateServiceImpl
+     * 同款）：缺失/非数字 NS-1019 拒绝（REST 链路操作者=登录护士——fail-closed）。
+     */
+    private static long contextOperatorId() {
+        String operator = OperatorContextHolder.get();
+        if (operator == null || !operator.matches("\\d+")) {
+            throw new BizException(
+                    NursingErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "操作者标识缺失或非数字（无法定位核对/签收主体）");
+        }
+        return Long.parseLong(operator);
     }
 
     /** 入参显式格式校验失败异常构造（NS-1019 400）。 */
