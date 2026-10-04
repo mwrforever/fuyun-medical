@@ -169,7 +169,7 @@
 - 处方：`POST /prescriptions`（开方，同步返回处方号 + 审方预检结果，调用方：M03/M04 出院带药/M18（P2））、`POST /prescriptions/{no}/cancel`（作废：未缴费作废与已缴费未发药退费的处方侧入口，必填原因，联动 M13 费用作废/退费与 M03 引用状态收敛）、`GET /prescriptions?visitId=|patientId=|rxNo=`
 - 审方：`GET /review-tasks`、`POST /review-tasks/{id}/accept|approve|reject`、`GET/POST/PUT /audit-rules`
 - 调剂：`POST /dispenses/{no}/pick|verify|issue`（配药/核对/发药签名）、`POST /dispense-returns`（退药受理）、`GET /dispenses?rxNo=|m04OrderNo=`、`POST /dispense-plans/generate`（按医嘱生成摆药计划）、`POST /dispense-plans/{id}/deliver|receive`（配送/病区签收）、`GET /dispense-plans/{no}/returnable`（可退明细读面——W-66 多明细退药数据源）
-  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决；破码双授权 primary=在场授权人令牌身份，secondary 客户端承载+审计留痕——第二授权人角色核验归 W-37 后续）
+  - 操作人身份字段兼容保留，服务端一律以登录令牌身份落值（W-72，2026-10-03 裁决）
 - 占用查询（供 M13）：`GET /medication-occupancy?patientId=&visitId=&itemCode=`（是否已发药/是否退药受理）
 - 药库药房：`GET/POST /purchase-orders`、`POST /purchase-ins/{id}/accept`（入库验收）、`GET/POST /transfer-orders`、`POST /transfer-orders/{id}/outbound|receive`、`GET/POST/PUT /stocktakes`、`POST /stocktakes/{id}/approve`、`GET/POST/PUT /suppliers`、`GET /stock/batches?drugId=&storehouse=`、`GET /stock/summaries?storehouse=`
 - 基数药：`GET/POST/PUT /base-stocks`、`POST /base-stocks/{id}/replenish`（补药）
