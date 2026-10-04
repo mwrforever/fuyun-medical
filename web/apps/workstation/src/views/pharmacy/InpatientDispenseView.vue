@@ -6,12 +6,14 @@
 // 计划号/患者号面/给药时点/类型标签[单剂量/PIVAS/整包]+PIVAS 排批；CANCELLED 作废态与退药
 // 态不进列——退药态由调剂行承载，计划行不迁）③操作流（行内按状态出下一动作按钮五步在途
 // 互斥；PIVAS 行出贴签查看弹窗[label 数据面，床号无 pharmacy 侧数据源恒空——展示即所得]；
-// DELIVERED 行退药弹窗直调 pharmacy dispense-returns 住院扩展形态[nursing 侧退药开关校验
-// 端点未建，Task 8 minor③ 注记——前端注记不越界实现]）。摆药五步状态机以后端
-// DispenseStatus 住院链实测词表为准；deliver 为 CHECKED 态内配送交接时间线半步不迁状态
-// （Task 8 裁决）——行内动作成功后一律重拉看板、不本地迁移状态（服务端回包为唯一状态源）。
-// 贴签弹窗打开先清旧数据+回包比对当前计划号（EX-45/FE-A1-04 纪律——Task 14 P1-1 同族）。
-// 失败弹错归响应拦截器（AxiosError 防双弹，业务拒绝对象由 surfaceBizError 兜底）。
+// DELIVERED 行退药弹窗=可退明细多行表[W-66：打开拉 returnable 读面——非 DELIVERED 409 归
+// 失败弹错；逐行数量数字正则+可退净量双验 D-8，提交全 NORMAL 行逐行 returnLines 直调
+// pharmacy dispense-returns 住院扩展形态——nursing 侧退药开关校验端点未建，Task 8 minor③
+// 注记，前端注记不越界实现]）。摆药五步状态机以后端 DispenseStatus 住院链实测词表为准；
+// deliver 为 CHECKED 态内配送交接时间线半步不迁状态（Task 8 裁决）——行内动作成功后一律
+// 重拉看板、不本地迁移状态（服务端回包为唯一状态源）。
+// 贴签弹窗与退药弹窗打开均先清旧数据+回包比对当前计划号（EX-45/FE-A1-04 纪律——Task 14
+// P1-1 同族）。失败弹错归响应拦截器（AxiosError 防双弹，业务拒绝对象由 surfaceBizError 兜底）。
 import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
@@ -24,7 +26,12 @@ import {
   dispensePlans,
   reviewTasks,
 } from '@/api/pharmacy';
-import type { DispensePlanLabelVO, DispensePlanVO, ReviewTaskVO } from '@/api/pharmacy';
+import type {
+  DispensePlanLabelVO,
+  DispensePlanReturnableVO,
+  DispensePlanVO,
+  ReviewTaskVO,
+} from '@/api/pharmacy';
 import { WARD_OPTIONS } from '@/api/nursing';
 import { usePagedList } from '@/composables/usePagedList';
 import { useAuthStore } from '@/stores/auth';
@@ -263,7 +270,7 @@ function onRowAction(row: DispensePlanVO, action: PlanAction): void {
       void openLabel(row);
       break;
     case 'return':
-      openReturn(row);
+      void openReturn(row);
       break;
   }
 }
@@ -346,30 +353,63 @@ async function openLabel(row: DispensePlanVO): Promise<void> {
   }
 }
 
-/* ==================== 退药弹窗（dispense-returns 住院扩展形态） ==================== */
+/* ==================== 退药弹窗（可退明细多行表——W-66/D-8） ==================== */
 const returnVisible = ref(false);
 const returning = ref(false);
-/** 退药目标行（弹窗期间行锚） */
+/** 退药目标行（EX-45 回包比对锚） */
 const returnTarget = ref<DispensePlanVO | null>(null);
-/** 医嘱明细序号录入（退药锚定=医嘱明细 itemSeq，纯数字） */
-const returnItemSeq = ref('');
-/** 退药数量录入（DECIMAL string 承载，禁 number 转换） */
-const returnQuantity = ref('');
-/** 追溯码录入（逗号/空格分隔；住院摆药采集为空集——后端非空码即拒，正常留空） */
-const returnTraceCodes = ref('');
+/** 可退明细读面（null=未回包，弹窗内 v-loading 兜底） */
+const returnData = ref<DispensePlanReturnableVO | null>(null);
+/** 逐行数量录入（itemSeq→DECIMAL string 承载，禁 number 转换；空=该行未交代） */
+const returnQtys = ref<Record<string, string>>({});
+/** 可退明细拉取在途标志 */
+const returnLoading = ref(false);
 
-/** 打开退药弹窗（复位录入） */
-function openReturn(row: DispensePlanVO): void {
-  returnTarget.value = row;
-  returnItemSeq.value = '';
-  returnQuantity.value = '';
-  returnTraceCodes.value = '';
-  returnVisible.value = true;
+/**
+ * 退药数量行级校验（D-8 收口，循 PdaView isValidNeedleVolume 正则+范围双验先例）：
+ * 数字正则拦负数/科学计数/Infinity/多小数点形态，范围比对可退净量（已发-已退）——
+ * 0 不允许（零量退药无业务意义），后端服务层同口径兜底。
+ */
+function isValidReturnQty(raw: string, returnableQty: string): boolean {
+  if (!/^\d+(\.\d+)?$/.test(raw)) {
+    return false;
+  }
+  const qty = Number(raw);
+  return qty > 0 && qty <= Number(returnableQty);
 }
 
 /**
- * 确认退药：明细序号纯数字+数量数字必填显式校验（零出网）→ 出网 createDispenseReturn
- * 住院扩展形态（dispensePlanNo+returnLines，不带门诊 mode/items 面）→ 关窗重拉看板。
+ * 打开退药弹窗并拉取可退明细读面：换行先清旧数据+清录入（防 A 行明细与数量驻留串台到
+ * B 行计划号名下），回包先比对当前目标计划号再落值——回包期间换行即在途回包过期直接丢弃
+ * （EX-45/FE-A1-04 纪律，循贴签弹窗 openLabel 同款防线）。
+ */
+async function openReturn(row: DispensePlanVO): Promise<void> {
+  const no = row.planNo ?? '';
+  returnTarget.value = row;
+  // 换行先清旧：B 行读面未回包前弹窗数据缺位不渲染，防 A 行可退明细串台
+  returnData.value = null;
+  returnQtys.value = {};
+  returnVisible.value = true;
+  returnLoading.value = true;
+  try {
+    const result = await dispensePlans.returnable(no);
+    // 过期回包丢弃：换行后目标计划号已变，旧计划回包不得落值
+    if (returnTarget.value?.planNo === no) {
+      returnData.value = result;
+    }
+  } catch {
+    // 失败弹错归响应拦截器（非 DELIVERED 409 等）；弹窗数据缺位占位
+  } finally {
+    returnLoading.value = false;
+  }
+}
+
+/**
+ * 确认退药：逐行交代校验（每行数量必填+数字正则+可退净量范围双验——D-8 收口；任一行
+ * 不合法或空即整单零出网——后端缺行守卫 400 的前端对齐）→ 出网 createDispenseReturn
+ * 住院扩展形态（全 NORMAL 行逐行 returnLines，不带门诊 mode/items 面）→ 关窗重拉看板。
+ * 追溯码输入面已删除：住院摆药采集恒空集，非空码后端必拒 PH-1012——原输入面是必 409
+ * 陷阱（如实化注记留档，防回流核验语义由后端 UT 承载），提交恒传 traceCodes: []。
  * 注记：nursing 侧退药开关校验端点未建（Task 8 minor③），本入口直调 pharmacy 端点；
  * 受理成功后计划行仍处病区已签收列（退药态由调剂行承载，计划行不迁——后端裁决口径）。
  */
@@ -377,27 +417,31 @@ async function onReturn(): Promise<void> {
   if (returning.value) {
     return;
   }
-  const seq = returnItemSeq.value.trim();
-  const quantity = returnQuantity.value.trim();
-  if (!/^\d+$/.test(seq)) {
-    void ElMessage.warning('医嘱明细序号须为纯数字');
+  const items = returnData.value?.items ?? [];
+  // 读面未回包（加载中）或无可退明细：显式拦截零出网（空 returnLines 必败于后端守卫）
+  if (items.length === 0) {
+    void ElMessage.warning('可退明细未就绪，无法提交退药');
     return;
   }
-  if (quantity === '' || Number.isNaN(Number(quantity))) {
-    void ElMessage.warning('退药数量须为数字');
-    return;
+  // 逐行交代：任一行数量缺填或不合法即整单拦截（明细序号锚+可退净量随警示透出）
+  for (const item of items) {
+    const raw = (returnQtys.value[item.itemSeq ?? ''] ?? '').trim();
+    if (!isValidReturnQty(raw, item.returnableQty ?? '')) {
+      void ElMessage.warning(
+        `明细 ${item.itemSeq ?? ''} 退药数量须为不超过可退净量 ${item.returnableQty ?? '—'} 的正数`,
+      );
+      return;
+    }
   }
   returning.value = true;
   try {
     await createDispenseReturn({
       dispensePlanNo: returnTarget.value?.planNo ?? '',
-      returnLines: [
-        {
-          itemSeq: seq,
-          returnQuantity: quantity,
-          traceCodes: returnTraceCodes.value.split(/[，,\s]+/).filter(Boolean),
-        },
-      ],
+      returnLines: items.map((item) => ({
+        itemSeq: item.itemSeq ?? '',
+        returnQuantity: (returnQtys.value[item.itemSeq ?? ''] ?? '').trim(),
+        traceCodes: [],
+      })),
     });
     void ElMessage.success(`退药受理完成：${returnTarget.value?.planNo ?? ''}`);
     returnVisible.value = false;
@@ -588,42 +632,43 @@ onMounted(() => {
       </div>
     </el-dialog>
 
-    <!-- ③ 退药弹窗（DELIVERED 行；直调 pharmacy dispense-returns 住院扩展形态） -->
-    <el-dialog v-model="returnVisible" title="住院退药受理" width="420px">
+    <!-- ③ 退药弹窗（DELIVERED 行；可退明细多行表——W-66 打开即拉 returnable 读面） -->
+    <el-dialog v-model="returnVisible" title="住院退药受理" width="640px">
       <p class="plan-dialog-target fuy-num">计划 {{ returnTarget?.planNo ?? '' }}</p>
-      <label class="plan-field-label">医嘱明细序号（必填，纯数字 itemSeq）</label>
-      <input
-        v-model="returnItemSeq"
-        class="plan-dialog-input plan-return-seq"
-        type="text"
-        inputmode="numeric"
-        autocomplete="off"
-        placeholder="如 1"
-        aria-label="医嘱明细序号"
-      />
-      <label class="plan-field-label">退药数量（必填，数字）</label>
-      <input
-        v-model="returnQuantity"
-        class="plan-dialog-input plan-return-qty"
-        type="text"
-        inputmode="decimal"
-        autocomplete="off"
-        placeholder="如 2"
-        aria-label="退药数量"
-      />
-      <label class="plan-field-label">追溯码（住院摆药未采集，正常留空；逗号分隔）</label>
-      <input
-        v-model="returnTraceCodes"
-        class="plan-dialog-input plan-return-trace"
-        type="text"
-        autocomplete="off"
-        placeholder="可空"
-        aria-label="追溯码"
-      />
-      <p class="plan-dialog-hint">
-        受理成功后计划行仍在病区已签收列（退药态由调剂行承载）；nursing
-        侧退药开关校验端点未建，本入口直调药房退药受理
-      </p>
+      <div v-loading="returnLoading">
+        <template v-if="returnData !== null">
+          <!-- 可退明细多行表（明细/编码/批号/已发/已退/可退/数量录入——D-8 双验=数字正则+可退净量） -->
+          <el-table :data="returnData.items ?? []" class="plan-return-items" size="small">
+            <el-table-column prop="itemSeq" label="明细" width="50" />
+            <el-table-column prop="itemCode" label="编码" min-width="90" />
+            <el-table-column prop="batchNo" label="批号" min-width="110" />
+            <el-table-column prop="issuedQty" label="已发" width="70" align="right" />
+            <el-table-column prop="returnedQty" label="已退" width="70" align="right" />
+            <el-table-column prop="returnableQty" label="可退" width="70" align="right" />
+            <el-table-column label="退药数量" width="130">
+              <template #default="{ row }">
+                <!-- 可退净量≤0 行（防御面，正常不可达）只读禁输，该行无法交代即整单零出网 -->
+                <input
+                  v-model="returnQtys[row.itemSeq ?? '']"
+                  class="plan-dialog-input plan-return-qty"
+                  type="text"
+                  inputmode="decimal"
+                  autocomplete="off"
+                  placeholder="如 1"
+                  :disabled="Number(row.returnableQty ?? '0') <= 0"
+                  :aria-label="`明细 ${row.itemSeq ?? ''} 退药数量`"
+                />
+              </template>
+            </el-table-column>
+          </el-table>
+          <p class="plan-dialog-hint">
+            逐行填写退药数量（全明细逐行交代）；追溯码免录——住院摆药未采集追溯码，
+            防回流核验由后端承载。受理成功后计划行仍在病区已签收列（退药态由调剂行承载）；
+            nursing 侧退药开关校验端点未建，本入口直调药房退药受理
+          </p>
+        </template>
+        <p v-else class="plan-dialog-hint">可退明细加载中…</p>
+      </div>
       <template #footer>
         <el-button size="small" @click="returnVisible = false">取消</el-button>
         <el-button
@@ -850,6 +895,10 @@ onMounted(() => {
   color: var(--fuy-color-text-secondary);
 }
 .plan-label-items {
+  margin-top: var(--fuy-space-3);
+}
+/* 退药可退明细多行表（贴签明细表同款间距口径） */
+.plan-return-items {
   margin-top: var(--fuy-space-3);
 }
 </style>
