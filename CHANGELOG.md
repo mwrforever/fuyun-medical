@@ -2,6 +2,20 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-04 · P2 PR-4B 收口（临床操作面语义包）
+
+- **W-72**：四域操作人服务端强制（方案 A 字段保留+令牌覆盖+匿名通道保留）+A-4 破码 primary 收敛
+  （两人不同改服务端比较）+InpatientDispenseView 去手输+PdaView 双授权主授权人展示回显。
+- **W-66（D-30）**：可退明细读面端点+退药弹窗多行化（含 D-8 数量正则/范围双验收口、住院追溯码必拒输入面删除注记）。
+- **D-31 顺手包**：D-3 分页慢回包守卫（usePagedList/useExecutions 序号守卫三消费面收口）+D-11 patientId 死字段清理。
+- **契约**：gen:api 再生成（八身份字段可空化+returnable 读面）；迁移零新增。
+- **D-21 申报汇总**：UT 执行人断言令牌化（EXECUTOR→NURSE 差异锁定用例新增）；IT 回签 executor_id="66"→登录管理员身份；
+  claim assigneeId 空守卫用例随消费面删除（同笔新增令牌锁定用例）；收口终验另修 InpatientDailyDecomposeIT
+  捕获帧按医嘱号分拣（终验暴露既有欠账：候选查询无 ORDER BY 致分解帧消息序不确定，去序依赖、断言严格度不降）。
+- **终验与 e2e**：后端全量 verify BUILD SUCCESS（两轮，第二轮 44:30 含 IT 修复）；前端六连绿（pnpm audit 本地受
+  TLS 拦截阻断、归 PR CI frontend job 权威承载）；真机 e2e 五面全 PASS（PDA 执行链/摆药签收/多明细退药/
+  不良事件双路匿名/D-3 弱网竞态，证据 `.superpowers/sdd/p2-pr4b/probe/`）；e2e 新发现 W-86/W-87 工单登记。
+
 ## 2026-10-04 · P2 PR-4B 立项（临床操作面语义包）启动
 
 - **范围**：W-72 服务端强制四域（执行单 start/finish/needleOut+破码 primary 收敛/摆药 receive/任务认领/
