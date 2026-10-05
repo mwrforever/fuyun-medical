@@ -37,7 +37,8 @@ export const router = createRouter({
           path: '',
           name: 'home',
           component: () => import('@/views/home/HomeView.vue'),
-          // meta 预留权限语义：P1 鉴权拦截接入后补 permission 权限点字段
+          // 首页有意不登记权限点（PR-4D 守卫两态口径的放行态）：空集会话登录后仍可落
+          // 首页再经业务路由拒绝到 403，业务面可见性一律由各业务路由 permission 承载
           meta: {},
         },
         {

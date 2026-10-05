@@ -8,7 +8,7 @@
 >    **V800–V899 为 nursing 专属固定段位（非通用段，其他模块不得占用）**。
 > 5. **登记口径**：版本号 / 迁移文件名 / 归属 schema 与模块 / 用途一句话，与本仓库 `docs/superpowers/plans/` 各 PR 计划及 CHANGELOG 交叉可溯。
 
-## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]、2026-10-02 V1106–V1111 排定登记[P2 PR-3，先记再改，随 Task 2/3 落盘]、2026-10-03 V1112/V1113 追加[C-4/C-5 补课索引迁移，PR-4A Task 6]）
+## 已占用版本一览（V1 起，按版本升序；数据源见文档头第 3 条，2026-09-21 建档实况、2026-09-22 V706 追加、2026-09-24 V808 追加、2026-09-24 V900 追加、2026-09-25 V901–V908/V1000–V1003 排定登记[P2 PR-1，先记再改，随 Task 2–13 逐任务落盘]、2026-09-26 V1004–V1013/V1014/V1100–V1102 排定登记[P2 PR-2，先记再改，随 Task 2–13 逐任务落盘；同日勘误：原排 V404–V413/V809 低于基线全局最大 V1003 被乱序守卫拒止，改走通用段，billing V1001–V1003 先例]、2026-09-29 V1103 追加[2026-09-28 性能清单 OPT-01 索引迁移]、2026-09-29 V1104 追加[OPT-02 索引迁移]、2026-09-29 V1105 追加[OPT-06 索引迁移]、2026-10-02 V1106–V1111 排定登记[P2 PR-3，先记再改，随 Task 2/3 落盘]、2026-10-03 V1112/V1113 追加[C-4/C-5 补课索引迁移，PR-4A Task 6]、2026-10-05 V1114 追加[W-40 演示账号绑定行种子，PR-4C Task 5]、2026-10-05 V1115 追加[W-67b fee.created visitType 契约 UPDATE，PR-4E Task 3]、2026-10-05 V1116~V1119 排定登记[W-37 全量权限点/角色绑定种子 V1116/V1117+W-91①/W-93① 扫描索引 V1118/V1119，PR-4D Task 3/9——V1114 起登记停更为遗留欠账，本次补齐]）
 
 | 版本 | 迁移文件名 | 归属 schema / 模块 | 用途 |
 | --- | --- | --- | --- |
@@ -102,6 +102,12 @@
 | V1111 | V1111__update_dispense_completed_payload.sql | pharmacy / fuyun-pharmacy | event_registry id 28 payload_desc 载荷契约 UPDATE（住院摆药行增 m04OrderNo/visitId/wardId/dispensePlanNo 四可空字段，只增不删双向评审，P2 PR-3 Task 3 落盘） |
 | V1112 | V1112__add_dispense_plan_no_index.sql | pharmacy / fuyun-pharmacy | dispense 计划号部分索引（C-4：住院链 receive/acceptInpatientReturn 按 dispense_plan_no 等值点查全表扫描→索引点查，门诊行 NULL 不进索引；调研 r3 §二设计候选，PR-4A Task 6 落盘；通用段——全局最大 V1111 的下一号，满足乱序守卫） |
 | V1113 | V1113__add_order_execution_visit_index.sql | nursing / fuyun-nursing | order_execution visit_id 部分索引（C-5：casCancelByVisit/casRedirectWard 两支批量 CAS 首要谓词 visit_id 等值点查，status IN 残余行个位数不进索引；调研 r3 §二设计候选，PR-4A Task 6 落盘；通用段——全局最大 V1112 的下一号，满足乱序守卫） |
+| V1114 | V1114__seed_nurse_assignment_binding.sql | nursing / fuyun-nursing | nurse_assignment 演示账号绑定行种子（W-40 fail-closed 同批配套：admin/doctordemo 两账号 W01 绑定行，患者/床位列为空仅承载访问授权非护理责任分配，PR-4C Task 5 落盘） |
+| V1115 | V1115__update_fee_created_payload_desc.sql | billing / fuyun-billing | event_registry id 17 billing.fee.created payload_desc 追加 visitType 组件语义（W-67b 住院行消费方分流净解：IN 行经 visitType 判别分流不再死信，PR-4E Task 3 落盘） |
+| V1116 | V1116__seed_full_permissions.sql | system / fuyun-system | 全量权限点种子：API 302 点（方法+空格+路径模板双键）+ MENU 32 点（冒号码）+ V303 旧 6 点方法前缀 UPDATE（W-37 矩阵权威源=PR-4D 计划附件 A/B，PR-4D Task 3 落盘） |
+| V1117 | V1117__seed_business_roles_bindings.sql | system / fuyun-system | 六业务角色（DOCTOR/NURSE/PHARMACIST/CASHIER/REGISTRAR/IOT_ADMIN）+ 全量角色权限绑定（API 315 行+MENU 42 行）+ 演示账号族种子（W-37；ADMIN 运行期全放不种绑定行，PR-4D Task 3 落盘） |
+| V1118 | V1118__add_nurse_assignment_nurse_id_index.sql | nursing / fuyun-nursing | nurse_assignment nurse_id 部分索引（W-91①：WardAccessServiceImpl.activeBoundWardIds 按 nurse_id 查询全表扫描→索引点查，WHERE deleted=0 AND status='ACTIVE'，PR-4D Task 9 落盘） |
+| V1119 | V1119__add_appointment_pay_deadline_index.sql | outpatient / fuyun-outpatient | appointment pay_deadline 部分索引（W-93①：scanAndReleaseTimedOut 周期扫描 RESERVED 超时全表扫→索引点查，WHERE deleted=0 AND status='RESERVED' 终态/已删行不入索引，PR-4D Task 9 落盘） |
 
 ## 冻结段速查（禁落新文件）
 
