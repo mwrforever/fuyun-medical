@@ -23,6 +23,7 @@ import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.AdverseEventMapper;
 import com.fuyun.nursing.service.IAdverseEventService;
+import com.fuyun.nursing.service.IWardMetaService;
 import com.fuyun.nursing.vo.AdverseEventStatsVO;
 import com.fuyun.nursing.vo.AdverseEventVO;
 import com.fuyun.nursing.vo.NurseBoardPushFrame;
@@ -104,17 +105,25 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
 
     private final ApplicationEventPublisher events;
 
+    private final IWardMetaService wardMetaService;
+
     /**
      * 全参构造器（装配归 NursingWebConfig @Import）。
      *
      * @param adverseEventMapper 不良事件 mapper，非空；ServiceImpl 基座 mapper（三支 CAS 面）
      * @param seqGate            护理业务单号发号器，非空；AE 号段（fy:nursing:seq:AE:{yyyyMMdd}）
      * @param events             进程内事件发布器，非空；id 83 事件事务内发布（AFTER_COMMIT 出 MQ）
+     * @param wardMetaService    病区元信息服务，非空；A-6 上报 wardId 词表守卫（wardConfig→
+     *                           requireConfig 缺行 NS-1016，语义复用零重复判定）
      */
     public AdverseEventServiceImpl(
-            AdverseEventMapper adverseEventMapper, NursingSeqGate seqGate, ApplicationEventPublisher events) {
+            AdverseEventMapper adverseEventMapper,
+            NursingSeqGate seqGate,
+            ApplicationEventPublisher events,
+            IWardMetaService wardMetaService) {
         this.seqGate = seqGate;
         this.events = events;
+        this.wardMetaService = wardMetaService;
     }
 
     /**
@@ -139,6 +148,10 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
         if (severityGrade == null) {
             throw paramInvalid("严重度等级 code 非法（A~E）：" + req.severityGrade());
         }
+        // A-6 wardId 词表校验：上报病区必须是护理配置词表内病区（nursing_ward_config 行存在性，
+        // IWardMetaService.wardConfig→requireConfig 语义复用，缺行 NS-1016 409）——防伪造 wardId
+        // 污染统计并定向驱动他病区大屏 ADVERSE_EVENT_REMIND（纯守卫：返回值不消费）
+        wardMetaService.wardConfig(req.wardId());
         OffsetDateTime now = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
         // 未来时刻倒灌守卫（NursingAssessmentServiceImpl 同款先例+容差放宽：超容差 NS-1016 拒绝）
         if (req.occurredAt().isAfter(now.plus(FUTURE_TOLERANCE))) {
