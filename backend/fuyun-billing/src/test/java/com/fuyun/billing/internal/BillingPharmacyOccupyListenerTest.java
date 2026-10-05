@@ -101,7 +101,7 @@ class BillingPharmacyOccupyListenerTest {
         new BillingPharmacyOccupyListener(consumerSupport, feeRecordMapper)
                 .handleCompleted(envelope(
                         "pharmacy.dispense.completed",
-                        "{\"rxNo\":\"R20261005000001\",\"dispenseNo\":\"D1\",\"lines\":[]}"));
+                        "{\"rxNo\":\"R20261005000001\",\"dispenseNo\":\"D1\",\"m04OrderNo\":null,\"lines\":[]}"));
 
         verify(feeRecordMapper).casMarkDispensed("R20261005000001");
     }

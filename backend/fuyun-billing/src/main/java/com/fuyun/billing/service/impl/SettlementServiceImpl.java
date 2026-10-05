@@ -198,7 +198,8 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
      *            账户 id 字符串，组件冻结见接口块）
      * @return 结算出参
      * @throws BizException BILL-1014（404 缺单）/ BILL-1015（409 状态不允许，含 CAS 抢锚失败后
-     *                      重读非 SETTLED 态）/ BILL-1016（409 两层勾稽任一不平或费用行并发被抢
+     *                      重读非 SETTLED 态；及非自费单 fail-closed 拒——评审 A-1，payments
+     *                      非自费形态归 W-80）/ BILL-1016（409 两层勾稽任一不平或费用行并发被抢
      *                      迁移数不足）/ BILL-1012（400 CARD_BALANCE 行缺/非法卡账户引用或多卡混付）；
      *                      PAT-1013/1014/1016（就诊卡记账失败经调用方事务回滚上抛）
      */
@@ -220,6 +221,21 @@ public class SettlementServiceImpl extends ServiceImpl<SettlementMapper, Settlem
         }
         if (st.getStatus() != SettlementStatus.DRAFT && st.getStatus() != SettlementStatus.PRESETTLED) {
             throw new BizException(BillingErrorCode.SETTLEMENT_STATE_NOT_ALLOWED, HttpStatus.CONFLICT, "结算单状态不允许结算");
+        }
+        // 评审 A-1 修复（fail-closed 资金防线）：非自费结算单（医保 PRESETTLED 等）拒绝 settle——
+        // 此前仅校验状态+金额勾稽，前端前置拦截可被 API 直调绕过，医保单可被 payments=[{CASH,总额}]
+        // 全现金结算（基金部分记作现金，勾稽语义错位）。拒绝≠造形态：payments 非自费组装形态归
+        // W-80 口径裁决，通道接入前一律显式拒（错误码复用既有 BILL-1015 语义——「当前形态不允许
+        // 结算」，409；NursingErrorCode 侧 *_STATE_NOT_ALLOWED 族同款复用先例，禁新码）
+        if (st.getPayerType() != PayerType.SELF_PAY) {
+            log.warn(
+                    "非自费结算单拒绝现金结算（fail-closed）：settleNo={}，payerType={}",
+                    settleNo,
+                    st.getPayerType().getCode());
+            throw new BizException(
+                    BillingErrorCode.SETTLEMENT_STATE_NOT_ALLOWED,
+                    HttpStatus.CONFLICT,
+                    "医保结算通道待接入：非自费结算单暂不支持现金结算（W-80 口径裁决中）");
         }
         // 两层勾稽第二层：Σpayments.amount == 结算总额（Spec §9 支付层——先勾稽后动卡，不平不扣）
         long paySum = 0L;

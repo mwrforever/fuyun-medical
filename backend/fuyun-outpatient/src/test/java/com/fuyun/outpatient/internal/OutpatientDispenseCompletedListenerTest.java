@@ -79,7 +79,7 @@ class OutpatientDispenseCompletedListenerTest {
         new OutpatientDispenseCompletedListener(null, chargingService)
                 .handleDispenseCompleted(envelope("{\"dispenseNo\":\"DF20261005000001\","
                         + "\"rxNo\":\"RX20261005000001\",\"visitId\":\"O20261005000001\","
-                        + "\"dispenseType\":\"WINDOW\",\"lines\":[]}"));
+                        + "\"dispenseType\":\"WINDOW\",\"m04OrderNo\":null,\"lines\":[]}"));
 
         verify(chargingService).onDispenseCompleted("RX20261005000001", "DF20261005000001");
     }

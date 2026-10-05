@@ -54,6 +54,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -461,6 +462,44 @@ class SettlementServiceImplTest {
                         .isEqualTo(BillingErrorCode.SETTLEMENT_STATE_NOT_ALLOWED));
         verifyNoInteractions(feeRecordMapper, cardAccountLedger, events);
         verify(settlementMapper, never()).updateById(any(Settlement.class));
+    }
+
+    @Test
+    @DisplayName("非自费单 fail-closed 拒：医保 PRESETTLED 单 settle 抛 BILL-1015 409 且不触勾稽（评审 A-1）")
+    void settleRejectsNonSelfPayPayerFailClosedAsBill1015() {
+        // 医保 PRESETTLED 单（状态合法+金额可配平）：此前仅校验状态+勾稽，API 直调
+        // payments=[{CASH,总额}] 可绕过前端拦截把医保单全现金结算（基金部分记作现金）
+        Settlement st = settlement(900L, "S100", SettlementStatus.PRESETTLED, 5000L);
+        st.setPayerType(PayerType.CITY_INS);
+        when(settlementMapper.selectOne(any())).thenReturn(st);
+
+        assertThatThrownBy(() -> service.settle(
+                        new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null)))))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    assertThat(e.getErrorCode()).isEqualTo(BillingErrorCode.SETTLEMENT_STATE_NOT_ALLOWED);
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        // fail-closed 先于勾稽与一切资金动作：费用清单不读、锚不抢、卡不动、事件不发
+        verify(feeRecordMapper, never()).selectList(any());
+        verify(settlementMapper, never()).casMarkSettled(anyLong(), any(), any());
+        verifyNoInteractions(cardAccountLedger, events);
+    }
+
+    @Test
+    @DisplayName("自费单照常结算：DRAFT+SELF_PAY 不触 fail-closed 守卫，正常收敛 SETTLED（评审 A-1 对照）")
+    void settlePassesSelfPayDraftBeyondPayerFailClosedGuard() {
+        Settlement st = settlement(900L, "S100", SettlementStatus.DRAFT, 5000L);
+        when(settlementMapper.selectOne(any())).thenReturn(st);
+        when(feeRecordMapper.selectList(any()))
+                .thenReturn(List.of(fee(1L, 5000L, OffsetDateTime.parse("2026-09-17T09:30+08:00"))));
+        when(settlementMapper.casMarkSettled(anyLong(), any(), any())).thenReturn(1);
+        when(feeRecordMapper.casMarkFeesSettled(anyLong(), any())).thenReturn(1);
+
+        SettlementVO vo =
+                service.settle(new SettleRequest("S100", List.of(new PaymentLine(PaymentMethod.CASH, 5000L, null))));
+
+        // 守卫只拦非自费单：自费 DRAFT 主路径零扰动（细粒度断言归既有 happy-path 用例，此处锚对照语义）
+        assertThat(vo.status()).isEqualTo("SETTLED");
     }
 
     @Test
