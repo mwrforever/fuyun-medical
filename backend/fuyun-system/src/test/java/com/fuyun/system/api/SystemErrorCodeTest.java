@@ -35,5 +35,7 @@ class SystemErrorCodeTest {
         assertThat(SystemErrorCode.LOGIN_NAME_OR_PASSWORD_WRONG.getCode()).isEqualTo("SYS-1001");
         assertThat(SystemErrorCode.TOKEN_MISSING_OR_INVALID.getCode()).isEqualTo("SYS-1003");
         assertThat(SystemErrorCode.TOKEN_EXPIRED.getCode()).isEqualTo("SYS-1004");
+        // PR-4D 扩位（D-21 增量申报）：403 鉴权拒绝码 SYS-1033 在位（AuthorizationInterceptor 消费）
+        assertThat(SystemErrorCode.PERMISSION_DENIED.getCode()).isEqualTo("SYS-1033");
     }
 }
