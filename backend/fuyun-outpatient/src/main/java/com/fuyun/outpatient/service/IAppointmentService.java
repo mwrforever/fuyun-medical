@@ -12,8 +12,8 @@ import java.util.List;
 /**
  * 预约/当日挂号服务（M03 FU-M03-02/03 写路径唯一入口）：统一预约主流程七步（患者归一冻结拦截→
  * 爽约限约→限购→池行复核→Redis 预扣→appointment 落库+池行 CAS→渠道分流占位/直达 TAKEN）、预约取号、
- * 支付超时释放（延迟队列消费业务面）、退号退费联动四分支（Task 6）、改期先占新后退旧与爽约信用
- * 管理面。聚合型服务不继承 IService（A.4.3-20）。
+ * 支付超时释放（延迟队列消费业务面与 W-27 tick 惰性扫描双通道）、退号退费联动四分支（Task 6）、
+ * 改期先占新后退旧与爽约信用管理面。聚合型服务不继承 IService（A.4.3-20）。
  */
 public interface IAppointmentService {
 
@@ -132,6 +132,18 @@ public interface IAppointmentService {
      * @throws IllegalStateException 预约单按 appt_no 定位失败时触发（数据异常，交容器拒收进死信留痕）
      */
     void markTimeout(AppointmentTimeoutPayload payload);
+
+    /**
+     * 号源超时惰性扫描释放（W-27 tick 双通道兜底面，P2 PR-4E Task 8）：扫 RESERVED 且
+     * pay_deadline&lt;now(北京钟面) 的过期占位单（DB pay_deadline 列为权威扫描面——Redis pay-hold
+     * 键可能先于 DB 态消失，扫键会漏单；有界 LIMIT 500，越界行由后续 tick 轮转收敛），逐单构造
+     * 超时载荷委托 {@link #markTimeout} 走同款释放面（双通道安全由 RESERVED→NO_SHOW CAS 0 行幂等
+     * 跳过保证——原 15m 档消息路径保留不动）；扫描在事务外、逐单独立事务承载（与 15m 消息通道
+     * 同一释放面复用）。单行数据异常上抛交容器有界重试（tick 帧重投后已处理行经 CAS 幂等收敛）。
+     *
+     * @return 本轮处理行数（逐单委托 markTimeout 的行数——日志观测口径；含 CAS 0 行幂等跳过行）
+     */
+    int scanAndReleaseTimedOut();
 
     /**
      * 爽约信用记录查询（按患者维度，id 降序最新在前）：工作站信用管理列表消费面。

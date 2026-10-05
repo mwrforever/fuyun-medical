@@ -95,6 +95,10 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 预约/当日挂号服务单测（M03 FU-M03-02/03，Task 5 冻结用例集 14 例）：窗口一步 TAKEN、portal
@@ -171,8 +175,9 @@ class AppointmentServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        // 缺省参数（与 V204/V705 与 Properties @DefaultValue 同源）：支付时限 15m、爽约窗口 90 天、阈值 3、限约 90 天
-        OutpatientProperties properties = new OutpatientProperties(Duration.ofMinutes(15), 1, 90, 3, 90);
+        // 缺省参数（与 V204/V705 与 Properties @DefaultValue 同源）：支付时限 15m、爽约窗口 90 天、阈值 3、
+        // 限约 90 天、tick 自续期开
+        OutpatientProperties properties = new OutpatientProperties(Duration.ofMinutes(15), 1, 90, 3, 90, true);
         delayEnvelopeSender = new DelayEnvelopeSender(rabbitTemplate, new EventEnvelopeCodec(new ObjectMapper()));
         service = new AppointmentServiceImpl(
                 patientContextResolver,
@@ -188,6 +193,7 @@ class AppointmentServiceImplTest {
                 delayEnvelopeSender,
                 billingPort,
                 events,
+                txTemplate(),
                 properties);
         OperatorContextHolder.set("admin001");
     }
@@ -277,6 +283,46 @@ class AppointmentServiceImplTest {
     /** 预约请求替身 */
     private AppointmentCreateRequest request(String channel) {
         return new AppointmentCreateRequest(9L, 31L, channel);
+    }
+
+    /**
+     * 无资源事务模板（nursing ExecutionConfirmCompensatorTest 同款形态）：tick 扫描逐单独立事务
+     * 边界的容器外替身，无真实资源提交（SQL 走 mock，事务语义仅承载同步边界）。
+     *
+     * @return 编程式事务模板，非空
+     */
+    private TransactionTemplate txTemplate() {
+        return new TransactionTemplate(new AbstractPlatformTransactionManager() {
+
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+                // 无资源事务令牌：同步激活由父类统一完成
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+                // 无资源 commit
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+                // 无资源 rollback：失败路径由调用方 catch 承载
+            }
+        });
+    }
+
+    /** 过期占位预约单替身（RESERVED+pay_deadline 已过 20 分钟——tick 扫描候选形态，主键/单号入参定） */
+    private Appointment timedOutReserved(String apptNo, long id) {
+        Appointment appointment =
+                reservedAppointment(ApptStatus.RESERVED, OffsetDateTime.now().minusMinutes(20), null);
+        appointment.setId(id);
+        appointment.setApptNo(apptNo);
+        return appointment;
     }
 
     // ---------------------------------------------------------------- 预约主流程
@@ -754,6 +800,68 @@ class AppointmentServiceImplTest {
         ArgumentCaptor<ApptCreditRecord> creditCaptor = ArgumentCaptor.forClass(ApptCreditRecord.class);
         verify(apptCreditRecordMapper, times(1)).insert(creditCaptor.capture());
         assertThat(creditCaptor.getValue().getRestrictFrom()).isNull();
+    }
+
+    // ------------------------------------------------- 号源超时 tick 惰性扫描（W-27 双通道兜底）
+
+    @Test
+    @DisplayName("scanAndReleaseTimedOut：过期 RESERVED 单逐单走 markTimeout 释放面（CAS+回池+credit），返回处理行数")
+    void scanReleasesEachTimedOutReservedAppointment() {
+        Appointment first = timedOutReserved("AP20260920000001", 101L);
+        Appointment second = timedOutReserved("AP20260920000002", 102L);
+        when(appointmentMapper.selectList(any())).thenReturn(List.of(first, second));
+        // markTimeout 逐单重读：两候选按序返回（快照后逐单独立事务处理）
+        when(appointmentMapper.selectOne(any())).thenReturn(first, second);
+        when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(1);
+        when(appointmentMapper.casStatus(102L, "RESERVED", "NO_SHOW")).thenReturn(1);
+        ApptNumberPool pool = activePool(PoolStatus.ACTIVE);
+        pool.setVersion(7);
+        when(apptNumberPoolMapper.selectById(31L)).thenReturn(pool);
+        when(scheduleMapper.selectById(11L)).thenReturn(schedule());
+        when(apptNumberPoolMapper.casRelease(31L, 7)).thenReturn(1);
+        when(apptCreditRecordMapper.selectCount(any())).thenReturn(0L);
+
+        int released = service.scanAndReleaseTimedOut();
+
+        // 逐单委托断言：两候选各自 CAS 置 NO_SHOW+回池+credit 行（15m 消息通道同款释放面复用）
+        assertThat(released).isEqualTo(2);
+        verify(appointmentMapper).casStatus(101L, "RESERVED", "NO_SHOW");
+        verify(appointmentMapper).casStatus(102L, "RESERVED", "NO_SHOW");
+        verify(apptNumberPoolMapper, times(2)).casRelease(31L, 7);
+        verify(apptCreditRecordMapper, times(2)).insert(any(ApptCreditRecord.class));
+    }
+
+    @Test
+    @DisplayName("scanAndReleaseTimedOut：无过期单零命中——零释放面触达（零 CAS 零重读零 credit），返回 0")
+    void scanWithNoTimedOutRowsSkipsReleaseEntirely() {
+        when(appointmentMapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(service.scanAndReleaseTimedOut()).isZero();
+
+        // 空 tick 幂等忽略：候选空即短路，逐单处理面零触达
+        verify(appointmentMapper, never()).selectOne(any());
+        verify(appointmentMapper, never()).casStatus(anyLong(), anyString(), anyString());
+        verify(apptCreditRecordMapper, never()).insert(any(ApptCreditRecord.class));
+    }
+
+    @Test
+    @DisplayName("scanAndReleaseTimedOut：扫描后并发已取号（CAS 0 行）——幂等跳过零回池零 credit，返回处理行数")
+    void scanToleratesConcurrentStateDriftViaCasIdempotency() {
+        Appointment held = timedOutReserved("AP20260920000001", 101L);
+        when(appointmentMapper.selectList(any())).thenReturn(List.of(held));
+        when(appointmentMapper.selectOne(any())).thenReturn(held);
+        // 扫描快照后患者并发取号：CAS RESERVED→NO_SHOW 影响 0 行（双通道安全锚——tick 与 15m 消息同款守卫）
+        when(appointmentMapper.casStatus(101L, "RESERVED", "NO_SHOW")).thenReturn(0);
+        Appointment taken = timedOutReserved("AP20260920000001", 101L);
+        taken.setStatus(ApptStatus.TAKEN);
+        when(appointmentMapper.selectById(101L)).thenReturn(taken);
+
+        assertThat(service.scanAndReleaseTimedOut()).isEqualTo(1);
+
+        // 幂等面断言：零回池零 credit 零占位键删除（已取号单禁二次释放）
+        verify(apptNumberPoolMapper, never()).casRelease(anyLong(), anyInt());
+        verify(apptCreditRecordMapper, never()).insert(any(ApptCreditRecord.class));
+        verify(redisTemplate, never()).delete(anyString());
     }
 
     // ---------------------------------------------------------------- R1 修复环（Important-1 泄漏 + Important-2 分支覆盖）

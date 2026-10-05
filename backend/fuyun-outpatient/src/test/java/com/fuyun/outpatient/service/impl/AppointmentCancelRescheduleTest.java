@@ -91,6 +91,10 @@ import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 退号退费联动与改期服务单测（M03 FU-M03-03，Task 6 冻结用例集 11 例+覆盖率收口补例；Task 10
@@ -168,8 +172,9 @@ class AppointmentCancelRescheduleTest {
 
     @BeforeEach
     void setUp() {
-        // 缺省参数（与 V204/V705 与 Properties @DefaultValue 同源）：支付时限 15m、线上退号提前 1 日
-        OutpatientProperties properties = new OutpatientProperties(Duration.ofMinutes(15), 1, 90, 3, 90);
+        // 缺省参数（与 V204/V705 与 Properties @DefaultValue 同源）：支付时限 15m、线上退号提前 1 日、
+        // tick 自续期开（本用例集不触达 tick 面，仅满足构造器契约）
+        OutpatientProperties properties = new OutpatientProperties(Duration.ofMinutes(15), 1, 90, 3, 90, true);
         DelayEnvelopeSender delayEnvelopeSender =
                 new DelayEnvelopeSender(rabbitTemplate, new EventEnvelopeCodec(new ObjectMapper()));
         service = new AppointmentServiceImpl(
@@ -186,6 +191,7 @@ class AppointmentCancelRescheduleTest {
                 delayEnvelopeSender,
                 billingPort,
                 events,
+                txTemplate(),
                 properties);
         OperatorContextHolder.set("admin001");
     }
@@ -193,6 +199,37 @@ class AppointmentCancelRescheduleTest {
     @AfterEach
     void tearDown() {
         OperatorContextHolder.clear();
+    }
+
+    /**
+     * 无资源事务模板（AppointmentServiceImplTest 同款替身）：tick 扫描逐单独立事务边界的
+     * 容器外承载，无真实资源提交。
+     *
+     * @return 编程式事务模板，非空
+     */
+    private TransactionTemplate txTemplate() {
+        return new TransactionTemplate(new AbstractPlatformTransactionManager() {
+
+            @Override
+            protected Object doGetTransaction() {
+                return new Object();
+            }
+
+            @Override
+            protected void doBegin(Object transaction, TransactionDefinition definition) {
+                // 无资源事务令牌：同步激活由父类统一完成
+            }
+
+            @Override
+            protected void doCommit(DefaultTransactionStatus status) {
+                // 无资源 commit
+            }
+
+            @Override
+            protected void doRollback(DefaultTransactionStatus status) {
+                // 无资源 rollback：失败路径由调用方 catch 承载
+            }
+        });
     }
 
     // ---------------------------------------------------------------- 替身构造

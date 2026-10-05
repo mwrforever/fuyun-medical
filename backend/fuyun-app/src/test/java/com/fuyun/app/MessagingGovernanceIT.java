@@ -9,6 +9,7 @@ import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.common.messaging.MessageIdempotencyService;
 import com.fuyun.common.messaging.ReceivedEventRecord;
 import com.fuyun.integration.api.ConsumerQueueSpec;
+import com.fuyun.integration.api.DelayQueueSpec;
 import com.fuyun.integration.api.MessagingGovernance;
 import com.fuyun.integration.constants.MessagingConstants;
 import com.fuyun.system.api.DictPublishedPayload;
@@ -31,8 +32,12 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.Declarable;
 import org.springframework.amqp.core.Declarables;
 import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.QueueBuilder;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,15 +66,17 @@ import org.testcontainers.utility.MountableFile;
  * 有界重试耗尽进 fy.dlx 死信落库（PENDING 留痕）、治理构件副作用（订阅自动登记 + 死信统一队列声明）。
  *
  * <p>容器三件套与 {@link SmokeStackIT} 完全同款（tag 与 deploy compose 严格一致 + it/rabbitmq.conf
- * 挂载 + static 类级共享 + @ServiceConnection），本类独立声明容器不改 SmokeStackIT。不含 fy.delay
- * TTL 到期时延断言（TASK.md T-R3-4 为压测待调研项，PR-2 只落声明构件）；不引入 awaitility（轮询
- * + 闩锁超时已覆盖等待语义）。
+ * 挂载 + static 类级共享 + @ServiceConnection），本类独立声明容器不改 SmokeStackIT。fy.delay TTL
+ * 到期转发时延断言已由 T-R3-4 探针用例承载（@Order(6)：测试专用 2s 短档位实测转发时延
+ * ∈ [TTL, TTL+5s]；P2 PR-4E Task 8 解冻落盘——原「压测待调研项、PR-2 只落声明构件」注记作废，
+ * D-21 类文档适配申报）；不引入 awaitility（轮询 + 闩锁超时已覆盖等待语义）。
  *
  * <p>消费承接形态：简报 §4.4"参数 String 承接"在 spring-amqp 3.2 实证下不可直连（Jackson 转换器
  * 对 String 目标无法还原 JSON 对象原文），落地为 raw {@code Message} 承接原文 + UTF-8 解码为
  * String 后经 codec 解析——"原文进 codec、__TypeId__ 不作消费依据"的 CF-1 语义不变。
  *
- * <p>五步断言按序执行（@Order 串联断言链，消费状态跨步累积属业务链路语义）。
+ * <p>六步断言按序执行（@Order 串联断言链，消费状态跨步累积属业务链路语义；T-R3-4 探针 @Order(6)
+ * 尾位携带独立拓扑，与前五步无状态耦合）。
  */
 @Testcontainers
 @SpringBootTest
@@ -127,6 +134,21 @@ class MessagingGovernanceIT {
     /** 幂等台账查询轮询间隔：死信落库为异步链路，200ms 步进轮询足够收敛 */
     private static final long POLL_INTERVAL_MILLIS = 200L;
 
+    /** T-R3-4 探针：短 TTL 档位业务段（declareDelayQueue 命名规则禁点；测试专用拓扑随容器销毁） */
+    private static final String PROBE_DELAY_BUSINESS = "probe-ttl-2s";
+
+    /** T-R3-4 探针：到期回投 fy.topic 的目标路由键（非事件不入 event_registry——tick 豁免同族口径） */
+    private static final String PROBE_ROUTING_KEY = "outpatient.probe-ttl.tick";
+
+    /** T-R3-4 探针消费队列名（自声明——探针键无登记面，declareConsumerQueue 不适用；照 tick 队列自声明形态） */
+    private static final String PROBE_QUEUE = "q.it.probe-ttl.tick";
+
+    /** T-R3-4 探针：档位 TTL（2s 真实驻留到期语义） */
+    private static final Duration PROBE_TTL = Duration.ofSeconds(2);
+
+    /** T-R3-4 探针：拉取与断言容忍窗上界（TTL+5s——超窗未达即失败留痕） */
+    private static final Duration PROBE_TOLERANCE = PROBE_TTL.plusSeconds(5);
+
     /** JDBC 模板：V5 种子登记行、幂等台账与死信台账的业务断言通道 */
     private final JdbcTemplate jdbcTemplate;
 
@@ -145,16 +167,20 @@ class MessagingGovernanceIT {
     /** 测试消费者 Bean：业务计数与放行锚点的真实载体 */
     private final ItDictPublishedConsumer consumer;
 
+    /** 消息治理构件：T-R3-4 探针动态声明测试专用延迟档位（declareDelayQueue） */
+    private final MessagingGovernance governance;
+
     /**
      * 构造器注入：Spring 6.2 测试构造器默认按注解识别（annotated 模式），须显式标注 @Autowired
      * 方可让 SpringExtension 从上下文解析各依赖；非空，来源为 fuyun-app test 上下文自动装配。
      *
      * @param jdbcTemplate   JDBC 模板，用于登记行/台账断言
-     * @param amqpAdmin      RabbitAdmin，用于死信统一队列声明断言
-     * @param rabbitTemplate RabbitTemplate，用于发布信封
+     * @param amqpAdmin      RabbitAdmin，用于死信统一队列声明断言与探针拓扑动态声明
+     * @param rabbitTemplate RabbitTemplate，用于发布信封与探针帧拉取
      * @param codec          信封编解码器，用于创建合规信封
      * @param objectMapper   全局定制 ObjectMapper，用于 payload 线格式对照
      * @param consumer       测试消费者 Bean，承载业务计数与消费锚点
+     * @param governance     消息治理构件，用于 T-R3-4 探针延迟档位声明
      */
     @Autowired
     MessagingGovernanceIT(
@@ -163,13 +189,15 @@ class MessagingGovernanceIT {
             RabbitTemplate rabbitTemplate,
             EventEnvelopeCodec codec,
             ObjectMapper objectMapper,
-            ItDictPublishedConsumer consumer) {
+            ItDictPublishedConsumer consumer,
+            MessagingGovernance governance) {
         this.jdbcTemplate = jdbcTemplate;
         this.amqpAdmin = amqpAdmin;
         this.rabbitTemplate = rabbitTemplate;
         this.codec = codec;
         this.objectMapper = objectMapper;
         this.consumer = consumer;
+        this.governance = governance;
     }
 
     /**
@@ -410,6 +438,78 @@ class MessagingGovernanceIT {
         assertThat(amqpAdmin.getQueueProperties(QUEUE_NAME)).isNotNull();
         assertThat(amqpAdmin.getQueueProperties(MessagingConstants.QUEUE_DEAD_LETTER))
                 .isNotNull();
+    }
+
+    @Test
+    @Order(6)
+    @DisplayName("T-R3-4 探针实测：fy.delay 2s 档位 TTL 到期经 DLX 回投 fy.topic，转发时延 ∈ [TTL, TTL+5s]（D-21 解冻）")
+    void delayQueueTtlForwardingLatencyProbe() throws Exception {
+        declareProbeTopology();
+
+        // 投帧时刻即计时起点：fy.delay 以档位队列名为路由键（declareDelayQueue 绑定形态）
+        long sentAtNanos = System.nanoTime();
+        rabbitTemplate.convertAndSend(
+                MessagingConstants.EXCHANGE_DELAY,
+                MessagingConstants.DELAY_QUEUE_PREFIX + PROBE_DELAY_BUSINESS,
+                "ttl-probe-frame");
+
+        Message forwarded = awaitProbeFrame();
+        assertThat(forwarded)
+                .as("探针帧未在 %s 内经 fy.delay 到期回投 fy.topic", PROBE_TOLERANCE)
+                .isNotNull();
+        long forwardingDelayMillis =
+                Duration.ofNanos(System.nanoTime() - sentAtNanos).toMillis();
+
+        // 载荷原样到达：String 载荷经 Boot JSON 转换器出线为带引号线格式——以同源 ObjectMapper
+        // 解码回原文断言（TTL 到期转发不改写消息体）
+        assertThat(objectMapper.readValue(forwarded.getBody(), String.class)).isEqualTo("ttl-probe-frame");
+        // 时延断言：下界=TTL（防提前转发——档位驻留语义），上界=TTL+5s 容忍窗（CI 抖动余量）
+        assertThat(forwardingDelayMillis)
+                .as("fy.delay TTL 到期转发时延（档位=%s，TTL=%s）", PROBE_DELAY_BUSINESS, PROBE_TTL)
+                .isBetween(PROBE_TTL.toMillis(), PROBE_TOLERANCE.toMillis());
+    }
+
+    /**
+     * 动态声明探针拓扑（T-R3-4）：测试专用 2s 短 TTL 档位经治理构件 declareDelayQueue（A.5-7
+     * 延迟档位语义——无先登记校验）逐项显式 declare；探针消费队列自声明（照 tick 队列自声明
+     * 形态：durable + 显式 quorum + 死信指向 fy.dlx + fy.topic 绑定探针键）。拓扑随容器销毁，
+     * 不进任何生产装配。
+     */
+    private void declareProbeTopology() {
+        Declarables delaySlot =
+                governance.declareDelayQueue(new DelayQueueSpec(PROBE_DELAY_BUSINESS, PROBE_TTL, PROBE_ROUTING_KEY));
+        for (Declarable declarable : delaySlot.getDeclarables()) {
+            if (declarable instanceof Queue queue) {
+                amqpAdmin.declareQueue(queue);
+            } else if (declarable instanceof Binding binding) {
+                amqpAdmin.declareBinding(binding);
+            }
+        }
+        amqpAdmin.declareQueue(QueueBuilder.durable(PROBE_QUEUE)
+                .quorum()
+                .deadLetterExchange(MessagingConstants.EXCHANGE_DLX)
+                .build());
+        amqpAdmin.declareBinding(new Binding(
+                PROBE_QUEUE,
+                Binding.DestinationType.QUEUE,
+                MessagingConstants.EXCHANGE_TOPIC,
+                PROBE_ROUTING_KEY,
+                null));
+    }
+
+    /**
+     * 轮询 basicGet 拉取探针帧（类既定约定不引入 awaitility）：单次等待 200ms 步进，总窗
+     * TTL+5s——超窗返回 null 交断言失败留痕。
+     *
+     * @return 到达的探针帧；超窗未达返回 null
+     */
+    private Message awaitProbeFrame() {
+        long deadlineNanos = System.nanoTime() + PROBE_TOLERANCE.toNanos();
+        Message received = null;
+        while (received == null && System.nanoTime() < deadlineNanos) {
+            received = rabbitTemplate.receive(PROBE_QUEUE, POLL_INTERVAL_MILLIS);
+        }
+        return received;
     }
 
     /**
