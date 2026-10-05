@@ -14,7 +14,7 @@ import org.springframework.http.HttpStatus;
  * 护理域频控守卫（PR-4E Task 6，A-6 不良事件上报限频 + A-8 PDA 枚举探测冷却）：
  * 以 Redis INCR+EXPIRE 承载两类效率层防线——
  * <ul>
- *   <li>A-6 上报限频（窗口计数族 {@link #checkWithinWindow}）：每操作者固定窗口内上报
+ *   <li>A-6 上报限频（窗口计数族 {@link #checkWithinWindow}）：每操作者滑动窗口内上报
  *       次数上限（10 次/分钟），超阈拒绝——防脚本批量刷单污染不良事件统计与 id 83 事件面。</li>
  *   <li>A-8 PDA 枚举冷却（冷却族 {@link #checkNotCooling} / {@link #recordProbeFailure} /
  *       {@link #clearFailureCount}）：PDA 标识解析端点可被用于枚举探测他人证件号（反复试错
@@ -26,9 +26,9 @@ import org.springframework.http.HttpStatus;
  * PDA identifier 含证件号属敏感字段明文禁入 Redis 键；operatorId 虽非敏感也统一摘要，
  * 简单一致且日志以摘要前 8 位留痕锚）：
  * <ul>
- *   <li>计数键 {@code fy:nursing:{space}:{digest}}——窗口计数（首次计数置 TTL 固定窗口）与
- *       失败计数（每次失败续期 TTL，StormGuard 自愈续期同款，杜绝进程异常遗留永久键）共用
- *       形态，业务段隔离互不冲突；解析成功即删除失败计数键（「连续」语义：成功打断计数）。</li>
+ *   <li>计数键 {@code fy:nursing:{space}:{digest}}——窗口计数与失败计数（均每次计数/失败
+ *       无条件续期 TTL——滑窗自愈续期，StormGuard 同款，杜绝 INCR 后 EXPIRE 失败遗留永久键）
+ *       共用形态，业务段隔离互不冲突；解析成功即删除失败计数键（「连续」语义：成功打断计数）。</li>
  *   <li>冷却标记键 {@code fy:nursing:{space}-cool:{digest}}——达阈值时置位，TTL=冷却时长，
  *       到期自然解除。</li>
  * </ul>
@@ -56,7 +56,7 @@ public class NursingRateGuard {
     /** A-6 上报限频：每操作者窗口内上报次数上限（10 次——正常护士单分钟内不可能连续上报 10 单） */
     public static final int REPORT_LIMIT = 10;
 
-    /** A-6 上报限频：计数窗口 60 秒（固定窗口，首计置 TTL 到期整窗重置） */
+    /** A-6 上报限频：计数窗口 60 秒（滑窗语义：每次计数续期 TTL，静默满窗自然重置——评审 C-F2/A-2 修复后口径） */
     public static final long REPORT_WINDOW_MS = 60_000L;
 
     /** A-8 PDA 枚举探测：连续解析失败阈值（5 次——PortalCredentialRateGuard 同锚，
@@ -85,9 +85,12 @@ public class NursingRateGuard {
     }
 
     /**
-     * 窗口计数判定（A-6 上报限频原语）：INCR 计数 + 首次计数置窗口 TTL（固定窗口——非首计
-     * 不续期，到期整窗重置），计数 ≤ 上限放行 true / 超阈 false；Redis 异常降级放行 true
-     * （warn 留痕，频控缺失不阻断医护主链路，StormGuard 同款）。
+     * 窗口计数判定（A-6 上报限频原语）：INCR 计数 + 每次计数无条件续期窗口 TTL（滑窗自愈——
+     * 评审 C-F2/A-2 修复：仅 count==1 置 TTL 时，INCR 成功后 EXPIRE 异常被降级放行会遗留
+     * 无 TTL 永久键，该操作者第 limit+1 次起永久 429 且无自愈出口；改每次续期后，偶发
+     * EXPIRE 失败遗留的键由任意后续计数自愈续期，与 {@link #recordProbeFailure} 每次续期
+     * 同款），计数 ≤ 上限放行 true / 超阈 false；Redis 异常降级放行 true（warn 留痕，
+     * 频控缺失不阻断医护主链路，StormGuard 同款）。
      *
      * @param space    业务段（如 report-freq——计数键的业务隔离成分），非空
      * @param key      计数键成分（如操作者标识），非空；统一内部摘要，明文禁入 Redis 键
@@ -103,10 +106,10 @@ public class NursingRateGuard {
             if (count == null) {
                 return true;
             }
-            if (count == 1L) {
-                // 缓存写操作：仅首次计数设置窗口 TTL（固定窗口语义；禁无过期键）
-                redisTemplate.expire(countKey, Duration.ofMillis(windowMs));
-            }
+            // 缓存写操作：每次计数无条件续期窗口 TTL（评审 C-F2/A-2 修复：仅 count==1 置 TTL 时
+            // INCR 后 EXPIRE 失败被 catch 放行会遗留无 TTL 永久键——该操作者超阈后永久 429 无
+            // 自愈；每次续期即滑窗语义，EXPIRE 偶发失败由后续计数自愈，禁无过期键）
+            redisTemplate.expire(countKey, Duration.ofMillis(windowMs));
             return count <= limit;
         } catch (RuntimeException e) {
             // Redis 降级：频控为效率层防线，计数失败放行（warn 留痕，不阻断上报主链路可用性）

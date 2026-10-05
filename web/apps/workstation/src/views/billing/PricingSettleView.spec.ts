@@ -5,13 +5,15 @@
 // 支付方式参数化（W-41）：默认自费档 preview 出网携 SELF_PAY、切医保档 preview 携所选值且
 // 确认结算被前置守卫拦截零出网（医保 payments 组装形态归 W-80，勿造）、确认文案随所选
 // 支付方式中文标签联动（不再硬编码「现金」）；切档即作废预结算草稿（W-41 补）：医保
-// PRESETTLED 草稿切回自费档不得跨档存活——按钮回禁用态拦截结算，强点亦零出网。
+// PRESETTLED 草稿切回自费档不得跨档存活——按钮回禁用态拦截结算，强点亦零出网；
+// preview 在途切档竞态（评审 D-1/E-1）：医保档在途回包切自费档后落地不得复活草稿；
+// 拦截文案参数化（评审 D-2）：商业保险档不再统称医保，文案随所选档中文标签联动。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox, ElSelect } from 'element-plus';
 import { listFees, manualCharge, previewSettlement, quote, settle } from '@/api/billing';
-import type { FeeRecordVO } from '@/api/billing';
+import type { FeeRecordVO, SettlementPreviewVO } from '@/api/billing';
 import PricingSettleView from './PricingSettleView.vue';
 
 vi.mock('@/api/billing', () => ({
@@ -262,6 +264,87 @@ describe('划价结算页', () => {
     // 被全现金结算的形态被彻底阻断（断言业务结果，不绑定拦截层归属）
     await settleBtn?.trigger('click');
     await flushPromises();
+    expect(vi.mocked(ElMessageBox.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(settle)).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('preview 在途切档竞态守卫：旧档慢回包落地不复活草稿，settle 零出网（D-1/E-1）', async () => {
+    // 复现评审 D-1/E-1 缺口：医保档 preview 在途挂起 → 切回自费档（watch 清空草稿）→
+    // 旧档（医保）慢回包落地。若回包无条件赋值，医保 PRESETTLED 草稿复活而当前档为
+    // SELF_PAY——settle 守卫放行，医保单被全 CASH 结算（勾稽语义错位）
+    let releasePreview: (vo: SettlementPreviewVO) => void = () => {};
+    vi.mocked(previewSettlement).mockImplementationOnce(
+      () => new Promise((resolve) => (releasePreview = resolve)) as never,
+    );
+    const wrapper = mount(PricingSettleView);
+    await wrapper.find('input[placeholder="患者号"]').setValue('1932000000000000002');
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V001');
+    // 医保档发起预结算：回包挂起至用例放行（在途窗口）
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'CITY_INS');
+    await flushPromises();
+    await clickButton(wrapper, '预结算');
+    await vi.waitFor(() => {
+      expect(vi.mocked(previewSettlement)).toHaveBeenCalled();
+    });
+    // 在途期间切回自费档：watch 已按切档作废语义清场，当前档位锚定为 SELF_PAY
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'SELF_PAY');
+    await flushPromises();
+
+    // 清掉前置流程与跨用例累积的调用史，只断言旧回包落地后的行为
+    vi.mocked(ElMessage.warning).mockClear();
+    vi.mocked(ElMessageBox.confirm).mockClear();
+    vi.mocked(settle).mockClear();
+
+    // 旧档（医保）慢回包晚到：携带 PRESETTLED 草稿——过期回包整包丢弃，不得复活
+    releasePreview({
+      settleNo: 'SN-20260918-005',
+      totalAmount: '7000',
+      payerType: 'CITY_INS',
+      status: 'PRESETTLED',
+    });
+    await flushPromises();
+
+    // 草稿不复活：确认结算按钮回禁用态（旧医保草稿未跨档存活）
+    const settleBtn = wrapper.findAll('button').find((b) => b.text() === '确认结算');
+    expect(settleBtn?.attributes('disabled')).toBeDefined();
+
+    // 纵深验证：程序化强点亦不进确认弹框、settle 零出网（与切档作废用例同款双锚）
+    await settleBtn?.trigger('click');
+    await flushPromises();
+    expect(vi.mocked(ElMessageBox.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(settle)).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('商业保险档拦截文案不称医保：warning 随所选档中文标签参数化（D-2）', async () => {
+    vi.mocked(previewSettlement).mockResolvedValue({
+      settleNo: 'SN-20260918-006',
+      totalAmount: '7000',
+      payerType: 'COMM_INS',
+      status: 'PRESETTLED',
+    });
+    const wrapper = mount(PricingSettleView);
+    await wrapper.find('input[placeholder="患者号"]').setValue('1932000000000000002');
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V001');
+    // 商业保险档预结算成功（按钮回启用），拦截文案须随档位标签而非统称医保
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'COMM_INS');
+    await flushPromises();
+    await clickButton(wrapper, '预结算');
+    await vi.waitFor(() => {
+      expect(vi.mocked(previewSettlement)).toHaveBeenCalled();
+    });
+
+    vi.mocked(ElMessage.warning).mockClear();
+    vi.mocked(ElMessageBox.confirm).mockClear();
+    vi.mocked(settle).mockClear();
+    await clickButton(wrapper, '确认结算');
+    await flushPromises();
+
+    // 文案参数化锚：携所选档中文标签「商业保险」，且不再出现「医保」字样（语义错位修复）
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
+      '商业保险结算通道待接入，当前仅支持自费结算（可先预览商业保险拆分）',
+    );
     expect(vi.mocked(ElMessageBox.confirm)).not.toHaveBeenCalled();
     expect(vi.mocked(settle)).not.toHaveBeenCalled();
     wrapper.unmount();

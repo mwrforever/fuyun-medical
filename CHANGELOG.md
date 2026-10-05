@@ -2,6 +2,23 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-05 · P2 PR-4E 收口修复环 R1（五路评审 must-fix 三主项+顺手三项）
+
+- 交付：A-1 settle 非自费单 fail-closed（结算单 payerType≠SELF_PAY 抛 BILL-1015 409，payments
+  非自费组装形态归 W-80，拒绝≠造形态）+C-F2/A-2 频控窗口每次续期自愈（checkWithinWindow
+  滑窗化，杜绝 INCR 后 EXPIRE 失败遗留永久键锁死操作者）+D-1/E-1 收费页 preview 在途切档
+  竞态守卫（payerType 发起锚定、回包不一致整包丢弃）+D-2 拦截文案随所选档中文标签参数化
+  （商业保险档不再统称医保）+B-1 判别子对照用例门诊行补 m04OrderNo:null 显式线格式（billing/
+  outpatient 两侧各一行）+E-3 恰阈值 10L 边界用例；评审档案 `.superpowers/code-review-pr4e/
+  findings-*.md`，修复环报告 `.superpowers/code-review-pr4e/fix-round-R1.md`。
+- **D-21 断言现代化申报（逐次批准，单点单次）**：NursingRateGuardTest.windowCountRejectsOverLimit
+  断言「非首计 never expire（固定窗口锚）」→「每次调用 expire 续期（滑窗自愈锚）」——原断言
+  冻结的恰是 C-F2 点名的脆弱实现细节（无 TTL 永久键→操作者第 11 次起永久 429 无自愈）；新断言
+  较原多锚一次 expire 且叠加恰阈值 10L 放行回归锚，严格度不低于原；断言修订+实现变更+回归锚
+  同 PR 交付零混入（批准出处=本修复环工单 R1-3 指令）。
+- 门禁：backend billing/outpatient/nursing 三模块 `mvn verify -DskipITs` 全绿（Spotless+单测+
+  JaCoCo 双阈值）；web `pnpm lint/type-check/test/format:check` 四连全绿（workstation 361 用例）。
+
 ## 2026-10-05 · P2 PR-4E 立项（事件与工单收敛包）
 
 - 占用迁移号 V1115（integration.event_registry id 17 billing.fee.created payload_desc 追加

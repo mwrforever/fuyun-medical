@@ -30,7 +30,8 @@ import org.springframework.http.HttpStatus;
 /**
  * 护理频控守卫单测（PR-4E Task 6，A-6 上报限频 + A-8 PDA 枚举冷却）：双方法族 Redis 键契约
  * （fy:nursing: 前缀 + SHA-256 摘要成分——operatorId/identifier 明文禁入键）、窗口计数判定
- * （首次 EXPIRE 固定窗口、≤上限放行/超阈拒绝）、连续失败阈值置冷却（第 5 次置 30m 冷却标记）、
+ * （每次 EXPIRE 续期滑窗自愈——评审 C-F2/A-2 修复后契约、恰上限放行/超阈拒绝）、连续失败
+ * 阈值置冷却（第 5 次置 30m 冷却标记）、
  * 成功清零（连续语义打断面）、冷却中 429 NS-1030 拒绝与 Redis 异常降级放行（效率层防线不阻断
  * 医护主链路，StormGuard 同款口径）。真栈 TTL 语义由部署环境验证，本单测锚定判定面契约。
  */
@@ -74,7 +75,7 @@ class NursingRateGuardTest {
     // ===================== 窗口计数族（A-6 上报限频） =====================
 
     @Test
-    @DisplayName("窗口内放行：首次计数 INCR=1 且 ≤ 上限返回 true，首计即置 60s 窗口 TTL（禁无过期键）")
+    @DisplayName("窗口内放行：首次计数 INCR=1 且 ≤ 上限返回 true，计数即续期 60s 窗口 TTL（禁无过期键）")
     void windowCountPassesWithinLimit() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(REPORT_COUNT_KEY)).thenReturn(1L);
@@ -83,13 +84,27 @@ class NursingRateGuardTest {
                         REPORT_SPACE, OPERATOR, NursingRateGuard.REPORT_LIMIT, NursingRateGuard.REPORT_WINDOW_MS))
                 .isTrue();
 
-        // 计数面断言：INCR 计数键 + 首次计数设置 60 秒窗口（固定窗口——非首计不续期）
+        // 计数面断言：INCR 计数键 + 计数即续期 60 秒窗口（滑窗自愈——每次调用都 expire）
         verify(valueOperations).increment(REPORT_COUNT_KEY);
         verify(redisTemplate).expire(REPORT_COUNT_KEY, Duration.ofSeconds(60));
     }
 
     @Test
-    @DisplayName("超阈拒绝：窗口内第 11 次计数返回 false（A-6 每操作者 10 次/分钟上限）")
+    @DisplayName("恰阈值边界：第 10 次计数=上限仍放行 true（count<limit 误改即第 10 次误拒不红）")
+    void windowCountPassesAtExactLimit() {
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.increment(REPORT_COUNT_KEY)).thenReturn(10L);
+
+        assertThat(guard.checkWithinWindow(
+                        REPORT_SPACE, OPERATOR, NursingRateGuard.REPORT_LIMIT, NursingRateGuard.REPORT_WINDOW_MS))
+                .isTrue();
+
+        // ≤ 语义边界锚：上限 10 次本身合法（第 11 次才拒），且恰阈值计数同样续期窗口
+        verify(redisTemplate).expire(REPORT_COUNT_KEY, Duration.ofSeconds(60));
+    }
+
+    @Test
+    @DisplayName("超阈拒绝：窗口内第 11 次计数返回 false（A-6 每操作者 10 次/分钟上限），计数仍续期窗口（滑窗自愈）")
     void windowCountRejectsOverLimit() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.increment(REPORT_COUNT_KEY)).thenReturn(11L);
@@ -98,8 +113,10 @@ class NursingRateGuardTest {
                         REPORT_SPACE, OPERATOR, NursingRateGuard.REPORT_LIMIT, NursingRateGuard.REPORT_WINDOW_MS))
                 .isFalse();
 
-        // 固定窗口锚：非首次计数不续期 TTL（窗口到期整窗重置，杜绝持续续期滑窗）
-        verify(redisTemplate, never()).expire(anyString(), any(Duration.class));
+        // 滑窗自愈锚（评审 C-F2/A-2 修复，D-21 断言现代化）：超阈计数也无条件续期 TTL——
+        // 仅 count==1 置 TTL 时 INCR 后 EXPIRE 失败会遗留无 TTL 永久键，该操作者第 11 次
+        // 起永久 429 无自愈出口；每次续期后 EXPIRE 失败遗留的键由任意后续计数自愈续期
+        verify(redisTemplate).expire(REPORT_COUNT_KEY, Duration.ofSeconds(60));
     }
 
     @Test

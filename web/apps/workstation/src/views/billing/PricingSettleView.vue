@@ -225,13 +225,23 @@ async function handlePreview(): Promise<void> {
     void ElMessage.warning('请输入患者号');
     return;
   }
+  // 发起时锚定当前支付方式（D-1/E-1 在途竞态守卫，本页 loadFees 的 visitId 锚定丢弃 /
+  // usePagedList 序号守卫同族）：await 挂起期间切档，watch 已按作废语义清场，旧档慢回包
+  // 晚到若无条件赋值将复活跨档草稿（医保 PRESETTLED+当前自费档→settle 守卫放行→医保单
+  // 全 CASH 结算）——回包时档位已变即整包丢弃，强制按新档重做预结算
+  const payerTypeAtRequest = payerType.value;
   previewing.value = true;
   try {
-    preview.value = await previewSettlement({
+    const vo = await previewSettlement({
       patientId: patientId.value.trim(),
       visitId: visitId.value.trim(),
       payerType: payerType.value,
     });
+    // 过期回包丢弃：旧档慢回包不得复活已清空的草稿（与切档作废 watch 强一致）
+    if (payerType.value !== payerTypeAtRequest) {
+      return;
+    }
+    preview.value = vo;
   } catch {
     // 失败弹错归响应拦截器
   } finally {
@@ -253,16 +263,22 @@ function buildPaymentLines(draft: SettlementPreviewVO): SettleRequest['payments'
 }
 
 /**
- * 确认结算：医保档前置守卫拦截（W-41）→ 弹框核对总额（文案随所选支付方式中文标签联动）→
- * settle 以预结算回传 settleNo + 支付明细出网（幂等由后端 settleNo 终态承载；就诊卡
- * CARD_BALANCE 混行随选卡页后续模块接入）。
+ * 确认结算：非自费档前置守卫拦截（W-41，文案随所选档中文标签参数化——D-2）→ 弹框核对总额
+ * （文案随所选支付方式中文标签联动）→ settle 以预结算回传 settleNo + 支付明细出网（幂等由
+ * 后端 settleNo 终态承载；就诊卡 CARD_BALANCE 混行随选卡页后续模块接入）。
  */
 async function handleSettle(): Promise<void> {
-  // W-41：医保档结算通道待接入——PaymentMethod 词表无医保基金支付通道（六值 CASH/BANK/SCAN/
-  // ONLINE/CARD_BALANCE/CHARGE_ON_CREDIT），payments 医保组装形态归 W-80 口径裁决；前置拦截防
-  // 医保单被全现金额外误结算（勾稽语义错位：基金部分将被记作现金）
+  // W-41：非自费档结算通道待接入——PaymentMethod 词表无医保基金/商保支付通道（六值 CASH/
+  // BANK/SCAN/ONLINE/CARD_BALANCE/CHARGE_ON_CREDIT），payments 非自费组装形态归 W-80 口径
+  // 裁决；前置拦截防非自费单被全现金额外误结算（勾稽语义错位：基金部分将被记作现金）
   if (payerType.value !== 'SELF_PAY') {
-    void ElMessage.warning('医保结算通道待接入，当前仅支持自费结算（可先预览医保拆分）');
+    // 拦截文案随所选档中文标签参数化（D-2）：商业保险档语义不再错位统称「医保」，
+    // 通道统一口径不变——仅自费可正式结算，可先按所选档预览拆分
+    const payerLabel =
+      PAYER_TYPE_OPTIONS.find((opt) => opt.value === payerType.value)?.label ?? '自费';
+    void ElMessage.warning(
+      `${payerLabel}结算通道待接入，当前仅支持自费结算（可先预览${payerLabel}拆分）`,
+    );
     return;
   }
   const draft = preview.value;
