@@ -250,3 +250,11 @@
 | R1-12 | §9 性能口径拆分两条：本地处理 P95 < 500ms 与"医保中心应答为外部依赖 SLA（同步调用超时上限 30s）"分列 | 90 号文档 R1-12：口径澄清（外部 SLA 不得计入本地性能考核） |
 | R4-09 | §7 M08 订阅补全为"检查登记事件（计费）+ 检查完成事件 `imaging.exam.completed`（执行占用回写）" | 90 号文档 R4-09：M08 偏差 4 检查计费双时点采纳 |
 | （事件计数） | 发布事件由 8 个增至 10 个（新增 `billing.charge.guaranteed`、`billing.arrears.approved`），与 §7 发布清单一致；两事件已列入 90 号文档 CF 契约冻结补充清单 | 90 号文档 M-5/M-10、第 3 节 MINOR 组 00-implementation-order 条目 |
+
+## 13. P2 PR-4E 落地注记（2026-10-05，feat/p2-pr4e-events-tickets）
+
+> 本节为 P2 PR-4E（事件与工单收敛包）交付面相对本 Spec 的界定与裁决声明；
+> PR-4E 口径以本节为准，Spec 正文不回改。
+
+1. **fee.created 载荷 visitType 组件（W-67b 净解，V1115 契约演进）**：`billing.fee.created` 载荷在 V605 id 17 原九组件尾部追加第十组件 `visitType`（取值 `OUT`/`IN`/`PEIS`——`VisitType.getCode()`，发布方取计费命令 `FeeGenerateCommand.visitType` @NotNull 恒填，与 `chargeSource` 同款送 code）；event_registry id 17 `payload_desc` 只增不删追加声明（V1115，双条件+幂等守卫）。消费方分流语义：outpatient 申请单推进消费方（`OutpatientFeeCreatedListener`）按 `visitType=="IN"` 跳过 `markPendingFee`（住院缴费回执不推进门诊申请单——终结 sourceRef 语义双载死信，`BillingInpatientLinkageIT` 零死信实证）；pharmacy 收费链同步消费方不受影响（处方通道守卫，住院行天然跳过）。旧版本事件帧无该组件时消费端 `asText("")` 兜底走原路径（兼容不破坏）。
+2. **dispense.completed 住院行判别子跳过（W-67a）**：billing 占用回写消费方（`BillingPharmacyOccupyListener.handleCompleted`）入口按载荷 `m04OrderNo` 在位判住院行 info 跳过直确认（住院计费归 M13 路径，占位回写是门诊语义）——与 §7「执行占用回写」条目语义并存的住院行边界声明；退药面（`handleReturned`）同族风险登记 W-92 待统筹。
