@@ -2,6 +2,22 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-05 · P2 PR-4D 立项（全量 403 鉴权包——六册流水线第五册，E 册后压轴功能册）
+
+- 立项：计划 `docs/superpowers/plans/2026-10-03-p2-pr4d-rbac-full.md` 落盘（D-28 全量端点 403
+  裁决承载）；范围=全仓 302 业务端点×角色矩阵 403（AuthorizationInterceptor+PermissionRegistry
+  启动装载+SYS-1033）+业务角色六席位与双命名空间权限点种子（API=方法前缀路径码 302 点+MENU=
+  冒号码 33 点）+登录链路 UserVO.permissions 填实（SessionUser/SessionData 扩字段+ADMIN 全量
+  导出特判）+前端 hasRoutePermission 空集语义收紧+W-90 承载（/ws/iot 哨兵订阅四主题白名单
+  防线+iot/ward Long wardId 端点入矩阵）+W-91/W-93 同族扫描索引（nurse_id/pay_deadline 部分
+  索引）+RbacMatrixIT 全量登记对照门禁；分支 feat/p2-pr4d-rbac-full（基线 dev@65f8398）。
+- 迁移号占位（先记再占）：V1116（system：全量权限点种子 302 API+33 MENU+V303 旧 6 点方法
+  前缀 UPDATE）/V1117（system：业务角色+全量绑定+演示账号族）/V1118（nursing：nurse_assignment
+  nurse_id 部分索引，W-91①）/V1119（outpatient：appointment pay_deadline 部分索引，W-93①）。
+- 主控设计裁定八项（计划 §设计裁定节定稿）：perm_code=方法+路径双键/双命名空间并存/ADMIN
+  运行期全放不种绑定行/登记面 fail-closed+未登记面放行+测试守护完整性/哨兵三端点豁免挂码/
+  业务角色六席位/演示账号族（doctordemo 增绑 DOCTOR 不动 ADMIN——13 IT 稳定）/W-90 两面承载。
+
 ## 2026-10-05 · P2 PR-4E 收口（事件与工单收敛包）
 
 - 交付：十任务全落地（立项 V1115 占号→W-67a 双消费方判别子跳过→W-67b fee.created visitType
