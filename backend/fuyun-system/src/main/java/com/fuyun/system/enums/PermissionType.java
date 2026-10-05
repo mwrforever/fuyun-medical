@@ -19,7 +19,10 @@ public enum PermissionType {
     MENU("MENU"),
 
     /** 接口权限点（perm_code = API 路径，M01 FU-M01-03） */
-    API("API");
+    API("API"),
+
+    /** 元素权限点（前端按钮/功能面板可见性，PR-4F D-33 粒度；perm_code = 四段 域:功能:btn|panel:动作） */
+    ELEMENT("ELEMENT");
 
     /** 存储值：DB 列写入（@EnumValue）与 JSON 输出（@JsonValue getCode）共用的业务 code */
     @EnumValue
