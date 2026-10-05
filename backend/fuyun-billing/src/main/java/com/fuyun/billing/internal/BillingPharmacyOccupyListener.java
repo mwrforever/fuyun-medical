@@ -13,7 +13,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 /**
  * M06 发药/退药占用回写消费侧（13-billing Spec §7「执行占用回写」PR-4 兑现）：发药完成标记
  * 费用行组 exec_occupy_status=DISPENSED（退费硬前置 BILL-1017 生效），全额退药回退 NONE
- * （解锁收费窗口退费）；部分退保持 DISPENSED（余量仍在患者侧，全退前不得退费）。
+ * （解锁收费窗口退费）；部分退保持 DISPENSED（余量仍在患者侧，全退前不得退费）；住院行
+ * （m04OrderNo 在位）判别子跳过——住院计费归 M13 路径，占位回写语义不适用（W-67a）。
  * 幂等=CAS 谓词（0 行即达成）；载荷以 JsonNode 读（禁依赖 pharmacy api——模块依赖单向）。
  * 归 internal/；Bean 注册点 BillingMessagingConfig @Import。
  */
@@ -61,8 +62,23 @@ public class BillingPharmacyOccupyListener {
         consumerSupport.consume(message, this::handleReturned);
     }
 
-    /** 业务体：NONE→DISPENSED 条件回写（缺 rxNo 即不合规帧抛出进死信留痕） */
+    /**
+     * 业务体：NONE→DISPENSED 条件回写；住院行（m04OrderNo 在位）判别子跳过——门诊占位回写
+     * 语义不适用（住院计费归 M13 InpatientChargeService 路径），info 留痕直接确认；其余缺
+     * rxNo 即不合规帧抛出进死信留痕（W-67a）。
+     */
     void handleCompleted(EventEnvelope envelope) {
+        JsonNode payload = envelope.payload();
+        // W-67 住院行判别子跳过：住院摆药签收（m04OrderNo 在位）的处方占用回写是门诊语义，
+        // 住院计费归 M13 InpatientChargeService 路径——不抛错走死信，info 留痕直接确认
+        String m04OrderNo = payload.path("m04OrderNo").asText(null);
+        if (m04OrderNo != null && !m04OrderNo.isBlank()) {
+            log.info(
+                    "dispense.completed 住院行跳过处方占用回写：dispenseNo={}，m04OrderNo={}",
+                    payload.path("dispenseNo").asText(""),
+                    m04OrderNo);
+            return;
+        }
         String rxNo = requireRxNo(envelope);
         int rows = feeRecordMapper.casMarkDispensed(rxNo);
         log.info("发药占用回写：rxNo={}，DISPENSED 行数={}", rxNo, rows);

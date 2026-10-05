@@ -3,7 +3,9 @@ package com.fuyun.nursing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -13,6 +15,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.cache.NursingRateGuard;
 import com.fuyun.nursing.dto.PdaPatrolRequest;
 import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.enums.TaskPriority;
@@ -54,7 +57,8 @@ import org.springframework.http.HttpStatus;
  * 就诊卡号/证件号）、PAT-1001 → NS-1003 错误码映射（M05 出口唯一）、FROZEN 拦截与 MERGED
  * 收敛主档、不在区降级摘要（PDA 患者查询不限在区）、脱敏输出结构断言（无证件号/手机号字段，
  * 姓名经 SensitiveMasker 掩码）、巡视打卡四参透传与扫错腕带跨患者拒收。MP 3.5.17 单测范式：
- * lambdaQuery 触达实体 @BeforeAll 手工注册表信息。
+ * lambdaQuery 触达实体 @BeforeAll 手工注册表信息。PR-4E Task 6 追加：A-8 枚举冷却组
+ * （冷却 NS-1030 透传 / 解析失败计数双常量锚 / 成功清零 / 腕带路径不计数）。
  */
 @ExtendWith(MockitoExtension.class)
 class PdaServiceImplTest {
@@ -101,6 +105,9 @@ class PdaServiceImplTest {
     @Mock
     private INursingTaskService taskService;
 
+    @Mock
+    private NursingRateGuard rateGuard;
+
     private PdaServiceImpl service;
 
     @BeforeAll
@@ -112,6 +119,7 @@ class PdaServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        // 第八参 rateGuard：A-8 标识枚举冷却（void 方法缺省零动作——冷却/计数专项用例单独打桩）
         service = new PdaServiceImpl(
                 wardPatientMapper,
                 identityQuery,
@@ -119,7 +127,8 @@ class PdaServiceImplTest {
                 allergyChecker,
                 wardMetaService,
                 vitalSignService,
-                taskService);
+                taskService,
+                rateGuard);
     }
 
     @Test
@@ -385,6 +394,75 @@ class PdaServiceImplTest {
             assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1019");
         });
         verifyNoInteractions(identityQuery, contextResolver, wardPatientMapper);
+    }
+
+    // ===================== A-8 PDA 枚举冷却用例组（PR-4E Task 6） =====================
+
+    @Test
+    @DisplayName("A-8 冷却透传：checkNotCooling 抛 NS-1030 → patientSummary 原样上抛，零解析触达")
+    void patientSummaryRejectsWhenProbeCooling() {
+        doThrow(new BizException(
+                        NursingErrorCode.PDA_PROBE_COOLING,
+                        HttpStatus.TOO_MANY_REQUESTS,
+                        "PDA 标识解析失败次数过多，已进入限流冷却，请稍后重试"))
+                .when(rateGuard)
+                .checkNotCooling("pda-probe", CARD);
+
+        assertThatThrownBy(() -> service.patientSummary(CARD)).isInstanceOfSatisfying(BizException.class, e -> {
+            // 三层逐位：错误码枚举 + NS-1030 code + 429 传输语义（频控守卫原样透传不改写）
+            assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.PDA_PROBE_COOLING);
+            assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1030");
+            assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        });
+        // 冷却前置阻断锚：解析分叉前拒绝——患者档案/病区/过敏/体征/在区行全零触达
+        verifyNoInteractions(
+                identityQuery, contextResolver, wardMetaService, allergyChecker, vitalSignService, wardPatientMapper);
+    }
+
+    @Test
+    @DisplayName("A-8 解析失败计数：resolveByIdentifier 抛 NS-1003 时 recordProbeFailure 被调（双常量锚）且原样上抛")
+    void patientSummaryCountsProbeFailureOnUnresolvableIdentifier() {
+        when(identityQuery.resolveActivePatientId("VISIT_CARD", CARD))
+                .thenThrow(new BizException(PatientErrorCode.PATIENT_NOT_FOUND, HttpStatus.NOT_FOUND, "标识未登记或已失效"));
+
+        assertThatThrownBy(() -> service.patientSummary(CARD)).isInstanceOfSatisfying(BizException.class, e -> {
+            assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.VISIT_ID_INVALID);
+            assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1003");
+        });
+        // 失败计数挂点锚：仅卡号/证件号解析路径计数（A-8 阈值/冷却双常量逐位），且失败面不清零
+        verify(rateGuard)
+                .recordProbeFailure("pda-probe", CARD, NursingRateGuard.PDA_THRESHOLD, NursingRateGuard.PDA_COOL_MS);
+        verify(rateGuard, never()).clearFailureCount(any(), any());
+    }
+
+    @Test
+    @DisplayName("A-8 解析成功清零：clearFailureCount 被调（成功打断连续失败语义的打断面）")
+    void patientSummaryClearsProbeCountOnSuccessfulResolve() {
+        when(identityQuery.resolveActivePatientId("VISIT_CARD", CARD)).thenReturn(PATIENT_ID);
+        when(contextResolver.resolve(PATIENT_ID)).thenReturn(context(PATIENT_ID, PATIENT_ID, "NORMAL", false));
+        when(wardPatientMapper.selectList(any())).thenReturn(List.of());
+        when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
+
+        service.patientSummary(CARD);
+
+        verify(rateGuard).clearFailureCount("pda-probe", CARD);
+    }
+
+    @Test
+    @DisplayName("A-8 腕带编码路径不计数：requireInWardByVisit 非 resolveByIdentifier——计数与清零双零触达")
+    void patientSummaryVisitCodePathSkipsProbeCounting() {
+        when(wardPatientMapper.selectOne(any())).thenReturn(wardRow(VISIT, PATIENT_ID, WARD));
+        when(contextResolver.resolve(PATIENT_ID)).thenReturn(context(PATIENT_ID, PATIENT_ID, "NORMAL", false));
+        when(wardMetaService.detail(VISIT)).thenReturn(detailVO(WARD, BED, "NORMAL", "张三", 0));
+        when(allergyChecker.listActiveAllergies(PATIENT_ID)).thenReturn(List.of());
+        when(vitalSignService.latestByPatient(PATIENT_ID)).thenReturn(null);
+
+        service.patientSummary(VISIT);
+
+        // visitCode 路径不算枚举探测失败（在区行定位语义）：失败计数与成功清零均零触达
+        verify(rateGuard, never()).recordProbeFailure(any(), any(), anyInt(), anyLong());
+        verify(rateGuard, never()).clearFailureCount(any(), any());
     }
 
     @Test

@@ -200,6 +200,27 @@ class DispenseSignoffLinkageIT extends FuyunStackITBase {
         return n == null ? 0 : n;
     }
 
+    /**
+     * 指定消费模块（billing/outpatient）对该事件族的 PROCESSED 台账行数——住院行零死信断言的
+     * 收敛锚：判别子跳过=方法直返即 ack 即 PROCESSED 登记，两消费方收敛后再查死信台账。
+     */
+    private long consumerProcessedCount(String consumerModule) {
+        Long n = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM integration.received_event"
+                        + " WHERE event_type = ? AND consumer_module = ? AND status = 'PROCESSED'",
+                Long.class,
+                PharmacyMessagingConstants.EVENT_DISPENSE_COMPLETED,
+                consumerModule);
+        return n == null ? 0 : n;
+    }
+
+    /** pharmacy 事件族死信台账行数（W-67 零死信断言锚——分流前住院摆药签收帧在此堆积）。 */
+    private long pharmacyDeadLetterCount() {
+        Long n = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM integration.dead_letter WHERE event_type LIKE 'pharmacy%'", Long.class);
+        return n == null ? 0 : n;
+    }
+
     /** 监测挂接行数（PIVAS 升格建链断言锚）。 */
     private int monitorLinkCount() {
         Integer n = jdbcTemplate.queryForObject(
@@ -256,6 +277,10 @@ class DispenseSignoffLinkageIT extends FuyunStackITBase {
     void inpatientRowDrivesSignoffAndInfusionUpgrade() {
         seedExecution(SNAPSHOT_ROW_ID, SNAPSHOT_EXECUTION, INPATIENT_ORDER, null);
         seedExecution(PLAN_ROW_ID, PLAN_EXECUTION, INPATIENT_ORDER, INPATIENT_PLAN);
+        // W-67 零死信断言基线：billing/outpatient 两消费方 PROCESSED 计数与死信台账行数（注入前锚）
+        long billingProcessedBefore = consumerProcessedCount("billing");
+        long outpatientProcessedBefore = consumerProcessedCount("outpatient");
+        long deadLettersBefore = pharmacyDeadLetterCount();
         publishDispenseCompleted(
                 "it-sign-inpatient", INPATIENT_ORDER, "INPATIENT_PIVA", "DP-IT-SIGN-0001", "TR-IT-SIGN-001");
         awaitUntil("住院行执行单批量 SIGNED（快照行+计划行）", () -> executionCount(INPATIENT_ORDER, "SIGNED") == 2);
@@ -272,6 +297,17 @@ class DispenseSignoffLinkageIT extends FuyunStackITBase {
                 PLAN_EXECUTION);
         assertThat(link.get("bag_label_code")).as("袋签码=lines 首个溯源码推导").isEqualTo("TR-IT-SIGN-001");
         assertThat(link.get("link_status")).as("建链初始态=监测中").isEqualTo("MONITORING");
+        // W-67：住院行注入后 billing/outpatient 两消费方入口判别子跳过（此前实测=每次住院摆药
+        // 签收 8 行死信台账）——先锚两消费方 PROCESSED 收敛（跳过=直返 ack），再断言死信零新增
+        awaitUntil(
+                "住院行 billing 消费方 PROCESSED 收敛（判别子跳过直确认）",
+                () -> consumerProcessedCount("billing") >= billingProcessedBefore + 1);
+        awaitUntil(
+                "住院行 outpatient 消费方 PROCESSED 收敛（判别子跳过直确认）",
+                () -> consumerProcessedCount("outpatient") >= outpatientProcessedBefore + 1);
+        assertThat(pharmacyDeadLetterCount())
+                .as("住院行双消费方零死信（W-67a 分流：占位回写/收费链入口判别子跳过）")
+                .isEqualTo(deadLettersBefore);
     }
 
     @Test

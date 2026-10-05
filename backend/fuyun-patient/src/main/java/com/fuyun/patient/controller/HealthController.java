@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
  * POST /patients/{patientId}/health-items + POST /health-items/{id}/correct。
  *
  * <p>controller 禁业务逻辑与事务（A.1-8）：纠错留痕与事务边界在 service impl 方法级；
- * 写端点挂 WRITE 审计（临床档案修正留痕口径），摘要查询只读不审计。
+ * 写端点挂 WRITE 审计（临床档案修正留痕口径），摘要查询挂 SENSITIVE_QUERY 审计（W-47 患者读面留痕）。
  */
 @RestController
 @RequestMapping("/api/v1/patient")
@@ -38,13 +38,15 @@ public class HealthController {
     }
 
     /**
-     * 健康档案摘要（GET /patients/{patientId}/health-summary，只读不审计）。
+     * 健康档案摘要（GET /patients/{patientId}/health-summary，SENSITIVE_QUERY 审计留痕）。
      *
      * @param patientId 患者主索引（路径变量）
      * @return 摘要出参（无聚合行为空摘要）；200
      * @throws com.fuyun.common.exception.BizException PAT-1001（404 档案不存在）
      */
     @GetMapping("/patients/{patientId}/health-summary")
+    // W-47 患者读面留痕：健康摘要触达临床健康档案数据，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public HealthSummaryVO summary(@PathVariable long patientId) {
         return healthSummaryService.getSummary(patientId);
     }

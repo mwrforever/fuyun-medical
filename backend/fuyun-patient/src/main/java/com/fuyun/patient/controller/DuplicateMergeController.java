@@ -57,6 +57,8 @@ public class DuplicateMergeController {
      * @return 分页出参；200
      */
     @GetMapping("/possible-duplicates")
+    // W-47 患者读面留痕：待审列表成对暴露疑似同人档案，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public PageResult<PossibleDuplicateVO> list(
             @RequestParam(defaultValue = "PENDING") String status,
             @RequestParam(defaultValue = "0") int page,

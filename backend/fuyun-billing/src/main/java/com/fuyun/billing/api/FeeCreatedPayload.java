@@ -1,7 +1,7 @@
 package com.fuyun.billing.api;
 
 /**
- * 费用生成事件载荷（billing.fee.created，CF-4，V605 id 17）。
+ * 费用生成事件载荷（billing.fee.created，CF-4，V605 id 17 + V1115 契约演进）。
  *
  * @param feeId        费用行 id
  * @param feeNo        费用编号
@@ -12,6 +12,8 @@ package com.fuyun.billing.api;
  * @param amount       金额（分，服务端计算）
  * @param chargeSource 计费来源（ChargeSource code）
  * @param billingKey   计费唯一键（消费方对账锚点）
+ * @param visitType    就诊类型 code（OUT=门诊/IN=住院/PEIS=体检预留；发布方取计费命令 visitType
+ *                     恒填，W-67b 净解追加——消费方按其分流住院行，旧版本事件帧无此组件按原路径兼容）
  */
 public record FeeCreatedPayload(
         Long feeId,
@@ -22,4 +24,5 @@ public record FeeCreatedPayload(
         String itemName,
         Long amount,
         String chargeSource,
-        String billingKey) {}
+        String billingKey,
+        String visitType) {}

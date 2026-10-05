@@ -92,6 +92,8 @@ public class PatientIdentifierController {
      * @return 标识出参清单；200
      */
     @GetMapping("/patients/{patientId}/identifiers")
+    // W-47 患者读面留痕：标识清单触达患者标识介质信息，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public List<IdentifierVO> list(@PathVariable long patientId) {
         return identifierService.listByPatient(patientId).stream()
                 .map(row -> Mappers.getMapper(PatientConverter.class).toVO(row))

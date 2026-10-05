@@ -3,8 +3,10 @@ package com.fuyun.nursing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -20,6 +22,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.nursing.api.AdverseEventReportedPayload;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.cache.NursingRateGuard;
 import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.AdverseEventCloseRequest;
@@ -31,6 +34,7 @@ import com.fuyun.nursing.enums.AdverseEventStatus;
 import com.fuyun.nursing.internal.NurseBoardPushEvent;
 import com.fuyun.nursing.internal.NursingDomainEvent;
 import com.fuyun.nursing.mapper.AdverseEventMapper;
+import com.fuyun.nursing.service.IWardMetaService;
 import com.fuyun.nursing.vo.AdverseEventStatsVO;
 import com.fuyun.nursing.vo.AdverseEventVO;
 import com.fuyun.nursing.vo.NurseBoardPushFrame;
@@ -52,6 +56,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 
 /**
@@ -60,7 +65,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  * 守卫）、handle/close/return 状态机三路+非法迁移 NS-1026、stats 聚合、tick 超时提醒扫描段
  * （只读不改状态）、list/stats wardScope 过滤（携 wardId 单值/绑定集 in/空集防御短路）；
  * 非惩罚红线反射锚（VO/统计出参零 reporter 字段）。MP 3.5.17 单测范式：lambdaQuery 触达
- * 实体 @BeforeAll 手工注册表信息。
+ * 实体 @BeforeAll 手工注册表信息。PR-4E Task 6 追加：A-6 上报频控组（窗口超阈 NS-1029 429
+ * 且词表守卫零交互 / 放行照常主路径+挂点契约锚）。
  */
 @ExtendWith(MockitoExtension.class)
 class AdverseEventServiceImplTest {
@@ -92,6 +98,12 @@ class AdverseEventServiceImplTest {
     @Mock
     private ApplicationEventPublisher events;
 
+    @Mock
+    private IWardMetaService wardMetaService;
+
+    @Mock
+    private NursingRateGuard rateGuard;
+
     @Captor
     private ArgumentCaptor<AdverseEvent> rowCaptor;
 
@@ -108,7 +120,13 @@ class AdverseEventServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdverseEventServiceImpl(mapper, seqGate, events);
+        // 第四参 wardMetaService：A-6 上报 wardId 词表守卫（未打桩时默认宽松返回 null——纯守卫不消费返回值）；
+        // 第五参 rateGuard：A-6 上报频控（默认放行桩——仅频控专项用例覆写为 false）
+        service = new AdverseEventServiceImpl(mapper, seqGate, events, wardMetaService, rateGuard);
+        // 频控默认放行（lenient：非 report 用例不触发也合规——mock 布尔缺省 false 会误伤主路径）
+        lenient()
+                .when(rateGuard.checkWithinWindow(any(), any(), anyInt(), anyLong()))
+                .thenReturn(true);
         // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
         ReflectionTestUtils.setField(service, "entityClass", AdverseEvent.class);
@@ -529,6 +547,87 @@ class AdverseEventServiceImplTest {
     }
 
     @Test
+    @DisplayName("A-6 上报 wardId 非词表病区：NS-1016 409 拒绝且零落库（防伪造 wardId 定向推送他病区提醒）")
+    void rejectsReportWhenWardIdNotInVocabulary() {
+        // 协作方真实抛出形态锚定：WardMetaServiceImpl.requireConfig 缺行即抛（消息同源复用，禁新码）
+        when(wardMetaService.wardConfig("FAKE-WARD"))
+                .thenThrow(new BizException(
+                        NursingErrorCode.CONFLICT, HttpStatus.CONFLICT, "未知病区或缺少护理配置：wardId=FAKE-WARD"));
+
+        assertThatThrownBy(() -> service.report(reportWithWard("FAKE-WARD")))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("未知病区")
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    // 双锚断言：错误码枚举与 NS-1016 code、传输语义 409（三层逐位——禁放宽为部分匹配）
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.CONFLICT);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1016");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+        // 词表守卫前置短路：零落库零事件（不产生 id 83 事件——防伪造 wardId 污染统计与他病区大屏推送）
+        verify(mapper, never()).insert(any(AdverseEvent.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("A-6 词表内 wardId（W01）照常上报：wardConfig 守卫放行不误伤主路径（落库行 wardId 逐位）")
+    void acceptsReportWhenWardIdInVocabulary() {
+        when(seqGate.nextNo("AE")).thenReturn(AE_NO);
+
+        AdverseEventVO vo = service.report(reportWithWard(WARD));
+
+        // 守卫挂点锚：report 入口经 wardMetaService.wardConfig 词表校验（纯守卫——返回值不消费，默认桩即放行）
+        verify(wardMetaService).wardConfig(WARD);
+        // 主路径不误伤：落库行 wardId 逐位、id 83 事件照发（词表内值正常入统计面）
+        verify(mapper).insert(rowCaptor.capture());
+        assertThat(rowCaptor.getValue().getWardId()).isEqualTo(WARD);
+        assertThat(vo.eventNo()).isEqualTo(AE_NO);
+        verify(events).publishEvent(any(NursingDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("A-6 上报频控：窗口超阈拒 NS-1029 429 且不触词表校验（频控先行省无效校验——wardMetaService 零交互）")
+    void reportRejectsWhenRateWindowExceeded() {
+        // 频控桩覆写为超阈（setUp 默认放行桩的同签名后位桩优先生效）
+        when(rateGuard.checkWithinWindow(
+                        eq("report-freq"),
+                        eq(String.valueOf(REPORTER)),
+                        eq(NursingRateGuard.REPORT_LIMIT),
+                        eq(NursingRateGuard.REPORT_WINDOW_MS)))
+                .thenReturn(false);
+
+        assertThatThrownBy(() -> service.report(
+                        report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), REPORTER, false)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    // 三层逐位：错误码枚举 + NS-1029 code + 429 传输语义
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.REPORT_RATE_LIMITED);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1029");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                });
+        // 频控先行短路锚：词表守卫（wardMetaService）零交互、零落库零事件——超阈上报不触达任何校验与写面
+        verifyNoInteractions(wardMetaService);
+        verify(mapper, never()).insert(any(AdverseEvent.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("A-6 频控放行照常主路径：checkWithinWindow 以 report-freq/操作者/双常量调用（挂点契约锚）")
+    void reportPassesRateGuardWithContractAnchor() {
+        when(seqGate.nextNo("AE")).thenReturn(AE_NO);
+
+        service.report(report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), REPORTER, false));
+
+        // 挂点契约锚：report 最前频控（space=report-freq，键=操作者令牌身份，A-6 窗口双常量逐位）
+        verify(rateGuard)
+                .checkWithinWindow(
+                        "report-freq",
+                        String.valueOf(REPORTER),
+                        NursingRateGuard.REPORT_LIMIT,
+                        NursingRateGuard.REPORT_WINDOW_MS);
+        // 放行不误伤主路径：照常落库
+        verify(mapper).insert(any(AdverseEvent.class));
+    }
+
+    @Test
     @DisplayName("list 分页：发生时点降序+VO 映射+分页口径直出；词表外过滤值 NS-1019")
     void listPagesAndRejectsInvalidVocab() {
         Page<AdverseEvent> pageResult = new Page<>(0, 20);
@@ -655,6 +754,28 @@ class AdverseEventServiceImplTest {
                 null,
                 reporterId,
                 anonymous);
+    }
+
+    /**
+     * 上报入参快捷构造（A-6 词表校验用例）：病区面定制入口，其余面取用例基准值——词表内/外
+     * wardId 差异值与既有构造辅助分置表达。
+     *
+     * @param wardId 病区编码（词表校验差异值载体，词表内=W01 / 词表外=FAKE-WARD）
+     * @return 上报入参
+     */
+    private static AdverseEventReportRequest reportWithWard(String wardId) {
+        return new AdverseEventReportRequest(
+                "FALL",
+                "I",
+                "C",
+                wardId,
+                "I2026100200001",
+                9001L,
+                OffsetDateTime.now(BEIJING).minusHours(1),
+                "患者床旁跌倒事件经过",
+                null,
+                REPORTER,
+                false);
     }
 
     /**

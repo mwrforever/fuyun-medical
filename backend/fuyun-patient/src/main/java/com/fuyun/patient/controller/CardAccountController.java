@@ -51,6 +51,8 @@ public class CardAccountController {
      * @throws BizException PAT-1013（404 账户不存在）
      */
     @GetMapping("/card-accounts/{id}")
+    // W-47 患者读面留痕：账户详情直出患者资金账户余额，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public CardAccountVO detail(@PathVariable long id) {
         CardAccount account = cardAccountService.getById(id);
         if (account == null) {
@@ -96,6 +98,8 @@ public class CardAccountController {
      * @return 流水分页；200
      */
     @GetMapping("/card-accounts/{id}/txns")
+    // W-47 患者读面留痕：流水分页直出患者资金往来明细，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public PageResult<CardTxnVO> txns(
             @PathVariable long id,
             @RequestParam(defaultValue = "0") int page,

@@ -25,8 +25,10 @@ class BillingEventPublisherTest {
     void onBillingDomainEventDelegatesToSenderOnly() {
         DomainEventSender sender = mock(DomainEventSender.class);
         BillingEventPublisher publisher = new BillingEventPublisher(sender);
+        // 载荷构造面随 V1115 契约演进补 visitType 第十参（O 前缀就诊号对应门诊型；本测试断言
+        // 透传不验内容，取值仅求语义一致）
         FeeCreatedPayload payload =
-                new FeeCreatedPayload(1L, "F1", 7L, "O2026091700001", 100L, "血常规", 6000L, "ORDER_LINKED", "k-1");
+                new FeeCreatedPayload(1L, "F1", 7L, "O2026091700001", 100L, "血常规", 6000L, "ORDER_LINKED", "k-1", "OUT");
 
         publisher.onBillingDomainEvent(new BillingDomainEvent("billing.fee.created", payload));
 

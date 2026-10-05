@@ -2,6 +2,55 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-05 · P2 PR-4E 收口（事件与工单收敛包）
+
+- 交付：十任务全落地（立项 V1115 占号→W-67a 双消费方判别子跳过→W-67b fee.created visitType
+  净解→W-47 患者读面 11 GET 审计→A-6 wardId 词表→NursingRateGuard 频控（NS-1029/1030）→
+  W-41 收费页 payerType 参数化（含切档清草稿补修环 8550226）→W-27 号源 tick 三件套+T-R3-4
+  探针（实测 2.07s∈[2s,7s]）→TASK 八工单销项+三 Spec 注记→收口修复环 R1），分支
+  feat/p2-pr4e-events-tickets 共 14 笔（72d07bf→6950677）。
+- 终验：后端 21 模块全量 verify BUILD SUCCESS（25:22）+前端六连全绿（workstation 361 用例；
+  audit 本地镜像端点缺失归 CI 权威）；轻 e2e=收费页 payerType 真栈走查（五档控件/草稿/
+  文案联动截图/API 双档语义[CITY_INS 409 BILL-1006 贯标拒绝]——证据 `.superpowers/sdd/
+  2026-10-03-p2-pr4e-events-tickets/probe/`）。
+- 五路评审：A 安全 78/B 架构 93/C 数据 82/D 前端 84/E 测试 87（findings 归档
+  `.superpowers/code-review-pr4e/`）；must-fix 三主项+A-1 后端防线（评审新增裁定：拒绝≠造
+  形态，settle 非 SELF_PAY fail-closed 归 W-80 前防线）经修复环 R1 全收口；C-F1/C-F3 登记
+  W-93（索引+断链恢复，W-91 同族）、W-92 退药面同族在案。
+- 主控裁定补录：①W-41 医保档 settle=前端守卫+后端 fail-closed 双层（payments 医保形态勿造，
+  归 W-80）②tick 三件套=自续期心跳链形态（先例实证无 @Scheduled 无 ShedLock，计划段措辞
+  失实以先例为准）③billing 族组件序断言用 record 反射勿建 COMPONENT_NAMES。
+
+## 2026-10-05 · P2 PR-4E 收口修复环 R1（五路评审 must-fix 三主项+顺手三项）
+
+- 交付：A-1 settle 非自费单 fail-closed（结算单 payerType≠SELF_PAY 抛 BILL-1015 409，payments
+  非自费组装形态归 W-80，拒绝≠造形态）+C-F2/A-2 频控窗口每次续期自愈（checkWithinWindow
+  滑窗化，杜绝 INCR 后 EXPIRE 失败遗留永久键锁死操作者）+D-1/E-1 收费页 preview 在途切档
+  竞态守卫（payerType 发起锚定、回包不一致整包丢弃）+D-2 拦截文案随所选档中文标签参数化
+  （商业保险档不再统称医保）+B-1 判别子对照用例门诊行补 m04OrderNo:null 显式线格式（billing/
+  outpatient 两侧各一行）+E-3 恰阈值 10L 边界用例；评审档案 `.superpowers/code-review-pr4e/
+  findings-*.md`，修复环报告 `.superpowers/code-review-pr4e/fix-round-R1.md`。
+- **D-21 断言现代化申报（逐次批准，单点单次）**：NursingRateGuardTest.windowCountRejectsOverLimit
+  断言「非首计 never expire（固定窗口锚）」→「每次调用 expire 续期（滑窗自愈锚）」——原断言
+  冻结的恰是 C-F2 点名的脆弱实现细节（无 TTL 永久键→操作者第 11 次起永久 429 无自愈）；新断言
+  较原多锚一次 expire 且叠加恰阈值 10L 放行回归锚，严格度不低于原；断言修订+实现变更+回归锚
+  同 PR 交付零混入（批准出处=本修复环工单 R1-3 指令）。
+- 门禁：backend billing/outpatient/nursing 三模块 `mvn verify -DskipITs` 全绿（Spotless+单测+
+  JaCoCo 双阈值）；web `pnpm lint/type-check/test/format:check` 四连全绿（workstation 361 用例）。
+
+## 2026-10-05 · P2 PR-4E 立项（事件与工单收敛包）
+
+- 占用迁移号 V1115（integration.event_registry id 17 billing.fee.created payload_desc 追加
+  visitType 组件语义句——先记再占，全局最大 V1114）。
+- 范围：W-67 死信分流（dispense.completed 两消费方判别子跳过+fee.created 载荷扩 visitType
+  净解）+W-47 患者读面 SENSITIVE_QUERY 审计（11 GET 端点）+A-6 上报 wardId 词表（nursing_
+  ward_config requireConfig）+NursingRateGuard 频控骨架（A-6 上报限频+A-8 PDA 枚举冷却）+
+  W-41 收费页 payerType UI 参数化（preview+settle 双硬编码联动）+W-27 号源超时 tick 三件套
+  （克隆 nursing delay.task-overdue 先例）+T-R3-4 quorum TTL 探针实测+TASK 六工单销项
+  （W-38/W-61/W-62 随 PR #59 闭环补注记+W-27/W-41/W-47/W-67 本册 ✅+T-R3-4 回填销项）。
+- 裁决依据：总纲既有裁决重申（W-67 判别子+visitType 净解/W-41 仅 SELF_PAY 门/W-27 仅号源
+  tick/GC21④ 不并入）；fee.created 载荷扩 visitType 走 V1115 通用段。
+
 ## 2026-10-05 · P2 PR-4C 收口（大屏通道与病区防线包）
 
 - 交付：11 任务全落地（立项→wardId 携带→哨兵 REST 限行→WardAccessService→V1114 种子→九端点守卫→

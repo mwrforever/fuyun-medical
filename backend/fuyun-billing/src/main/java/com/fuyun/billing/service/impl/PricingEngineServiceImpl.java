@@ -229,7 +229,11 @@ public class PricingEngineServiceImpl extends ServiceImpl<FeeRecordMapper, FeeRe
                         fee.getItemNameSnapshot(),
                         fee.getAmount(),
                         fee.getChargeSource().getCode(),
-                        billingKey)));
+                        billingKey,
+                        // W-67b：visitType 净解组件——计费命令 visitType @NotNull 恒在位（OUT/IN/PEIS），
+                        // 与 chargeSource 同款送 code；消费方（outpatient 申请单推进）按其跳过住院行，
+                        // 终结 sourceRef 语义双载死信
+                        cmd.visitType().getCode())));
         log.info(
                 "费用生成：feeNo={}，visit={}，item={}，amount={}分，source={}",
                 fee.getFeeNo(),

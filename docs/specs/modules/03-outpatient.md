@@ -302,3 +302,12 @@
 - **M-25**：§7 订阅 `patient.frozen` 处成对补订 `patient.unfrozen`。
 - **澄清 3**：处方计费事件归属按 M-4 主方案落定，备选表述删除。
 - **M-25（收尾补订，Round 2）**：§7 订阅 `patient.merged` 处成对补订 `patient.split`（合并读侧归一、拆分逆映射同步刷新；成对语义权威口径在 M02 §7）。
+
+## 13. P2 PR-4E 落地注记（2026-10-05，feat/p2-pr4e-events-tickets）
+
+> 本节为 P2 PR-4E（事件与工单收敛包）交付面相对本 Spec 的界定与裁决声明；
+> PR-4E 口径以本节为准，Spec 正文不回改。
+
+1. **号源超时 tick 双通道兜底（W-27，P2 预订方案②落地）**：在既有 `delay.appointment-timeout`（15m 支付时限档）消息通道外，新增 tick 心跳扫描通道——`delay.appointment-timeout-tick` 档位（TTL=60s，DLX 专用路由键 `outpatient.appointment-timeout.tick`，tick 键非事件不入 event_registry、消费队列自声明豁免）+三件套（`AppointmentTimeoutTickSender`/`TickListener`/`TickSeeder`，克隆 nursing TaskOverdueTick 先例的自续期心跳链形态：启动播种首帧→消费后续投，无 @Scheduled 无 ShedLock）。
+2. **扫描面与双通道幂等**：tick 消费触发 `IAppointmentService.scanAndReleaseTimedOut()`——扫 `status=RESERVED AND pay_deadline < now(HEALTHCARE_TZ)`（DB 列为权威扫描面，Redis pay-hold 键是清理对象非判定源；按需投影+pay_deadline 升序+有界 LIMIT 500）逐单构造 `AppointmentTimeoutPayload` 调既有 `markTimeout`（CAS RESERVED→NO_SHOW 0 行幂等跳过锚——15m 档消息与 tick 扫描双通道并存安全由该谓词保证）。
+3. **T-R3-4 探针常驻（fy.delay TTL 时延断言解冻）**：`MessagingGovernanceIT` @Order(6) 探针用例——动态声明 2s 短 TTL 档投帧实测 quorum 队列 TTL 到期经 DLX 转发时延（断言 ∈ [TTL, TTL+5s] 容忍窗，实测 2.07s）；类 javadoc「不含 fy.delay TTL 时延断言」句已同步解冻改写。

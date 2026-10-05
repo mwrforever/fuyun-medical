@@ -3,6 +3,8 @@ package com.fuyun.outpatient.constants;
 /**
  * 门诊域消息治理常量：事件字面量与 V204 种子行、api payload record 三方一致，
  * 任何一侧变更属 CF-3/CF-5 契约变更（双向评审）。
+ * tick 豁免口径：ROUTING_APPOINTMENT_TIMEOUT_TICK 为延迟档位到期转发路由键而非事件——不入
+ * event_registry、不入 SUBSCRIBED_EVENT_TYPES（declareDelayQueue 无先登记校验，A.5-7 延迟档位语义）。
  */
 public final class OutpatientMessagingConstants {
 
@@ -44,6 +46,25 @@ public final class OutpatientMessagingConstants {
 
     /** 发布事件：停诊广播（id 40） */
     public static final String EVENT_SCHEDULE_STOPPED = "outpatient.schedule.stopped";
+
+    /** 延迟档位到期转发路由键（delay.appointment-timeout-tick 到期经 DLX 回投 fy.topic 的目标键；非事件不入 event_registry，豁免注记见类注释） */
+    public static final String ROUTING_APPOINTMENT_TIMEOUT_TICK = "outpatient.appointment-timeout.tick";
+
+    /** 号源超时 tick 延迟档位队列名（delay.appointment-timeout-tick；W-27 自续期投递目标，与 OutpatientMessagingConfig 档位声明同源） */
+    public static final String DELAY_QUEUE_APPOINTMENT_TIMEOUT_TICK = "delay.appointment-timeout-tick";
+
+    /**
+     * 号源超时 tick 延迟档位业务段（declareDelayQueue 的 business 入参段）：治理构件按
+     * {@code delay. + business} 拼最终队列名，本段不含前缀、不含点（命名审查规则
+     * ^[a-z][a-z0-9-]*$ 拒绝带点值——nursing 曾以整队列名入参导致启动阻断，回归测试
+     * NursingMessagingConfigTest 把守，本段镜像该教训）。与 DELAY_QUEUE_APPOINTMENT_TIMEOUT_TICK
+     * 拼接同源；与既有 15m 档业务段 appointment-timeout 并存（A.5-7 单档位语义——两档位各司其职：
+     * 15m 档携载荷信封逐单到期，tick 档空帧 60s 心跳扫描兜底）。
+     */
+    public static final String DELAY_BUSINESS_APPOINTMENT_TIMEOUT_TICK = "appointment-timeout-tick";
+
+    /** 号源超时 tick 消费队列名（W-27 tick 监听器绑定 fy.topic 路由键 outpatient.appointment-timeout.tick 的消费队列） */
+    public static final String QUEUE_APPOINTMENT_TIMEOUT_TICK = "q.outpatient.appointment-timeout.tick";
 
     /** 订阅事件：PENDING 费用生成回执（id 17 既有；申请单 CREATED→PENDING_FEE 与 visit 待缴费推进） */
     public static final String EVENT_SUB_BILLING_FEE_CREATED = "billing.fee.created";

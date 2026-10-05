@@ -64,6 +64,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 预约/当日挂号服务实现（M03 FU-M03-02/03，Task 5 写路径唯一入口；Task 6 扩退号退费联动与改期）：
@@ -77,7 +78,9 @@ import org.springframework.transaction.annotation.Transactional;
  * appointment.booked；WINDOW/KIOSK 一步直达 TAKEN（同事务签发 visit+casTake+发布 visit.registered）。
  * Task 6：退号四分支（未支付免退费直取消/已付退费申请待回执/已取号退费待回执/已报到拒线上退，
  * 终态一律 billing.refund.approved 回执后置——资金无涉红线裁决 7）、改期先占新后退旧（reschedule_of
- * 链）与爽约信用管理面。事件发布走事务内 publishEvent → AFTER_COMMIT 出 MQ（A.4.2-7）。
+ * 链）与爽约信用管理面。P2 PR-4E Task 8 追加：W-27 号源超时 tick 惰性扫描兜底
+ * （scanAndReleaseTimedOut——扫描在事务外+逐单独立事务委托 markTimeout，与 15m 延迟消息通道
+ * 双通道并存，CAS 谓词幂等锚）。事件发布走事务内 publishEvent → AFTER_COMMIT 出 MQ（A.4.2-7）。
  * 资金无涉红线（裁决 7）：本类零金额逻辑。线程安全：无状态单例。装配归 OutpatientWebConfig
  *
  * @Import；com.fuyun.outpatient.service.impl 包 = JaCoCo PACKAGE LINE 1.00 覆盖对象。
@@ -135,6 +138,10 @@ public class AppointmentServiceImpl implements IAppointmentService {
     /** casOccupy 重读重试上限（首次 + 2 次重试，Global Constraints 双道闸口径） */
     private static final int CAS_RETRY_TIMES = 2;
 
+    /** tick 惰性扫描单轮行数上界（W-27 有界扫描纪律，nursing TaskOverdueServiceImpl 同族；
+     * 越界行由后续 tick 轮转收敛） */
+    private static final int TICK_SCAN_LIMIT = 500;
+
     private final PatientContextResolver patientContextResolver;
 
     private final IVisitIdIssuer visitIdIssuer;
@@ -161,6 +168,8 @@ public class AppointmentServiceImpl implements IAppointmentService {
 
     private final ApplicationEventPublisher events;
 
+    private final TransactionTemplate transactionTemplate;
+
     private final OutpatientProperties properties;
 
     /**
@@ -180,7 +189,9 @@ public class AppointmentServiceImpl implements IAppointmentService {
      * @param billingPort            billing 对接端口（billing api 契约），非空；退号退费统一免审档与
      *                               费用行定位（裁决 7 进程内承载，禁 HTTP 自调用）
      * @param events                 Spring 应用事件发布器，非空；事务内发布 AFTER_COMMIT 出 MQ
-     * @param properties             门诊域参数，非空；支付时限/线上退号时限/爽约窗口/阈值/限约天数
+     * @param transactionTemplate    编程式事务模板，非空；tick 惰性扫描逐单独立事务承载（扫描在事务外，
+     *                               W-27——markTimeout 同类自调用不经代理，事务边界经模板显式提供）
+     * @param properties             门诊域参数，非空；支付时限/线上退号时限/爽约窗口/阈值/限约天数/tick 自续期开关
      */
     public AppointmentServiceImpl(
             PatientContextResolver patientContextResolver,
@@ -196,6 +207,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
             DelayEnvelopeSender delayEnvelopeSender,
             OutpatientBillingPort billingPort,
             ApplicationEventPublisher events,
+            TransactionTemplate transactionTemplate,
             OutpatientProperties properties) {
         this.patientContextResolver = patientContextResolver;
         this.visitIdIssuer = visitIdIssuer;
@@ -210,6 +222,7 @@ public class AppointmentServiceImpl implements IAppointmentService {
         this.delayEnvelopeSender = delayEnvelopeSender;
         this.billingPort = billingPort;
         this.events = events;
+        this.transactionTemplate = transactionTemplate;
         this.properties = properties;
     }
 
@@ -493,6 +506,45 @@ public class AppointmentServiceImpl implements IAppointmentService {
                 payload.apptNo(),
                 payload.patientId(),
                 payload.poolId());
+    }
+
+    /**
+     * 号源超时惰性扫描释放（W-27 tick 双通道兜底面）：扫描在事务外（有界单查询），逐单委托
+     * {@link #markTimeout}（15m 消息通道同款释放面）——markTimeout 同类自调用不经代理（A.1-8），
+     * 逐单事务边界经 TransactionTemplate 显式提供（nursing tick 扫描先例同款编程式事务形态）。
+     *
+     * @return 本轮处理行数（逐单委托行数——日志观测口径；含 CAS 0 行幂等跳过行）
+     * @throws IllegalStateException 单行数据异常（预约单定位失败）时触发并中止本轮——交容器有界重试，
+     *                               tick 帧重投后已处理行经 CAS 幂等收敛（NO_SHOW 不再命中扫描谓词）
+     */
+    @Override
+    public int scanAndReleaseTimedOut() {
+        // 扫描基准钟面钉北京时区（时区纪律红线：禁裸 now() 随容器时区漂移——pay_deadline 比对语义恒定）
+        OffsetDateTime now = OffsetDateTime.now(TimeConstants.HEALTHCARE_TZ);
+        // 数据库读操作：tick 候选扫描（RESERVED 且 pay_deadline 已过——DB 列为权威扫描面，Redis pay-hold
+        // 键可能先于 DB 态消失扫键会漏单；按需取列投影，pay_deadline 升序+id 唯一顺序，事务外有界扫描）
+        List<Appointment> candidates = appointmentMapper.selectList(Wrappers.<Appointment>lambdaQuery()
+                .select(Appointment::getApptNo, Appointment::getPatientId, Appointment::getPoolId)
+                .eq(Appointment::getStatus, ApptStatus.RESERVED)
+                .lt(Appointment::getPayDeadline, now)
+                .orderByAsc(Appointment::getPayDeadline)
+                .orderByAsc(Appointment::getId)
+                .last("LIMIT " + TICK_SCAN_LIMIT));
+        if (candidates.isEmpty()) {
+            // 空 tick 幂等忽略：零命中零副作用（自续期心跳归监听器承载——进程存活即有心跳）
+            log.debug("号源超时 tick 扫描零命中（空 tick 幂等忽略）");
+            return 0;
+        }
+        int processed = 0;
+        for (Appointment row : candidates) {
+            // 逐单独立事务：单行释放面（CAS+回池+占位键+credit）原子成败与共，单行失败不回滚他行
+            // （已处理行下轮 tick 经 CAS 幂等收敛——NO_SHOW 不再命中 RESERVED 谓词）
+            transactionTemplate.executeWithoutResult(status ->
+                    markTimeout(new AppointmentTimeoutPayload(row.getApptNo(), row.getPatientId(), row.getPoolId())));
+            processed++;
+        }
+        log.info("号源超时 tick 扫描完成：本轮处理 {} 单（双通道兜底面，越界行由后续 tick 轮转收敛）", processed);
+        return processed;
     }
 
     // ---------------------------------------------------------------- 退号退费联动（Task 6）

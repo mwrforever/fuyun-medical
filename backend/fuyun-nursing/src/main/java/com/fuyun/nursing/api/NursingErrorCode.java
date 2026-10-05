@@ -11,7 +11,8 @@ import com.fuyun.common.exception.ErrorCode;
  * P2 PR-3 执行域续号 NS-1020 起（CHANGELOG 2026-10-01 立项③排定全集 NS-1020~1027；Task 5
  * 落执行单操作面五码，Task 6 落 NS-1024 输液面，Task 10 落 NS-1025/1026 不良事件面
  * ——立项排定全集 NS-1020~1027 至此在位；P2 PR-4C Task 4 续号 NS-1028 病区归属校验面
- * （W-40 方案 A））。
+ * （W-40 方案 A）；P2 PR-4E Task 6 续号 NS-1029/1030 频控面（A-6 上报限频 + A-8 PDA
+ * 枚举冷却，NursingRateGuard 承载，429 传输语义）。
  * 业务异常抛 {@code BizException(NursingErrorCode.XXX, HttpStatus, message)}，由全局渲染器
  * 输出 RFC 9457 ProblemDetail（properties.errorCode/traceId），禁止「全 200 + 错误码」。
  */
@@ -93,7 +94,13 @@ public enum NursingErrorCode implements ErrorCode {
     EXECUTION_TIME_WINDOW("NS-1027"),
 
     /** 病区访问被拒（403；请求病区不在操作者当班 ACTIVE 绑定集或无有效绑定行——W-40 fail-closed，哨兵 "0" 豁免） */
-    WARD_ACCESS_DENIED("NS-1028");
+    WARD_ACCESS_DENIED("NS-1028"),
+
+    /** 上报频控（429；每操作者 1 分钟窗口内不良事件上报次数超限——A-6 限频，防脚本批量刷单污染统计面） */
+    REPORT_RATE_LIMITED("NS-1029"),
+
+    /** PDA 标识解析冷却中（429；同一标识连续解析失败达阈值的限流冷却——A-8 枚举探测防线，冷却到期自动恢复） */
+    PDA_PROBE_COOLING("NS-1030");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

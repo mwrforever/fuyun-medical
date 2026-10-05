@@ -353,3 +353,11 @@
 
 3. **V1114 种子行语义（fail-closed 同批配套）**：演示环境为两运维/演示账号（admin、doctordemo）种 W01 绑定行——assignment_type 取 PRIMARY 但患者/床位列为空，**非护理责任分配、仅承载访问授权**（应用层分配端点的类型一致性校验不适用于种子通道，防 fail-closed 上线锁死演示账号）；生产语义=护士绑定行随排班/责任分配数据自然存在，无种子通道。
 4. **WS SUBSCRIBE 病区防线（PR #63 评审 A-2 门槛项收口）**：`/ws/nursing` 客户端入站通道双拦截器序——CONNECT 帧鉴权在前（令牌校验+访问主体摘要缓存进会话）、board 主题族 SUBSCRIBE 限行在后：哨兵令牌仅可订阅令牌绑定病区（泛哨兵一律拒）；登录态订阅尾段病区须在当班绑定集内（fail-closed）；无已鉴权主体（未 CONNECT 即订阅）一律拒；拒绝以 ERROR 帧回送并按协议错误关闭连接。§7 WebSocket 节、方案 3.5 与 FU-M05-08 主题描述行已同步补防线锚。
+
+## 16. P2 PR-4E 落地注记（2026-10-05，feat/p2-pr4e-events-tickets）
+
+> 本节为 P2 PR-4E（事件与工单收敛包）交付面相对本 Spec 的界定与裁决声明；
+> PR-4E 口径以本节为准，Spec 正文不回改。
+
+1. **上报 wardId 词表校验（A-6）**：不良事件上报（`AdverseEventServiceImpl.report`）入口在三级词表守卫后追加病区词表守卫——`IWardMetaService.wardConfig(wardId)` 复用 `requireConfig` 语义（nursing_ward_config 行存在性，缺行 NS-1016 409 拒绝，禁新码）；防伪造 wardId 污染统计并定向驱动他病区大屏 ADVERSE_EVENT_REMIND。
+2. **护理域频控守卫（A-6 上报限频+A-8 PDA 枚举冷却，NursingRateGuard）**：cache/ 新增频控守卫（PortalCredentialRateGuard 先例镜像，Redis INCR+TTL 原语，键 `fy:nursing:{space}:{SHA-256 摘要}`——明文 identifier 禁入键；Redis 异常一律降级放行，频控是效率层防线不阻断医护主链路）：①上报限频每操作者 60s 内 10 次（`checkWithinWindow`，超阈 NS-1029 429）；②PDA 标识解析枚举冷却——同 identifier 连续解析失败 5 次（计数窗口 10m）冷却 30 分钟（`checkNotCooling`/`recordProbeFailure`/`clearFailureCount`，冷却中 NS-1030 429；窗口不变式：冷却时长>计数窗口）。错误码 NS-1029（`REPORT_RATE_LIMITED`）/NS-1030（`PDA_PROBE_COOLING`）为冻结序顺延占号。

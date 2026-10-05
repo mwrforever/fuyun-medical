@@ -99,7 +99,8 @@ class OutpatientRefundRollbackIT extends FuyunStackITBase {
         @Bean
         @org.springframework.context.annotation.Primary
         OutpatientProperties testOutpatientProperties() {
-            return new OutpatientProperties(Duration.ofMinutes(15), 1, 90, 1, 90);
+            // 末位 tickSelfRearm=true 与生产缺省同源（P2 PR-4E Task 8 追加——本 IT 不触达 tick 面）
+            return new OutpatientProperties(Duration.ofMinutes(15), 1, 90, 1, 90, true);
         }
     }
 
