@@ -1,6 +1,7 @@
-// 侧栏权限过滤单测（BUG-14 守卫骨架）：权限点集为空=全量显示（数据源缺失口径）、集非空=
-// 仅渲染无权限要求项与集内项、过滤后清空的分组整组剔除（防空标题组残留）；权限语义经真实
-// 路由表反查（路由 = 权限点清单），会话以直接注入 state 的方式承载（假令牌资产，非真实凭证）。
+// 侧栏权限过滤单测（BUG-14 守卫骨架）：权限点集为空=仅渲染无权限要求项（空集=无任何
+// 权限全拒口径，PR-4D 语义反转）、集非空=仅渲染无权限要求项与集内项、过滤后清空的分组
+// 整组剔除（防空标题组残留）；权限语义经真实路由表反查（路由 = 权限点清单），会话以直接
+// 注入 state 的方式承载（假令牌资产，非真实凭证）。
 // 注：全文件共享单一 Pinia——与挂载组件必须读写同一会话 store，逐用例换实例会割裂会话语义。
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -17,7 +18,8 @@ describe('侧栏权限过滤', () => {
   /**
    * 构造带权限点集的测试会话。
    *
-   * @param permissions 权限点编码集；undefined 模拟 P0 后端契约未返回该字段的数据源缺失形态
+   * @param permissions 权限点编码集；空数组 = 无任何业务权限的授权会话（后端 PR-4D 已
+   *        填实登录契约，空集按无权限全拒消费），undefined 模拟权限字段缺省的防御会话形态
    */
   function injectSession(permissions: string[] | undefined): void {
     const auth = useAuthStore();
@@ -40,19 +42,14 @@ describe('侧栏权限过滤', () => {
     await router.push('/login');
   });
 
-  it('权限点集缺失（空集）：全量显示 33 项菜单（与守卫全放行同口径）', () => {
-    injectSession(undefined);
+  it('权限点集为空（无任何权限）：仅显示未登记权限点的首页（与守卫同口径）', () => {
+    injectSession([]);
     const wrapper = mount(AppSidebar, { global: { plugins: [pinia, router] } });
 
-    // 断言业务结果：数据源缺失时侧栏不做任何过滤——全量 33 项（与 MENU_ITEMS 常量同数，
-    // 新增菜单项时随动更新），各分组与顶层项均渲染
-    expect(wrapper.findAll('.el-menu-item')).toHaveLength(33);
+    // 断言业务结果：空集=无任何业务权限（PR-4D 语义反转）——33 项菜单中仅首页（路由
+    // 未登记权限点）可见，全部业务菜单隐藏；与守卫「已登记且集不含=拒绝」同一判定口径
     const texts = wrapper.findAll('.el-menu-item').map((item) => item.text());
-    expect(texts).toContain('首页');
-    expect(texts).toContain('退费审批');
-    expect(texts).toContain('PDA 扫码');
-    expect(texts).toContain('冷链台账');
-    expect(texts).toContain('住院摆药台');
+    expect(texts).toEqual(['首页']);
     wrapper.unmount();
   });
 

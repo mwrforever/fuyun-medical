@@ -2,12 +2,23 @@ package com.fuyun.system.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fuyun.system.entity.PermissionEntity;
+import com.fuyun.system.entity.RoleEntity;
+import com.fuyun.system.entity.RolePermissionEntity;
 import com.fuyun.system.internal.AuthTokenInterceptor;
+import com.fuyun.system.internal.AuthorizationInterceptor;
+import com.fuyun.system.mapper.PermissionMapper;
+import com.fuyun.system.mapper.RoleMapper;
+import com.fuyun.system.mapper.RolePermissionMapper;
 import com.fuyun.system.properties.SecurityProperties;
 import com.fuyun.system.service.impl.TokenServiceImpl;
 import java.time.Duration;
 import java.util.List;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -28,11 +39,26 @@ class SystemWebConfigTest {
     /** 测试资产假密钥（≥32 字符，仅具单测意义，与任何真实凭证无关） */
     private static final String TEST_SECRET = "unit-test-only-hmac-secret-0123456789abcdef";
 
+    @BeforeAll
+    static void initTableInfo() {
+        // PR-4D 起 addInterceptors 会真调 permissionRegistry().load()（403 矩阵装载）：
+        // lambda 条件列名解析依赖 TableInfo，容器外单测需手动初始化（照 RoleServiceImplTest 先例）
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), PermissionEntity.class);
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), RolePermissionEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), RoleEntity.class);
+    }
+
     private SystemWebConfig config() {
+        // PR-4D 起构造器追加 403 矩阵装载三 mapper：mock 空矩阵（selectList 默认空清单）即可装配
         return new SystemWebConfig(
                 new SecurityProperties(TEST_SECRET, Duration.ofHours(2), Duration.ofHours(24)),
                 org.mockito.Mockito.mock(StringRedisTemplate.class),
-                new ObjectMapper());
+                new ObjectMapper(),
+                org.mockito.Mockito.mock(PermissionMapper.class),
+                org.mockito.Mockito.mock(RolePermissionMapper.class),
+                org.mockito.Mockito.mock(RoleMapper.class));
     }
 
     @Test
@@ -63,18 +89,21 @@ class SystemWebConfigTest {
     }
 
     @Test
-    @DisplayName("拦截器注册：/api/v1/** 拦截路径注册 AuthTokenInterceptor 单一拦截器")
-    void addInterceptorsRegistersAuthTokenInterceptor() {
+    @DisplayName("双拦截器注册：/api/v1/** 拦截路径注册 401 认证 + 403 鉴权两道拦截器（PR-4D 顺延，D-21 申报）")
+    void addInterceptorsRegistersAuthAndAuthorizationInterceptors() {
         SystemWebConfig config = config();
         ExposingInterceptorRegistry registry = new ExposingInterceptorRegistry();
 
         config.addInterceptors(registry);
 
-        // 指定路径模式后注册表以 MappedInterceptor 包装拦截器：断言其委托为本模块认证拦截器
-        assertThat(registry.registered()).hasSize(1);
+        // 指定路径模式后注册表以 MappedInterceptor 包装拦截器：第一道 401 认证、第二道 403 鉴权
+        assertThat(registry.registered()).hasSize(2);
         assertThat(registry.registered().get(0)).isInstanceOf(MappedInterceptor.class);
         assertThat(((MappedInterceptor) registry.registered().get(0)).getInterceptor())
                 .isInstanceOf(AuthTokenInterceptor.class);
+        assertThat(registry.registered().get(1)).isInstanceOf(MappedInterceptor.class);
+        assertThat(((MappedInterceptor) registry.registered().get(1)).getInterceptor())
+                .isInstanceOf(AuthorizationInterceptor.class);
     }
 
     /** getInterceptors 为 protected：测试子类暴露已注册清单（只读断言用途） */

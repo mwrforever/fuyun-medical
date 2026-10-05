@@ -16,6 +16,9 @@ import java.util.List;
  * @param orgId       主归属机构 ID，可 null
  * @param roles       角色编码清单，非 null（无角色为空清单）；403 鉴权拦截（P1）的数据来源
  * @param wardId      大屏哨兵令牌绑定的病区编码，可 null（登录态恒 null；哨兵经 bigscreen-token?wardId= 透传，REST 限行与 WS 订阅防线比对源）
+ * @param permissions 角色展开的授权点编码清单（MENU+API 全命名空间），非 null（无权限为空清单）；旧会话 JSON 缺该
+ *                    字段时反序列化为 null（升级窗口内既有会话，PR-4D 加字段），消费侧须归一空清单守卫
+ *                    （AuthService.refresh 已落位，r1 §3.4 record 缺字段先例）
  */
 public record SessionData(
         Long userId,
@@ -24,4 +27,5 @@ public record SessionData(
         Long employeeId,
         Long orgId,
         List<String> roles,
-        String wardId) {}
+        String wardId,
+        List<String> permissions) {}

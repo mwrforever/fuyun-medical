@@ -221,6 +221,12 @@ public final class IotMessagingConstants {
     /** STOMP 全院运营摘要主题：/topic/iot/dashboard/global（FU-M14-13 四主题完整化，P2 PR-2 Task 11） */
     public static final String TOPIC_DASHBOARD_GLOBAL = "/topic/iot/dashboard/global";
 
+    /**
+     * STOMP iot 主题命名空间前缀：/topic/iot/（PR-4D W-90 订阅防线的管辖面判定锚——
+     * 前缀面内行使哨兵白名单，面外主题归各域自身防线自治，镜像 nursing board 前缀管辖形态）
+     */
+    public static final String TOPIC_IOT_PREFIX = "/topic/iot/";
+
     /** 错误留痕摘要算法：SHA-256，十六进制摘要 64 位与 raw_digest 列宽一致（DeadLetterListener 同口径） */
     public static final String DIGEST_ALGORITHM_SHA256 = "SHA-256";
 

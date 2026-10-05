@@ -95,7 +95,9 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("签发返回可用令牌对：access/refresh 两段式、claims 短键正确、会话以 access TTL 落 Redis")
     void issueProducesVerifiableTokenPairAndStoresSession() throws Exception {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        // permissions 携非空清单入会话：断言 record↔JSON 字段同名映射透传天然成立（PR-4D）
+        SessionUser user =
+                new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of("MENU /dashboard"));
 
         TokenPair pair = tokenService.issue(user);
 
@@ -140,17 +142,19 @@ class TokenServiceImplTest {
         assertThat(stored.employeeId()).isEqualTo(456L);
         assertThat(stored.orgId()).isNull();
         assertThat(stored.roles()).containsExactly("ADMIN");
+        assertThat(stored.permissions()).containsExactly("MENU /dashboard");
     }
 
     @Test
     @DisplayName("签发→校验往返：会话 JSON 还原 SessionData，且校验成功后滑动续期为 access TTL")
     void verifyRoundTripsSessionDataAndRenewsTtl() throws Exception {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         String sid = (String) readClaimsJson(pair.accessToken()).get(SecurityConstants.CLAIM_SID);
         String key = SecurityConstants.SESSION_KEY_PREFIX + sid;
         String sessionJson = new ObjectMapper()
-                .writeValueAsString(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
+                .writeValueAsString(
+                        new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of()));
         when(valueOps.get(key)).thenReturn(sessionJson);
 
         SessionData session = tokenService.verify(pair.accessToken(), SecurityConstants.TOKEN_TYPE_ACCESS);
@@ -165,7 +169,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("短期单 access 签发（大屏匿名订阅令牌）：exp=自定义 TTL、会话同 TTL 落 Redis，verifyAccessToken 全链通过")
     void issueAccessProducesShortLivedTokenPassingWsVerifyChain() throws Exception {
-        SessionUser screen = new SessionUser(0L, "bigscreen", "候诊大屏", null, null, List.of(), null);
+        SessionUser screen = new SessionUser(0L, "bigscreen", "候诊大屏", null, null, List.of(), null, List.of());
         Duration shortTtl = Duration.ofMinutes(5);
 
         String token = tokenService.issueAccess(screen, shortTtl);
@@ -187,7 +191,7 @@ class TokenServiceImplTest {
     @DisplayName("主体校验：携 wardId 哨兵令牌经会话承载返回主体三元组（W-39 通道锚点）")
     void verifyAccessPrincipalReturnsWardBoundTripleForSentinelToken() {
         // 哨兵会话携病区编码（病区屏专用）：wardId 经会话承载而非令牌体（线格式冻结，GC1）
-        SessionUser screen = new SessionUser(0L, "bigscreen", "候诊大屏", null, null, List.of(), "1001");
+        SessionUser screen = new SessionUser(0L, "bigscreen", "候诊大屏", null, null, List.of(), "1001", List.of());
         Duration shortTtl = Duration.ofMinutes(5);
 
         String token = tokenService.issueAccess(screen, shortTtl);
@@ -208,7 +212,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("主体校验：坏签名/空令牌返回 null 不抛异常（防枚举口径与 verifyAccessToken 一致）")
     void verifyAccessPrincipalReturnsNullForTamperedOrBlankToken() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         // 签名篡改样本（尾端仍为合法 base64url 字符，触发签名比对失败而非格式错误）
         String tampered = pair.accessToken().substring(0, pair.accessToken().length() - 2) + "xx";
@@ -222,7 +226,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("主体校验：登录令牌 wardId 为 null（登录态会话不携病区，哨兵签发面专属）")
     void verifyAccessPrincipalYieldsNullWardForLoginToken() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
 
         // 会话回读桩：以签发时实际落库的键与会话 JSON 喂给校验链
@@ -240,7 +244,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("篡改签名拒绝：重算 HMAC 常量时间比较失败即 SYS-1003/401")
     void tamperedSignatureIsRejected() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         // 篡改签名段末尾两个字符（仍为合法 base64url 字符，触发重算比对失败而非格式错误）
         String tampered = pair.accessToken().substring(0, pair.accessToken().length() - 2) + "xx";
@@ -255,7 +259,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("篡改载荷拒绝：改动 payload 一字节后签名比对失败")
     void tamperedPayloadIsRejected() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         // 交换 payload 段首两个字符：payload 仍可解码但与签名不再匹配（防"改 uid 越权"攻击面）
         String[] parts = pair.accessToken().split("\\.", -1);
@@ -285,7 +289,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("typ 严格匹配：access 令牌按 refresh 校验（及反向）均拒绝")
     void typeMismatchIsRejected() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
 
         assertThatThrownBy(() -> tokenService.verify(pair.refreshToken(), SecurityConstants.TOKEN_TYPE_ACCESS))
@@ -299,7 +303,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("会话被删拒绝：登出/踢出后 Redis 键不存在即 SYS-1003（删除即全端失效）")
     void missingSessionIsRejected() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         when(valueOps.get(org.mockito.ArgumentMatchers.anyString())).thenReturn(null);
 
@@ -313,13 +317,13 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("refresh 令牌按 refresh 类型校验成功（刷新换发的令牌校验侧前置能力）")
     void refreshTokenVerifiesAgainstRefreshType() throws Exception {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         String sid = (String) readClaimsJson(pair.refreshToken()).get(SecurityConstants.CLAIM_SID);
         when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid))
                 .thenReturn(new ObjectMapper()
-                        .writeValueAsString(
-                                new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null)));
+                        .writeValueAsString(new SessionData(
+                                123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of())));
 
         SessionData session = tokenService.verify(pair.refreshToken(), SecurityConstants.TOKEN_TYPE_REFRESH);
 
@@ -357,7 +361,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("会话 JSON 损坏拒绝：合法令牌+损坏会话值按 SYS-1003 处置且失败路径不续期")
     void corruptedSessionValueIsRejected() throws Exception {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         String sid = (String) readClaimsJson(pair.accessToken()).get(SecurityConstants.CLAIM_SID);
         // 真实令牌 + Redis 会话值损坏（存储层脏数据/被外力篡改的兜底防线）
@@ -383,13 +387,13 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("刷新换发成功：refresh 令牌换发同 sid 新 access，可按 access 类型校验且会话续期")
     void refreshAccessTokenMintsSameSidAccessToken() throws Exception {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         String sid = (String) readClaimsJson(pair.refreshToken()).get(SecurityConstants.CLAIM_SID);
         when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid))
                 .thenReturn(new ObjectMapper()
-                        .writeValueAsString(
-                                new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null)));
+                        .writeValueAsString(new SessionData(
+                                123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of())));
 
         RefreshedAccess refreshed = tokenService.refreshAccessToken(pair.refreshToken());
 
@@ -412,7 +416,7 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("刷新失败统一 SYS-1005：typ 不符/签名篡改均按刷新令牌无效拒绝（防错误细分探测）")
     void refreshAccessTokenRejectsInvalidRefreshTokenWithUnifiedCode() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         // access 令牌按 refresh 用途提交：typ 不符属刷新失败
         String wrongTypeRaw = pair.accessToken();
@@ -432,13 +436,13 @@ class TokenServiceImplTest {
     @Test
     @DisplayName("登出校验 typ=access 后删键：合法 access 登出删除会话；refresh 令牌登出被拒绝且不删键")
     void logoutRequiresAccessTokenAndDeletesSession() throws Exception {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of());
         TokenPair pair = tokenService.issue(user);
         String sid = (String) readClaimsJson(pair.accessToken()).get(SecurityConstants.CLAIM_SID);
         when(valueOps.get(SecurityConstants.SESSION_KEY_PREFIX + sid))
                 .thenReturn(new ObjectMapper()
-                        .writeValueAsString(
-                                new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null)));
+                        .writeValueAsString(new SessionData(
+                                123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of())));
 
         // 合法 access 登出：删除同 sid 会话键（refresh 同失效）
         tokenService.logout(pair.accessToken());

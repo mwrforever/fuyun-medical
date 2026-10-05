@@ -58,7 +58,10 @@ public enum SystemErrorCode implements ErrorCode {
     ENUM_VALUE_INVALID("SYS-1031"),
 
     /** 大屏匿名令牌越权访问只读看板白名单外端点或病区不匹配（403；PR-4C W-39 哨兵 REST 限行） */
-    SENTINEL_ACCESS_DENIED("SYS-1032");
+    SENTINEL_ACCESS_DENIED("SYS-1032"),
+
+    /** 403 鉴权拒绝（命中权限点且会话角色与允许集交集为空；PR-4D W-37 主体，AuthorizationInterceptor 消费） */
+    PERMISSION_DENIED("SYS-1033");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

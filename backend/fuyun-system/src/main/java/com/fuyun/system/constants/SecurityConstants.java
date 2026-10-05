@@ -63,6 +63,9 @@ public final class SecurityConstants {
     /** 哨兵操作者注入值（userId=0 十进制字符串化——WardAccessService 豁免判定锚点） */
     public static final String BIGSCREEN_SENTINEL_OPERATOR_ID = "0";
 
+    /** 超管角色码：403 拦截器一票放行与登录导出全量特判共用的判定锚（PR-4D D3 裁定，禁散落字面量） */
+    public static final String ADMIN_ROLE_CODE = "ADMIN";
+
     /** 纯常量类，禁止实例化（backend 宪法 A.2-6） */
     private SecurityConstants() {}
 }

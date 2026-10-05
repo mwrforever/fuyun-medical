@@ -19,9 +19,17 @@ class AuthConverterTest {
     private final AuthConverter converter = AuthConverter.INSTANCE;
 
     @Test
-    @DisplayName("会话身份转用户出参：身份字段同名映射，employeeId 不出参，permissions 空集合占位（P1-authz 前契约锚定）")
+    @DisplayName("会话身份转用户出参：身份字段同名映射，employeeId 不出参，permissions 同名映射（PR-4D 填实）")
     void toUserVoMapsSessionIdentity() {
-        SessionUser user = new SessionUser(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionUser user = new SessionUser(
+                123L,
+                "admin",
+                "系统管理员",
+                456L,
+                null,
+                List.of("ADMIN"),
+                null,
+                List.of("GET /api/v1/patients", "MENU /dashboard"));
 
         UserVO vo = converter.toUserVO(user);
 
@@ -30,8 +38,8 @@ class AuthConverterTest {
         assertThat(vo.displayName()).isEqualTo("系统管理员");
         assertThat(vo.orgId()).isNull();
         assertThat(vo.roles()).containsExactly("ADMIN");
-        // permissions 契约锚定：P0 权限点体系未建恒为空集合（前端守卫按空集全放行兼容）
-        assertThat(vo.permissions()).isEmpty();
+        // permissions 契约锚定：恒空集表达式已删，经会话身份同名映射携带角色展开的授权点集
+        assertThat(vo.permissions()).containsExactly("GET /api/v1/patients", "MENU /dashboard");
     }
 
     @Test

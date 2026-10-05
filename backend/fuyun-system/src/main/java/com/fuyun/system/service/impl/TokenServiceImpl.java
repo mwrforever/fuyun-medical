@@ -328,7 +328,10 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
                 user.orgId(),
                 user.roles(),
                 // wardId 透传入会话：哨兵限行与 WS 订阅防线的比对源（登录态恒 null；令牌线格式不动，GC1）
-                user.wardId());
+                user.wardId(),
+                // permissions 透传入会话：record↔JSON 字段同名自动映射天然成立（PR-4D）；
+                // 旧会话 JSON 缺字段反序列化为 null，消费侧归一守卫见 AuthService.refresh
+                user.permissions());
         String sessionJson;
         try {
             sessionJson = objectMapper.writeValueAsString(session);

@@ -11,7 +11,7 @@ import type { components } from '@fuyun/shared/api';
 export type LoginRequest = components['schemas']['LoginRequest'];
 /** 契约类型别名（生成物唯一来源）：登录/刷新双端点同构响应 */
 export type LoginResponse = components['schemas']['LoginResponse'];
-/** 契约类型别名（生成物唯一来源）：登录用户身份（含 P0 占位的 permissions 空集合契约） */
+/** 契约类型别名（生成物唯一来源）：登录用户身份（permissions 授权点集已填实——PR-4D 登录链路导出 API+MENU 双命名空间编码，ADMIN 全量特判；空集=无任何权限，守卫按全拒语义消费） */
 export type UserVO = components['schemas']['UserVO'];
 
 /**

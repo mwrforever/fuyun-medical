@@ -2,6 +2,45 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-06 · P2 PR-4D 五路评审修复环（A-1 must-fix 收口+建议级裁量收敛）
+
+- 五路评审：A 安全 72/B 架构 87/C 数据 84/D 前端 89/E 测试 76（findings 归档
+  `.superpowers/code-review-pr4d/`；C 路首派被 off-peak 票据过期杀死，本会话重派完成）。
+- must-fix A-1（演示账号族生产暴露 85）收口：部署面缓解落盘 `deploy/production-checklist.md`
+  （V303/V1117 共 7 个已知口令账号的生产处置表+可执行停用 SQL+验证口径；A-4 context-path
+  禁设红线+角色变更过渡纪律同文件承载），长期门控方案登记 W-95；V303/V1117 已应用迁移
+  禁改（A.4.1-3），不追加改码迁移。
+- 建议级采纳四项：①A-3+B-2（同族合并）未登记面 warn 改同 URI 首见告警+重复降 debug
+  （带上界 512 防人为膨胀；AuthorizationInterceptor+2 用例）；②B-1 PermissionRegistry 装载
+  尾段新增同 method 面重叠模式互测 warn 守护（resolve 多模式首中语义 javadoc 如实申报，
+  治本择一待行为分叉时升级；+2 用例）；③A-5 IotSubscribeInterceptor javadoc 补 WS-REST
+  纵深不对齐缺口申报（W-94 在案，纯注记零行为变更）；④D-1 前端新 spec
+  menuPermissionMatrix.spec.ts：路由 meta 权限码与 V1116 MENU 种子双向一致性机器守护
+  （跨层漂移 CI 锚定，提取面与消费面双自证防空集假绿）。
+- 建议级转工单不扩环：W-94（iot alarms 读面+WS 订阅面角色限行——A-2/A-5 统一，哨兵伪角色
+  方案涉 D5 裁定与豁免面重构）、W-96（登录链路查询合并+踢出通道——C-1/A-6/D-2 归 F 册）、
+  W-97（绑定矩阵快照断言——B-6/E-2 合并升级为六角色全抽验+全量对照，F 册管理台前置）。
+- E-1 留痕形态如实申报：本册 SDD 执行未落 task-N-report.md 档（家族先例 PR-4A 有 9 个），
+  执行证据以 ledger 行+brief 内嵌+提交历史承载，不事后伪造补写；后续册恢复 report 落盘
+  纪律。留意级处置：A-4 已随检查单红线承载、A-6 已入 W-96，其余（A-7~A-9、B-3~B-5、
+  C-2~C-4、D-3、E-3）留档 findings 不动作，F 册相关项已带入 W-96/W-97 与立项任务书。
+
+## 2026-10-05 · P2 PR-4D 立项（全量 403 鉴权包——六册流水线第五册，E 册后压轴功能册）
+
+- 立项：计划 `docs/superpowers/plans/2026-10-03-p2-pr4d-rbac-full.md` 落盘（D-28 全量端点 403
+  裁决承载）；范围=全仓 302 业务端点×角色矩阵 403（AuthorizationInterceptor+PermissionRegistry
+  启动装载+SYS-1033）+业务角色六席位与双命名空间权限点种子（API=方法前缀路径码 302 点+MENU=
+  冒号码 33 点）+登录链路 UserVO.permissions 填实（SessionUser/SessionData 扩字段+ADMIN 全量
+  导出特判）+前端 hasRoutePermission 空集语义收紧+W-90 承载（/ws/iot 哨兵订阅四主题白名单
+  防线+iot/ward Long wardId 端点入矩阵）+W-91/W-93 同族扫描索引（nurse_id/pay_deadline 部分
+  索引）+RbacMatrixIT 全量登记对照门禁；分支 feat/p2-pr4d-rbac-full（基线 dev@65f8398）。
+- 迁移号占位（先记再占）：V1116（system：全量权限点种子 302 API+33 MENU+V303 旧 6 点方法
+  前缀 UPDATE）/V1117（system：业务角色+全量绑定+演示账号族）/V1118（nursing：nurse_assignment
+  nurse_id 部分索引，W-91①）/V1119（outpatient：appointment pay_deadline 部分索引，W-93①）。
+- 主控设计裁定八项（计划 §设计裁定节定稿）：perm_code=方法+路径双键/双命名空间并存/ADMIN
+  运行期全放不种绑定行/登记面 fail-closed+未登记面放行+测试守护完整性/哨兵三端点豁免挂码/
+  业务角色六席位/演示账号族（doctordemo 增绑 DOCTOR 不动 ADMIN——13 IT 稳定）/W-90 两面承载。
+
 ## 2026-10-05 · P2 PR-4E 收口（事件与工单收敛包）
 
 - 交付：十任务全落地（立项 V1115 占号→W-67a 双消费方判别子跳过→W-67b fee.created visitType

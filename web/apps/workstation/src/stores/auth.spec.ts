@@ -1,6 +1,7 @@
 // 认证会话 store 单测（BRIEF-PR3-01 §4 + BUG-14 权限点集）：登录写 state+sessionStorage、
 // 登出清空并回登录页（api 失败也必须完成本地登出）、isLoggedIn 计算、会话恢复与损坏数据防御、
-// 权限点集派生与 hasRoutePermission 三态判定；api 层以 mock 承载
+// 权限点集派生与 hasRoutePermission 两态判定（PR-4D 空集语义反转：未登记放行/登记且不含拒绝，
+// 空集=无任何权限全拒）；api 层以 mock 承载
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { login as loginApiMock, logout as logoutApiMock } from '@/api/auth';
@@ -37,6 +38,23 @@ function loginResponse(permissions?: string[]): LoginResponse {
       roles: ['ADMIN'],
       ...(permissions !== undefined ? { permissions } : {}),
     },
+  };
+}
+
+/**
+ * 构造守卫判定测试用户（PR-4D 空集语义反转后的 hasRoutePermission 判定专用会话身份）。
+ *
+ * @param permissions 权限点编码集；缺省 = user 无 permissions 字段（契约可选字段缺省的
+ *        防御形态，派生为空集后按无权限全拒消费）
+ */
+function guardUser(permissions?: string[]): UserVO {
+  return {
+    userId: '1',
+    loginName: 'nurse01',
+    displayName: '测试护士',
+    orgId: undefined,
+    roles: [],
+    ...(permissions !== undefined ? { permissions } : {}),
   };
 }
 
@@ -137,31 +155,46 @@ describe('认证会话 store', () => {
 
     await auth.login({ loginName: 'admin', password: FAKE_PASSWORD });
 
-    // 断言业务结果：P0 后端契约缺省字段 → 空集（守卫全放行/侧栏全量显示的骨架口径）
+    // 断言业务结果：契约可选字段缺省的防御形态 → 空集（守卫按无权限全拒消费；后端
+    // PR-4D 已填实登录契约，正常登录不出现该形态）
     expect(auth.permissions).toEqual([]);
   });
 
-  it('hasRoutePermission 三态：未登记权限点放行/空集全放行/集非空按集判定', () => {
+  it('hasRoutePermission：路由未登记权限点放行，空集会话亦放行（public 路由语义）', () => {
     const auth = useAuthStore();
     auth.token = 'guard-access-token'; // 测试注入会话（假令牌资产，非真实凭证）
-    const user: UserVO = {
-      userId: '1',
-      loginName: 'nurse01',
-      displayName: '测试护士',
-      orgId: undefined,
-      roles: [],
-      permissions: ['patient:archive:search'],
-    };
-    auth.user = user;
+    auth.user = guardUser(['patient:archive:search']);
 
-    // 集非空：未登记权限点的路由（首页等）恒放行；集内权限点放行；集外权限点拒绝
+    // 集非空会话：未登记权限点的路由（首页/登录页等 public/通用路由）恒放行
     expect(auth.hasRoutePermission(undefined)).toBe(true);
+
+    // 空集会话（无任何业务权限）仍放行：登录后无权限用户可看首页，业务页由「已登记
+    // 且不含」分支拒绝（PR-4D 反转后的 public 路由语义）
+    auth.user = guardUser();
+    expect(auth.hasRoutePermission(undefined)).toBe(true);
+  });
+
+  it('hasRoutePermission：会话权限集含目标权限点放行、不含拒绝', () => {
+    const auth = useAuthStore();
+    auth.token = 'guard-access-token'; // 测试注入会话（假令牌资产，非真实凭证）
+    auth.user = guardUser(['patient:archive:search']);
+
+    // 集内权限点放行；集外权限点拒绝（守卫重定向 403 与侧栏隐藏菜单项的判定来源）
     expect(auth.hasRoutePermission('patient:archive:search')).toBe(true);
     expect(auth.hasRoutePermission('billing:refund:approve')).toBe(false);
+  });
 
-    // 空集（数据源缺失）：任意权限点均放行（骨架语义，P1 接线后收紧）
-    auth.user = { ...user, permissions: undefined };
-    expect(auth.hasRoutePermission('billing:refund:approve')).toBe(true);
+  it('hasRoutePermission：空集+路由已登记权限点=拒绝（PR-4D 无权限全拒核心断言）', () => {
+    const auth = useAuthStore();
+    auth.token = 'guard-access-token'; // 测试注入会话（假令牌资产，非真实凭证）
+
+    // 空数组与字段缺省两种空集形态同判：已登记权限点的路由一律拒绝（旧骨架「空集全
+    // 放行」分支已删，无任何业务权限的会话进业务页恒 403）
+    auth.user = guardUser([]);
+    expect(auth.hasRoutePermission('billing:refund:approve')).toBe(false);
+    expect(auth.hasRoutePermission('patient:archive:search')).toBe(false);
+    auth.user = guardUser();
+    expect(auth.hasRoutePermission('billing:refund:approve')).toBe(false);
   });
 
   it('会话恢复保留权限点集（刷新标签页后守卫判定数据源不丢失）', () => {

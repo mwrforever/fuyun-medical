@@ -254,3 +254,12 @@
 9. **iot_metric_dict 自管面声明**：MDC 指标术语字典为本模块自管专业字典（V1007 `iot_metric_dict`/`iot_metric_mapping` 两表；REST `GET/POST /metrics`、`PUT /products/{id}/metric-mappings` 自管词表，不经 M01 字典体系，§8「与 M01 的关系」既定）；物模型属性缺映射按 `RAW_PASSTHROUGH` 原生属性名直通入库（metric_code 记原生属性名，不静默丢弃，FU-M14-02 红线；每设备×属性首见一次 warn，Redis 键 TTL 1h 防刷屏）；字典未登记编码跳过生理极限校验（不误伤直通行），quality 按管道口径重算（数值+新鲜即 GOOD）——「词表外 ⇒ SUSPECT」仅为上报报文侧 quality 字段缺省语义，不构成平台落库口径（task-18 批次 IT 实证）。
 10. **告警关闭实况收口（主控裁定：后端实况为准）**：实况 `casClose` 允许 **ACTIVE/ACKNOWLEDGED 两态直关**（`IotAlarmMapper` :74-76 CAS `WHERE status IN ('ACTIVE','ACKNOWLEDGED')`），与本文 §5 状态机（:125 附近线性生命周期「确认后才可关」的 TRIGGERED→…→ACKNOWLEDGED→…→CLOSED 描述）的矛盾以本注记收口为准；非两态拒绝关闭，前端已三方收敛实况（api 注释/视图暴露/测试用例，Task 15 裁定分支 1）。状态机其余语义（升级=动作非状态、CLOSED 终态必填处理记录）不变。
 11. **WS 尾帧语义注记（Task 11 遗留）**：遥测摘要主题 2 秒节流窗口（每病区独立）+ 500ms 兜底排空线程双路出帧下，单批尾帧出帧延迟上界 ≈ 窗口 2s + 排空轮询 500ms ≈ **2.5s 量级**（轮询+节流组合上界）；断连补齐窗口的「≤2s 大屏刷新」严格语义由重连后 REST 增量拉取承载（FU-M14-07 既定），WS 窗口尾帧不承诺严格 ≤2s。
+
+## 14. P2 PR-4D 落地注记（2026-10-05，feat/p2-pr4d-rbac-full）
+
+> 本节为 P2 PR-4D（全量 403 鉴权包）交付面相对本 Spec 的界定与裁决声明；
+> PR-4D 口径以本节为准，Spec 正文不回改。
+
+1. **WS SUBSCRIBE 订阅防线（W-90 WS 面收口）**：`/ws/iot` 客户端入站通道挂 `IotSubscribeInterceptor`（CONNECT 鉴权拦截器之后第二位，主体取 CONNECT 阶段缓存的令牌会话属性）——大屏哨兵（loginName=bigscreen，iot 侧镜像常量承载）SUBSCRIBE 限订 iot 主题面内四主题白名单：三主题族前缀匹配（`/topic/iot/telemetry|alarm|device-status/{wardId}`，尾段任意）+ 全院摘要精确匹配（`/topic/iot/dashboard/global`，多一层尾段即越面）；白名单词表复用推送出口前缀常量（与推送侧逐字同源防漂移）。登录态（任意非哨兵账号）订阅不受限——iot 主题族无登录态维度的限行面，登录态守卫属 REST 403 全量矩阵与护理 board 族防线承载。越面拒绝以 ERROR 帧回送并按协议错误关闭连接（异常消息含 destination 与 traceId，禁打令牌）；无已鉴权主体（未 CONNECT 即订阅）一律拒（fail-closed）。
+2. **域防线自治（修复环裁定）**：clientInboundChannel 为全部 WS 端点共享的全局入站通道（nursing/iot/outpatient 三端点拦截器均对彼此连接生效），本防线经 `/topic/iot/` 前缀判定收窄管辖面——仅 iot 面内行使哨兵白名单，面外主题（如护理 board 族）原样放行、归各域自身防线（哨兵的 board 订阅由 nursing 侧 `NursingSubscribeWardInterceptor` 按令牌 wardId 一致性校验，PR-4C A-2 链路不变）；域防线互不代管，与 nursing 侧 board 前缀管辖形态互为镜像。
+3. **wardId 段级核验缺位申报（W-74 关联）**：三主题族 `{wardId}` 尾段与哨兵令牌绑定病区的一致性本防线不校验——iot 数字病区 id 与护理病区编码双标识空间映射缺失（TASK.md W-74 工单在案），擅自造映射表属越权；当前泛哨兵（未携病区签发）与绑定哨兵同一白名单语义（四主题均 iot 展示数据）。待 W-74 映射面收口后升级为段级核验（绑定哨兵非匹配段与泛哨兵的族内订阅届时应拒）。REST 面病区参数端点已随 PR-4D 全量入 403 矩阵（登录态+角色交集判定），W-90 双面收口语义见 TASK.md W-90 行。

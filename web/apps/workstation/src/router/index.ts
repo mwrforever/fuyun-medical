@@ -1,7 +1,7 @@
 /**
  * 路由 = 权限点清单（web B.3-2）：每条路由 meta 承载权限语义，路由组件全部懒加载；
- * beforeEach 做认证判定（默认拒绝 + 防死循环）与权限点骨架判定（无权限重定向 403，
- * 权限点集缺失=数据源未接线时全放行，P1 鉴权接线后收紧）。
+ * beforeEach 做认证判定（默认拒绝 + 防死循环）与权限点判定（路由已登记权限点且会话
+ * 权限集不含——含空集=无任何权限——时重定向 403；未登记权限点路由放行，PR-4D 收紧后口径）。
  */
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -37,7 +37,8 @@ export const router = createRouter({
           path: '',
           name: 'home',
           component: () => import('@/views/home/HomeView.vue'),
-          // meta 预留权限语义：P1 鉴权拦截接入后补 permission 权限点字段
+          // 首页有意不登记权限点（PR-4D 守卫两态口径的放行态）：空集会话登录后仍可落
+          // 首页再经业务路由拒绝到 403，业务面可见性一律由各业务路由 permission 承载
           meta: {},
         },
         {
@@ -272,8 +273,8 @@ router.beforeEach((to) => {
   if (to.path === '/login' && auth.isLoggedIn) {
     return { path: '/' };
   }
-  // 权限判定（BUG-14 守卫骨架）：路由登记了权限点且会话权限点集不含时重定向 403 页；
-  // 权限点集为空（数据源缺失）全放行，口径与接线 TODO 见 auth store hasRoutePermission
+  // 权限判定（BUG-14 骨架 + PR-4D 收紧）：路由登记了权限点且会话权限点集不含（空集=
+  // 无任何权限恒不含）时重定向 403 页；两态口径详见 auth store hasRoutePermission
   if (!auth.hasRoutePermission(to.meta.permission)) {
     return { path: '/403' };
   }
