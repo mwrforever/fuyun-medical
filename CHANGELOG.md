@@ -2,6 +2,22 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-06 · P2 PR-4F 立项（元素级 UI 访问控制与权限管理台——六册流水线末册）
+
+- 立项：计划 `docs/superpowers/plans/2026-10-03-p2-pr4f-ui-perm.md` 落盘（D-32~D-35 裁决承载，
+  D 册底座 dev@d74c36f 之上）；范围=perm_type=ELEMENT 第三命名空间（40 元素码四段形态，
+  盘点报告一对一度缺口=0）+`v-perm` 指令与 `hasPerm()` 双入口（无码全隐藏 DOM 移除）+system
+  域权限管理台（RoleAdminController/PermissionAdminController 矩阵读写+@AuditLog+新端点 API
+  码 ADMIN 专属自挂）+workstation 管理页（角色×权限矩阵编辑器+新 MENU 码）+变更生效链路
+  （MQ 广播 Registry 重载+受影响会话踢出——W-96②③收口）+W-97 绑定矩阵快照断言；分支
+  feat/p2-pr4f-ui-perm。
+- 主控设计裁定八项（计划 §F1~F8）：四段元素码/permissions 混出形态 A（B-5 收口，登录链零
+  结构改动）/刷新通道走 RabbitMQ 镜像 dict 广播先例（**修正总纲「Redis pub/sub」字面——依据
+  盘点实况仓库零装配先例**）/变更生效三件套/管理端点族不做角色增删/四错位 MENU 扩绑全修/
+  W-97 六角色全抽验/hasPerm 独立建模禁复用路由语义（D-3）。
+- 迁移号占位（先记再占）：V1120（system：40 ELEMENT+1 MENU+4 管理 API 码+event_registry
+  id 84 事件登记）/V1121（system：40 元素码×角色绑定 43 行+四错位扩绑 4 行）。
+
 ## 2026-10-06 · P2 PR-4D 五路评审修复环（A-1 must-fix 收口+建议级裁量收敛）
 
 - 五路评审：A 安全 72/B 架构 87/C 数据 84/D 前端 89/E 测试 76（findings 归档
