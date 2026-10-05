@@ -3,7 +3,7 @@
 // 预结算锁价 → 确认弹框 → 正式结算出网；金额全程 string 承载、仅经 fenToYuanDisplay 展示，
 // 页面零金额运算（总 Spec D5）；幂等由后端 settleNo 终态承载，前端不生成任何流水键。
 // 弹错归响应拦截器（web A.3-2）；失败驻留旧结果。
-import { reactive, ref } from 'vue';
+import { reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage 在模板外使用，按需样式需手动引入（与 api/http.ts 同款口径）
 import 'element-plus/es/components/message/style/css';
@@ -56,8 +56,18 @@ const quoteResult = ref<QuoteVO | null>(null);
 
 /** 待收费用行（listFees 回显，仅 PENDING 状态进入本表） */
 const pendingFees = ref<FeeRecordVO[]>([]);
-/** 预结算草稿（确认结算以回传 settleNo/totalAmount 为唯一出网依据） */
+/** 预结算草稿（确认结算以回传 settleNo/totalAmount 为唯一出网依据；档位切换即作废——
+ *  草稿与所选支付方式强一致，见下方 watch） */
 const preview = ref<SettlementPreviewVO | null>(null);
+
+// 切档即作废预结算草稿（W-41 补）：草稿金额/流水键均按预结算当时档位生成（医保档为贯标
+// 校验+网关拆分后的 PRESETTLED 形态）。若草稿跨档存活——典型如医保草稿切回自费档——settle
+// 守卫按当前档（自费）放行，buildPaymentLines 将以医保草稿的 totalAmount 全 CASH 出网且
+// settleNo 落在医保单上，形成医保单被全现金结算的勾稽语义错位。作废后 settle 入口由
+// 「请先执行预结算」既有守卫自然拦截，强制按新档重做预结算。
+watch(payerType, () => {
+  preview.value = null;
+});
 /** 最近一次结算终态（成功横幅展示，string 金额原样透出）。常驻业务锚点：横幅不随新查询
  * 自动清除，驻留至下一次结算成功覆盖——新查询后旧横幅与摘要并存属既定口径，仅注记不改逻辑 */
 const settled = ref<SettlementVO | null>(null);

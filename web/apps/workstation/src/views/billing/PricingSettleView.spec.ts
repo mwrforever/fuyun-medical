@@ -4,7 +4,8 @@
 // 回包判空兜底（content 缺省不驻留旧就诊费用）与切换就诊号在途竞态守卫（旧就诊慢回包丢弃）、
 // 支付方式参数化（W-41）：默认自费档 preview 出网携 SELF_PAY、切医保档 preview 携所选值且
 // 确认结算被前置守卫拦截零出网（医保 payments 组装形态归 W-80，勿造）、确认文案随所选
-// 支付方式中文标签联动（不再硬编码「现金」）。
+// 支付方式中文标签联动（不再硬编码「现金」）；切档即作废预结算草稿（W-41 补）：医保
+// PRESETTLED 草稿切回自费档不得跨档存活——按钮回禁用态拦截结算，强点亦零出网。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -213,6 +214,54 @@ describe('划价结算页', () => {
     // 医保结算通道待 W-80 接入（PaymentMethod 无医保基金通道，payments 形态勿造）：
     // 前置守卫 warning 拦截且不进确认弹框，settle 零出网（防基金部分被记作现金的误结算）
     expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(expect.stringContaining('医保'));
+    expect(vi.mocked(ElMessageBox.confirm)).not.toHaveBeenCalled();
+    expect(vi.mocked(settle)).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('医保草稿切回自费档点结算被拦：切档即作废预结算草稿（W-41 补）', async () => {
+    // 复现主控审查 concerns 2 缺口：CITY_INS preview 得 PRESETTLED 草稿 → 切回 SELF_PAY →
+    // 若草稿驻留，settle 守卫按当前档（自费）放行，医保单被全现金结算（勾稽语义错位）
+    vi.mocked(previewSettlement).mockResolvedValue({
+      settleNo: 'SN-20260918-004',
+      totalAmount: '7000',
+      payerType: 'CITY_INS',
+      status: 'PRESETTLED',
+    });
+    vi.mocked(settle).mockResolvedValue({
+      settleNo: 'SN-20260918-004',
+      totalAmount: '7000',
+      status: 'SETTLED',
+    });
+    const wrapper = mount(PricingSettleView);
+    await wrapper.find('input[placeholder="患者号"]').setValue('1932000000000000002');
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V001');
+    // 医保档预结算：得医保 PRESETTLED 草稿（select 替身口径同存量 spec）
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'CITY_INS');
+    await flushPromises();
+    await clickButton(wrapper, '预结算');
+    await vi.waitFor(() => {
+      expect(vi.mocked(previewSettlement)).toHaveBeenCalled();
+    });
+    // 切回自费档：草稿与档位强一致，医保草稿不得跨档存活
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'SELF_PAY');
+    await flushPromises();
+
+    // 清掉本用例前置流程与模块级 mock 跨用例累积的调用史，只断言本次触发
+    vi.mocked(ElMessage.warning).mockClear();
+    vi.mocked(ElMessageBox.confirm).mockClear();
+    vi.mocked(settle).mockClear();
+
+    // 旧医保草稿已作废：确认结算按钮回禁用态（:disabled="preview === null"），真实用户
+    // 无法以医保草稿发起结算——拦截点前移至按钮禁用层（jsdom 对禁用控件激活语义与真实
+    // 浏览器一致地抑制，handleSettle 不可达，「请先执行预结算」守卫退居纵深防御）
+    const settleBtn = wrapper.findAll('button').find((b) => b.text() === '确认结算');
+    expect(settleBtn?.attributes('disabled')).toBeDefined();
+
+    // 纵深验证：即便程序化强点禁用按钮，也不进确认弹框、settle 零出网——医保 settleNo
+    // 被全现金结算的形态被彻底阻断（断言业务结果，不绑定拦截层归属）
+    await settleBtn?.trigger('click');
+    await flushPromises();
     expect(vi.mocked(ElMessageBox.confirm)).not.toHaveBeenCalled();
     expect(vi.mocked(settle)).not.toHaveBeenCalled();
     wrapper.unmount();
