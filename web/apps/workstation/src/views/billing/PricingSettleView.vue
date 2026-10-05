@@ -14,6 +14,8 @@ import type {
   FeeRecordVO,
   ManualChargeRequest,
   QuoteVO,
+  SettleRequest,
+  SettlementPreviewRequest,
   SettlementPreviewVO,
   SettlementVO,
 } from '@/api/billing';
@@ -24,6 +26,23 @@ import { fenToYuanDisplay } from '@/utils/money';
 const patientId = ref('');
 /** 就诊号（CF-3，检索与全部操作的锚点） */
 const visitId = ref('');
+
+/** 支付方式代码（契约直取 PayerType 五档字面量联合；非法 code 由后端 400 承载，前端不另设词表校验） */
+type PayerTypeCode = SettlementPreviewRequest['payerType'];
+
+/** 支付方式五档词表（与后端 PayerType 枚举同源的内联常量；中文标签供工具栏下拉展示与
+ *  结算确认文案插值共用，W-41 参数化后单一来源） */
+const PAYER_TYPE_OPTIONS: ReadonlyArray<{ value: PayerTypeCode; label: string }> = [
+  { value: 'SELF_PAY', label: '自费' },
+  { value: 'CITY_INS', label: '市医保' },
+  { value: 'PROV_INS', label: '省医保' },
+  { value: 'OUTSIDE_INS', label: '异地医保' },
+  { value: 'COMM_INS', label: '商业保险' },
+];
+
+/** 所选支付方式（默认自费）：预结算出网携值；医保档预览拆分可用但结算被前置守卫拦截
+ *  （通道待 W-80 接入），确认文案随所选档中文标签联动 */
+const payerType = ref<PayerTypeCode>('SELF_PAY');
 
 /** 划价行编辑模型（与 QuoteRequest.Line 同构；quantity 为数量非金额，number 合法） */
 interface QuoteLineEdit {
@@ -185,8 +204,8 @@ async function submitManual(): Promise<void> {
 }
 
 /**
- * 预结算：自费口径本地聚合锁价（医保模拟回执后续接入，payerType 暂固定 SELF_PAY）。
- * 结果仅存草稿（settleNo/totalAmount），确认结算以此出网，前端不生成流水键。
+ * 预结算：出网携工具栏所选支付方式（自费=本地聚合锁价；医保档=后端贯标校验+网关拆分
+ * PRESETTLED）。结果仅存草稿（settleNo/totalAmount），确认结算以此出网，前端不生成流水键。
  */
 async function handlePreview(): Promise<void> {
   if (!requireVisit()) {
@@ -201,7 +220,7 @@ async function handlePreview(): Promise<void> {
     preview.value = await previewSettlement({
       patientId: patientId.value.trim(),
       visitId: visitId.value.trim(),
-      payerType: 'SELF_PAY',
+      payerType: payerType.value,
     });
   } catch {
     // 失败弹错归响应拦截器
@@ -211,21 +230,44 @@ async function handlePreview(): Promise<void> {
 }
 
 /**
- * 确认结算：弹框核对总额 → settle 以预结算回传 settleNo + 全现金单行 payments 出网
- * （2026-09-17 裁决①：Σamount==totalAmount 勾稽由后端 BILL-1016 兜底，页面零运算直透
- *  string 分值；就诊卡 CARD_BALANCE 混行随选卡页后续模块接入）。
+ * 组装 settle 支付明细（纯函数抽取，行为与原内联逐字一致，W-41）：自费档全现金单行——
+ * 金额取预结算回传 totalAmount 的 string 分值直透（零运算零转换，Σamount==totalAmount
+ * 勾稽由后端 BILL-1016 兜底）。医保档形态归 W-80 口径裁决（结算入口已前置拦截，本函数
+ * 不会被医保档触达）。
+ *
+ * @param draft 预结算草稿（totalAmount 为 string 分值，允许缺省回退空串）
+ * @return 支付明细（当前仅自费单行 CASH）
+ */
+function buildPaymentLines(draft: SettlementPreviewVO): SettleRequest['payments'] {
+  return [{ method: 'CASH', amount: draft.totalAmount ?? '' }];
+}
+
+/**
+ * 确认结算：医保档前置守卫拦截（W-41）→ 弹框核对总额（文案随所选支付方式中文标签联动）→
+ * settle 以预结算回传 settleNo + 支付明细出网（幂等由后端 settleNo 终态承载；就诊卡
+ * CARD_BALANCE 混行随选卡页后续模块接入）。
  */
 async function handleSettle(): Promise<void> {
+  // W-41：医保档结算通道待接入——PaymentMethod 词表无医保基金支付通道（六值 CASH/BANK/SCAN/
+  // ONLINE/CARD_BALANCE/CHARGE_ON_CREDIT），payments 医保组装形态归 W-80 口径裁决；前置拦截防
+  // 医保单被全现金额外误结算（勾稽语义错位：基金部分将被记作现金）
+  if (payerType.value !== 'SELF_PAY') {
+    void ElMessage.warning('医保结算通道待接入，当前仅支持自费结算（可先预览医保拆分）');
+    return;
+  }
   const draft = preview.value;
   if (draft === null || draft.settleNo === undefined) {
     void ElMessage.warning('请先执行预结算');
     return;
   }
+  // 确认文案插值所选支付方式中文标签（守卫后此处恒为自费档，插值保持参数化形态供 W-80 接入复用）
+  const payerLabel =
+    PAYER_TYPE_OPTIONS.find((opt) => opt.value === payerType.value)?.label ?? '自费';
   try {
     // R-3：ElMessageBox 函数式挂载不继承 ConfigProvider locale（默认渲染英文 OK/Cancel），
     // 按钮文案显式中文（PatientDetailView 先例同款）
     await ElMessageBox.confirm(
-      `应缴总额 ${fenToYuanDisplay(draft.totalAmount ?? '0')} 元（现金），确认结算？`,
+      `应缴总额 ${fenToYuanDisplay(draft.totalAmount ?? '0')} 元（${payerLabel}），确认结算？`,
       '结算确认',
       {
         type: 'warning',
@@ -241,7 +283,7 @@ async function handleSettle(): Promise<void> {
   try {
     settled.value = await settle({
       settleNo: draft.settleNo,
-      payments: [{ method: 'CASH', amount: draft.totalAmount ?? '' }],
+      payments: buildPaymentLines(draft),
     });
     void ElMessage.success('结算成功');
     preview.value = null;
@@ -267,6 +309,16 @@ async function handleSettle(): Promise<void> {
         <el-input v-model="visitId" placeholder="就诊号" class="pricing-settle-input" clearable />
         <el-button :loading="feesLoading" @click="handleQueryFees">查询费用</el-button>
         <el-button @click="openManual">手工计费</el-button>
+        <!-- 支付方式选择（W-41）：预结算出网携值、确认文案联动；医保档仅可预览拆分，
+             结算入口前置守卫拦截（通道待 W-80 接入） -->
+        <el-select v-model="payerType" class="pricing-settle-payer">
+          <el-option
+            v-for="opt in PAYER_TYPE_OPTIONS"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
       </div>
 
       <!-- 划价行编辑区：itemCode/quantity 两列可增删行（金额由后端按快照算，前端不填）；
@@ -405,6 +457,12 @@ async function handleSettle(): Promise<void> {
    卡宽随 .fuy-page 全宽（列表 1080 上限撤销），本块只留按钮组/横幅间距与 input 宽度 */
 .pricing-settle-input {
   max-width: 240px;
+}
+
+/* 支付方式下拉定宽（W-41）：el-select 默认宽 100% 会撑满工具栏剩余空间，照
+   RefundApprovalView 筛选下拉 160px 口径约束（四字中文标签+箭头富余） */
+.pricing-settle-payer {
+  width: 160px;
 }
 
 .pricing-settle-actions {
