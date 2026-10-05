@@ -2,6 +2,25 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-05 · P2 PR-4E 收口（事件与工单收敛包）
+
+- 交付：十任务全落地（立项 V1115 占号→W-67a 双消费方判别子跳过→W-67b fee.created visitType
+  净解→W-47 患者读面 11 GET 审计→A-6 wardId 词表→NursingRateGuard 频控（NS-1029/1030）→
+  W-41 收费页 payerType 参数化（含切档清草稿补修环 8550226）→W-27 号源 tick 三件套+T-R3-4
+  探针（实测 2.07s∈[2s,7s]）→TASK 八工单销项+三 Spec 注记→收口修复环 R1），分支
+  feat/p2-pr4e-events-tickets 共 14 笔（72d07bf→6950677）。
+- 终验：后端 21 模块全量 verify BUILD SUCCESS（25:22）+前端六连全绿（workstation 361 用例；
+  audit 本地镜像端点缺失归 CI 权威）；轻 e2e=收费页 payerType 真栈走查（五档控件/草稿/
+  文案联动截图/API 双档语义[CITY_INS 409 BILL-1006 贯标拒绝]——证据 `.superpowers/sdd/
+  2026-10-03-p2-pr4e-events-tickets/probe/`）。
+- 五路评审：A 安全 78/B 架构 93/C 数据 82/D 前端 84/E 测试 87（findings 归档
+  `.superpowers/code-review-pr4e/`）；must-fix 三主项+A-1 后端防线（评审新增裁定：拒绝≠造
+  形态，settle 非 SELF_PAY fail-closed 归 W-80 前防线）经修复环 R1 全收口；C-F1/C-F3 登记
+  W-93（索引+断链恢复，W-91 同族）、W-92 退药面同族在案。
+- 主控裁定补录：①W-41 医保档 settle=前端守卫+后端 fail-closed 双层（payments 医保形态勿造，
+  归 W-80）②tick 三件套=自续期心跳链形态（先例实证无 @Scheduled 无 ShedLock，计划段措辞
+  失实以先例为准）③billing 族组件序断言用 record 反射勿建 COMPONENT_NAMES。
+
 ## 2026-10-05 · P2 PR-4E 收口修复环 R1（五路评审 must-fix 三主项+顺手三项）
 
 - 交付：A-1 settle 非自费单 fail-closed（结算单 payerType≠SELF_PAY 抛 BILL-1015 409，payments
