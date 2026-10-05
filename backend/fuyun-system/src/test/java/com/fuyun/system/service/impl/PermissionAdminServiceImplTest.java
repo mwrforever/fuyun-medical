@@ -50,7 +50,7 @@ class PermissionAdminServiceImplTest {
     }
 
     @Test
-    @DisplayName("三型混出各归其位：按 perm_type 分组且组内按 perm_code 排序（乱序入库自证）")
+    @DisplayName("三型混出各归其位：组序随枚举声明序（MENU/API/ELEMENT）锁定且组内按 perm_code 排序（乱序入库自证）")
     void listGroupedGroupsByTypeAndSortsPointsByCode() {
         // 乱序返回（类型与码序均乱）：分组与排序语义由 service 内存组装承载
         when(permissionMapper.selectList(any()))
@@ -63,10 +63,11 @@ class PermissionAdminServiceImplTest {
 
         List<PermissionGroupVO> groups = service.listGrouped();
 
-        // 三组各归其位（类型归属由 perm_type 列承载，非码形态解析）
+        // 组序确定性锁定（Task 4 审查遗留收口）：EnumMap 按枚举声明序迭代，前端免再排组——
+        // 严格序断言锁实现现状（MENU→API→ELEMENT），非改语义
         assertThat(groups)
                 .extracting(PermissionGroupVO::permType)
-                .containsExactlyInAnyOrder(PermissionType.MENU, PermissionType.API, PermissionType.ELEMENT);
+                .containsExactly(PermissionType.MENU, PermissionType.API, PermissionType.ELEMENT);
         assertThat(codesOf(groups, PermissionType.ELEMENT))
                 .containsExactly("billing:refund:btn:approve", "nursing:ward:btn:task");
         assertThat(codesOf(groups, PermissionType.API))
