@@ -88,7 +88,9 @@ public class PermissionRegistry {
      * 按「第一个空格」切分 perm_code 的动词与路径模板（禁 split 正则歧义），
      * 非法编码（无空格/空段）跳过并记 warn，不阻断其余条目装载。
      *
-     * <p>幂等语义：重复调用清空重建，旧条目不残留（测试与 PR-4F 刷新通道复用前提）。
+     * <p>幂等语义：重复调用清空重建，旧条目不残留（测试与 PR-4F 刷新通道复用前提）；
+     * 装载尾段附带同 method 面重叠模式互测 warn 守护（评审 B-1，见
+     * {@link #warnOverlappingPatterns}）。
      */
     public void load() {
         // 第一步：sys_permission 全量 API 行（精确投影 id/perm_code，A.4.3-14）
@@ -150,15 +152,56 @@ public class PermissionRegistry {
         }
         // 整体替换快照引用：并发读要么全旧要么全新，不清空旧 Map（幂等重建的原子性锚点）
         matrix = fresh;
+        warnOverlappingPatterns(fresh);
         log.info("403鉴权矩阵装载完成：API权限点={}条，跳过非法编码={}条", permissions.size() - skipped, skipped);
+    }
+
+    /**
+     * 同 method 面内路径模式重叠检测（评审 B-1 修复环守护）：两两互测（对方模板串作请求路径
+     * 归一解析后 matches），捕获「字面量段 vs 变量段」形态的登记重叠（如
+     * {@code /patients/search} 与 {@code /patients/{patientId}}）。
+     *
+     * <p>为何只 warn 不择一：{@link #resolve} 对多模式命中取迭代首中（HashMap 桶序，非 MVC
+     * specificity 语义）——当前仓库唯一重叠对两码允许集恰好相同、行为零差异，warn 申报即守护
+     * 锚（重叠且角色集分叉时此处会暴露）；治本（按字面量段数等确定性规则择一）待该形态实际
+     * 出现分叉时升级，避免无行为差异阶段引入匹配语义变更。
+     *
+     * <p>互测为保守近似（模板串互代请求实参存在漏报方向，如 {@code /a/{x}/c} 与
+     * {@code /a/b/{y}} 互测双双不中），漏报仅少一条 warn 无行为影响；启动期一次性执行，
+     * 百级模式两两互测毫秒级，不进请求路径。
+     *
+     * @param fresh 本轮装载完成的新快照（method → 路径模板 → 条目），非空
+     */
+    private void warnOverlappingPatterns(Map<String, Map<PathPattern, PermissionEntry>> fresh) {
+        for (Map.Entry<String, Map<PathPattern, PermissionEntry>> methodFace : fresh.entrySet()) {
+            List<PathPattern> patterns = List.copyOf(methodFace.getValue().keySet());
+            for (int i = 0; i < patterns.size(); i++) {
+                for (int j = i + 1; j < patterns.size(); j++) {
+                    PathPattern first = patterns.get(i);
+                    PathPattern second = patterns.get(j);
+                    if (first.matches(PathContainer.parsePath(second.getPatternString()))
+                            || second.matches(PathContainer.parsePath(first.getPatternString()))) {
+                        log.warn(
+                                "403鉴权矩阵存在重叠路径模式（resolve 首中依赖迭代序，重叠双码角色集应保持一致，建议收敛登记）：method={}，patternA={}，patternB={}",
+                                methodFace.getKey(),
+                                first.getPatternString(),
+                                second.getPatternString());
+                    }
+                }
+            }
+        }
     }
 
     /**
      * 解析请求归属的权限点条目。
      *
+     * <p>多模式命中语义（评审 B-1 如实申报）：同 method 面内多个模式同时命中同一请求路径时
+     * 取迭代首中（HashMap 桶序，非 MVC specificity 排序）——重叠登记由 {@link #load()} 尾段
+     * 互测 warn 守护（见 {@link #warnOverlappingPatterns}），重叠双码允许集应保持一致。
+     *
      * @param method HTTP 方法，非空；大小写不敏感（容器返回大写，归一防御）
      * @param path   请求路径，非空；含路径变量实参段（如 /refunds/123/approve）
-     * @return 命中的权限点条目（permCode + 允许角色集）；方法或路径未登记时为 empty（拦截器按 D4 放行+warn 处置）
+     * @return 命中的权限点条目（permCode + 允许角色集）；方法或路径未登记时为 empty（拦截器按 D4 放行+首见 warn 处置）
      */
     public Optional<PermissionEntry> resolve(String method, String path) {
         Map<PathPattern, PermissionEntry> candidates = matrix.get(method.toUpperCase(Locale.ROOT));

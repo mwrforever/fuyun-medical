@@ -5,6 +5,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -28,6 +32,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 
 /**
  * 权限点登记面单元测试（PR-4D W-37 主体构件，D1/D4 裁定的可执行化）。
@@ -35,7 +40,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
  * <p>覆盖：perm_code「动词+空格+路径模板」形态解析、PathPattern 模板对路径变量请求的归一命中、
  * 方法维度隔离（同路径 GET/POST 权限差异）、未登记路径 empty、停用角色绑定不入允许集
  * （与 findRoleCodesByUserId 的 ACTIVE 过滤语义一致）、load 幂等可重载（清空重建，供单测与
- * 未来 PR-4F 刷新通道复用）、非法权限点编码跳过。mapper 以 Mockito 模拟（三步单表查询
+ * 未来 PR-4F 刷新通道复用）、非法权限点编码跳过、装载尾段同 method 面重叠模式互测 warn
+ * 守护（评审 B-1 修复环，命中与不误报双面）。mapper 以 Mockito 模拟（三步单表查询
  * 不触库，TableInfo 手动初始化供 lambda 条件列名解析）。
  */
 @ExtendWith(MockitoExtension.class)
@@ -161,6 +167,53 @@ class PermissionRegistryTest {
 
         assertThat(registry.resolve("GET", "/-/api/v1/broken")).isEmpty();
         assertThat(registry.resolve("GET", "/api/v1/billing/settlements/{no}")).isPresent();
+    }
+
+    @Test
+    @DisplayName("重叠路径模式装载留 warn 痕：字面量段与变量段模板互测命中即申报（评审 B-1 守护）")
+    void loadWarnsOnOverlappingPatterns() {
+        // 仓库真实重叠对同构样本：/patients/search（字面量尾段）与 /patients/{patientId}（变量尾段）
+        when(permissionMapper.selectList(any()))
+                .thenReturn(List.of(
+                        perm(301L, "GET /api/v1/patient/patients/search"),
+                        perm(302L, "GET /api/v1/patient/patients/{patientId}")));
+        // 留一条绑定使三步查询链完整走通（roleMapper 消费 setUp 共享 stub，Mockito 严格模式零冗余）
+        when(rolePermissionMapper.selectList(any())).thenReturn(List.of(bind(301L, 1L)));
+        Logger registryLogger = (Logger) LoggerFactory.getLogger(PermissionRegistry.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        registryLogger.addAppender(appender);
+        try {
+            registry.load();
+
+            assertThat(appender.list)
+                    .anyMatch(event -> Level.WARN.equals(event.getLevel())
+                            && event.getFormattedMessage().contains("重叠路径模式")
+                            && event.getFormattedMessage().contains("/patients/search")
+                            && event.getFormattedMessage().contains("/patients/{patientId}"));
+        } finally {
+            registryLogger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("无重叠模式装载零告警：不同 method 面与互斥路径模板不触发重叠申报（守护不误报）")
+    void loadStaysSilentWithoutOverlap() {
+        // 既有共享种子（结算 GET + 退款审批 POST，方法面隔离）+ 同 method 面互斥模板，
+        // 均不构成重叠——断言装载全程无重叠 warn
+        Logger registryLogger = (Logger) LoggerFactory.getLogger(PermissionRegistry.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        registryLogger.addAppender(appender);
+        try {
+            registry.load();
+
+            assertThat(appender.list)
+                    .noneMatch(event -> Level.WARN.equals(event.getLevel())
+                            && event.getFormattedMessage().contains("重叠路径模式"));
+        } finally {
+            registryLogger.detachAppender(appender);
+        }
     }
 
     /** 构造权限点行样本（仅装载用到的 id/permCode 字段）。 */

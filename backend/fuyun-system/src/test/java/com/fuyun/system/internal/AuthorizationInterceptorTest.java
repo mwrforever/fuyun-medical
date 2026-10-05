@@ -32,9 +32,10 @@ import org.springframework.mock.web.MockHttpServletResponse;
  * <p>覆盖：ADMIN 一票放行（优先级最高，未登记/越权均放行）；命中权限点且会话角色与允许集
  * 交集非空放行；命中但角色不符 → 403 {@code application/problem+json}（结构
  * {type,title,status,detail,errorCode,traceId} 与 AuthTokenInterceptor 拒绝面同构，
- * errorCode=SYS-1033）；未登记路径放行（D4 医疗可用性优先）且 warn 日志留痕；哨兵
- * （角色空集）未登记放行/已登记拒绝双面。角色上下文经 RoleContextHolder set/clear
- * （OrderExecutionOperateServiceImplTest 范式），MDC traceId 手工置入模拟 TraceIdFilter 前提。
+ * errorCode=SYS-1033）；未登记路径放行（D4 医疗可用性优先）且同 URI 首见 warn、重复降
+ * debug（评审 A-3/B-2 修复环）；哨兵（角色空集）未登记放行/已登记拒绝双面。角色上下文经
+ * RoleContextHolder set/clear（OrderExecutionOperateServiceImplTest 范式），MDC traceId
+ * 手工置入模拟 TraceIdFilter 前提。
  */
 @ExtendWith(MockitoExtension.class)
 class AuthorizationInterceptorTest {
@@ -116,7 +117,7 @@ class AuthorizationInterceptorTest {
     }
 
     @Test
-    @DisplayName("未登记路径放行留 warn 痕：消息携带 uri（完整性缺口由 RbacMatrixIT 对照断言守护）")
+    @DisplayName("未登记路径首见留 warn 痕：消息携带 uri（完整性缺口由 RbacMatrixIT 对照断言守护）")
     void unregisteredPathPassLogsWarnWithUri() throws Exception {
         RoleContextHolder.set(List.of("DOCTOR"));
         Logger interceptorLogger = (Logger) LoggerFactory.getLogger(AuthorizationInterceptor.class);
@@ -132,6 +133,35 @@ class AuthorizationInterceptorTest {
         } finally {
             // 测试挂载的 appender 必须卸下，防污染后续用例的日志断言
             interceptorLogger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("未登记路径重复请求告警降级：同 URI 仅首见 warn，后续降 debug（哨兵轮询不刷屏）")
+    void unregisteredPathRepeatedRequestDowngradesToDebug() throws Exception {
+        RoleContextHolder.set(List.of("DOCTOR"));
+        Logger interceptorLogger = (Logger) LoggerFactory.getLogger(AuthorizationInterceptor.class);
+        interceptorLogger.setLevel(Level.DEBUG);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        interceptorLogger.addAppender(appender);
+        try {
+            // 同 URI 连续三次请求：首见 warn 一条，后续全部降 debug（评审 A-3/B-2 修复环语义）
+            for (int i = 0; i < 3; i++) {
+                assertThat(interceptor.preHandle(request("GET", "/api/v1/ward/board/W01"), response(), new Object()))
+                        .isTrue();
+            }
+
+            assertThat(appender.list.stream().filter(event -> Level.WARN.equals(event.getLevel())))
+                    .as("同 URI 仅首见一条 warn")
+                    .hasSize(1);
+            assertThat(appender.list.stream().filter(event -> Level.DEBUG.equals(event.getLevel())))
+                    .as("重复请求降 debug 留痕")
+                    .hasSize(2);
+        } finally {
+            interceptorLogger.detachAppender(appender);
+            // 恢复级别继承（null=沿用父级有效级别），防降级泄漏影响后续用例的 warn 断言
+            interceptorLogger.setLevel(null);
         }
     }
 

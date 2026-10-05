@@ -9,6 +9,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.http.HttpStatus;
@@ -21,8 +23,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
  *
  * <p>判定顺序（优先级从高到低）：
  * ①会话角色含 ADMIN → 一票放行（D3 超管运行期全放，不种绑定行）；②矩阵未登记 →
- * 放行 + warn 留痕（D4 医疗可用性优先——运行期全量 fail-closed 有全站锁死风险，
- * 端点登记完整性由 RbacMatrixIT 全量对照断言守护）；③命中权限点 → 允许集与会话角色
+ * 放行 + 同 URI 首见 warn 留痕（D4 医疗可用性优先——运行期全量 fail-closed 有全站锁死风险，
+ * 端点登记完整性由 RbacMatrixIT 全量对照断言守护；首见告警语义防哨兵轮询等常态流量刷屏）；
+ * ③命中权限点 → 允许集与会话角色
  * 交集非空放行，空则写出 403 {@code application/problem+json}（errorCode=SYS-1033，
  * body 结构与 AuthTokenInterceptor 拒绝面同构：{type,title,status,detail,errorCode,traceId}）。
  *
@@ -40,6 +43,16 @@ public class AuthorizationInterceptor implements HandlerInterceptor {
 
     /** JSON 转换器：403 ProblemDetail 手工序列化（拦截器无异常出口，必须自行写响应） */
     private final ObjectMapper objectMapper;
+
+    /**
+     * 未登记路径首见告警登记面（评审 A-3/B-2 修复环）：哨兵三端点等常态流量秒级轮询未登记面，
+     * 逐请求 warn 会持续刷屏稀释告警语义——同 URI 仅首见留 warn、后续降 debug；
+     * 带 {@link #UNREGISTERED_WARN_CAP} 上界防人为构造随机路径膨胀内存。
+     */
+    private final Set<String> reportedUnregisteredUris = ConcurrentHashMap.newKeySet();
+
+    /** 首见告警登记上界：超出后新 URI 不再登记与告警（未登记面本就放行，上界只约束登记面体量） */
+    private static final int UNREGISTERED_WARN_CAP = 512;
 
     /**
      * 全参构造器（装配归 SystemWebConfig，构造器注入宪法 A.1-7）。
@@ -72,8 +85,14 @@ public class AuthorizationInterceptor implements HandlerInterceptor {
         Optional<PermissionRegistry.PermissionEntry> entry =
                 registry.resolve(request.getMethod(), request.getRequestURI());
         if (entry.isEmpty()) {
-            // 未登记面放行（D4 医疗可用性优先）：warn 留痕供登记缺口巡检（RbacMatrixIT 为门禁面）
-            log.warn("403矩阵未登记路径放行：uri={}", request.getRequestURI());
+            // 未登记面放行（D4 医疗可用性优先）：首见告警供登记缺口巡检（RbacMatrixIT 为门禁面），
+            // 重复 URI 降 debug——哨兵高频轮询等常态流量不刷 warn（评审 A-3/B-2 修复环）
+            String uri = request.getRequestURI();
+            if (reportedUnregisteredUris.size() < UNREGISTERED_WARN_CAP && reportedUnregisteredUris.add(uri)) {
+                log.warn("403矩阵未登记路径放行：uri={}", uri);
+            } else {
+                log.debug("403矩阵未登记路径放行（已申报过或超首见登记上界）：uri={}", uri);
+            }
             return true;
         }
         // 命中权限点：允许集与会话角色交集判定（空集会话——哨兵——与任何允许集交集必空）

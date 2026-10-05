@@ -30,8 +30,11 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
  * 精确匹配（/topic/iot/dashboard/global，多一层尾段即越面）；白名单词表直接复用
  * {@link IotMessagingConstants} 推送出口前缀常量（与推送侧逐字同源，防两侧漂移——不另立副本）。
  * W-90 登记前哨兵 CONNECT 通过即可订任意 /topic 主题，越面收窄为新增防御纵深。
- * 登录态（任意非哨兵 loginName）订阅不受限——iot 主题族无登录态维度的限行面（登录态守卫属
- * REST 403 全量矩阵与护理 board 族防线承载，W-90 REST 面零涉及）。
+ * 登录态（任意非哨兵 loginName）订阅不受限。<b>已知缺口申报（评审 A-5，W-94 工单在案）</b>：
+ * REST 面 iot 域读端点已全量入 403 矩阵（无关角色 403 拒绝），而本防线对登录态在
+ * /topic/iot/ 面内全放行——WS 与 REST 纵深不对齐（REST 收紧、WS 敞开），登录态订阅限行
+ * （镜像矩阵允许集或「已授予任一 iot 域读权限点的角色」口径）待 W-94 与 alarms 端点入
+ * 矩阵统一收敛；wardId 段级核验仍按 W-74 节奏收口。
  *
  * <p><b>wardId 段归属核验缺位申报（W-74，javadoc 注记）</b>：三主题族 {@code {wardId}} 尾段与
  * 哨兵令牌绑定病区的一致性本防线不校验——iot 数字病区 id 与护理病区编码双标识空间映射缺失
@@ -84,7 +87,8 @@ public class IotSubscribeInterceptor implements ChannelInterceptor {
             log.warn("iot 订阅帧缺少已鉴权会话主体（异常态未 CONNECT 即订阅）：sessionId={}", accessor.getSessionId());
             throw new MessagingException("订阅缺少已鉴权会话主体，已被服务端拒绝");
         }
-        // 登录态（非哨兵登录名）全放行：iot 主题族无登录态限行面（哨兵锚点比对，镜像
+        // 登录态（非哨兵登录名）全放行：iot 主题族暂无登录态限行面（WS 与 REST 403 矩阵纵深
+        // 不对齐为已申报缺口，W-94 工单在案；哨兵锚点比对，镜像
         // NursingSecurityConstants.BIGSCREEN_LOGIN_NAME 判定形态——iot 侧镜像常量防跨模块 import）
         if (!IotSecurityConstants.BIGSCREEN_LOGIN_NAME.equals(principal.loginName())) {
             return message;
