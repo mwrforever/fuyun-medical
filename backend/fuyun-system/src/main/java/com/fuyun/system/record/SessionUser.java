@@ -15,6 +15,9 @@ import java.util.List;
  * @param orgId       主归属机构 ID，可 null（P0 种子不建 org 行）
  * @param roles       角色编码清单（如 ["ADMIN"]），非 null（无角色为空清单）；来源：user_role→role 两步单表查询
  * @param wardId      大屏哨兵令牌绑定的病区编码，可 null（登录态恒 null；哨兵经 bigscreen-token?wardId= 透传，REST 限行与 WS 订阅防线比对源）
+ * @param permissions 角色展开的授权点编码清单（MENU+API 全命名空间），非 null（无权限为空清单）；来源：
+ *                    IRoleService.findPermissionCodesByUserId（ADMIN 特判全表导出，PR-4D）；变更语义=踢出重登生效
+ *                    （随会话整体失效，不随权限行变更实时刷新）
  */
 public record SessionUser(
         Long userId,
@@ -23,4 +26,5 @@ public record SessionUser(
         Long employeeId,
         Long orgId,
         List<String> roles,
-        String wardId) {}
+        String wardId,
+        List<String> permissions) {}

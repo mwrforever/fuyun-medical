@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
@@ -47,9 +48,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  *
  * <p>覆盖：成功登录（成功复位 + 双令牌签发 + 响应组装）、账号不存在/口令错误同文案 SYS-1001
  * （防枚举）、锁定期间拒绝且不比对口令（SYS-1002 文案含解锁时刻）、锁定已到期恢复、停用拒绝
- * （SYS-1006/403）、无员工行账号的会话身份兜底、refresh 换发（原 refresh 值回填）、logout 委派。
- * 依赖以 Mockito 模拟；AuthConverter 用 MapStruct 生成实现（转换逻辑一并断言）。
- * 端到端 HTTP 链路归 B3.3 集成测试。
+ * （SYS-1006/403）、无员工行账号的会话身份兜底、refresh 换发（原 refresh 值回填）、logout 委派；
+ * PR-4D 追加 permissions 填实断言（login 角色展开写入会话并透传出参、refresh 会话透传与旧会话
+ * null 归一、哨兵签发零权限面）。依赖以 Mockito 模拟；AuthConverter 用 MapStruct 生成实现
+ * （转换逻辑一并断言）。端到端 HTTP 链路归 B3.3 集成测试。
  */
 @ExtendWith(MockitoExtension.class)
 class AuthServiceImplTest {
@@ -64,6 +66,9 @@ class AuthServiceImplTest {
     private static final String ACCESS_TOKEN = "unit-access-token";
 
     private static final String REFRESH_TOKEN = "unit-refresh-token";
+
+    /** 权限点固定清单：findPermissionCodesByUserId 的 mock 返回值（permissions 透传断言锚点，PR-4D） */
+    private static final List<String> PERMISSION_CODES = List.of("GET /api/v1/patients", "MENU /dashboard");
 
     @Mock
     private IUserService userService;
@@ -109,12 +114,13 @@ class AuthServiceImplTest {
     }
 
     @Test
-    @DisplayName("成功登录：状态机复位 + 双令牌签发 + 响应组装（身份/角色/有效期逐项断言）")
+    @DisplayName("成功登录：状态机复位 + 双令牌签发 + 响应组装（身份/角色/权限/有效期逐项断言）")
     void loginSucceedsAndIssuesTokenPairWithSessionReset() {
         UserEntity user = activeUser();
         when(userService.findByLoginName(LOGIN_NAME)).thenReturn(user);
         when(employeeMapper.selectOne(any())).thenReturn(employee(456L, "系统管理员", null));
         when(roleService.findRoleCodesByUserId(123L)).thenReturn(List.of("ADMIN"));
+        when(roleService.findPermissionCodesByUserId(123L)).thenReturn(PERMISSION_CODES);
         when(passwordEncoder.matches("Fuyun@2026", PASSWORD_HASH)).thenReturn(true);
         when(tokenService.issue(any(SessionUser.class))).thenReturn(new TokenPair(ACCESS_TOKEN, REFRESH_TOKEN));
 
@@ -129,8 +135,8 @@ class AuthServiceImplTest {
         assertThat(response.user().displayName()).isEqualTo("系统管理员");
         assertThat(response.user().orgId()).isNull();
         assertThat(response.user().roles()).containsExactly("ADMIN");
-        // permissions 契约锚定：P0 权限点体系未建恒为空集合（前端守卫按空集全放行兼容）
-        assertThat(response.user().permissions()).isEmpty();
+        // permissions 契约锚定：角色展开的授权点集透传出参（PR-4D 填实，空集=无任何权限）
+        assertThat(response.user().permissions()).containsExactlyElementsOf(PERMISSION_CODES);
 
         // 成功路径复位状态机（失败计数清零/锁定清空/最近登录时刻），签发入参为组装后的会话身份
         verify(userService).recordLoginSuccess(user);
@@ -141,6 +147,7 @@ class AuthServiceImplTest {
         assertThat(issued.displayName()).isEqualTo("系统管理员");
         assertThat(issued.employeeId()).isEqualTo(456L);
         assertThat(issued.roles()).containsExactly("ADMIN");
+        assertThat(issued.permissions()).containsExactlyElementsOf(PERMISSION_CODES);
     }
 
     @Test
@@ -202,6 +209,7 @@ class AuthServiceImplTest {
         when(userService.findByLoginName(LOGIN_NAME)).thenReturn(user);
         when(employeeMapper.selectOne(any())).thenReturn(employee(456L, "系统管理员", null));
         when(roleService.findRoleCodesByUserId(123L)).thenReturn(List.of("ADMIN"));
+        when(roleService.findPermissionCodesByUserId(123L)).thenReturn(PERMISSION_CODES);
         when(passwordEncoder.matches("Fuyun@2026", PASSWORD_HASH)).thenReturn(true);
         when(tokenService.issue(any(SessionUser.class))).thenReturn(new TokenPair(ACCESS_TOKEN, REFRESH_TOKEN));
 
@@ -236,6 +244,7 @@ class AuthServiceImplTest {
         when(userService.findByLoginName(LOGIN_NAME)).thenReturn(user);
         when(employeeMapper.selectOne(any())).thenReturn(null);
         when(roleService.findRoleCodesByUserId(123L)).thenReturn(List.of());
+        when(roleService.findPermissionCodesByUserId(123L)).thenReturn(List.of());
         when(passwordEncoder.matches("Fuyun@2026", PASSWORD_HASH)).thenReturn(true);
         when(tokenService.issue(any(SessionUser.class))).thenReturn(new TokenPair(ACCESS_TOKEN, REFRESH_TOKEN));
 
@@ -246,12 +255,14 @@ class AuthServiceImplTest {
         verify(tokenService).issue(sessionUserCaptor.capture());
         assertThat(sessionUserCaptor.getValue().employeeId()).isNull();
         assertThat(sessionUserCaptor.getValue().orgId()).isNull();
+        assertThat(sessionUserCaptor.getValue().permissions()).isEmpty();
     }
 
     @Test
     @DisplayName("刷新换发：新 access + 原 refresh 值回填（P0 不轮换）+ 会话身份还原")
     void refreshReturnsMintedAccessWithOriginalRefreshToken() {
-        SessionData session = new SessionData(123L, LOGIN_NAME, "系统管理员", 456L, null, List.of("ADMIN"), null);
+        SessionData session = new SessionData(
+                123L, LOGIN_NAME, "系统管理员", 456L, null, List.of("ADMIN"), null, List.of("MENU /dashboard"));
         when(tokenService.refreshAccessToken(REFRESH_TOKEN)).thenReturn(new RefreshedAccess(ACCESS_TOKEN, session));
 
         LoginResponse response = authService.refresh(new RefreshRequest(REFRESH_TOKEN));
@@ -261,7 +272,53 @@ class AuthServiceImplTest {
         assertThat(response.tokenType()).isEqualTo("Bearer");
         assertThat(response.user().userId()).isEqualTo(123L);
         assertThat(response.user().roles()).containsExactly("ADMIN");
-        // permissions 契约锚定：refresh 端点与 login 出参同构，同样空集合占位
+        // permissions 契约锚定：refresh 端点与 login 出参同构，会话权限集透传（PR-4D 填实）
+        assertThat(response.user().permissions()).containsExactly("MENU /dashboard");
+    }
+
+    @Test
+    @DisplayName("登录链路权限填实：roleService 展开的授权点集写入会话身份并经 toUserVO 透传出参（PR-4D）")
+    void loginFillsPermissionsFromRoleExpansion() {
+        UserEntity user = activeUser();
+        when(userService.findByLoginName(LOGIN_NAME)).thenReturn(user);
+        when(employeeMapper.selectOne(any())).thenReturn(employee(456L, "系统管理员", null));
+        when(roleService.findRoleCodesByUserId(123L)).thenReturn(List.of("DOCTOR"));
+        when(roleService.findPermissionCodesByUserId(123L)).thenReturn(PERMISSION_CODES);
+        when(passwordEncoder.matches("Fuyun@2026", PASSWORD_HASH)).thenReturn(true);
+        when(tokenService.issue(any(SessionUser.class))).thenReturn(new TokenPair(ACCESS_TOKEN, REFRESH_TOKEN));
+
+        LoginResponse response = authService.login(new LoginRequest(LOGIN_NAME, "Fuyun@2026"));
+
+        // 会话身份携带角色展开的授权点集（ADMIN 特判/四步单表展开归 RoleServiceImpl，本类只断言接线）
+        verify(tokenService).issue(sessionUserCaptor.capture());
+        assertThat(sessionUserCaptor.getValue().permissions()).containsExactlyElementsOf(PERMISSION_CODES);
+        // 出参透传：UserVO.permissions 经会话身份同名映射（AuthConverter 恒空集表达式已删）
+        assertThat(response.user().permissions()).containsExactlyElementsOf(PERMISSION_CODES);
+    }
+
+    @Test
+    @DisplayName("刷新链路权限透传：SessionData.permissions 重组进 SessionUser 并透传出参（PR-4D）")
+    void refreshPassesSessionPermissionsThroughToUserVO() {
+        SessionData session =
+                new SessionData(123L, LOGIN_NAME, "系统管理员", 456L, null, List.of("DOCTOR"), null, PERMISSION_CODES);
+        when(tokenService.refreshAccessToken(REFRESH_TOKEN)).thenReturn(new RefreshedAccess(ACCESS_TOKEN, session));
+
+        LoginResponse response = authService.refresh(new RefreshRequest(REFRESH_TOKEN));
+
+        assertThat(response.user().permissions()).containsExactlyElementsOf(PERMISSION_CODES);
+    }
+
+    @Test
+    @DisplayName("旧会话缺 permissions 字段兼容：null 归一空清单出参（record 缺字段反序列化先例，PR-4D）")
+    void refreshNormalizesNullPermissionsFromLegacySession() {
+        // 旧会话 JSON 无 permissions 字段：反序列化为 null（升级窗口内既有会话），消费侧归一空清单
+        SessionData legacySession =
+                new SessionData(123L, LOGIN_NAME, "系统管理员", 456L, null, List.of("ADMIN"), null, null);
+        when(tokenService.refreshAccessToken(REFRESH_TOKEN))
+                .thenReturn(new RefreshedAccess(ACCESS_TOKEN, legacySession));
+
+        LoginResponse response = authService.refresh(new RefreshRequest(REFRESH_TOKEN));
+
         assertThat(response.user().permissions()).isEmpty();
     }
 
@@ -290,6 +347,8 @@ class AuthServiceImplTest {
         assertThat(sessionUser.employeeId()).isNull();
         assertThat(sessionUser.orgId()).isNull();
         assertThat(sessionUser.roles()).isEmpty();
+        // 哨兵零权限面：permissions 空清单补位（403 面靠豁免挂码承载，不进会话权限集）
+        assertThat(sessionUser.permissions()).isEmpty();
         // 短期 TTL 冻结：5 分钟（W-39 过渡期「缩短 TTL」用户裁决口径）
         assertThat(ttlCaptor.getValue()).isEqualTo(Duration.ofMinutes(5));
         // VO 组装：令牌值透传 + Bearer 方案名 + 有效期秒数换算（不包装 envelope）
@@ -316,6 +375,20 @@ class AuthServiceImplTest {
         ArgumentCaptor<SessionUser> captor = ArgumentCaptor.forClass(SessionUser.class);
         verify(tokenService).issueAccess(captor.capture(), any());
         assertThat(captor.getValue().wardId()).isNull();
+    }
+
+    @Test
+    @DisplayName("哨兵签发零权限面：permissions 空清单补位且不触角色/权限查询（PR-4D）")
+    void issueBigscreenTokenGrantsEmptyPermissionFace() {
+        when(tokenService.issueAccess(any(SessionUser.class), any(Duration.class)))
+                .thenReturn(ACCESS_TOKEN);
+
+        authService.issueBigscreenToken(null);
+
+        // 哨兵不查库：角色摘要与权限集两查询均不触达（零权限面靠 D5 豁免挂码承载）
+        verify(tokenService).issueAccess(sessionUserCaptor.capture(), any());
+        assertThat(sessionUserCaptor.getValue().permissions()).isEmpty();
+        verifyNoInteractions(roleService);
     }
 
     /** 构造 ACTIVE 状态的账号实体样本（含口令哈希与零失败计数） */

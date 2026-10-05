@@ -106,7 +106,7 @@ class AuthTokenInterceptorTest {
         request.addHeader("Authorization", "Bearer good-token");
         MockHttpServletResponse response = new MockHttpServletResponse();
         when(tokenService.verify("good-token", "access"))
-                .thenReturn(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null));
+                .thenReturn(new SessionData(123L, "admin", "系统管理员", 456L, null, List.of("ADMIN"), null, List.of()));
 
         boolean proceed = interceptor.preHandle(request, response, new Object());
 
@@ -238,7 +238,7 @@ class AuthTokenInterceptorTest {
      * @return 会话数据（userId=0 哨兵语义；verify 已 mock，userId 不参与放行/拒绝断言）
      */
     private SessionData session(String loginName, String wardId) {
-        return new SessionData(0L, loginName, "候诊大屏", null, null, List.of(), wardId);
+        return new SessionData(0L, loginName, "候诊大屏", null, null, List.of(), wardId, List.of());
     }
 
     /**

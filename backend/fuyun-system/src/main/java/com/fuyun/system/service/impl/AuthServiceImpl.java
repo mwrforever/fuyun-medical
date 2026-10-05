@@ -34,7 +34,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
  *
  * <p>login 执行流程：加载账号 → 锁定校验（locked_until 未到期拒绝，先于口令比对防锁定期间
  * 继续累加计数）→ 停用校验 → bcrypt 口令比对（失败走 recordLoginFailure 状态机）→ 成功走
- * recordLoginSuccess 复位 → 员工反查 + 角色摘要组装会话身份 → 令牌服务签发。防枚举红线：
+ * recordLoginSuccess 复位 → 员工反查 + 角色摘要与权限集组装会话身份 → 令牌服务签发。防枚举红线：
  * 账号不存在与口令错误共用 SYS-1001 同文案；日志禁打印口令与口令哈希。
  *
  * <p>事务边界：登录写路径（recordLoginFailure/recordLoginSuccess）在用户服务方法级各自成事务
@@ -183,7 +183,9 @@ public class AuthServiceImpl implements IAuthService {
                 session.employeeId(),
                 session.orgId(),
                 session.roles(),
-                null);
+                null,
+                // 旧会话 JSON 缺 permissions 字段（升级窗口）反序列化为 null：归一空清单（r1 §3.4 record 缺字段先例）
+                session.permissions() != null ? session.permissions() : List.of());
         log.info("刷新换发成功：userId={}", session.userId());
         // refresh 值原样回填（P0 不轮换）：前端以响应中 refreshToken 覆盖存储，值未变
         return new LoginResponse(
@@ -232,7 +234,9 @@ public class AuthServiceImpl implements IAuthService {
                 null,
                 null,
                 List.of(),
-                wardId);
+                wardId,
+                // 哨兵零权限面：permissions 空清单补位（不查角色/权限表，403 面靠 D5 豁免挂码承载）
+                List.of());
         String accessToken = tokenService.issueAccess(screen, BIGSCREEN_TOKEN_TTL);
         log.info(
                 "大屏订阅令牌已签发：loginName={}，wardId={}，ttl={}s（匿名哨兵会话，令牌值禁入日志）",
@@ -244,10 +248,11 @@ public class AuthServiceImpl implements IAuthService {
     }
 
     /**
-     * 组装登录会话身份：员工反查（eid/orgId/displayName）+ 角色摘要。
+     * 组装登录会话身份：员工反查（eid/orgId/displayName）+ 角色摘要 + 权限集展开（PR-4D 填实）。
      *
      * @param user 已通过认证的账号实体，非空
-     * @return 会话身份入参，非空；无员工行的系统/接口账号 eid/orgId 为 null，displayName 以登录名兜底
+     * @return 会话身份入参，非空；无员工行的系统/接口账号 eid/orgId 为 null，displayName 以登录名兜底；
+     *         permissions 为角色展开的授权点集（ADMIN 特判全表导出归 RoleServiceImpl）
      */
     private SessionUser buildSessionUser(UserEntity user) {
         // 员工反查（sys_employee.user_id 一对一，select 精确投影 A.4.3-14）
@@ -255,6 +260,8 @@ public class AuthServiceImpl implements IAuthService {
                 .eq(EmployeeEntity::getUserId, user.getId())
                 .select(EmployeeEntity::getId, EmployeeEntity::getEmpName, EmployeeEntity::getPrimaryOrgId));
         List<String> roles = roleService.findRoleCodesByUserId(user.getId());
+        // 权限集展开：登录瞬间快照入会话（变更语义=踢出重登生效，与角色摘要同口径）
+        List<String> permissions = roleService.findPermissionCodesByUserId(user.getId());
         String displayName =
                 (employee != null && employee.getEmpName() != null) ? employee.getEmpName() : user.getLoginName();
         return new SessionUser(
@@ -265,6 +272,7 @@ public class AuthServiceImpl implements IAuthService {
                 employee != null ? employee.getPrimaryOrgId() : null,
                 roles,
                 // wardId=null：登录态会话不携病区（哨兵签发面专属）
-                null);
+                null,
+                permissions);
     }
 }
