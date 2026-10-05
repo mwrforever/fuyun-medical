@@ -20,14 +20,16 @@ import org.springframework.messaging.simp.stomp.StompHeaderAccessor;
 import org.springframework.messaging.support.MessageBuilder;
 
 /**
- * /ws/iot 订阅防线拦截器单测（PR-4D Task 7，W-90 WS 面——五用例 TDD 先红后绿）：登录态订任意
- * /topic 主题放行、哨兵订三主题族前缀（telemetry/alarm/device-status）放行、哨兵订
- * dashboard/global 精确放行（多一层尾段即越面拒）、哨兵订白名单外主题拒（异常消息含
- * destination——排障锚点，禁打令牌）、泛哨兵（wardId=null）同白名单语义（wardId 段归属核验
- * 因 W-74 双标识映射缺失不校验）；分支补全：无会话主体（异常态未 CONNECT 即订阅）拒
- * （fail-closed）、destination 缺失视同越面拒、非 SUBSCRIBE 帧直通。帧构造对齐
- * NursingSubscribeWardInterceptorTest 既有 StompHeaderAccessor + MessageBuilder 手法（会话主体
- * 经 setSessionAttributes 承载，与 StompSubProtocolHandler 真实链路同一入口）。
+ * /ws/iot 订阅防线拦截器单测（PR-4D Task 7，W-90 WS 面——TDD 先红后绿+修复环管辖面适配）：
+ * 登录态订任意 /topic 主题放行、哨兵订三主题族前缀（telemetry/alarm/device-status）放行、
+ * 哨兵订 dashboard/global 精确放行（多一层尾段即越面拒）、哨兵订 iot 面内白名单外主题拒
+ * （异常消息含 destination——排障锚点，禁打令牌）、哨兵订 iot 前缀面外主题放行（域防线
+ * 自治——修复环裁定：board 族归 NursingSubscribeWardInterceptor 段级校验）、泛哨兵
+ * （wardId=null）同白名单语义（wardId 段归属核验因 W-74 双标识映射缺失不校验）；
+ * 分支补全：无会话主体（异常态未 CONNECT 即订阅）拒（fail-closed）、destination 缺失视同
+ * 越面拒、非 SUBSCRIBE 帧直通。帧构造对齐 NursingSubscribeWardInterceptorTest 既有
+ * StompHeaderAccessor + MessageBuilder 手法（会话主体经 setSessionAttributes 承载，
+ * 与 StompSubProtocolHandler 真实链路同一入口）。
  */
 @ExtendWith(MockitoExtension.class)
 class IotSubscribeInterceptorTest {
@@ -93,20 +95,30 @@ class IotSubscribeInterceptorTest {
     }
 
     @Test
-    @DisplayName("哨兵订白名单外主题拒：异常消息含 destination（排障锚点，禁打令牌）")
+    @DisplayName("哨兵订 iot 面内白名单外主题拒：异常消息含 destination（排障锚点，禁打令牌）")
     void sentinelSubscribeOutsideWhitelistRejected() {
         Map<String, Object> attrs = withPrincipal(new TokenPrincipal(0L, "bigscreen", SENTINEL_WARD));
 
-        // 护理 board 族：跨模块主题越面（W-90 收窄前哨兵可订任意 /topic/** 的增量语义）
-        assertThatThrownBy(() -> interceptor.preSend(subscribeFrame("/topic/nursing/board/W01", attrs), channel))
-                .as("哨兵订护理 board 主题必须拒绝（ERROR 帧 + PROTOCOL_ERROR 关闭连接）")
-                .isInstanceOf(MessagingException.class)
-                .hasMessageContaining("/topic/nursing/board/W01");
-        // 白名单外 iot 主题：不在四主题面
+        // 白名单外 iot 主题：不在四主题面（iot 面内越面拒绝——W-90 增量防线本体）
         assertThatThrownBy(() -> interceptor.preSend(subscribeFrame("/topic/iot/other", attrs), channel))
                 .as("哨兵订白名单外 iot 主题必须拒绝")
                 .isInstanceOf(MessagingException.class)
                 .hasMessageContaining("/topic/iot/other");
+    }
+
+    @Test
+    @DisplayName("哨兵订 iot 前缀面外主题放行：域防线自治（board 族归 NursingSubscribeWardInterceptor 段级校验）")
+    void sentinelSubscribeOutsideIotNamespacePasses() {
+        Map<String, Object> attrs = withPrincipal(new TokenPrincipal(0L, "bigscreen", SENTINEL_WARD));
+
+        // 修复环裁定：clientInboundChannel 为全部 WS 端点共享，iot 防线经前缀判定收窄管辖面——
+        // 哨兵经 /ws/nursing 订护理 board 主通道不得被本防线拦死（PR-4C A-2 按 wardId 段一致性校验）
+        assertThatCode(() -> interceptor.preSend(subscribeFrame("/topic/nursing/board/W01", attrs), channel))
+                .as("哨兵订护理 board 主题应放行（归 nursing 域防线，iot 防线不越权代管）")
+                .doesNotThrowAnyException();
+        assertThatCode(() -> interceptor.preSend(subscribeFrame("/topic/other", attrs), channel))
+                .as("哨兵订 iot 命名空间外主题应放行（无 iot 推送源即无暴露面）")
+                .doesNotThrowAnyException();
     }
 
     @Test

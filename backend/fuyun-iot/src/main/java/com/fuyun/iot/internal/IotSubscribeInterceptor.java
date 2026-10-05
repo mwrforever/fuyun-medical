@@ -16,15 +16,22 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 /**
  * /ws/iot STOMP 订阅防线拦截器（PR-4D Task 7，W-90 WS 面——镜像 nursing PR-4C
  * NursingSubscribeWardInterceptor 防线先例）：大屏哨兵（loginName=bigscreen）SUBSCRIBE
- * 限订白名单四主题面，登录态全放行。
+ * 在 iot 主题面内限订白名单四主题，登录态全放行。
  *
- * <p><b>增量语义（如实声明）</b>：本防线收窄「哨兵可订任意 /topic/**」为 iot 四主题面——三主题族
- * 前缀匹配（telemetry/alarm/device-status，{@code {wardId}} 尾段任意）+ 全院摘要精确匹配
- * （/topic/iot/dashboard/global，多一层尾段即越面）；白名单词表直接复用
+ * <p><b>管辖面（域防线自治，修复环裁定）</b>：clientInboundChannel 为全部 WS 端点共享的全局
+ * 入站通道（nursing/iot/outpatient 三端点的拦截器均对彼此连接生效），故本防线经
+ * {@link IotMessagingConstants#TOPIC_IOT_PREFIX} 前缀判定收窄管辖面——仅 /topic/iot/ 面内
+ * 行使哨兵白名单；面外主题（如护理 board 族）原样放行、归各域自身防线（哨兵的 board 订阅由
+ * NursingSubscribeWardInterceptor 按令牌 wardId 段一致性校验，PR-4C A-2 链路保持不变——
+ * 域防线互不代管，与 nursing 侧 board 前缀管辖形态互为镜像）。
+ *
+ * <p><b>增量语义（如实声明）</b>：iot 面内收窄「哨兵可订任意 /topic/iot/**」为四主题面——
+ * 三主题族前缀匹配（telemetry/alarm/device-status，{@code {wardId}} 尾段任意）+ 全院摘要
+ * 精确匹配（/topic/iot/dashboard/global，多一层尾段即越面）；白名单词表直接复用
  * {@link IotMessagingConstants} 推送出口前缀常量（与推送侧逐字同源，防两侧漂移——不另立副本）。
- * W-90 登记前哨兵 CONNECT 通过即可订任意 /topic 主题（含护理 board 族与其他模块主题），越面
- * 收窄为新增防御纵深。登录态（任意非哨兵 loginName）订阅不受限——iot 主题族无登录态维度的
- * 限行面（登录态守卫属 REST 403 全量矩阵与护理 board 族防线承载，W-90 REST 面本任务零涉及）。
+ * W-90 登记前哨兵 CONNECT 通过即可订任意 /topic 主题，越面收窄为新增防御纵深。
+ * 登录态（任意非哨兵 loginName）订阅不受限——iot 主题族无登录态维度的限行面（登录态守卫属
+ * REST 403 全量矩阵与护理 board 族防线承载，W-90 REST 面零涉及）。
  *
  * <p><b>wardId 段归属核验缺位申报（W-74，javadoc 注记）</b>：三主题族 {@code {wardId}} 尾段与
  * 哨兵令牌绑定病区的一致性本防线不校验——iot 数字病区 id 与护理病区编码双标识空间映射缺失
@@ -48,15 +55,16 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 public class IotSubscribeInterceptor implements ChannelInterceptor {
 
     /**
-     * 订阅防线：仅拦 SUBSCRIBE 帧——哨兵（loginName=bigscreen）限订四主题白名单，登录态全放行；
-     * 无会话主体（异常态未 CONNECT）fail-closed 拒；其余帧原样放行。
+     * 订阅防线：仅拦 SUBSCRIBE 帧——登录态全放行；哨兵在 iot 前缀面内限订四主题白名单
+     * （面外主题放行归各域防线自治）；无会话主体（异常态未 CONNECT）fail-closed 拒；其余帧原样放行。
      *
      * @param message 入站消息，非空；SUBSCRIBE 帧的会话属性表由 StompSubProtocolHandler 建帧时
      *                注入（WS 会话 attributes 原引用，含 CONNECT 阶段缓存的令牌主体）
      * @param channel 入站通道（clientInboundChannel），非空（本拦截器不直接使用）
      * @return 原消息（放行）；拒绝时不返回而是抛 MessagingException
-     * @throws MessagingException 无会话主体（异常态未 CONNECT）、哨兵越面（白名单外 destination
-     *                            或 destination 缺失）；客户端将收到 ERROR 帧且连接被服务端关闭
+     * @throws MessagingException 无会话主体（异常态未 CONNECT）、哨兵越面（iot 面内白名单外
+     *                            destination 或 destination 缺失）；客户端将收到 ERROR 帧且
+     *                            连接被服务端关闭
      */
     @Override
     public Message<?> preSend(Message<?> message, MessageChannel channel) {
@@ -81,7 +89,13 @@ public class IotSubscribeInterceptor implements ChannelInterceptor {
         if (!IotSecurityConstants.BIGSCREEN_LOGIN_NAME.equals(principal.loginName())) {
             return message;
         }
-        // 哨兵：白名单四主题面判定（三前缀+精确）；destination 缺失（畸形帧）视同越面拒
+        // 管辖面判定（域防线自治，修复环裁定）：iot 前缀面外主题放行——归各域自身防线（哨兵的
+        // board 订阅由 NursingSubscribeWardInterceptor 按 wardId 段一致性校验，域防线互不代管）；
+        // destination 为 null 不走本分流（畸形帧落白名单判定拒，保持 fail-closed）
+        if (destination != null && !destination.startsWith(IotMessagingConstants.TOPIC_IOT_PREFIX)) {
+            return message;
+        }
+        // 哨兵：iot 面内白名单四主题判定（三前缀+精确）；destination 缺失（畸形帧）视同越面拒
         if (destination != null && withinWhitelist(destination)) {
             return message;
         }
