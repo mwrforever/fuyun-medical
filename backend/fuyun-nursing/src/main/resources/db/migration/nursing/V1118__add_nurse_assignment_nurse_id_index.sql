@@ -1,0 +1,21 @@
+-- V1118：nurse_assignment 护士维度访问授权查询部分索引（W-91①索引缺口面，PR-4C 收口五路评审
+--   C-F2/A-5/B-2 合并登记工单；PR-4D Task 9 落地）。
+-- 业务意图：WardAccessServiceImpl.activeBoundWardIds（D-29 fail-closed 病区访问授权锚）以
+--   nurse_id 等值 + status='ACTIVE' + 当日 valid_from/valid_to 双边窗口为谓词查当班绑定病区集，
+--   九个护理读端点每请求必经（board 守卫位于 5s 缓存之前，缓存不能免扫）；V801 两条部分唯一索引
+--   （uk_assignment_bed_shift / uk_assignment_patient_shift）前导列均为 ward_id，nurse_id 维度
+--   查询只能全表顺序扫描——表逻辑删不物理删只增不减，生产化前必须补护士维度索引。
+-- 谓词同构：部分谓词 deleted = 0 AND status = 'ACTIVE' 与查询常量条件严格同构（NurseAssignment
+--   @TableLogic 查询自动附加 deleted=0；等值蕴含，计划器可命中）；CANCELLED / 已删行不入索引，
+--   索引体量随在途 ACTIVE 绑定行而非全表历史行增长。
+-- valid_from / valid_to 窗口谓词不进索引（工单①「status/valid 窗口谓词评估」结论）：单护士当窗
+--   ACTIVE 绑定行为个位数，nurse_id 等值命中后残余行过滤成本可忽略，窗口列选择性低且 valid_to
+--   NULL 长期行语义使谓词复杂化——维持 V801 部分唯一索引「窗口列不入索引」先例与 selectivity 权衡。
+-- 构建形态：普通 CREATE INDEX IF NOT EXISTS（幂等形态）——Flyway 迁移在事务内执行，CREATE INDEX
+--   CONCURRENTLY 不可用于事务块内；当前阶段表数据量有限，建索引锁表窗口可接受
+--   （V808/V900/V1103~V1105、V1112/V1113 同款取舍）。
+-- 号段：nursing 走 V500+ 通用段（固定段 V800–V899 已被守卫封死禁用），取 V1118——全局最大已应用
+--   版本 V1117 的下一号（outOfOrder=false 乱序守卫）；号段占位先记于 CHANGELOG PR-4D 立项条目
+--   （先记再占）。查询代码零改动即受益（行为保持，不改既有迁移 V801——A.4.1-3 禁改红线）。
+
+CREATE INDEX IF NOT EXISTS idx_nurse_assignment_nurse_active ON nursing.nurse_assignment (nurse_id) WHERE deleted = 0 AND status = 'ACTIVE';
