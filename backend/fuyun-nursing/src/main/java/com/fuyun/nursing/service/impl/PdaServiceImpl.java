@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.common.utils.SensitiveMasker;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.cache.NursingRateGuard;
 import com.fuyun.nursing.dto.PdaPatrolRequest;
 import com.fuyun.nursing.entity.NursingWardPatient;
 import com.fuyun.nursing.mapper.NursingWardPatientMapper;
@@ -69,6 +70,8 @@ public class PdaServiceImpl implements IPdaService {
 
     private final INursingTaskService taskService;
 
+    private final NursingRateGuard rateGuard;
+
     /**
      * 全参构造器（装配归 NursingWebConfig @Import）。
      *
@@ -79,6 +82,8 @@ public class PdaServiceImpl implements IPdaService {
      * @param wardMetaService   病区元数据服务，非空；摘要病区上下文聚合（detail 消费面）
      * @param vitalSignService  生命体征服务，非空；最近一次体征摘要取数
      * @param taskService       护理任务服务，非空；巡视打卡四参委托（Task 7 冻结面）
+     * @param rateGuard         护理频控守卫，非空；A-8 标识枚举冷却（冷却中 NS-1030 429 +
+     *                           解析失败计数/成功清零）
      */
     public PdaServiceImpl(
             NursingWardPatientMapper wardPatientMapper,
@@ -87,7 +92,8 @@ public class PdaServiceImpl implements IPdaService {
             AllergyChecker allergyChecker,
             IWardMetaService wardMetaService,
             IVitalSignService vitalSignService,
-            INursingTaskService taskService) {
+            INursingTaskService taskService,
+            NursingRateGuard rateGuard) {
         this.wardPatientMapper = wardPatientMapper;
         this.identityQuery = identityQuery;
         this.contextResolver = contextResolver;
@@ -95,6 +101,7 @@ public class PdaServiceImpl implements IPdaService {
         this.wardMetaService = wardMetaService;
         this.vitalSignService = vitalSignService;
         this.taskService = taskService;
+        this.rateGuard = rateGuard;
     }
 
     /**
@@ -104,7 +111,8 @@ public class PdaServiceImpl implements IPdaService {
      *
      * @param identifier 扫码标识（腕带就诊编码/就诊卡号/证件号三合一），非空；来源：PDA 扫码或手工录入
      * @return 患者摘要出参（不在区时病区上下文字段为空、在途计数 0），非空
-     * @throws BizException NS-1019（400 标识空白）/ NS-1003（400 标识未命中在档患者，PAT-1001 映射）/
+     * @throws BizException NS-1019（400 标识空白）/ NS-1030（429 同一标识连续解析失败达阈值，
+     *                      限流冷却中——A-8 枚举探测防线）/ NS-1003（400 标识未命中在档患者，PAT-1001 映射）/
      *                      NS-1001（404 腕带就诊编码无在区行）/ NS-1004（409 档案冻结）
      */
     @Override
@@ -118,6 +126,9 @@ public class PdaServiceImpl implements IPdaService {
         if (normalized.isBlank()) {
             throw new BizException(NursingErrorCode.PARAM_FORMAT_INVALID, HttpStatus.BAD_REQUEST, "PDA 扫码标识不能为空");
         }
+        // 守卫链①b（A-8 枚举冷却）：解析分叉前统一冷却判定（腕带/卡号/证件号三形态同守卫；
+        // 键成分内部摘要——identifier 明文禁入 Redis 键，冷却中抛 NS-1030 429）
+        rateGuard.checkNotCooling("pda-probe", normalized);
         // 守卫链②：标识解析归一主档（腕带编码直查在区行 / 卡号与证件号盲索引归一）
         NursingWardPatient visitRow = null;
         long patientId;
@@ -125,7 +136,17 @@ public class PdaServiceImpl implements IPdaService {
             visitRow = requireInWardByVisit(normalized);
             patientId = visitRow.getPatientId();
         } else {
-            patientId = resolveByIdentifier(normalized);
+            // A-8 枚举探测失败计数：仅卡号/证件号解析路径（腕带编码路径 requireInWardByVisit
+            // 为在区行定位语义，不算枚举探测失败，勿挂计数）
+            try {
+                patientId = resolveByIdentifier(normalized);
+            } catch (BizException e) {
+                rateGuard.recordProbeFailure(
+                        "pda-probe", normalized, NursingRateGuard.PDA_THRESHOLD, NursingRateGuard.PDA_COOL_MS);
+                throw e;
+            }
+            // 解析成功打断连续失败计数（「连续」语义的成功打断面）
+            rateGuard.clearFailureCount("pda-probe", normalized);
         }
         // 守卫链③：档案拦截与合并收敛（FROZEN 拒查；MERGED 收敛主档，业务数据一律挂收敛值）
         long resolvedPatientId = requireNotBlockedAndConverge(patientId);

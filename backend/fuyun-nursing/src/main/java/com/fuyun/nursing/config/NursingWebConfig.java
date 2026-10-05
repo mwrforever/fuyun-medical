@@ -1,5 +1,6 @@
 package com.fuyun.nursing.config;
 
+import com.fuyun.nursing.cache.NursingRateGuard;
 import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.controller.AdverseEventController;
 import com.fuyun.nursing.controller.BoardController;
@@ -62,7 +63,8 @@ import org.springframework.context.annotation.Import;
  * 回接面，IOT_LINKAGE 幂等创建复用护理任务服务；消费方 iot LinkageExecutor 经构造器
  * 注入本 PortImpl Bean）。P2 PR-4C Task 4 追加：病区归属校验域服务（当班 ACTIVE 绑定集
  * +fail-closed 403 NS-1028，W-40 方案 A；Task 6 端点守卫与 Task 7 WS SUBSCRIBE 防线
- * 消费基座）。
+ * 消费基座）。P2 PR-4E Task 6 追加：护理频控守卫（A-6 上报限频 + A-8 PDA 枚举冷却，
+ * NS-1029/1030，效率层防线 Redis 异常降级放行）。
  */
 @Configuration
 @EnableConfigurationProperties(NursingProperties.class)
@@ -90,6 +92,8 @@ import org.springframework.context.annotation.Import;
     NursingTaskLinkagePortImpl.class,
     // P2 PR-4C Task 4 病区归属校验域服务（W-40 方案 A）：当班绑定集+fail-closed 403 NS-1028
     WardAccessServiceImpl.class,
+    // P2 PR-4E Task 6 护理频控守卫（A-6 上报限频 + A-8 PDA 枚举冷却）：NS-1029/1030 判定执行点
+    NursingRateGuard.class,
     NursingRecordController.class,
     TemperatureChartController.class,
     VitalSignController.class,

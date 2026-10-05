@@ -3,8 +3,10 @@ package com.fuyun.nursing.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -20,6 +22,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.nursing.api.AdverseEventReportedPayload;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.cache.NursingRateGuard;
 import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.AdverseEventCloseRequest;
@@ -62,7 +65,8 @@ import org.springframework.test.util.ReflectionTestUtils;
  * 守卫）、handle/close/return 状态机三路+非法迁移 NS-1026、stats 聚合、tick 超时提醒扫描段
  * （只读不改状态）、list/stats wardScope 过滤（携 wardId 单值/绑定集 in/空集防御短路）；
  * 非惩罚红线反射锚（VO/统计出参零 reporter 字段）。MP 3.5.17 单测范式：lambdaQuery 触达
- * 实体 @BeforeAll 手工注册表信息。
+ * 实体 @BeforeAll 手工注册表信息。PR-4E Task 6 追加：A-6 上报频控组（窗口超阈 NS-1029 429
+ * 且词表守卫零交互 / 放行照常主路径+挂点契约锚）。
  */
 @ExtendWith(MockitoExtension.class)
 class AdverseEventServiceImplTest {
@@ -97,6 +101,9 @@ class AdverseEventServiceImplTest {
     @Mock
     private IWardMetaService wardMetaService;
 
+    @Mock
+    private NursingRateGuard rateGuard;
+
     @Captor
     private ArgumentCaptor<AdverseEvent> rowCaptor;
 
@@ -113,8 +120,13 @@ class AdverseEventServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        // 第四参 wardMetaService：A-6 上报 wardId 词表守卫（未打桩时默认宽松返回 null——纯守卫不消费返回值）
-        service = new AdverseEventServiceImpl(mapper, seqGate, events, wardMetaService);
+        // 第四参 wardMetaService：A-6 上报 wardId 词表守卫（未打桩时默认宽松返回 null——纯守卫不消费返回值）；
+        // 第五参 rateGuard：A-6 上报频控（默认放行桩——仅频控专项用例覆写为 false）
+        service = new AdverseEventServiceImpl(mapper, seqGate, events, wardMetaService, rateGuard);
+        // 频控默认放行（lenient：非 report 用例不触发也合规——mock 布尔缺省 false 会误伤主路径）
+        lenient()
+                .when(rateGuard.checkWithinWindow(any(), any(), anyInt(), anyLong()))
+                .thenReturn(true);
         // 链式 lambdaQuery（A.4.3-13）走 getEntityClass（经 mapper 代理元数据解析），mock 下须显式注入
         ReflectionTestUtils.setField(service, "baseMapper", mapper);
         ReflectionTestUtils.setField(service, "entityClass", AdverseEvent.class);
@@ -570,6 +582,49 @@ class AdverseEventServiceImplTest {
         assertThat(rowCaptor.getValue().getWardId()).isEqualTo(WARD);
         assertThat(vo.eventNo()).isEqualTo(AE_NO);
         verify(events).publishEvent(any(NursingDomainEvent.class));
+    }
+
+    @Test
+    @DisplayName("A-6 上报频控：窗口超阈拒 NS-1029 429 且不触词表校验（频控先行省无效校验——wardMetaService 零交互）")
+    void reportRejectsWhenRateWindowExceeded() {
+        // 频控桩覆写为超阈（setUp 默认放行桩的同签名后位桩优先生效）
+        when(rateGuard.checkWithinWindow(
+                        eq("report-freq"),
+                        eq(String.valueOf(REPORTER)),
+                        eq(NursingRateGuard.REPORT_LIMIT),
+                        eq(NursingRateGuard.REPORT_WINDOW_MS)))
+                .thenReturn(false);
+
+        assertThatThrownBy(() -> service.report(
+                        report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), REPORTER, false)))
+                .isInstanceOfSatisfying(BizException.class, e -> {
+                    // 三层逐位：错误码枚举 + NS-1029 code + 429 传输语义
+                    assertThat(e.getErrorCode()).isEqualTo(NursingErrorCode.REPORT_RATE_LIMITED);
+                    assertThat(e.getErrorCode().getCode()).isEqualTo("NS-1029");
+                    assertThat(e.getHttpStatus()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+                });
+        // 频控先行短路锚：词表守卫（wardMetaService）零交互、零落库零事件——超阈上报不触达任何校验与写面
+        verifyNoInteractions(wardMetaService);
+        verify(mapper, never()).insert(any(AdverseEvent.class));
+        verifyNoInteractions(events);
+    }
+
+    @Test
+    @DisplayName("A-6 频控放行照常主路径：checkWithinWindow 以 report-freq/操作者/双常量调用（挂点契约锚）")
+    void reportPassesRateGuardWithContractAnchor() {
+        when(seqGate.nextNo("AE")).thenReturn(AE_NO);
+
+        service.report(report("FALL", "I", "C", OffsetDateTime.now(BEIJING).minusHours(1), REPORTER, false));
+
+        // 挂点契约锚：report 最前频控（space=report-freq，键=操作者令牌身份，A-6 窗口双常量逐位）
+        verify(rateGuard)
+                .checkWithinWindow(
+                        "report-freq",
+                        String.valueOf(REPORTER),
+                        NursingRateGuard.REPORT_LIMIT,
+                        NursingRateGuard.REPORT_WINDOW_MS);
+        // 放行不误伤主路径：照常落库
+        verify(mapper).insert(any(AdverseEvent.class));
     }
 
     @Test

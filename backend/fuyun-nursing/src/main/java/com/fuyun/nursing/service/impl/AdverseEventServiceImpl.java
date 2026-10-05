@@ -8,6 +8,7 @@ import com.fuyun.common.exception.BizException;
 import com.fuyun.common.web.PageResult;
 import com.fuyun.nursing.api.AdverseEventReportedPayload;
 import com.fuyun.nursing.api.NursingErrorCode;
+import com.fuyun.nursing.cache.NursingRateGuard;
 import com.fuyun.nursing.cache.NursingSeqGate;
 import com.fuyun.nursing.constants.NursingMessagingConstants;
 import com.fuyun.nursing.dto.AdverseEventCloseRequest;
@@ -107,6 +108,8 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
 
     private final IWardMetaService wardMetaService;
 
+    private final NursingRateGuard rateGuard;
+
     /**
      * 全参构造器（装配归 NursingWebConfig @Import）。
      *
@@ -115,15 +118,19 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
      * @param events             进程内事件发布器，非空；id 83 事件事务内发布（AFTER_COMMIT 出 MQ）
      * @param wardMetaService    病区元信息服务，非空；A-6 上报 wardId 词表守卫（wardConfig→
      *                           requireConfig 缺行 NS-1016，语义复用零重复判定）
+     * @param rateGuard          护理频控守卫，非空；A-6 上报限频（每操作者窗口计数，超阈
+     *                           NS-1029 429）
      */
     public AdverseEventServiceImpl(
             AdverseEventMapper adverseEventMapper,
             NursingSeqGate seqGate,
             ApplicationEventPublisher events,
-            IWardMetaService wardMetaService) {
+            IWardMetaService wardMetaService,
+            NursingRateGuard rateGuard) {
         this.seqGate = seqGate;
         this.events = events;
         this.wardMetaService = wardMetaService;
+        this.rateGuard = rateGuard;
     }
 
     /**
@@ -135,6 +142,13 @@ public class AdverseEventServiceImpl extends ServiceImpl<AdverseEventMapper, Adv
     @Override
     @Transactional
     public AdverseEventVO report(AdverseEventReportRequest req) {
+        // A-6 上报频控：每操作者窗口限频（匿名上报也已登录态——PR-4C 哨兵限行拒匿名于写面；
+        // operator() 与审计列同源含 system 回退桶）
+        if (!rateGuard.checkWithinWindow(
+                "report-freq", operator(), NursingRateGuard.REPORT_LIMIT, NursingRateGuard.REPORT_WINDOW_MS)) {
+            throw new BizException(
+                    NursingErrorCode.REPORT_RATE_LIMITED, HttpStatus.TOO_MANY_REQUESTS, "不良事件上报过于频繁，请稍后重试");
+        }
         // 词表收口（NS-1019——禁词表外值入库；三级词表同守卫）
         AdverseEventCategory category = AdverseEventCategory.fromCode(req.category());
         if (category == null) {
