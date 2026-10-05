@@ -1,6 +1,7 @@
 // 路由守卫单测（BRIEF-PR3-01 §4 + BUG-14 守卫骨架）：认证三态（默认拒绝重定向登录页并
-// 携带回跳地址、public 路由直通、已登录访问 /login 回首页防死循环）+ 权限三态（集内放行/
-// 集外重定向 403/权限点集缺失全放行）；会话以直接注入 state 的方式承载
+// 携带回跳地址、public 路由直通、已登录访问 /login 回首页防死循环）+ 权限两态（集内放行/
+// 集外与空集重定向 403，未登记权限点路由放行——PR-4D 空集语义反转后口径）；
+// 会话以直接注入 state 的方式承载
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { router } from './index';
@@ -50,8 +51,8 @@ describe('路由权限守卫骨架（BUG-14）', () => {
   /**
    * 构造带权限点集的测试会话（假令牌资产，非真实凭证）。
    *
-   * @param permissions 登录用户权限点编码集；undefined 模拟 P0 后端契约未返回该字段的
-   *        数据源缺失形态，传数组模拟 P1 接线后的授权会话
+   * @param permissions 登录用户权限点编码集；undefined 模拟权限字段缺省的防御会话形态
+   *        （后端 PR-4D 已填实登录契约，正常登录恒为数组），传数组模拟真实授权会话
    */
   function injectSession(permissions: string[] | undefined): void {
     const auth = useAuthStore();
@@ -103,15 +104,16 @@ describe('路由权限守卫骨架（BUG-14）', () => {
     );
   });
 
-  it('权限点集缺失（空集）：权限页全放行（骨架语义）', async () => {
-    injectSession(undefined);
+  it('权限点集为空（无任何权限）：已登记权限点的业务页重定向 403', async () => {
+    injectSession([]);
     await router.push('/patients');
 
-    // P0 后端登录契约未返回权限点集：守卫按数据源缺失全放行，行为与既有登录态一致
+    // 空集=无任何业务权限（PR-4D 语义反转）：目标页权限点 patient:archive:search 不在
+    // 集内被拦，落点为 403 页（懒加载经 MainLayout，轮询等导航完成防慢 CI flaky）
     await vi.waitFor(
       () => {
-        expect(router.currentRoute.value.path).toBe('/patients');
-        expect(router.currentRoute.value.name).toBe('patient-search');
+        expect(router.currentRoute.value.path).toBe('/403');
+        expect(router.currentRoute.value.name).toBe('forbidden');
       },
       { timeout: 3000 },
     );

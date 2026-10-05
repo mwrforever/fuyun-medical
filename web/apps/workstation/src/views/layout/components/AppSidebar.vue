@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 侧边菜单（PR-3 B3.4 骨架，批次 1 菜单数据化 + 高亮修复，§9.3.1/§9.3.2）：品牌头 + 分组菜单。
 // 菜单源为组件内常量数组（一份常量承载分组渲染/折叠单字缩写/高亮计算三个消费面）；
-// 权限过滤（BUG-14 守卫骨架）与会话权限点集联动：权限点集为空（数据源缺失）全量显示，
-// 集非空时按路由登记的权限点过滤，角色驱动的细粒度菜单随 P1 鉴权接线演进。
+// 权限过滤（BUG-14 守卫骨架 + PR-4D 空集语义收紧）与会话权限点集联动：仅保留「未登记
+// 权限点」与「集内权限点」的菜单项（空集=无任何业务权限，除未登记项外全部隐藏）。
 import { computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
@@ -73,8 +73,8 @@ function routePermissionOf(index: string): string | undefined {
   return router.resolve(index).meta.permission;
 }
 
-/** 权限过滤（BUG-14 守卫骨架，与守卫共用 hasRoutePermission 口径）：权限点集为空
- * （数据源缺失）全量显示；集非空时仅保留「未登记权限点」与「集内权限点」的菜单项 */
+/** 权限过滤（BUG-14 骨架 + PR-4D 收紧，与守卫共用 hasRoutePermission 口径）：仅保留
+ * 「未登记权限点」与「集内权限点」的菜单项；空集会话=无任何业务权限，仅剩未登记项 */
 const visibleMenuItems = computed(() =>
   MENU_ITEMS.filter((item) => auth.hasRoutePermission(routePermissionOf(item.index))),
 );
