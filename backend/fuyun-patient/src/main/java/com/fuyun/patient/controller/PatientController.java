@@ -90,6 +90,8 @@ public class PatientController {
      * @return 脱敏出参；200
      */
     @GetMapping("/patients/{patientId}")
+    // W-47 患者读面留痕：档案详情触达脱敏档案数据，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public PatientVO detail(@PathVariable long patientId) {
         return patientService.getDetail(patientId);
     }
@@ -116,6 +118,8 @@ public class PatientController {
      * @return 脱敏分页；200
      */
     @GetMapping("/patients/search")
+    // W-47 患者读面留痕：检索结果为脱敏患者清单，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public PageResult<PatientVO> search(
             @RequestParam(required = false) String keyword,
             @RequestParam(defaultValue = "0") int page,

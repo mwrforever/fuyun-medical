@@ -32,7 +32,8 @@ import org.springframework.web.bind.annotation.RestController;
  * /privacy-mask-rules、POST /privacy/unmask、GET /privacy-access-logs 六端点。
  *
  * <p>审计落点：POST /privacy-auths 与 PUT /privacy-mask-rules 挂 WRITE；POST /privacy/unmask 挂
- * SENSITIVE_QUERY（双留痕的审计侧，台账侧在 PrivacyServiceImpl 落 privacy_access_log）。
+ * SENSITIVE_QUERY（双留痕的审计侧，台账侧在 PrivacyServiceImpl 落 privacy_access_log）；
+ * 三个读端点（授权清单/规则清单/查阅台账）挂 SENSITIVE_QUERY（W-47 患者读面留痕）。
  * 安全收口（SEC-01）：PUT /privacy-mask-rules 仅限 ADMIN 角色（PAT-1024 403，门禁在
  * PrivacyMaskServiceImpl.updateRule 方法首行），阻断非管理员改写 exemptRoles 自授豁免再经
  * unmask 提权解密的攻击链；读端点与 unmask 豁免链路不受影响。
@@ -73,6 +74,8 @@ public class PrivacyController {
      * @return 授权出参清单（无授权为空清单）；200
      */
     @GetMapping("/privacy-auths")
+    // W-47 患者读面留痕：授权清单暴露患者授权关系，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public List<PrivacyAuthVO> auths(@RequestParam long patientId) {
         return privacyAuthService.listAuthVosByPatient(patientId);
     }
@@ -100,6 +103,8 @@ public class PrivacyController {
      * @return 规则出参清单（种子固定 5 行量级）；200
      */
     @GetMapping("/privacy-mask-rules")
+    // W-47 患者读面留痕：规则清单含豁免角色等脱敏策略面，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public List<PrivacyMaskRuleVO> maskRules() {
         return privacyMaskService.listRules();
     }
@@ -148,6 +153,8 @@ public class PrivacyController {
      * @return 台账分页；200
      */
     @GetMapping("/privacy-access-logs")
+    // W-47 患者读面留痕：查阅台账本身即等保审计数据，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public PageResult<PrivacyAccessLogVO> accessLogs(
             @RequestParam(required = false) Long patientId,
             @RequestParam(defaultValue = "0") int page,

@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
  *
  * <p>controller 禁业务逻辑与事务（A.1-8）：状态机守卫与事务边界在 service impl 方法级；
  * 动作型端点挂 WRITE 审计（@AuditLog 注解 + AuditLogAspect 上下文内拦截——窗口办理的
- * 证件核验留痕口径），查询端点只读不审计。
+ * 证件核验留痕口径），卡详情查询挂 SENSITIVE_QUERY 审计（W-47 患者读面留痕）。
  */
 @RestController
 @RequestMapping("/api/v1/patient")
@@ -109,13 +109,15 @@ public class CardController {
     }
 
     /**
-     * 卡详情（GET /cards/{cardNo}，只读不审计）。
+     * 卡详情（GET /cards/{cardNo}，SENSITIVE_QUERY 审计留痕）。
      *
      * @param cardNo 卡面号（路径变量）
      * @return 卡出参；200
      * @throws com.fuyun.common.exception.BizException PAT-1011（404 卡号无命中）
      */
     @GetMapping("/cards/{cardNo}")
+    // W-47 患者读面留痕：卡详情可反查持卡人档案归属，挂 SENSITIVE_QUERY 敏感查询审计
+    @AuditLog(actionType = AuditActionType.SENSITIVE_QUERY)
     public CardVO detail(@PathVariable String cardNo) {
         return visitCardService.getByCardNo(cardNo);
     }
