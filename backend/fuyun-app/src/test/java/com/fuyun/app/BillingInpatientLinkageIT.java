@@ -12,11 +12,13 @@ import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.inpatient.constants.InpatientMessagingConstants;
 import com.fuyun.integration.constants.MessagingConstants;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -52,7 +54,9 @@ import org.testcontainers.utility.MountableFile;
  * 离散计价（两行金额=种子价×数量；audited 帧到店不改计费状态面——计价承载面在 created，
  * Task 13 裁决）③executed→PENDING 确认 CONFIRMED ④stopped→PENDING 截断作废 ⑤transferred→
  * 归属切分行（from/to 病区）⑥同 eventId 重投幂等（构件幂等拦截，received_event 单行零重复
- * 计费）⑦precheck 聚合（未结清合计=PENDING+CONFIRMED、押金余额、结清布尔三组件契约）。
+ * 计费）⑦precheck 聚合（未结清合计=PENDING+CONFIRMED、押金余额、结清布尔三组件契约）
+ * ⑧W-67b 住院行 fee.created（visitType=IN）outpatient 消费方判别跳过直确认、billing 族
+ * 死信零新增（Order(2) 三基线断言——sourceRef 语义双载死信终结实证）。
  *
  * <p>捕获形态：住院域事件族含子键帧，自声明 q.it.inpatient.#（BillingMessagingConfig 生产侧
  * 同款先例）；raw 解析监听不进幂等台账。容器三件套类级独占（GC9 红线）。
@@ -110,6 +114,12 @@ class BillingInpatientLinkageIT extends FuyunStackITBase {
     private static String orderANo = "";
 
     private static String orderBNo = "";
+
+    /** W-67b 零死信断言基线：outpatient 消费方 fee.created PROCESSED 计数（Order(1) 起费前锚定） */
+    private static long outpatientFeeProcessedBefore = 0L;
+
+    /** W-67b 零死信断言基线：billing 族死信计数（Order(1) 起费前锚定，Order(2) 收敛断言消费） */
+    private static long billingDeadLettersBefore = 0L;
 
     /** 住院域事件族通配捕获队列（自声明——governance 无通配通道，BillingMessagingConfig 同款先例）。 */
     @TestConfiguration
@@ -269,6 +279,45 @@ class BillingInpatientLinkageIT extends FuyunStackITBase {
         throw new IllegalStateException("捕获队列未收到帧：" + eventType);
     }
 
+    /**
+     * outpatient 消费方对 fee.created 的 PROCESSED 台账行数——W-67b 收敛锚：住院行
+     * visitType=IN 判别跳过直确认即登记 PROCESSED（DispenseSignoffLinkageIT 同款形态）。
+     */
+    private long outpatientFeeProcessedCount() {
+        Long n = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM integration.received_event"
+                        + " WHERE event_type = 'billing.fee.created' AND consumer_module = 'outpatient'"
+                        + " AND status = 'PROCESSED'",
+                Long.class);
+        return n == null ? 0 : n;
+    }
+
+    /** billing 事件族死信台账行数（W-67b 零死信断言锚——sourceRef 双载死信堆积面）。 */
+    private long billingDeadLetterCount() {
+        Long n = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM integration.dead_letter WHERE event_type LIKE 'billing%'", Long.class);
+        return n == null ? 0 : n;
+    }
+
+    /** 轮询等待业务条件成立（消费链异步收敛，超时附 billing 族死信诊断；DispenseSignoffLinkageIT 同款）。 */
+    private void awaitUntil(String description, BooleanSupplier condition) {
+        long deadline = System.currentTimeMillis() + Duration.ofSeconds(10).toMillis();
+        while (System.currentTimeMillis() < deadline && !condition.getAsBoolean()) {
+            try {
+                Thread.sleep(POLL_INTERVAL_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        if (!condition.getAsBoolean()) {
+            // 超时诊断：死信台账定位消费断点（消费失败帧留痕面）
+            var deadLetters = jdbcTemplate.queryForList("SELECT event_type, fail_reason FROM integration.dead_letter"
+                    + " WHERE event_type LIKE 'billing%' ORDER BY created_at DESC LIMIT 5");
+            throw new IllegalStateException(description + "——等待超时，死信近帧=" + deadLetters);
+        }
+    }
+
     @Test
     @Order(1)
     @DisplayName("前置：登录/定价/患者两床两病区直插；入院链四步至 ADMITTED；押金 5000 分缴存")
@@ -314,6 +363,11 @@ class BillingInpatientLinkageIT extends FuyunStackITBase {
                 .path("visitId")
                 .asText();
         assertThat(visitId).as("I 型 14 位 visit_id（计费键定位面）").matches("I\\d{13}");
+        // W-67b 基线锚定：入科起费（下方 admit-ward 触发床位费 fee.created IN 行）前取
+        // outpatient 消费方 PROCESSED 计数与 billing 族死信计数（Order(2) 收敛断言消费——
+        // 起费动作在本用例，断言挂 Order(2) 床位费行断言之后）
+        outpatientFeeProcessedBefore = outpatientFeeProcessedCount();
+        billingDeadLettersBefore = billingDeadLetterCount();
         ObjectNode admit = objectMapper.createObjectNode();
         admit.put("wardId", WARD_FROM).put("bedId", BED_FROM_ID).put("nursingLevel", "NORMAL");
         assertThat(postForEntity("/api/v1/inpatient/visits/" + visitId + "/admit-ward", adminToken, admit)
@@ -364,6 +418,16 @@ class BillingInpatientLinkageIT extends FuyunStackITBase {
                 visitId,
                 WARD_FROM);
         assertThat(anchors).as("入科起费锚点 ADMIT_START 恰一行（to_ward=入科病区）").isEqualTo(1);
+
+        // W-67b：住院行 fee.created（visitType=IN）零死信——outpatient 消费方（死信消费方唯一，
+        // pharmacy 走处方通道守卫不死信）判别跳过直确认，先锚 PROCESSED 收敛再断言死信零新增
+        // （DispenseSignoffLinkageIT :280-310 三基线形态，消费方仅 outpatient 单方收敛）
+        awaitUntil(
+                "住院行 fee.created outpatient 消费方 PROCESSED 收敛（IN 判别跳过直确认）",
+                () -> outpatientFeeProcessedCount() >= outpatientFeeProcessedBefore + 1);
+        assertThat(billingDeadLetterCount())
+                .as("住院行 fee.created 零死信（W-67b 分流：visitType=IN 行跳过门诊申请单推进）")
+                .isEqualTo(billingDeadLettersBefore);
     }
 
     @Test

@@ -2,26 +2,49 @@ package com.fuyun.billing.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.reflect.RecordComponent;
 import java.time.Instant;
+import java.util.Arrays;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
  * CF-4 六事件载荷 record 契约测试：组件存取、等值/哈希、toString 生成物可用——
- * 事件体经 EventEnvelopeCodec 序列化前构造锚定（载荷字段见 V605 event_registry 种子）。
+ * 事件体经 EventEnvelopeCodec 序列化前构造锚定（载荷字段见 V605 event_registry 种子 +
+ * V1115 契约演进追加 visitType）。
  */
 class BillingPayloadsContractTest {
 
     @Test
-    @DisplayName("FeeCreatedPayload：九组件存取与等值/哈希/toString 契约")
+    @DisplayName("FeeCreatedPayload：组件序冻结（十组件，visitType 尾部追加）")
+    void feeCreatedComponentNamesAppendVisitTypeAtTail() {
+        // W-67b 契约演进锚：record 反射断言组件序（尾部追加序，禁中插——消费方按组件名取值，
+        //   序冻结防装配面漂移；billing 族无 COMPONENT_NAMES 先例，反射即断言载体）
+        assertThat(Arrays.stream(FeeCreatedPayload.class.getRecordComponents()).map(RecordComponent::getName))
+                .containsExactly(
+                        "feeId",
+                        "feeNo",
+                        "patientId",
+                        "visitId",
+                        "chargeItemId",
+                        "itemName",
+                        "amount",
+                        "chargeSource",
+                        "billingKey",
+                        "visitType");
+    }
+
+    @Test
+    @DisplayName("FeeCreatedPayload：十组件存取与等值/哈希/toString 契约")
     void feeCreatedPayloadContract() {
         FeeCreatedPayload payload = new FeeCreatedPayload(
-                1L, "FEE20260917001", 5L, "V20260917000001", 7L, "血常规", 1230L, "ORDER_LINKED", "billing-key-1");
+                1L, "FEE20260917001", 5L, "V20260917000001", 7L, "血常规", 1230L, "ORDER_LINKED", "billing-key-1", "OUT");
         FeeCreatedPayload same = new FeeCreatedPayload(
-                1L, "FEE20260917001", 5L, "V20260917000001", 7L, "血常规", 1230L, "ORDER_LINKED", "billing-key-1");
+                1L, "FEE20260917001", 5L, "V20260917000001", 7L, "血常规", 1230L, "ORDER_LINKED", "billing-key-1", "OUT");
 
         assertThat(payload.feeId()).isEqualTo(1L);
         assertThat(payload.billingKey()).isEqualTo("billing-key-1");
+        assertThat(payload.visitType()).isEqualTo("OUT");
         assertThat(payload).isEqualTo(same).hasSameHashCodeAs(same);
         assertThat(payload.toString()).contains("FEE20260917001").contains("billing-key-1");
     }
