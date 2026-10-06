@@ -20,6 +20,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/roles/{roleCode}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateStatus"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/roles/{roleCode}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["overwritePermissions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pharmacy/drugs/{id}": {
         parameters: {
             query?: never;
@@ -3328,6 +3360,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/roles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listRoles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listGrouped"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/dicts/{typeCode}": {
         parameters: {
             query?: never;
@@ -4601,6 +4665,19 @@ export interface components {
             overdue?: boolean;
             /** Format: date-time */
             createdAt?: string;
+        };
+        RoleStatusRequest: {
+            status: string;
+        };
+        RoleAdminVO: {
+            roleCode?: string;
+            roleName?: string;
+            status?: string;
+            dataScopeType?: string;
+            permCodes?: string[];
+        };
+        RolePermCodesRequest: {
+            permCodes: string[];
         };
         DrugSaveRequest: {
             drugCode: string;
@@ -6934,6 +7011,15 @@ export interface components {
             status?: string;
             approvalRef?: string;
         };
+        PermissionGroupVO: {
+            /** @enum {string} */
+            permType?: "MENU" | "API" | "ELEMENT";
+            points?: components["schemas"]["PermissionPointVO"][];
+        };
+        PermissionPointVO: {
+            permCode?: string;
+            permName?: string;
+        };
         PageResultReviewTaskVO: {
             content?: components["schemas"]["ReviewTaskVO"][];
             /** @example 0 */
@@ -8232,6 +8318,58 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    updateStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleCode: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RoleStatusRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RoleAdminVO"];
+                };
+            };
+        };
+    };
+    overwritePermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                roleCode: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RolePermCodesRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RoleAdminVO"];
+                };
             };
         };
     };
@@ -13793,6 +13931,46 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["InfusionBoardVO"];
+                };
+            };
+        };
+    };
+    listRoles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RoleAdminVO"][];
+                };
+            };
+        };
+    };
+    listGrouped: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PermissionGroupVO"][];
                 };
             };
         };

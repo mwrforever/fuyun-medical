@@ -53,6 +53,8 @@ const MENU_ITEMS: SidebarMenuItem[] = [
   { index: '/ward/infusion-board', label: '输液看板', abbr: '液', group: '病区视图' },
   { index: '/ward/call-workbench', label: '呼叫工作台', abbr: '呼', group: '病区视图' },
   { index: '/ward/cold-chain', label: '冷链台账', abbr: '冷', group: '病区视图' },
+  // 系统管理分组（PR-4F 权限管理台：ADMIN 专属菜单码，无权限会话整组隐藏）
+  { index: '/system/permissions', label: '权限管理', abbr: '权', group: '系统管理' },
 ];
 
 /** 折叠态由父布局下行（§9.3.2 父子直连 props 下行/事件上行，不引 provide/store） */

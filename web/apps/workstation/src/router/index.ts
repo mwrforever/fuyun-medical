@@ -249,6 +249,13 @@ export const router = createRouter({
           component: () => import('@/views/ward/ColdChainView.vue'),
           meta: { permission: 'ward:coldchain:manage' },
         },
+        {
+          // 权限管理台（PR-4F F8）：角色×权限矩阵编辑器；MENU 码 ADMIN 专属（V1120 种子零绑定行）
+          path: 'system/permissions',
+          name: 'system-permissions',
+          component: () => import('@/views/system/RolePermissionMatrixView.vue'),
+          meta: { permission: 'system:permission:manage' },
+        },
       ],
     },
     {
