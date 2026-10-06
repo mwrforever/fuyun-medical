@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
@@ -31,8 +32,10 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Base64;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +46,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpStatus;
@@ -51,7 +58,9 @@ import org.springframework.http.HttpStatus;
  * HMAC 令牌签发/校验与 Redis 会话行为测试（D-2 方案核心路径，BRIEF-PR3-01 §1.1/§1.2 校验链全覆盖）。
  *
  * <p>覆盖：签发→校验往返、篡改签名拒绝、过期拒绝（SYS-1004）、typ 不符拒绝、会话被删拒绝（SYS-1003）、
- * 校验成功滑动续期、登出删除会话、线格式字段冻结。Redis 以 Mockito 桩承载（真实 Redis 交互由 B3.3 端到端 IT 把关）。
+ * 校验成功滑动续期、登出删除会话、线格式字段冻结；PR-4F 追加按角色清理会话（evictSessionsByRoles：
+ * SCAN 游标遍历 + 角色交集删键 + 脏值跳过，W-96③）。Redis 以 Mockito 桩承载（真实 Redis 交互由 B3.3
+ * 端到端 IT 把关）。
  */
 @ExtendWith(MockitoExtension.class)
 class TokenServiceImplTest {
@@ -70,6 +79,9 @@ class TokenServiceImplTest {
 
     @Mock
     private StringRedisTemplate redisTemplate;
+
+    @Mock
+    private RedisConnection redisConnection;
 
     @Mock
     @SuppressWarnings("unchecked")
@@ -454,6 +466,106 @@ class TokenServiceImplTest {
                 .isInstanceOfSatisfying(BizException.class, ex -> assertThat(ex.getErrorCode())
                         .isEqualTo(SystemErrorCode.TOKEN_MISSING_OR_INVALID));
         verify(redisTemplate, never()).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("按角色清理会话：删匹配键留他者（NURSE×2 清 2，DOCTOR 会话保留）")
+    void evictSessionsByRolesDeletesMatchingSessionsAndKeepsOthers() {
+        // 三会话：NURSE×2 + DOCTOR×1 → 清 NURSE 计 2，DOCTOR 保留
+        String nurseJson =
+                "{\"userId\":11,\"loginName\":\"nursedemo\",\"displayName\":\"护\",\"employeeId\":11,\"orgId\":1,\"roles\":[\"NURSE\"],\"wardId\":null,\"permissions\":[]}";
+        String doctorJson =
+                "{\"userId\":3,\"loginName\":\"doctordemo\",\"displayName\":\"医\",\"employeeId\":3,\"orgId\":1,\"roles\":[\"ADMIN\",\"DOCTOR\"],\"wardId\":null,\"permissions\":[]}";
+        stubScanExecute();
+        Cursor<byte[]> cursor = cursorOf("fy:system:session:s1", "fy:system:session:s2", "fy:system:session:s3");
+        when(redisConnection.scan(any(ScanOptions.class))).thenReturn(cursor);
+        when(valueOps.get("fy:system:session:s1")).thenReturn(nurseJson);
+        when(valueOps.get("fy:system:session:s2")).thenReturn(nurseJson);
+        when(valueOps.get("fy:system:session:s3")).thenReturn(doctorJson);
+
+        int evicted = tokenService.evictSessionsByRoles(Set.of("NURSE"));
+
+        assertThat(evicted).isEqualTo(2);
+        verify(redisTemplate).delete("fy:system:session:s1");
+        verify(redisTemplate).delete("fy:system:session:s2");
+        verify(redisTemplate, never()).delete("fy:system:session:s3"); // DOCTOR 会话保留
+    }
+
+    @Test
+    @DisplayName("空交集零删除：全部会话角色与目标集无交集时返回 0，会话键全保留")
+    void evictSessionsByRolesReturnsZeroWhenNoSessionRoleMatches() {
+        // DOCTOR 会话对 PHARMACIST 目标集：交集为空，不触发任何删除
+        String doctorJson =
+                "{\"userId\":3,\"loginName\":\"doctordemo\",\"displayName\":\"医\",\"employeeId\":3,\"orgId\":1,\"roles\":[\"ADMIN\",\"DOCTOR\"],\"wardId\":null,\"permissions\":[]}";
+        stubScanExecute();
+        Cursor<byte[]> cursor = cursorOf("fy:system:session:s3");
+        when(redisConnection.scan(any(ScanOptions.class))).thenReturn(cursor);
+        when(valueOps.get("fy:system:session:s3")).thenReturn(doctorJson);
+
+        int evicted = tokenService.evictSessionsByRoles(Set.of("PHARMACIST"));
+
+        assertThat(evicted).isZero();
+        verify(redisTemplate, never()).delete(anyString());
+    }
+
+    @Test
+    @DisplayName("非法 JSON 跳过续处理：脏会话键 warn 留痕不抛，后续键继续清理（单键脏数据不阻断整批）")
+    void evictSessionsByRolesSkipsCorruptedSessionValueAndContinues() {
+        // 首键存储层脏数据（非 JSON），次键正常命中目标角色：证明脏键跳过后处理链未中断
+        String nurseJson =
+                "{\"userId\":11,\"loginName\":\"nursedemo\",\"displayName\":\"护\",\"employeeId\":11,\"orgId\":1,\"roles\":[\"NURSE\"],\"wardId\":null,\"permissions\":[]}";
+        stubScanExecute();
+        Cursor<byte[]> cursor = cursorOf("fy:system:session:bad", "fy:system:session:s2");
+        when(redisConnection.scan(any(ScanOptions.class))).thenReturn(cursor);
+        when(valueOps.get("fy:system:session:bad")).thenReturn("{\"corrupted");
+        when(valueOps.get("fy:system:session:s2")).thenReturn(nurseJson);
+
+        int evicted = tokenService.evictSessionsByRoles(Set.of("NURSE"));
+
+        assertThat(evicted).isEqualTo(1);
+        verify(redisTemplate).delete("fy:system:session:s2");
+        verify(redisTemplate, never()).delete("fy:system:session:bad");
+    }
+
+    @Test
+    @DisplayName("SCAN 游标而非 KEYS 全量：match 模式收敛会话键前缀（Redis 命令红线，批大小细节作评审锚）")
+    void evictSessionsByRolesScansWithSessionKeyPatternInsteadOfKeys() {
+        String nurseJson =
+                "{\"userId\":11,\"loginName\":\"nursedemo\",\"displayName\":\"护\",\"employeeId\":11,\"orgId\":1,\"roles\":[\"NURSE\"],\"wardId\":null,\"permissions\":[]}";
+        stubScanExecute();
+        Cursor<byte[]> cursor = cursorOf("fy:system:session:s1");
+        when(redisConnection.scan(any(ScanOptions.class))).thenReturn(cursor);
+        when(valueOps.get("fy:system:session:s1")).thenReturn(nurseJson);
+
+        int evicted = tokenService.evictSessionsByRoles(Set.of("NURSE"));
+
+        // 断言锚定业务结果（计数与删除键集在其余用例承载），此处锚定扫描入口合规性：
+        // SCAN 携带会话键前缀 match；count 批大小等实现细节不在此锁定（代码评审锚）
+        assertThat(evicted).isEqualTo(1);
+        ArgumentCaptor<ScanOptions> optionsCaptor = ArgumentCaptor.forClass(ScanOptions.class);
+        verify(redisConnection).scan(optionsCaptor.capture());
+        assertThat(optionsCaptor.getValue().getPattern()).isEqualTo(SecurityConstants.SESSION_KEY_PREFIX + "*");
+        // 禁 KEYS 红线：连接层不得出现 keys 全量调用
+        verify(redisConnection, never()).keys(any());
+    }
+
+    /** 桩化 SCAN 执行链：execute 回调直连 mock 连接（回调真执行非直返），SCAN 语义由连接 stub 承载 */
+    @SuppressWarnings("unchecked")
+    private void stubScanExecute() {
+        when(redisTemplate.execute(any(RedisCallback.class))).thenAnswer(inv -> {
+            RedisCallback<?> callback = inv.getArgument(0);
+            return callback.doInRedis(redisConnection); // 回调直连 mock 连接，SCAN 语义由 stub 承载
+        });
+    }
+
+    /** 构造按序产出指定键的 SCAN 游标 stub（hasNext/next 闭合，close 走 mock 默认 no-op） */
+    @SuppressWarnings("unchecked")
+    private Cursor<byte[]> cursorOf(String... keys) {
+        Cursor<byte[]> cursor = mock(Cursor.class);
+        Iterator<String> remaining = List.of(keys).iterator();
+        when(cursor.hasNext()).thenAnswer(inv -> remaining.hasNext());
+        when(cursor.next()).thenAnswer(inv -> remaining.next().getBytes(StandardCharsets.UTF_8));
+        return cursor;
     }
 
     /** 读取令牌 payload 段 JSON（base64url 解码 + Map 承载，断言线格式字段全集） */

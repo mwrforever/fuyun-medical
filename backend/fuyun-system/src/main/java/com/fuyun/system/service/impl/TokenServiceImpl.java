@@ -21,10 +21,14 @@ import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Set;
 import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.Cursor;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 
@@ -240,6 +244,51 @@ public class TokenServiceImpl implements ITokenService, TokenVerifier {
     public void evict(String sid) {
         Boolean deleted = redisTemplate.delete(sessionKey(sid));
         log.info("删除登录会话：sid={}，删除前存在={}", sid, Boolean.TRUE.equals(deleted));
+    }
+
+    /**
+     * 按角色清理会话键（PR-4F W-96③ 权限变更生效链路）：SCAN 分批游标遍历全部会话键
+     * （禁 KEYS 全量阻塞 Redis，红线），逐键读值解析会话，角色摘要与目标集交集非空即
+     * 删键并计数——受影响角色在线会话踢出重登，permissions 快照随重登刷新（F4）。
+     *
+     * <p>健壮性边界：单键会话值非法（存储层脏数据 / SCAN 与 GET 间隙 TTL 过期的空值）
+     * warn 留痕跳过该键不抛，后续键继续处理——单键脏数据不阻断整批清理；Redis 基础
+     * 设施异常原样上抛，交 MQ 消费失败处置（settleFailure 走有界重试）。
+     *
+     * @param roleCodes 受影响角色编码集，非空；来源：权限矩阵变更事件载荷的角色码
+     * @return 实际清理的会话键计数（零=目标角色无在线会话的常态）
+     */
+    @Override
+    public int evictSessionsByRoles(Set<String> roleCodes) {
+        Integer evicted = redisTemplate.execute((RedisCallback<Integer>) connection -> {
+            int count = 0;
+            // SCAN 分批游标（批大小 500：会话量级内游标往返与单批内存的均衡值）而非 KEYS 全量
+            try (Cursor<byte[]> cursor = connection.scan(ScanOptions.scanOptions()
+                    .match(SecurityConstants.SESSION_KEY_PREFIX + "*")
+                    .count(500)
+                    .build())) {
+                while (cursor.hasNext()) {
+                    String key = new String(cursor.next(), StandardCharsets.UTF_8);
+                    String sessionJson = redisTemplate.opsForValue().get(key);
+                    SessionData session;
+                    try {
+                        session = objectMapper.readValue(sessionJson, SessionData.class);
+                    } catch (Exception e) {
+                        // 脏值防御：单键解析失败 warn 跳过（键名不含令牌与会话体，可入日志），不阻断整批清理
+                        log.warn("按角色清理会话跳过非法会话值：key={}", key, e);
+                        continue;
+                    }
+                    // 角色摘要与目标集交集非空即踢出：删键 = access/refresh 同 sid 同时失效
+                    if (session.roles().stream().anyMatch(roleCodes::contains)) {
+                        redisTemplate.delete(key);
+                        count++;
+                    }
+                }
+            }
+            return count;
+        });
+        log.info("按角色清理会话完成：清理计数={}，角色码={}", evicted, roleCodes);
+        return evicted;
     }
 
     /**

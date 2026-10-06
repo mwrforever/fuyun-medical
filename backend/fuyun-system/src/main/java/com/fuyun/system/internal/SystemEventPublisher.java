@@ -3,6 +3,7 @@ package com.fuyun.system.internal;
 import com.fuyun.common.messaging.EventEnvelope;
 import com.fuyun.common.messaging.EventEnvelopeCodec;
 import com.fuyun.system.api.DictPublishedPayload;
+import com.fuyun.system.api.PermissionMatrixChangedPayload;
 import com.fuyun.system.api.PracticeChangedPayload;
 import com.fuyun.system.constants.SecurityConstants;
 import com.fuyun.system.constants.SystemMessagingConstants;
@@ -120,6 +121,31 @@ public class SystemEventPublisher implements RabbitTemplate.ConfirmCallback, Rab
                 event.employeeId(),
                 event.grantType(),
                 event.status(),
+                envelope.eventId(),
+                envelope.traceId());
+    }
+
+    /**
+     * 权限矩阵变更广播入口（事务提交后触发，F3/F4）：信封化载荷发送至 fy.topic
+     * （system.permission.changed，V1120 id 84 登记行）。各实例广播队列重载 Registry（403 面实时生效）；
+     * 治理命名队列单实例消费承担幂等三步 + 受影响角色会话键清理（踢出重登，permissions 快照随重登刷新）。
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onPermissionMatrixChanged(PermissionMatrixChangedEvent event) {
+        EventEnvelope envelope = codec.create(
+                Clock.systemUTC(),
+                SystemMessagingConstants.MODULE,
+                SystemMessagingConstants.EVENT_PERMISSION_CHANGED,
+                MDC.get(SecurityConstants.TRACE_ID_MDC_KEY),
+                new PermissionMatrixChangedPayload(event.roleCode()));
+        rabbitTemplate.convertAndSend(
+                SystemMessagingConstants.TOPIC_EXCHANGE,
+                envelope.eventType(),
+                envelope,
+                new CorrelationData(envelope.eventId()));
+        log.info(
+                "权限矩阵变更广播已投递 MQ：roleCode={}，eventId={}，traceId={}",
+                event.roleCode(),
                 envelope.eventId(),
                 envelope.traceId());
     }
