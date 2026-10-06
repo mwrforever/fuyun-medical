@@ -1,13 +1,20 @@
 package com.fuyun.app;
 
+import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fuyun.system.internal.PermissionRegistry;
 import com.jayway.jsonpath.JsonPath;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.DisplayName;
@@ -34,7 +41,7 @@ import org.testcontainers.utility.MountableFile;
 /**
  * 403 鉴权矩阵集成测试（PR-4D Task 8，W-37 主体的端到端行为锚 + D4 完整性门禁的测试承载）：
  * 真实穿过 TraceIdFilter → AuthTokenInterceptor → AuthorizationInterceptor → Controller 全链
- * （RANDOM_PORT + TestRestTemplate），四组断言：
+ * （RANDOM_PORT + TestRestTemplate），五组断言：
  *
  * <p>①<b>全量端点登记对照</b>（矩阵完整性守护，D4 语义的测试承载）：反射扫描
  * {@link RequestMappingHandlerMapping} 全部 /api/v1 端点（方法+路径模板），逐一断言
@@ -45,19 +52,25 @@ import org.testcontainers.utility.MountableFile;
  * <p>②<b>ADMIN 全放</b>（D3 超管运行期一票放行）：admin 登录抽验 5 个跨域端点全非 403
  * （2xx/4xx 业务码均可——断言 ≠403，防把「矩阵拒绝」与「业务校验失败」混同）。
  *
- * <p>③<b>业务角色正反例</b>：nursedemo（NURSE）正例 GET /nursing/tasks 非 403、跨域反例
- * （billing 审批面 / iot 产品面）403+errorCode=SYS-1033；registrardemo（REGISTRAR）正例
- * GET /patient/patients/search 非 403、反例 POST /billing/settlements 403。
+ * <p>③<b>业务角色正反例全抽验</b>（W-97②）：六业务角色（demo/IT 播种账号）各验正例（本域
+ * 挂码端点非 403，业务 4xx 可接受）与反例（跨域端点 403+errorCode=SYS-1033）——nursedemo/
+ * registrardemo 沿用 D 册用例，DOCTOR/PHARMACIST/CASHIER/IOT_ADMIN 四席 PR-4F 补齐。
  *
  * <p>④<b>哨兵可达</b>（W-39 限行内的三端点+越面拒绝）：bigscreen-token 签发（wardId=1001，
  * 数字形态——iot/alarms 的 wardId 绑定为 Long，字符串病区编码会 400 而非 200）→
  * board 与 alarms 区内 200、越面 GET /billing/settlements 非 200（403 SYS-1032 或 401，
  * 勿过锁状态码——拦截层演进不破测试）。
  *
+ * <p>⑤<b>绑定矩阵快照</b>（W-97①，PR-4F Task 7）：解析 V1117+V1121 绑定段 VALUES 二元组
+ * 全集（404 对）对照真库 sys_role_permission 双向一致——管理台 DB 写通道上线后误删/误改
+ * 绑定行在抽验面外静默生效的缺口由全量快照锚定（任一漂移即红）。
+ *
  * <p>夹具说明：nursedemo 未种 nurse_assignment 绑定行（V1117:512-513 口径），而护理域
  * API 挂码端点统一挂 W-40 当班绑定守卫（fail-closed，ADMIN 无豁免）——正例用例先照
  * V1114 种子行形态直插 nursedemo→W01 绑定行（NurseBoardWsIT admin 夹具同款先例），
  * 使「非 403」只归因于 RBAC 矩阵放行而非病区守卫；board 族端点本类不碰（哨兵组承载）。
+ * doctordemo 兼绑 ADMIN（V704 种子、V1117 明言不动），D3 一票放行下不可归因——DOCTOR 席
+ * 改用 it-doctor 纯席位播种（{@link #seedDoctorUser}，基类 seedReviewerUser 幂等两段式先例）。
  *
  * <p>容器三件套类级独占（GC9 红线，NurseBoardWsIT :86-103 逐字同型：tag 与 deploy compose
  * 严格一致 + it/rabbitmq.conf 挂载 + @ServiceConnection）；测试假密钥经基类
@@ -131,6 +144,33 @@ class RbacMatrixIT extends FuyunStackITBase {
 
     /** registrardemo 种子账号（V1117 id=14，REGISTRAR 角色） */
     private static final String REGISTRAR_DEMO_LOGIN_NAME = "registrardemo";
+
+    /** it-doctor 播种账号（纯 DOCTOR 席位）——doctordemo 自 V704 起即绑 ADMIN 且 V1117 段 4 明言
+     * 「ADMIN 绑定不动」，D3 一票放行下 doctordemo 的正反例均无法归因 DOCTOR 矩阵行，纯席位承载抽验 */
+    private static final String DOCTOR_SEED_LOGIN_NAME = "it-doctor";
+
+    /** it-doctor 播种账号 id（小整数种子 ID 口径，避开 V303 id=1 / IT reviewer id=2 / V704 id=3 / V1117 id=11~15） */
+    private static final long DOCTOR_SEED_USER_ID = 21L;
+
+    /** pharmdemo 种子账号（V1117 id=12，PHARMACIST 角色） */
+    private static final String PHARMACIST_DEMO_LOGIN_NAME = "pharmdemo";
+
+    /** cashierdemo 种子账号（V1117 id=13，CASHIER 角色） */
+    private static final String CASHIER_DEMO_LOGIN_NAME = "cashierdemo";
+
+    /** iotdemo 种子账号（V1117 id=15，IOT_ADMIN 角色） */
+    private static final String IOT_DEMO_LOGIN_NAME = "iotdemo";
+
+    /** V303 遗留 ADMIN 绑定基线（6 对，V303 权限点 id 1~6 序）：P0 期 ADMIN 实体绑定先于 D3
+     * 「ADMIN 运行期全放不种绑定」裁定存在，V1116 只 UPDATE 权限码且明言该组绑定「按 id 不受
+     * 影响」——已应用迁移禁改（A.4.1-3），显式并入第⑤组快照期望面，基线外任何漂移仍红 */
+    private static final Set<String> V303_LEGACY_ADMIN_PAIRS = Set.of(
+            "ADMIN=GET /api/v1/system/dicts/{typeCode}",
+            "ADMIN=POST /api/v1/system/dict-types",
+            "ADMIN=POST /api/v1/system/dict-types/{typeCode}/versions",
+            "ADMIN=POST /api/v1/system/dict-versions/{versionId}/items",
+            "ADMIN=POST /api/v1/system/dict-versions/{versionId}/publish",
+            "ADMIN=POST /api/v1/system/practice/check");
 
     /** 哨兵令牌绑定病区（数字形态：iot/alarms 的 wardId 绑定为 Long，字符串编码会 400） */
     private static final String SENTINEL_WARD_ID = "1001";
@@ -207,11 +247,12 @@ class RbacMatrixIT extends FuyunStackITBase {
     }
 
     /**
-     * 第③组：业务角色正反例——nursedemo/registrardemo 各验正例（本域挂码端点非 403）
-     * 与反例（跨域端点 403+errorCode=SYS-1033，矩阵拒绝面而非业务校验面）。
+     * 第③组：业务角色正反例全抽验——六业务角色各验正例（本域挂码端点非 403，业务 4xx 可接受）
+     * 与反例（跨域端点 403+errorCode=SYS-1033，矩阵拒绝面而非业务校验面）；NURSE/REGISTRAR
+     * 沿用 D 册用例，DOCTOR/PHARMACIST/CASHIER/IOT_ADMIN 四席 PR-4F 补齐（W-97②）。
      */
     @Test
-    @DisplayName("业务角色正反例：nursedemo 本域放行+跨域 403 SYS-1033；registrardemo 正反例")
+    @DisplayName("业务角色正反例：六业务角色本域放行+跨域 403 SYS-1033 全抽验（W-97②）")
     void businessRoleMatrixAllowsOwnDomainAndDeniesCrossDomain() throws Exception {
         // nursedemo→W01 当班绑定行夹具（V1114 种子行形态直插，长期有效窗当日命中）：
         // 护理域 API 挂码端点统一挂 W-40 fail-closed 守卫，无绑定行则正例会 403 NS-1028
@@ -244,6 +285,25 @@ class RbacMatrixIT extends FuyunStackITBase {
                 .isNotEqualTo(403);
         // 反例：billing 结算写面（CASHIER 绑定，REGISTRAR 集外）——403+SYS-1033
         assertMatrixForbidden(registrarToken, HttpMethod.POST, "/api/v1/billing/settlements", "{}");
+
+        // DOCTOR：正例=住院医嘱开立（本域），反例=退费审批（ADMIN 专属面）。doctordemo 兼绑 ADMIN
+        // （V704:46-48 种子、V1117「ADMIN 绑定不动」，禁改已应用迁移）——IT 播种纯 DOCTOR 席位承载
+        seedDoctorUser();
+        String doctorToken = loginToken(DOCTOR_SEED_LOGIN_NAME);
+        assertNotForbidden(doctorToken, HttpMethod.POST, "/api/v1/inpatient/visits/999/orders", "{\"visitId\":999}");
+        assertMatrixForbidden(doctorToken, HttpMethod.POST, "/api/v1/billing/refunds/1/approve", "{}");
+        // PHARMACIST：正例=审方驳回（本域），反例=患者建档
+        String pharmToken = loginToken(PHARMACIST_DEMO_LOGIN_NAME);
+        assertNotForbidden(pharmToken, HttpMethod.POST, "/api/v1/pharmacy/review-tasks/99999/reject", "{}");
+        assertMatrixForbidden(pharmToken, HttpMethod.POST, "/api/v1/patient/patients", "{}");
+        // CASHIER：正例=结算收费（本域），反例=药品创建
+        String cashierToken = loginToken(CASHIER_DEMO_LOGIN_NAME);
+        assertNotForbidden(cashierToken, HttpMethod.POST, "/api/v1/billing/settlements", "{}");
+        assertMatrixForbidden(cashierToken, HttpMethod.POST, "/api/v1/pharmacy/drugs", "{}");
+        // IOT_ADMIN：正例=设备查询（本域），反例=患者建档
+        String iotToken = loginToken(IOT_DEMO_LOGIN_NAME);
+        assertNotForbidden(iotToken, HttpMethod.GET, "/api/v1/iot/devices", null);
+        assertMatrixForbidden(iotToken, HttpMethod.POST, "/api/v1/patient/patients", "{}");
     }
 
     /**
@@ -284,6 +344,98 @@ class RbacMatrixIT extends FuyunStackITBase {
                         .value())
                 .as("哨兵越面端点应非 200（W-39 限行拒绝）")
                 .isNotEqualTo(200);
+    }
+
+    /**
+     * 第⑤组（W-97①）：V1117+V1121 绑定段 VALUES 二元组全集对照真库——管理台 DB 写通道上线后
+     * 误删/误改绑定行在抽验面外静默生效的缺口由全量快照锚定（双向差集断言，任一漂移即红）。
+     */
+    @Test
+    @DisplayName("绑定矩阵快照：V1117+V1121 VALUES 全集与真库 sys_role_permission 双向一致")
+    void rolePermissionBindingsMatchSeedSnapshot() throws Exception {
+        Set<String> expected = new HashSet<>();
+        expected.addAll(parseBindingPairs("/db/migration/system/V1117__seed_business_roles_bindings.sql"));
+        expected.addAll(parseBindingPairs("/db/migration/system/V1121__seed_element_bindings_and_menu_fix.sql"));
+        assertThat(expected.size()).isGreaterThan(350); // 提取面自证：V1117 357+V1121 47=404，正则失效即红
+
+        // V303 遗留 ADMIN 基线并入期望面（实测库侧恰多出该 6 对，出处 V303:45-67+V1116 头注）：禁改
+        // 已应用迁移（A.4.1-3），以显式常量锚定已知合法存量——基线外的库侧新增（管理台/人工越权写入）
+        // 与种子缺库（误删）仍红
+        expected.addAll(V303_LEGACY_ADMIN_PAIRS);
+
+        // 库侧全集取数面：SELECT r.role_code || '=' || p.perm_code FROM system.sys_role_permission rp
+        // JOIN sys_role r ON rp.role_id=r.id AND r.deleted=0 JOIN sys_permission p ON rp.permission_id=p.id
+        // AND p.deleted=0 WHERE rp.deleted=0（join 左键属 rp 侧——右表 sys_permission 无 permission_id 列）
+        Set<String> actual = queryRolePermissionPairs();
+        assertThat(actual).isEqualTo(expected); // 双向一致：多种子缺库=误删，库多种子=管理台/人工越权写入
+    }
+
+    /** 解析绑定段 VALUES ('角色码','权限码') 二元组（正则 \\('([A-Z_]+)', '([^']+)'\\)——首组限定大写
+     * 下划线天然出界角色行/演示账号段的中文与小写值，跨 V1117 API/MENU 与 V1121 ELEMENT/扩绑全段通用） */
+    private Set<String> parseBindingPairs(String classpathSql) throws IOException {
+        Set<String> pairs = new HashSet<>();
+        Pattern pattern = Pattern.compile("\\('([A-Z_]+)', '([^']+)'\\)");
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                requireNonNull(getClass().getResourceAsStream(classpathSql)), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                Matcher matcher = pattern.matcher(line);
+                while (matcher.find()) {
+                    pairs.add(matcher.group(1) + '=' + matcher.group(2));
+                }
+            }
+        }
+        return pairs;
+    }
+
+    /**
+     * 查询真库当前全量角色-权限绑定对（role_code=perm_code 形态，第⑤组快照的库侧取数面）——
+     * BillingSettlementFlowIT 库态断言同款 jdbcTemplate 直查形态。
+     *
+     * <p>三表 join 且三表均滤 deleted=0：软删行不入快照（管理台矩阵覆写的删腿即置 deleted=1，
+     * 恰落入快照要报出的「多种子缺库」漂移面，不得被过滤子句吞掉）。
+     *
+     * @return 绑定对字符串集合，非空；元素形态「角色码=权限码」
+     */
+    private Set<String> queryRolePermissionPairs() {
+        return new HashSet<>(jdbcTemplate.queryForList("""
+                        SELECT r.role_code || '=' || p.perm_code
+                        FROM system.sys_role_permission rp
+                        JOIN system.sys_role r ON rp.role_id = r.id AND r.deleted = 0
+                        JOIN system.sys_permission p ON rp.permission_id = p.id AND p.deleted = 0
+                        WHERE rp.deleted = 0
+                        """, String.class));
+    }
+
+    /**
+     * 播种纯 DOCTOR 席位账号 it-doctor（口令哈希直取 admin 行，禁明文/禁硬编码哈希——基类
+     * seedReviewerUser 同款幂等两段式先例；V1117 角色行 id=101 硬编码同 seedReviewerUser 取
+     * role_id=1 形态）。doctordemo（V704 id=3）自带 ADMIN 角色绑定且 V1117 段 4 明言「ADMIN
+     * 绑定不动」，D3 运行期一票放行使 doctordemo 的正反例均无法归因 DOCTOR 矩阵行——纯席位
+     * 账号是第③组 DOCTOR 席抽验的唯一可归因主语（V704/V1117 均为已应用迁移禁改，测试面承载）。
+     *
+     * @return 播种账号 id
+     */
+    private long seedDoctorUser() {
+        String adminHash = jdbcTemplate.queryForObject(
+                "SELECT password_hash FROM system.sys_user WHERE login_name = ?", String.class, ADMIN_LOGIN_NAME);
+        // 幂等：容器各 IT 独占天然干净；条件插入兜底同 JVM 复用重跑
+        jdbcTemplate.update(
+                "INSERT INTO system.sys_user (id, login_name, password_hash, user_type, status)"
+                        + " SELECT ?, ?, ?, 'STAFF', 'ACTIVE'"
+                        + " WHERE NOT EXISTS (SELECT 1 FROM system.sys_user WHERE login_name = ?)",
+                DOCTOR_SEED_USER_ID,
+                DOCTOR_SEED_LOGIN_NAME,
+                adminHash,
+                DOCTOR_SEED_LOGIN_NAME);
+        jdbcTemplate.update(
+                "INSERT INTO system.sys_user_role (id, user_id, role_id)"
+                        + " SELECT ?, ?, 101"
+                        + " WHERE NOT EXISTS (SELECT 1 FROM system.sys_user_role WHERE user_id = ? AND role_id = 101)",
+                DOCTOR_SEED_USER_ID,
+                DOCTOR_SEED_USER_ID,
+                DOCTOR_SEED_USER_ID);
+        return DOCTOR_SEED_USER_ID;
     }
 
     /**
@@ -331,6 +483,21 @@ class RbacMatrixIT extends FuyunStackITBase {
         if (status == 403) {
             forbidden.add(method.name() + " " + path);
         }
+    }
+
+    /**
+     * 断言携带 Bearer 令牌的请求未收到 403（第③组六角色正例的逐端点判定——即时报出，无缺口清单
+     * 累积面；与五参形态语义一致：断言 ≠403，防把「矩阵拒绝」与「业务校验失败」混同）。
+     *
+     * @param token    Bearer 令牌原文，非空；经 Authorization 头注入（禁入日志）
+     * @param method   HTTP 方法，非空
+     * @param path     目标 URI，非空
+     * @param jsonBody 请求体 JSON 字符串，可空；GET 传 null，占位体只触发业务校验不触鉴权面
+     */
+    private void assertNotForbidden(String token, HttpMethod method, String path, String jsonBody) {
+        assertThat(bearerJson(path, method, token, jsonBody).getStatusCode().value())
+                .as(method.name() + " " + path + " 不应 403（角色矩阵对本域挂码端点放行，业务 4xx 可接受）")
+                .isNotEqualTo(403);
     }
 
     /**
