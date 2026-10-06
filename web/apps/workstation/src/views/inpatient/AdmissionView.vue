@@ -365,8 +365,8 @@ onMounted(() => {
               <el-table-column label="操作" width="150" class-name="fuy-ops-8">
                 <template #default="{ row }">
                   <!-- 行内动作（PR-4F #13）：医生建单码与票据状态数据态行内与运算（权限在
-                       外数据在内，两层独立判定）；登记动作（selectForRegister）为纯 UI 选中
-                       不出网，不挂元素码 -->
+                       外数据在内，两层独立判定）；登记选择为 #14 入区链路前置，建单与登记
+                       两类角色共用（纯 UI 选中不出网），故不挂元素码 -->
                   <el-button
                     v-if="
                       row.status === 'WAITING' && auth.hasPerm('inpatient:admission:btn:create')
@@ -378,10 +378,7 @@ onMounted(() => {
                     >预约</el-button
                   >
                   <el-button
-                    v-if="
-                      (row.status === 'WAITING' || row.status === 'SCHEDULED') &&
-                      auth.hasPerm('inpatient:admission:btn:create')
-                    "
+                    v-if="row.status === 'WAITING' || row.status === 'SCHEDULED'"
                     link
                     type="primary"
                     size="small"
