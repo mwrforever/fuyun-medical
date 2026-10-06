@@ -196,8 +196,11 @@ async function submitReturn(): Promise<void> {
             </el-radio-group>
           </div>
           <div class="dispense-return-actions">
-            <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，根除双击重复出网 -->
+            <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，根除双击重复出网；
+                 退药受理提交（PR-4F #21，PHARMACIST 绑定）v-perm 直挂——无码 DOM 移除（D-34），
+                 与住院摆药页退药入口同码跨视图收口 -->
             <el-button
+              v-perm="'pharmacy:dispense:btn:return'"
               type="primary"
               :disabled="submitting"
               :loading="submitting"

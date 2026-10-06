@@ -160,6 +160,28 @@ type PlanAction = 'pick' | 'verify' | 'issue' | 'deliver' | 'receive' | 'label' 
 const actingNo = ref('');
 
 /**
+ * 行内动作码位过滤（PR-4F #20/#21）：行内按钮经 v-for 单渲染源生成，v-perm 无法逐项
+ * 直挂，以 hasPerm 过滤清单等效承载（无码全隐藏 D-34，fail-closed 不弱于 el.remove，
+ * Task 10 #15 actionsOf 先例）——摆药五步（pick/verify/issue/deliver/receive）归
+ * #20 摆药计划族（含「病区签收」入口）；退药（return）归 #21 退药族；贴签（label）
+ * 为纯读数据面且附件 A 元素列未列，不挂码保持全量可见。
+ *
+ * @param actions 状态机产出的原始动作集
+ * @return 按会话码位过滤后的可渲染动作集（无对应码即整组隐藏）
+ */
+function filterRowActionsByPerm(actions: PlanAction[]): PlanAction[] {
+  const canPlan = auth.hasPerm('pharmacy:dispense:btn:plan');
+  const canReturn = auth.hasPerm('pharmacy:dispense:btn:return');
+  return actions.filter((action) => {
+    if (action === 'label') {
+      return true;
+    }
+    // 摆药族动作与退药动作分属两码，互不干扰（同视图双码各自独立判定）
+    return action === 'return' ? canReturn : canPlan;
+  });
+}
+
+/**
  * 状态-动作矩阵（spec 冻结断言，以后端 DispenseStatus 实测迁移为准）：CREATED=摆药开始；
  * PICKING=药师核对；PICKED=出库交接；CHECKED 按 issuedAt 分位——配送交接半步前置（后端
  * receive 要求 issuedAt 非空 PH-1026），未配送出「配送交接」、已配送出「病区签收」；
@@ -189,7 +211,7 @@ function rowActions(row: DispensePlanVO): PlanAction[] {
     default:
       break;
   }
-  return actions;
+  return filterRowActionsByPerm(actions);
 }
 
 /** 行内动作按钮文案词表 */
@@ -489,7 +511,10 @@ onMounted(() => {
           reviewStatus.items ?? '—'
         }}</span>
       </span>
+      <!-- 生成摆药计划（PR-4F #20，PHARMACIST 绑定）：v-perm 直挂，与 :disabled 审方通过
+           数据态正交——行内摆药五步动作经 rowActions 码位过滤同码承载（见 script） -->
       <el-button
+        v-perm="'pharmacy:dispense:btn:plan'"
         type="primary"
         :loading="generating"
         :disabled="reviewStatus?.status !== 'APPROVED'"
@@ -573,7 +598,10 @@ onMounted(() => {
       <p class="plan-dialog-hint">未配送不可签收（配送交接为签收必要前置，后端 PH-1026 把守）</p>
       <template #footer>
         <el-button size="small" @click="receiveVisible = false">取消</el-button>
+        <!-- 签收确认（PR-4F #20）：与行内「病区签收」入口（rowActions 过滤）同码 v-perm
+             直挂双保险（Task 10 #15 先例——入口过滤 + 弹窗提交直挂） -->
         <el-button
+          v-perm="'pharmacy:dispense:btn:plan'"
           type="primary"
           size="small"
           :loading="receiving"
@@ -671,7 +699,10 @@ onMounted(() => {
       </div>
       <template #footer>
         <el-button size="small" @click="returnVisible = false">取消</el-button>
+        <!-- 退药提交（PR-4F #21，PHARMACIST 绑定）：与行内「退药」入口（rowActions 过滤）
+             同码 v-perm 直挂双保险；与门诊退药受理页（DispenseReturnView）同码跨视图收口 -->
         <el-button
+          v-perm="'pharmacy:dispense:btn:return'"
           type="primary"
           size="small"
           :loading="returning"

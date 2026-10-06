@@ -6,8 +6,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { createDispenseReturn, listDispenses } from '@/api/pharmacy';
 import type { DispenseVO } from '@/api/pharmacy';
+import { permDirective } from '@/directives/perm';
 import DispenseReturnView from './DispenseReturnView.vue';
 
 vi.mock('@/api/pharmacy', () => ({
@@ -91,7 +94,29 @@ async function mountWithSheet(): Promise<VueWrapper> {
 }
 
 describe('退药受理页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #21）：真实 PHARMACIST 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u9',
+          loginName: 'pharmacistdemo',
+          displayName: '王药师',
+          orgId: null,
+          roles: ['pharmacist'],
+          permissions: ['pharmacy:dispense:btn:return'],
+        },
+      }),
+    );
     vi.mocked(listDispenses).mockReset();
     vi.mocked(createDispenseReturn).mockReset();
     vi.mocked(ElMessage.warning).mockClear();
@@ -166,6 +191,45 @@ describe('退药受理页', () => {
     releaseSubmit();
     await flushPromises();
     expect(findButton(wrapper, '提交退药').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(DispenseReturnView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  /** 权限态挂载并检回发药单（检索链路不受元素码影响，读面照常回显） */
+  async function mountViewWithSheet(): Promise<VueWrapper> {
+    const wrapper = mountView();
+    await wrapper.find('input[placeholder="处方号"]').setValue('RX-20260919-001');
+    await clickButton(wrapper, '检索发药单');
+    await flushPromises();
+    return wrapper;
+  }
+
+  it('PR-4F 权限态：会话无 pharmacy:dispense:btn:return 时提交退药隐藏（D-34 DOM 移除）', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u9' } }),
+    );
+    const wrapper = await mountViewWithSheet();
+    // 发药单读面回显不受元素码影响；提交入口经 v-perm DOM 移除（检索按钮为读面不挂码）
+    expect(wrapper.text()).toContain('D1');
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).not.toContain('提交退药');
+    expect(buttonTexts).toContain('检索发药单');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 pharmacy:dispense:btn:return 时提交退药可见', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    const wrapper = await mountViewWithSheet();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('提交退药');
     wrapper.unmount();
   });
 });

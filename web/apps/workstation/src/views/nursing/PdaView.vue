@@ -799,7 +799,10 @@ async function onPatrol(): Promise<void> {
                 placeholder="放行原因"
               />
             </label>
+            <!-- 双人覆核提交（PR-4F #30，NURSE 绑定）v-perm 直挂；副授权人工号与放行
+                 原因输入为表单数据面不挂码——无码即破码放行链路不可达（fail-closed） -->
             <button
+              v-perm="'nursing:pda:btn:use'"
               type="button"
               class="pda-button pda-button-primary"
               :disabled="overriding"
@@ -833,10 +836,13 @@ async function onPatrol(): Promise<void> {
             {{ selectedExecution.execItemName ?? '' }} {{ selectedExecution.executionNo ?? '' }}
           </p>
           <p v-if="!executionReady" class="pda-card-hint">该执行单尚未核对通过，请先完成扫码核对</p>
-          <!-- 给药面：按状态切换开始/完成两按钮 -->
+          <!-- 给药面：按状态切换开始/完成两按钮；两态均 #30「执行」族同码 v-perm 直挂
+               （PR-4F #30——:852 完成态按「执行」族文案+互斥分支上下文回锚并入，与
+               开始态同族同码，防「开始隐藏、完成可见」的半断链） -->
           <template v-else-if="!isInfusionExecution">
             <button
               v-if="selectedExecution.status === 'CHECKED'"
+              v-perm="'nursing:pda:btn:use'"
               type="button"
               class="pda-button pda-button-primary"
               :disabled="executing"
@@ -846,6 +852,7 @@ async function onPatrol(): Promise<void> {
             </button>
             <button
               v-else
+              v-perm="'nursing:pda:btn:use'"
               type="button"
               class="pda-button pda-button-primary"
               :disabled="executing"
@@ -867,7 +874,9 @@ async function onPatrol(): Promise<void> {
                   placeholder="扫描输液设备码（选填）"
                 />
               </label>
+              <!-- 开始输液（PR-4F #30 执行族）v-perm 直挂；设备码输入为表单数据面不挂码 -->
               <button
+                v-perm="'nursing:pda:btn:use'"
                 type="button"
                 class="pda-button pda-button-primary"
                 :disabled="executing"
@@ -899,7 +908,10 @@ async function onPatrol(): Promise<void> {
                   @keyup.enter="onNeedleOut"
                 />
               </label>
+              <!-- 拔针完成（PR-4F #30 执行族）v-perm 直挂；输注量与腕带复扫输入为表单
+                   数据面不挂码（复扫回车通道归后端端点绑定兜底） -->
               <button
+                v-perm="'nursing:pda:btn:use'"
                 type="button"
                 class="pda-button pda-button-primary"
                 :disabled="executing"
@@ -987,7 +999,9 @@ async function onPatrol(): Promise<void> {
           />
         </label>
       </div>
+      <!-- 提交体征（PR-4F #30，NURSE 绑定）v-perm 直挂；七字段录入网格为表单数据面不挂码 -->
       <button
+        v-perm="'nursing:pda:btn:use'"
         type="button"
         class="pda-button pda-button-primary"
         :disabled="recording || !identified"
@@ -1000,7 +1014,9 @@ async function onPatrol(): Promise<void> {
     <!-- 第 7 段：巡视打卡（成功后转已完成态 + taskNo 回显） -->
     <section class="pda-card" :class="{ 'pda-card-locked': !identified }" aria-label="巡视打卡">
       <h2 class="pda-card-title">巡视打卡</h2>
+      <!-- 巡视打卡（PR-4F #30，NURSE 绑定）v-perm 直挂；已巡视态文案随按钮本体同移除 -->
       <button
+        v-perm="'nursing:pda:btn:use'"
         type="button"
         class="pda-button"
         :class="patrolTask !== null ? 'pda-button-done' : 'pda-button-primary'"

@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
 import { executions, pda, vitalSigns } from '@/api/nursing';
 import type { OrderExecutionVO, PdaPatientSummaryVO } from '@/api/nursing';
+import { permDirective } from '@/directives/perm';
 import PdaView from './PdaView.vue';
 import { todayString } from './wardBoardShared';
 
@@ -128,7 +129,8 @@ let execListRows: OrderExecutionVO[] = [];
 // 会话级 pinia（PdaView 消费 auth store 取执行人 userId）
 let pinia: Pinia;
 
-/** 会话种子（auth store 从 sessionStorage 恢复：执行人=登录用户 u1/李护士） */
+/** 会话种子（auth store 从 sessionStorage 恢复：执行人=登录用户 u1/李护士；
+ * permissions 含 #30 元素码——真实 NURSE 会话经登录契约导出含码，既有用例语义不变） */
 function seedAuthSession(): void {
   sessionStorage.setItem(
     'fy:workstation:auth',
@@ -141,13 +143,18 @@ function seedAuthSession(): void {
         displayName: '李护士',
         orgId: null,
         roles: ['nurse'],
+        permissions: ['nursing:pda:btn:use'],
       },
     }),
   );
 }
 
+/** 挂载 helper：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备；
+ * beforeEach 已播种含 #30 码会话，既有用例按钮保留、断言语义不变） */
 function mountView(): VueWrapper {
-  return mount(PdaView, { global: { plugins: [pinia] } });
+  return mount(PdaView, {
+    global: { plugins: [pinia], directives: { perm: permDirective } },
+  });
 }
 
 /** 完成患者识别前置（合法腕带 → 摘要返回 → 段解锁 + 在途清单加载） */
@@ -706,6 +713,34 @@ describe('PDA 移动护理页', () => {
     rejectB(checkFailError());
     await flushPromises();
     expect(wrapper.find('.pda-override').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话无 nursing:pda:btn:use 时执行/体征/巡视/双授权入口全隐藏（D-34）', async () => {
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u1' } }),
+    );
+    const wrapper = mountView();
+    await identify(wrapper);
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // 体征提交与巡视打卡为常驻入口（不依赖执行单选中）：无码即 DOM 移除
+    expect(buttonTexts).not.toContain('提交体征');
+    expect(buttonTexts).not.toContain('巡视打卡');
+    // 识别与查询为链路前置读面（附件 A 元素列未列）不挂码，保持可见
+    expect(buttonTexts).toContain('查询');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 nursing:pda:btn:use 时执行/体征/巡视入口按数据态出位', async () => {
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    const wrapper = mountView();
+    await identify(wrapper);
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('提交体征');
+    expect(buttonTexts).toContain('巡视打卡');
     wrapper.unmount();
   });
 });

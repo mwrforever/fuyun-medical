@@ -318,10 +318,13 @@ onMounted(() => {
           />
         </div>
 
-        <!-- 操作按钮组（五动作在途互斥；锚行不进操作流） -->
+        <!-- 操作按钮组（五动作在途互斥；锚行不进操作流）；五动作（PR-4F #29，NURSE 绑定）
+             同码 v-perm 直挂——无码 DOM 移除（D-34），:disabled 在途数据态正交叠加；
+             扫码核对输入框回车通道（附件 A 元素列未列）不挂码，越权出网由后端端点绑定拦截 -->
         <div v-if="actions.length > 0" class="exec-drawer-actions">
           <el-button
             v-if="actions.includes('signReceive')"
+            v-perm="'nursing:execution:btn:perform'"
             type="primary"
             size="small"
             :loading="acting"
@@ -331,6 +334,7 @@ onMounted(() => {
           >
           <el-button
             v-if="actions.includes('check')"
+            v-perm="'nursing:execution:btn:perform'"
             size="small"
             :loading="acting"
             :disabled="acting"
@@ -339,6 +343,7 @@ onMounted(() => {
           >
           <el-button
             v-if="actions.includes('start')"
+            v-perm="'nursing:execution:btn:perform'"
             type="primary"
             size="small"
             :loading="acting"
@@ -348,6 +353,7 @@ onMounted(() => {
           >
           <el-button
             v-if="actions.includes('finish')"
+            v-perm="'nursing:execution:btn:perform'"
             type="success"
             size="small"
             :loading="acting"
@@ -357,6 +363,7 @@ onMounted(() => {
           >
           <el-button
             v-if="actions.includes('cancel')"
+            v-perm="'nursing:execution:btn:perform'"
             link
             type="danger"
             size="small"

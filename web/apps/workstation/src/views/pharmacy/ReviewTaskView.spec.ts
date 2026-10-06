@@ -6,8 +6,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { reviewTasks } from '@/api/pharmacy';
 import type { ReviewTaskVO } from '@/api/pharmacy';
+import { permDirective } from '@/directives/perm';
 import ReviewTaskView from './ReviewTaskView.vue';
 
 vi.mock('@/api/pharmacy', () => ({
@@ -83,7 +86,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('住院审方台', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #24）：真实 PHARMACIST 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u9',
+          loginName: 'pharmacistdemo',
+          displayName: '王药师',
+          orgId: null,
+          roles: ['pharmacist'],
+          permissions: ['pharmacy:review:btn:audit'],
+        },
+      }),
+    );
     for (const fn of [reviewTasks.list, reviewTasks.approve, reviewTasks.reject]) {
       vi.mocked(fn).mockReset();
     }
@@ -154,5 +179,49 @@ describe('住院审方台', () => {
     );
     // 操作后列表刷新（初载+刷新=2 次）
     expect(reviewTasks.list).toHaveBeenCalledTimes(2);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(ReviewTaskView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 pharmacy:review:btn:audit 时通过/驳回隐藏（D-34 DOM 移除）', async () => {
+    vi.mocked(reviewTasks.list).mockResolvedValue({
+      content: [taskMock()],
+      page: '0',
+      size: '10',
+      total: '1',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u9' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    // 待审行读面回显不受元素码影响；通过/驳回两写入口经 v-perm DOM 移除
+    expect(wrapper.text()).toContain('MO2026092500001');
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).not.toContain('通过');
+    expect(buttonTexts).not.toContain('驳回');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 pharmacy:review:btn:audit 时通过/驳回可见', async () => {
+    vi.mocked(reviewTasks.list).mockResolvedValue({
+      content: [taskMock()],
+      page: '0',
+      size: '10',
+      total: '1',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('通过');
+    expect(buttonTexts).toContain('驳回');
+    wrapper.unmount();
   });
 });

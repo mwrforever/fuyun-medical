@@ -90,7 +90,11 @@ onMounted(() => {
         <option value="HANDLING">处理中</option>
         <option value="CLOSED">已关闭</option>
       </select>
-      <el-button type="primary" @click="openReport">上报事件</el-button>
+      <!-- 上报事件（PR-4F #31，NURSE 绑定）v-perm 直挂；上报弹窗「提交上报」随入口
+           免挂接（入口隐藏即弹窗不可达）；类别/状态筛选为读面过滤不挂码 -->
+      <el-button v-perm="'nursing:adverse-event:btn:manage'" type="primary" @click="openReport"
+        >上报事件</el-button
+      >
     </header>
 
     <!-- 列表（分页；单号/类别/分级+等级/状态/时限标记/匿名标记/操作） -->
@@ -168,16 +172,30 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="130" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 处理/退回/关闭三动作（PR-4F #31）与上报入口同码 v-perm 直挂——
+                       不良事件全生命周期动作单码收口；状态机数据态（REPORTED/HANDLING/
+                       CLOSED）与权限判定两层正交 -->
                   <template v-if="canHandle(row)">
-                    <el-button link type="primary" size="small" @click="onHandle(row)"
+                    <el-button
+                      v-perm="'nursing:adverse-event:btn:manage'"
+                      link
+                      type="primary"
+                      size="small"
+                      @click="onHandle(row)"
                       >处理</el-button
                     >
-                    <el-button link type="warning" size="small" @click="onReturn(row)"
+                    <el-button
+                      v-perm="'nursing:adverse-event:btn:manage'"
+                      link
+                      type="warning"
+                      size="small"
+                      @click="onReturn(row)"
                       >退回</el-button
                     >
                   </template>
                   <el-button
                     v-else-if="row.status === 'HANDLING'"
+                    v-perm="'nursing:adverse-event:btn:manage'"
                     link
                     type="success"
                     size="small"

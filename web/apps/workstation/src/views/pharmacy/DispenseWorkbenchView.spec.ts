@@ -16,6 +16,7 @@ import {
   verifyDispense,
 } from '@/api/pharmacy';
 import type { DispenseVO } from '@/api/pharmacy';
+import { permDirective } from '@/directives/perm';
 import DispenseWorkbenchView from './DispenseWorkbenchView.vue';
 
 vi.mock('@/api/pharmacy', () => ({
@@ -105,6 +106,22 @@ describe('发药工作台', () => {
     sessionStorage.clear();
     pinia = createPinia();
     setActivePinia(pinia);
+    // 会话种子（PR-4F #19）：真实 PHARMACIST 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u9',
+          loginName: 'pharmacistdemo',
+          displayName: '王药师',
+          orgId: null,
+          roles: ['pharmacist'],
+          permissions: ['pharmacy:dispense:btn:issue'],
+        },
+      }),
+    );
     vi.mocked(listPrescriptions).mockReset();
     vi.mocked(listDispenses).mockReset();
     vi.mocked(pickDispense).mockReset();
@@ -250,6 +267,51 @@ describe('发药工作台', () => {
     releaseVerify();
     await flushPromises();
     expect(findButton(wrapper, '核对').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(DispenseWorkbenchView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 pharmacy:dispense:btn:issue 时配药/核对/发药签名全隐藏（D-34）', async () => {
+    mockQueueWithPendingRx();
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock('CREATED')]);
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u9' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('.el-table__row').trigger('click');
+    await flushPromises();
+    // 发药单读面回显不受元素码影响，三写入口经 v-perm DOM 移除（队列「选择」为
+    // 纯 UI 选单通道不挂码，仍可见）
+    expect(wrapper.text()).toContain('D1');
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).not.toContain('配药');
+    expect(buttonTexts).not.toContain('核对');
+    expect(buttonTexts).not.toContain('发药签名');
+    expect(buttonTexts).toContain('选择');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 pharmacy:dispense:btn:issue 时配药/核对/发药签名可见', async () => {
+    mockQueueWithPendingRx();
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock('CREATED')]);
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('.el-table__row').trigger('click');
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('配药');
+    // 核对/发药签名按 CREATED 单数据态禁用但仍在 DOM（权限与数据态两层正交）
+    expect(buttonTexts).toContain('核对');
+    expect(buttonTexts).toContain('发药签名');
     wrapper.unmount();
   });
 });
