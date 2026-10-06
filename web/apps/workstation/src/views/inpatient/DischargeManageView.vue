@@ -223,7 +223,10 @@ onMounted(() => {
     <header class="discharge-toolbar fuy-toolbar" :style="{ '--fuy-stagger-index': 0 }">
       <h2 class="discharge-title">出院管理</h2>
       <span class="discharge-hint">在途清理 + 费用预审单事务编排 · 双条件离院放行</span>
+      <!-- 发起出院申请（PR-4F #16）：医生管理码 v-perm 直挂——弹窗提交随本入口同码
+           不可达（入口隐藏则弹窗打不开），免重复挂接 -->
       <el-button
+        v-perm="'inpatient:discharge:btn:manage'"
         type="primary"
         class="discharge-create-btn"
         :disabled="creating"
@@ -280,8 +283,11 @@ onMounted(() => {
                   <el-button link type="primary" size="small" @click="loadClearance(row)"
                     >清理预审</el-button
                   >
+                  <!-- 取消申请（PR-4F #16）：管理码 v-perm 直挂（GET 清理预审只读不挂）——
+                       与 REQUESTED 状态数据态 v-if 正交（状态不符不渲染，无码 DOM 移除） -->
                   <el-button
                     v-if="row.status === 'REQUESTED'"
+                    v-perm="'inpatient:discharge:btn:manage'"
                     link
                     type="danger"
                     size="small"
@@ -381,7 +387,10 @@ onMounted(() => {
                   class="discharge-confirm-reason"
                   >{{ confirmBlockReason }}</span
                 >
+                <!-- 离院确认（PR-4F #16）：管理码 v-perm 直挂——与双条件 canConfirm 数据态
+                     :disabled 正交叠加（权限决定在不在 DOM，欠费/结算未结决定可不可点） -->
                 <el-button
+                  v-perm="'inpatient:discharge:btn:manage'"
                   type="danger"
                   plain
                   :loading="confirming"

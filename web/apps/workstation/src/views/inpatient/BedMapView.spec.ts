@@ -8,8 +8,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { beds, transfer } from '@/api/inpatient';
 import type { BedMapVO, TransferResultVO } from '@/api/inpatient';
+import { permDirective } from '@/directives/perm';
 import BedMapView from './BedMapView.vue';
 
 vi.mock('@/api/inpatient', () => ({
@@ -136,6 +139,9 @@ function findBedCard(wrapper: VueWrapper, bedNo: string) {
 }
 
 describe('病区床位图', () => {
+  /** 文件级 Pinia：actionsOf 过滤与 v-perm 读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
     for (const fn of [
       beds.map,
@@ -156,6 +162,18 @@ describe('病区床位图', () => {
     vi.mocked(ElMessageBox.confirm).mockClear();
     // 只读面兜底空：防未 stub 的 resolve 断链
     vi.mocked(beds.map).mockResolvedValue([]);
+    // PR-4F #15 后转科转床入口挂元素权限（actionsOf 过滤）：激活 pinia 并播种含码会话，
+    // 既有用例语义不变（占床卡动作下拉按权限正常出现，断言零改动）
+    pinia = createPinia();
+    setActivePinia(pinia);
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['inpatient:bed:btn:change'] },
+      }),
+    );
   });
 
   it('床位图五态渲染并按状态类承载色标（空床/预占/占床/消毒/维修）', async () => {
@@ -258,5 +276,34 @@ describe('病区床位图', () => {
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
     // 床位图重载
     expect(beds.map).toHaveBeenCalledTimes(2);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(BedMapView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 inpatient:bed:btn:change 时占床卡不出现转科转床动作（D-34 无码全隐藏）', async () => {
+    vi.mocked(beds.map).mockResolvedValue(fiveStateBeds());
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('I2026092000003');
+    expect(wrapper.text()).not.toContain('转科转床');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 inpatient:bed:btn:change 时占床卡出现转科转床动作', async () => {
+    vi.mocked(beds.map).mockResolvedValue(fiveStateBeds());
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('转科转床');
+    wrapper.unmount();
   });
 });

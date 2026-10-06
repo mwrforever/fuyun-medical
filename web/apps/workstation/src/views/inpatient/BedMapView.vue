@@ -16,8 +16,13 @@ import 'element-plus/es/components/message-box/style/css';
 import { beds, BED_STATUS_LABELS, transfer, WARD_OPTIONS } from '@/api/inpatient';
 import type { BedMapVO } from '@/api/inpatient';
 import { useAsyncTask } from '@/composables/useAsyncTask';
+import { useAuthStore } from '@/stores/auth';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
+
+// 元素权限判定入口（PR-4F F8）：床位卡「转科转床」入口经 actionsOf 过滤（#15），
+// 与弹窗确认按钮（v-perm）同码双保险
+const auth = useAuthStore();
 
 /** visit 号格式：I 前缀 + 13 位数字（I+8 位日期+5 位流水，共 14 字符，M02 冻结） */
 const VISIT_NO_PATTERN = /^I\d{13}$/;
@@ -74,9 +79,14 @@ const stateCounts = computed<Record<string, number>>(() => {
   return counts;
 });
 
-/** 床位卡动作清单（按状态给出合法迁移） */
+/** 床位卡动作清单（按状态给出合法迁移）；转科转床入口受元素权限约束（PR-4F #15）：
+ * 床位动作经 v-for 生成 option，v-perm 指令无法逐项直挂，以 hasPerm 过滤清单等效承载
+ * （无码全隐藏 D-34）——与弹窗确认按钮 v-perm 同码双保险 */
 function actionsOf(bed: BedMapVO): ReadonlyArray<{ value: string; label: string }> {
-  return BED_ACTIONS[bed.bedStatus ?? ''] ?? [];
+  const actions = BED_ACTIONS[bed.bedStatus ?? ''] ?? [];
+  return auth.hasPerm('inpatient:bed:btn:change')
+    ? actions
+    : actions.filter((action) => action.value !== 'transferDialog');
 }
 
 /** 床位操作 select 复位（动作完成后回「操作…」占位） */
@@ -381,7 +391,10 @@ onMounted(() => {
       </p>
       <template #footer>
         <el-button size="small" @click="transferVisible = false">取消</el-button>
+        <!-- 转床确认（PR-4F #15）：与床位卡入口同码 v-perm 直挂（双保险）——与 transferring
+             在途数据态 :disabled 正交叠加 -->
         <el-button
+          v-perm="'inpatient:bed:btn:change'"
           type="primary"
           size="small"
           :loading="transferring"

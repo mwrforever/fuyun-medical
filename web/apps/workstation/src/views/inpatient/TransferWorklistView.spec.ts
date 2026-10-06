@@ -8,8 +8,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { transferWorklist } from '@/api/inpatient';
 import type { TransferWorklistVO } from '@/api/inpatient';
+import { permDirective } from '@/directives/perm';
 import TransferWorklistView from './TransferWorklistView.vue';
 
 vi.mock('@/api/inpatient', () => ({
@@ -104,6 +107,9 @@ async function checkRow(wrapper: VueWrapper, orderNo: string): Promise<void> {
 }
 
 describe('转抄工作台', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
     for (const fn of [transferWorklist.list, transferWorklist.check]) {
       vi.mocked(fn).mockReset();
@@ -113,6 +119,8 @@ describe('转抄工作台', () => {
     vi.mocked(ElMessage.success).mockClear();
     // 只读面兜底空：防未 stub 的 resolve 断链
     vi.mocked(transferWorklist.list).mockResolvedValue(emptyWorklist());
+    pinia = createPinia();
+    setActivePinia(pinia);
   });
 
   it('待转抄列表加载渲染并透出高危红色标识（病区维度）', async () => {
@@ -191,5 +199,39 @@ describe('转抄工作台', () => {
     );
     // 提交成功后列表重载（初载+刷新=2 次）
     expect(transferWorklist.list).toHaveBeenCalledTimes(2);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(TransferWorklistView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 inpatient:transfer:btn:check 时提交批量核对按钮不渲染（D-34 无码全隐藏）', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('批量核对');
+    expect(wrapper.text()).not.toContain('提交批量核对');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 inpatient:transfer:btn:check 时提交批量核对按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['inpatient:transfer:btn:check'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '提交批量核对')).toBe(true);
+    wrapper.unmount();
   });
 });

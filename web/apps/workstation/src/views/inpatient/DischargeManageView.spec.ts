@@ -9,8 +9,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { discharge } from '@/api/inpatient';
 import type { ClearanceVO, DischargeRequestVO } from '@/api/inpatient';
+import { permDirective } from '@/directives/perm';
 import DischargeManageView from './DischargeManageView.vue';
 
 vi.mock('@/api/inpatient', () => ({
@@ -126,6 +129,9 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('出院管理', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
     for (const fn of [discharge.create, discharge.cancel, discharge.clearance, discharge.confirm]) {
       vi.mocked(fn).mockReset();
@@ -134,6 +140,8 @@ describe('出院管理', () => {
     vi.mocked(ElMessage.error).mockClear();
     vi.mocked(ElMessage.success).mockClear();
     vi.mocked(ElMessageBox.confirm).mockClear();
+    pinia = createPinia();
+    setActivePinia(pinia);
   });
 
   it('四态 tab 渲染与空态提示', async () => {
@@ -296,5 +304,39 @@ describe('出院管理', () => {
     await flushPromises();
     expect(discharge.confirm).toHaveBeenCalledWith('DC20260925001', {});
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(DischargeManageView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 inpatient:discharge:btn:manage 时发起出院申请按钮不渲染（D-34 无码全隐藏）', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('出院管理');
+    expect(wrapper.text()).not.toContain('发起出院申请');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 inpatient:discharge:btn:manage 时发起出院申请按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['inpatient:discharge:btn:manage'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '发起出院申请')).toBe(true);
+    wrapper.unmount();
   });
 });

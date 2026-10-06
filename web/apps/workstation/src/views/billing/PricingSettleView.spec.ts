@@ -12,8 +12,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox, ElSelect } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { listFees, manualCharge, previewSettlement, quote, settle } from '@/api/billing';
 import type { FeeRecordVO, SettlementPreviewVO } from '@/api/billing';
+import { permDirective } from '@/directives/perm';
 import PricingSettleView from './PricingSettleView.vue';
 
 vi.mock('@/api/billing', () => ({
@@ -66,6 +69,9 @@ function feeRow(partial: Partial<FeeRecordVO> = {}): FeeRecordVO {
 }
 
 describe('划价结算页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
     vi.mocked(quote).mockReset();
     vi.mocked(listFees).mockReset();
@@ -73,6 +79,8 @@ describe('划价结算页', () => {
     vi.mocked(settle).mockReset();
     // 待收表刷新兜底：空分页默认值，防未 stub 的 resolve 断链
     vi.mocked(listFees).mockResolvedValue({ content: [], page: 0, size: 20, total: '0' });
+    pinia = createPinia();
+    setActivePinia(pinia);
   });
 
   it('空就诊号点划价被前置拦截不出网', async () => {
@@ -435,6 +443,40 @@ describe('划价结算页', () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain('F-OLD');
     expect(wrapper.text()).toContain('F-NEW');
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(PricingSettleView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 billing:charge:btn:manual 时手工计费按钮不渲染（D-34 无码全隐藏）', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('划价结算');
+    expect(wrapper.text()).not.toContain('手工计费');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 billing:charge:btn:manual 时手工计费按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['billing:charge:btn:manual'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('手工计费');
     wrapper.unmount();
   });
 });

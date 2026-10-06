@@ -551,7 +551,10 @@ onMounted(() => {
                 >
                 <span class="station-group-hint">{{ groupHint }}</span>
               </div>
+              <!-- 保存医嘱（PR-4F #17）：医生医嘱码 v-perm 直挂——与 selectedVisit 选中
+                   数据态 :disabled 正交叠加（F6② 扩绑后 DOCTOR 可入页） -->
               <el-button
+                v-perm="'inpatient:station:btn:order'"
                 type="primary"
                 class="station-save"
                 :loading="creating"

@@ -6,12 +6,15 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElDatePicker, ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { listFees, previewSettlement, settle } from '@/api/billing';
 import type { SettlementPreviewVO } from '@/api/billing';
 import { createAppointment, listAvailablePools } from '@/api/outpatient';
 import type { AppointmentVO, NumberPoolVO } from '@/api/outpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { permDirective } from '@/directives/perm';
 import RegistrationChargeView from './RegistrationChargeView.vue';
 
 vi.mock('@/api/patient', () => ({
@@ -105,6 +108,9 @@ function appointmentTakenMock(): AppointmentVO {
 }
 
 describe('挂号收费联动页', () => {
+  /** 文件级 Pinia：结算面板 hasPerm 与 v-perm 读取 auth 会话 store，每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
     vi.mocked(searchPatients).mockReset();
     vi.mocked(createAppointment).mockReset();
@@ -114,6 +120,21 @@ describe('挂号收费联动页', () => {
     vi.mocked(settle).mockReset();
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.success).mockClear();
+    // PR-4F #4/#12 后结算面板与挂号按钮挂元素权限：激活 pinia 并播种含码会话，
+    // 既有用例语义不变（按钮按权限正常渲染，断言零改动）
+    pinia = createPinia();
+    setActivePinia(pinia);
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: {
+          userId: 1,
+          permissions: ['billing:charge:btn:settle', 'outpatient:registration:btn:register'],
+        },
+      }),
+    );
   });
 
   it('渲染断言：三步卡、检索/号源/确认按钮与收费面板空态齐备', () => {
@@ -345,6 +366,88 @@ describe('挂号收费联动页', () => {
     releaseRegister();
     await flushPromises();
     expect(findButton(wrapper, '确认挂号').attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(RegistrationChargeView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  /** 驱动挂号主链至收费联动态（患者检索→选号→确认挂号→TAKEN 拉起待缴费用） */
+  async function driveToChargePanel(wrapper: VueWrapper): Promise<void> {
+    await wrapper.find('input[placeholder="姓名/证件号/手机号"]').setValue('张');
+    await clickButton(wrapper, '检索患者');
+    await flushPromises();
+    await wrapper.find('.fuy-patient-row').trigger('click');
+    await wrapper.find('input[placeholder="诊区编码，如 DEPT-INT"]').setValue('DEPT-INT');
+    wrapper.findComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-09-21');
+    await flushPromises();
+    await clickButton(wrapper, '查询号源');
+    await flushPromises();
+    await wrapper.find('button.registration-charge-pool').trigger('click');
+    await clickButton(wrapper, '确认挂号');
+    await flushPromises();
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('普通挂号费');
+    });
+  }
+
+  /** 权限态用例共用数据源：检索/号源/挂号/费用四 mock 齐备（主链用例同源口径） */
+  function seedChargeChainMocks(): void {
+    vi.mocked(searchPatients).mockResolvedValue({
+      content: [patientMock()],
+      page: 0,
+      size: 10,
+      total: 1,
+    });
+    vi.mocked(listAvailablePools).mockResolvedValue([poolMock(8)]);
+    vi.mocked(createAppointment).mockResolvedValue(appointmentTakenMock());
+    vi.mocked(listFees).mockResolvedValue({
+      content: [
+        {
+          id: '701',
+          feeNo: 'FEE-1',
+          visitId: 'O2026092100001',
+          itemNameSnapshot: '普通挂号费',
+          quantity: 1,
+          amount: '1050',
+          status: 'PENDING',
+        },
+      ],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+  }
+
+  it('PR-4F 权限态：会话无 billing:charge:btn:settle 时挂号费待缴渲染但预结算不渲染（D-34）', async () => {
+    seedChargeChainMocks();
+    // 仅含挂号码（驱动主链可达收费态），结算面板码缺席——面板整体隐藏
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['outpatient:registration:btn:register'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    await driveToChargePanel(wrapper);
+    expect(wrapper.text()).toContain('待缴费用');
+    expect(wrapper.text()).not.toContain('预结算');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 billing:charge:btn:settle 时预结算按钮渲染', async () => {
+    seedChargeChainMocks();
+    const wrapper = mountView();
+    await flushPromises();
+    await driveToChargePanel(wrapper);
+    expect(wrapper.findAll('button').some((b) => b.text() === '预结算')).toBe(true);
     wrapper.unmount();
   });
 });

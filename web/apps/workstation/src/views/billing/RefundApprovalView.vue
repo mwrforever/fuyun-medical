@@ -298,13 +298,21 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          <!-- 退费申请入口（PR-4F #5）：v-perm 直挂——权限决定在不在 DOM，:loading/:disabled
+               在途数据态决定可不可点，两者正交叠加 -->
           <div class="refund-approval-apply">
             <el-input
               v-model="reason"
               placeholder="退费理由（必填留痕）"
               class="refund-approval-reason"
             />
-            <el-button type="primary" :loading="applying" @click="handleApply">申请退费</el-button>
+            <el-button
+              v-perm="'billing:refund:btn:apply'"
+              type="primary"
+              :loading="applying"
+              @click="handleApply"
+              >申请退费</el-button
+            >
           </div>
         </div>
       </Transition>
@@ -340,12 +348,21 @@ onMounted(() => {
         </el-table-column>
         <!-- 间距 8px（§8.2 同款）经全局工具类 .fuy-ops-8（element-plus.css）承载：
              td 由 el-table 内部渲染不含本组件 scoped 哈希，scoped 规则零匹配 -->
+        <!-- 审批双动作与执行（PR-4F #7/#6）：批准/驳回同码（ADMIN 专属码）、执行独立码，
+             均 v-perm 直挂——与 canApprove/canReject/canExecute 业务态 :disabled 正交叠加
+             （权限决定在不在 DOM，单据状态决定可不可点） -->
         <el-table-column label="操作" width="210" class-name="fuy-ops-8">
           <template #default="{ row }">
-            <el-button size="small" :disabled="!canApprove(row)" @click="handleApprove(row)">
+            <el-button
+              v-perm="'billing:refund:btn:approve'"
+              size="small"
+              :disabled="!canApprove(row)"
+              @click="handleApprove(row)"
+            >
               批准
             </el-button>
             <el-button
+              v-perm="'billing:refund:btn:approve'"
               size="small"
               :disabled="!canReject(row) || rejecting"
               :loading="rejecting"
@@ -354,6 +371,7 @@ onMounted(() => {
               驳回
             </el-button>
             <el-button
+              v-perm="'billing:refund:btn:execute'"
               size="small"
               :disabled="!canExecute(row) || executing"
               :loading="executing"
