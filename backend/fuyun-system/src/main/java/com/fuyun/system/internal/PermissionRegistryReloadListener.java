@@ -72,10 +72,6 @@ public class PermissionRegistryReloadListener {
     /**
      * 治理命名队列消费入口（幂等三步范式，DictPublishedListener 同款）：重载 Registry +
      * 清理受影响角色会话键。单实例消费语义（共享队列竞争消费）恰好承载「会话清理只需做一次」。
-     */
-    /**
-     * 治理命名队列消费入口（幂等三步范式，DictPublishedListener 同款）：重载 Registry +
-     * 清理受影响角色会话键。单实例消费语义（共享队列竞争消费）恰好承载「会话清理只需做一次」。
      *
      * @param message 原始消息帧，非空；来源：fy.topic 路由至本模块消费队列的信封线格式
      * @throws IllegalStateException 载荷与契约不符（roleCode 缺失或类型错误）——包装修正
