@@ -73,6 +73,19 @@ describe('患者建档页', () => {
   /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
   let pinia: Pinia;
 
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 REGISTRAR/DOCTOR/NURSE
+   * 会话经登录契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: { userId: 'u1', permissions: ['patient:archive:btn:create'] },
+      }),
+    );
+  }
+
   beforeEach(() => {
     vi.mocked(matchCheck).mockReset();
     vi.mocked(createPatient).mockReset();
@@ -81,6 +94,7 @@ describe('患者建档页', () => {
     vi.mocked(ElMessageBox.confirm).mockClear();
     pinia = createPinia();
     setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('知情同意凭证未填点击建档被校验拦截，不调用建档接口', async () => {

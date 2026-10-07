@@ -110,6 +110,19 @@ describe('转抄工作台', () => {
   /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
   let pinia: Pinia;
 
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 NURSE 会话经登录
+   * 契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 全局指令补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: { userId: 'u1', permissions: ['inpatient:transfer:btn:check'] },
+      }),
+    );
+  }
+
   beforeEach(() => {
     for (const fn of [transferWorklist.list, transferWorklist.check]) {
       vi.mocked(fn).mockReset();
@@ -121,6 +134,7 @@ describe('转抄工作台', () => {
     vi.mocked(transferWorklist.list).mockResolvedValue(emptyWorklist());
     pinia = createPinia();
     setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('待转抄列表加载渲染并透出高危红色标识（病区维度）', async () => {

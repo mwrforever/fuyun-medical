@@ -249,6 +249,12 @@ describe('权限管理台矩阵编辑器', () => {
     await flushPromises();
     expect(vi.mocked(updateRoleStatus)).not.toHaveBeenCalled();
 
+    // 停用即踢出语义契约（评审 A-I1 文案修正）：确认弹窗必须明示在线会话立即登出后果
+    // （入参为模板字符串，收窄断言避免对象默认字符串化告警）
+    const confirmText = vi.mocked(ElMessageBox.confirm).mock.calls[0]?.[0] as string | undefined;
+    expect(confirmText ?? '').toContain('在线会话立即登出');
+    expect(confirmText ?? '').not.toContain('不回溯撤销');
+
     // 确认停用：以 NURSE + DISABLED 出网
     vi.mocked(ElMessageBox.confirm).mockResolvedValueOnce({ action: 'confirm' } as MessageBoxData);
     await switchEl.trigger('click');

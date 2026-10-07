@@ -86,6 +86,26 @@ describe('退费审批页', () => {
   /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
   let pinia: Pinia;
 
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 DOCTOR/CASHIER 会话
+   * 经登录契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u1',
+          permissions: [
+            'billing:refund:btn:apply',
+            'billing:refund:btn:approve',
+            'billing:refund:btn:execute',
+          ],
+        },
+      }),
+    );
+  }
+
   beforeEach(() => {
     vi.mocked(getSettlement).mockReset();
     vi.mocked(listFees).mockReset();
@@ -99,6 +119,7 @@ describe('退费审批页', () => {
     vi.mocked(approveRefund).mockResolvedValue();
     pinia = createPinia();
     setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('空结算号点查询结算被前置拦截，不触达结算与费用接口', async () => {

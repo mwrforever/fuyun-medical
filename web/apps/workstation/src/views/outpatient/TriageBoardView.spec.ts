@@ -86,6 +86,22 @@ describe('分诊台', () => {
   /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
   let pinia: Pinia;
 
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 NURSE 会话经登录
+   * 契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 全局指令补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u1',
+          permissions: ['outpatient:queue:btn:call', 'outpatient:triage:btn:manage'],
+        },
+      }),
+    );
+  }
+
   beforeEach(() => {
     vi.mocked(checkIn).mockReset();
     vi.mocked(adjustTriage).mockReset();
@@ -98,6 +114,7 @@ describe('分诊台', () => {
     vi.mocked(getQueueSnapshot).mockResolvedValue([]);
     pinia = createPinia();
     setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('渲染断言：报到输入/诊区切换/轮询提示与队列表空态齐备', async () => {

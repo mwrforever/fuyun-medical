@@ -196,9 +196,9 @@ async function saveMatrix(): Promise<void> {
 }
 
 /**
- * 角色启停开关（旁置于角色信息条）：DISABLED 方向二次确认（防误停生产角色——
- * 停用即禁配新用户）；确认后调 PUT status 并以响应回写角色行，取消则维持原态
- * （开关为受控 :model-value 形态，无需回滚动作）。
+ * 角色启停开关（旁置于角色信息条）：DISABLED 方向二次确认（防误停生产角色——停用即
+ * 禁配新用户且该角色全部在线会话立即登出，确认弹窗明示踢出后果）；确认后调 PUT status
+ * 并以响应回写角色行，取消则维持原态（开关为受控 :model-value 形态，无需回滚动作）。
  *
  * @param role 目标角色，非空
  * @param next 开关新值（change 载荷）：true=ACTIVE / false=DISABLED
@@ -212,7 +212,7 @@ async function onStatusSwitch(role: RoleAdminVO, next: boolean): Promise<void> {
   if (target === 'DISABLED') {
     try {
       await ElMessageBox.confirm(
-        `停用后「${role.roleName}」将禁止配置新用户，存量会话不回溯撤销。确认停用？`,
+        `停用后「${role.roleName}」将禁止配置新用户，且该角色全部在线会话立即登出（需重新登录）。确认停用？`,
         '停用角色确认',
         { type: 'warning', confirmButtonText: '确认停用', cancelButtonText: '取消' },
       );

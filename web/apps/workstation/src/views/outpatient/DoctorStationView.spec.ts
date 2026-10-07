@@ -79,7 +79,9 @@ function findButton(wrapper: VueWrapper, text: string): DOMWrapper<Element> {
   return button;
 }
 
-/** 会话种子（auth store 从 sessionStorage 恢复：出诊医生=登录用户 u1/张三） */
+/** 会话种子（auth store 从 sessionStorage 恢复：出诊医生=登录用户 u1/张三；
+ * permissions 含本页元素码——真实 DOCTOR 会话经登录契约导出含码，既有用例按钮保留、
+ * 断言语义不变，D-21 申报规范，评审 D-I1 全局指令补齐） */
 function seedAuthSession(): void {
   sessionStorage.setItem(
     'fy:workstation:auth',
@@ -92,6 +94,7 @@ function seedAuthSession(): void {
         displayName: '张三',
         orgId: null,
         roles: ['doctor'],
+        permissions: ['outpatient:doctor:btn:admit', 'outpatient:doctor:btn:order'],
       },
     }),
   );
