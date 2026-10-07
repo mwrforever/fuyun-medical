@@ -8,10 +8,13 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { admissions, beds } from '@/api/inpatient';
 import type { AdmissionVO, BedMapVO } from '@/api/inpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { permDirective } from '@/directives/perm';
 import AdmissionView from './AdmissionView.vue';
 
 vi.mock('@/api/inpatient', () => ({
@@ -157,6 +160,9 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('入院登记台', () => {
+  /** 文件级 Pinia：v-perm/hasPerm 读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
     for (const fn of [
       admissions.create,
@@ -182,6 +188,21 @@ describe('入院登记台', () => {
       size: 20,
       total: 0,
     });
+    // PR-4F #13/#14 后建单/入区按钮挂元素权限：激活 pinia 并播种含码会话，
+    // 既有用例语义不变（预约/作废行内与运算按权限正常渲染，断言零改动）
+    pinia = createPinia();
+    setActivePinia(pinia);
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: {
+          userId: 1,
+          permissions: ['inpatient:admission:btn:create', 'inpatient:admission:btn:register'],
+        },
+      }),
+    );
   });
 
   it('候床队列加载渲染并透出急诊优先标识（后端冻结排序，前端只读标识）', async () => {
@@ -347,5 +368,71 @@ describe('入院登记台', () => {
     );
     expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
     expect(admissions.list).toHaveBeenCalledTimes(2);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(AdmissionView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 inpatient:admission:btn:create 时创建住院证按钮不渲染（D-34 无码全隐藏）', async () => {
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('住院证登记');
+    expect(wrapper.text()).not.toContain('创建住院证');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 inpatient:admission:btn:create 时创建住院证按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['inpatient:admission:btn:create'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '创建住院证')).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：有 #14 无 #13（REGISTRAR 人格）会话行内登记钮可见且登记确认可达（修复环 R1 断链面锁定）', async () => {
+    // V1121 种子 #13→DOCTOR、#14→REGISTRAR/NURSE：登记员会话无 #13——行内「登记」为
+    // #14 入区链路前置选择钮（不挂码），若被 #13 门控移除则无法选证、登记确认恒禁用
+    vi.mocked(admissions.list).mockResolvedValue({
+      content: [admissionMock({ status: 'SCHEDULED' })],
+      page: '0',
+      size: '50',
+      total: '1',
+    });
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['inpatient:admission:btn:register'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    // 行内「登记」钮渲染存在（无 #13 不被 DOM 移除，入区链路入口完整）
+    expect(wrapper.findAll('button').some((b) => b.text() === '登记')).toBe(true);
+    // 未选证时登记确认钮已渲染（#14 含码）但因 selectedAdmission 为空而禁用
+    const confirmBefore = wrapper.findAll('button').find((b) => b.text() === '登记确认');
+    expect(confirmBefore?.attributes('disabled')).toBeDefined();
+    // 选中住院证后禁用解锁——登记确认可达，链路（选择→确认）对该人格整体可用
+    await clickButton(wrapper, '登记');
+    const confirmAfter = wrapper.findAll('button').find((b) => b.text() === '登记确认');
+    expect(confirmAfter?.attributes('disabled')).toBeUndefined();
+    wrapper.unmount();
   });
 });

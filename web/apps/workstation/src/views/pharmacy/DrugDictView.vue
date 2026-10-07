@@ -287,7 +287,11 @@ onMounted(loadDrugs);
           <el-option label="未对照" :value="false" />
         </el-select>
         <el-button :loading="loading" @click="handleSearch">检索</el-button>
-        <el-button type="primary" @click="openCreate">药品建档</el-button>
+        <!-- 药品建档（PR-4F #22，PHARMACIST 绑定）v-perm 直挂——无码 DOM 移除（D-34）；
+             建档/变更弹窗提交按钮随入口同码免挂接（入口隐藏即弹窗不可达） -->
+        <el-button v-perm="'pharmacy:drug:btn:maintain'" type="primary" @click="openCreate"
+          >药品建档</el-button
+        >
       </div>
 
       <el-table v-loading="loading" :data="rows" class="drug-dict-table">
@@ -310,8 +314,22 @@ onMounted(loadDrugs);
         </el-table-column>
         <el-table-column label="操作" width="150" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">变更</el-button>
-            <el-button link type="primary" @click="openMapping(row)">医保对照</el-button>
+            <!-- 变更（PR-4F #22）与建档同码 v-perm 直挂；医保对照（PR-4F #23）ADMIN 专属码
+                 直挂——ADMIN 会话经权限全表导出含码可见，PHARMACIST 等业务角色无码隐藏 -->
+            <el-button
+              v-perm="'pharmacy:drug:btn:maintain'"
+              link
+              type="primary"
+              @click="openEdit(row)"
+              >变更</el-button
+            >
+            <el-button
+              v-perm="'pharmacy:drug:btn:insurance-mapping'"
+              link
+              type="primary"
+              @click="openMapping(row)"
+              >医保对照</el-button
+            >
           </template>
         </el-table-column>
         <!-- 检索空结果业务口径提示（挂载即检索，初始与查无结果同语义，无需 searched 门控） -->

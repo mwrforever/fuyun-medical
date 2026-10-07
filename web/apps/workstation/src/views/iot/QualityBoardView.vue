@@ -388,8 +388,12 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="96" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 重放/放弃（PR-4F #38，IOT_ADMIN 绑定）v-perm 同码直挂——无码 DOM
+                       移除（D-34）；PENDING v-if 状态机数据态与权限判定两层正交；放弃
+                       弹窗「确认放弃」随入口不可达免挂接；重放在途守卫防重复重投 -->
                   <el-button
                     v-if="row.status === 'PENDING'"
+                    v-perm="'iot:quality:btn:replay'"
                     link
                     type="primary"
                     size="small"
@@ -400,6 +404,7 @@ onMounted(() => {
                   >
                   <el-button
                     v-if="row.status === 'PENDING'"
+                    v-perm="'iot:quality:btn:replay'"
                     link
                     type="danger"
                     size="small"

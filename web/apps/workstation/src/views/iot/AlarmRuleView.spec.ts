@@ -10,8 +10,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { alarmRules, alarms } from '@/api/iot';
 import type { AlarmRuleVO, AlarmVO } from '@/api/iot';
+import { permDirective } from '@/directives/perm';
 import AlarmRuleView from './AlarmRuleView.vue';
 
 vi.mock('@/api/iot', () => ({
@@ -158,7 +161,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('告警规则页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #32）：真实 IOT_ADMIN 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u5',
+          loginName: 'iotadmindemo',
+          displayName: '陆物联',
+          orgId: null,
+          roles: ['iot_admin'],
+          permissions: ['iot:alarm-rule:btn:manage'],
+        },
+      }),
+    );
     for (const fn of [
       alarmRules.list,
       alarmRules.create,
@@ -399,6 +424,65 @@ describe('告警规则页', () => {
       'rule-2',
       expect.objectContaining({ ruleName: '心率超阈告警' }),
     );
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(AlarmRuleView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 iot:alarm-rule:btn:manage 时规则/告警写面与回放执行口全隐藏（D-34）', async () => {
+    vi.mocked(alarmRules.list).mockResolvedValue([ruleMock()]);
+    vi.mocked(alarms.list).mockResolvedValue({
+      content: [alarmMock({ status: 'ACTIVE' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u5' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // 规则行编辑/删除与告警行确认/关闭四个写口无码全隐藏（D-34 无码 DOM 移除）
+    expect(buttonTexts).not.toContain('编辑');
+    expect(buttonTexts).not.toContain('删除');
+    expect(buttonTexts).not.toContain('确认');
+    expect(buttonTexts).not.toContain('关闭');
+    // 回放执行口（弹窗内出网按钮）无码隐藏：入口「模拟回放」可开窗但不可出网
+    await clickRowButton(wrapper, '心率超阈告警', '模拟回放');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('开始回放');
+    // 列表读面不受元素码影响（规则名/告警号仍渲染）
+    expect(wrapper.text()).toContain('心率超阈告警');
+    expect(wrapper.text()).toContain('ALM-20260926-0001');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 iot:alarm-rule:btn:manage 时规则/告警写面与回放执行口可见', async () => {
+    vi.mocked(alarmRules.list).mockResolvedValue([ruleMock()]);
+    vi.mocked(alarms.list).mockResolvedValue({
+      content: [alarmMock({ status: 'ACTIVE' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('编辑');
+    expect(buttonTexts).toContain('删除');
+    expect(buttonTexts).toContain('确认');
+    expect(buttonTexts).toContain('关闭');
+    await clickRowButton(wrapper, '心率超阈告警', '模拟回放');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('开始回放');
     wrapper.unmount();
   });
 });

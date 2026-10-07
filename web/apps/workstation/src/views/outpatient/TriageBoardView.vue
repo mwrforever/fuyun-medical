@@ -443,7 +443,14 @@ onBeforeUnmount(() => {
           >{{ factor.label }}</el-checkbox
         >
       </el-checkbox-group>
-      <el-button type="primary" :loading="checkingIn" :disabled="checkingIn" @click="onCheckIn"
+      <!-- 分诊报到（PR-4F #8）：v-perm 直挂（护士管理码）——与 checkingIn 在途数据态正交叠加；
+           F6③ 扩绑后 REGISTRAR 可入页但无本码，报到入口对其隐藏 -->
+      <el-button
+        v-perm="'outpatient:triage:btn:manage'"
+        type="primary"
+        :loading="checkingIn"
+        :disabled="checkingIn"
+        @click="onCheckIn"
         >分诊报到</el-button
       >
       <el-select v-model="deptCode" class="triage-board-dept" @change="onDeptChange">
@@ -524,9 +531,12 @@ onBeforeUnmount(() => {
               </el-table-column>
               <el-table-column label="操作" width="200">
                 <template #default="{ row }">
-                  <!-- 操作按钮 size=small 间距 8px（§8.2）；三动作按票据状态互斥启停 -->
+                  <!-- 操作按钮 size=small 间距 8px（§8.2）；三动作按票据状态互斥启停；
+                       叫号/过号/重呼同挂叫号码（PR-4F #9，与报到管理码角色分叉分码）——
+                       v-perm 直挂与状态 :disabled 正交叠加 -->
                   <div class="triage-board-actions">
                     <el-button
+                      v-perm="'outpatient:queue:btn:call'"
                       size="small"
                       type="primary"
                       link
@@ -535,6 +545,7 @@ onBeforeUnmount(() => {
                       >叫号</el-button
                     >
                     <el-button
+                      v-perm="'outpatient:queue:btn:call'"
                       size="small"
                       type="warning"
                       link
@@ -543,6 +554,7 @@ onBeforeUnmount(() => {
                       >过号</el-button
                     >
                     <el-button
+                      v-perm="'outpatient:queue:btn:call'"
                       size="small"
                       type="info"
                       link
@@ -626,7 +638,10 @@ onBeforeUnmount(() => {
               />
             </el-form-item>
             <el-form-item>
+              <!-- 分诊处置提交（PR-4F #8）：与报到入口同码 v-perm 直挂——表单其余字段
+                   保留只读可见，仅提交动作随权限收敛 -->
               <el-button
+                v-perm="'outpatient:triage:btn:manage'"
                 type="primary"
                 :loading="adjusting"
                 :disabled="adjusting || selectedTicket === null"

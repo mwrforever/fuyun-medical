@@ -2,6 +2,60 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-07 · P2 PR-4F 收口（元素级 UI 访问控制与权限管理台——六册流水线末册 SDD 十三任务全收口）
+
+- 六任务链概要：Task 1~2 元素码设计与 V1120 种子（40 ELEMENT+1 MENU+4 管理 API 码+
+  event_registry id 84）→Task 3 V1121 绑定（43 行一对一度锚+F6 四处 MENU 错位扩绑）→
+  Task 4/5 管理端点族四端点（GET roles/GET permissions/PUT 覆写/PUT 启停，ADMIN 专属码
+  自挂+@AuditLog(WRITE)+ADMIN 角色不可维护 SYS-1043 硬拒+RoleAdminVO 契约）→Task 6 变更
+  生效三件套（system.permission.changed MQ 广播→各实例 PermissionRegistry 幂等重载→
+  evictSessionsByRoles 受影响角色会话清理）→Task 7 RbacMatrixIT 两面扩展（快照断言
+  V1117+V1121=404 对双向对照+六角色正反例）→Task 8~12 前端面（hasPerm+v-perm 指令
+  D-3/D-34+管理台 RolePermissionMatrixView+gen:api 重生成+门禁锚扩读+40 码三批挂接
+  18+13+9）→Task 13 终验+真栈 e2e+销项文档。
+- 40 码落位：三批 TDD 挂接（Task 10 批一 18 码/Task 11 批二 13 码/Task 12 批三 9 码）
+  正反例全量锁定 v-perm el.remove() 行为；附件 A 计数落位修正申报（补 #12 挂号钮凑齐
+  40 码）；AlarmRuleView「保存规则」常驻表单提交钮盘点漏列按铁律留白不挂码——暴露面
+  为零（入页角色皆含码+V1117 403 兜底），IoT 页扩绑角色前须补码（W-100 登记）。
+- 真栈 e2e 双实例六步全过（`.superpowers/probe/e2e-report.md`+九个 step 文件，SDD 工作
+  区不入库）：①NURSE 快照 118 码 ②PUT 覆写移除目标码（117）③双实例旧令牌定点直调均
+  401 SYS-1003——W-96②踢出链双实例实证 ④重登 117 码不含目标码（F4②）⑤新令牌直调
+  实况 400 非 403——计划 783 行「403 SYS-1033」预期勘误（V1117:270 NURSE API 码独立
+  绑定、元素码覆写不动 API 面，D-3 两层正交恰获实证）⑥恢复 118 码+三登含码+复验。
+- 终验与断言随动修复：后端全量 verify 240/241 过+1 断言失败——V1120 种入 event_registry
+  id 84 而 MessagingGovernanceIT 冻结断言停留 83 口径，修复 commit 105611aa（断言 84/84
+  双口径+总量口径注释随动+定向 IT 6 用例绿）；其余 240 IT 同 HEAD 全绿，册级终验复核
+  整体复跑。前端五连全绿（lint/format:check/type-check/593 用例/build 三应用）。
+- 销项与登记（TASK.md）：W-97 全量销项（快照断言+六角色抽验随 RbacMatrixIT 常驻 CI）；
+  W-96②③收口注记（②踢出通道 evictSessionsByRoles+IT/e2e 双实例覆盖、③升级过渡态
+  变更即删会话键→401→前端既有重登引导承载）——①登录查询合并留单（涉公开接口形态
+  变更，B-3 宪法 A.1-8 张力另案）；W-95 关联注记（V1120/V1121 号段已被本册占用，长期
+  方案顺延取号）；新登记 W-98（V303 遗留 6 行 ADMIN 绑定与 D-3 语义不一致——Task 7
+  审查 M2 转登记）/W-99（PermissionRegistry 两组同 URI 重叠模式告警——Task 13 verify
+  复跑发现）/W-100（AlarmRuleView 保存规则钮未入清单——Task 12 审查留痕转登记）；
+  W-30 追加 PR-4F Task 9 I-1 第三次复现注记（CI gen:api 新鲜度缺口，已在册不另立目）。
+- 文档同步：01-system.md §3.1 追加「PR-4F 形态」段（ELEMENT 四段码/管理端点族四端点/
+  MQ 广播刷新通道——修正总纲「Redis pub/sub」字面/会话踢出语义）；P2 计划 §PR-4 F 册
+  完成回填（合并点/CI run 号 merge 后补）；SDD 计划 783 行⑤ e2e 勘误括注；router/
+  index.ts 两处同族失实注释修正（PR-3 期「system 无业务权限码种子」表述未随 V1116/
+  V1117 落地更新——F 册顺手遗留收口）。
+
+## 2026-10-06 · P2 PR-4F 立项（元素级 UI 访问控制与权限管理台——六册流水线末册）
+
+- 立项：计划 `docs/superpowers/plans/2026-10-03-p2-pr4f-ui-perm.md` 落盘（D-32~D-35 裁决承载，
+  D 册底座 dev@d74c36f 之上）；范围=perm_type=ELEMENT 第三命名空间（40 元素码四段形态，
+  盘点报告一对一度缺口=0）+`v-perm` 指令与 `hasPerm()` 双入口（无码全隐藏 DOM 移除）+system
+  域权限管理台（RoleAdminController/PermissionAdminController 矩阵读写+@AuditLog+新端点 API
+  码 ADMIN 专属自挂）+workstation 管理页（角色×权限矩阵编辑器+新 MENU 码）+变更生效链路
+  （MQ 广播 Registry 重载+受影响会话踢出——W-96②③收口）+W-97 绑定矩阵快照断言；分支
+  feat/p2-pr4f-ui-perm。
+- 主控设计裁定八项（计划 §F1~F8）：四段元素码/permissions 混出形态 A（B-5 收口，登录链零
+  结构改动）/刷新通道走 RabbitMQ 镜像 dict 广播先例（**修正总纲「Redis pub/sub」字面——依据
+  盘点实况仓库零装配先例**）/变更生效三件套/管理端点族不做角色增删/四错位 MENU 扩绑全修/
+  W-97 六角色全抽验/hasPerm 独立建模禁复用路由语义（D-3）。
+- 迁移号占位（先记再占）：V1120（system：40 ELEMENT+1 MENU+4 管理 API 码+event_registry
+  id 84 事件登记）/V1121（system：40 元素码×角色绑定 43 行+四错位扩绑 4 行）。
+
 ## 2026-10-06 · P2 PR-4D 五路评审修复环（A-1 must-fix 收口+建议级裁量收敛）
 
 - 五路评审：A 安全 72/B 架构 87/C 数据 84/D 前端 89/E 测试 76（findings 归档

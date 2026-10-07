@@ -61,7 +61,29 @@ public enum SystemErrorCode implements ErrorCode {
     SENTINEL_ACCESS_DENIED("SYS-1032"),
 
     /** 403 鉴权拒绝（命中权限点且会话角色与允许集交集为空；PR-4D W-37 主体，AuthorizationInterceptor 消费） */
-    PERMISSION_DENIED("SYS-1033");
+    PERMISSION_DENIED("SYS-1033"),
+
+    /**
+     * 角色不存在（404）：管理台写端点按角色码定位失败（PR-4F Task 5，矩阵覆写与启停共用）。
+     * 触发原因：路径 roleCode 在 sys_role 无 deleted=0 行（误传/已删角色）。建议处理：刷新
+     * 角色清单后重试。消费方：RoleAdminServiceImpl 写链前置校验。
+     */
+    ROLE_NOT_FOUND("SYS-1041"),
+
+    /**
+     * 载荷含未登记权限码（400；detail 列全部非法码）：矩阵覆写载荷出现 sys_permission
+     * 未登记的 perm_code（PR-4F Task 5）。触发原因：前端码集过期或手工构造载荷。建议
+     * 处理：以 GET /api/v1/system/permissions 分组清单为准修正后整体重发（全量覆写无部分
+     * 生效）。消费方：RoleAdminServiceImpl.overwritePermissions 载荷校验。
+     */
+    PERMISSION_CODE_INVALID("SYS-1042"),
+
+    /**
+     * 内置超管角色不可维护（400）：ADMIN 运行期全放语义无绑定行可维护，矩阵覆写与启停
+     * 均不可操作（PR-4F Task 5，D3 注记延伸）。触发原因：对 ADMIN 发起写操作。建议处理：
+     * 前端对 ADMIN 行禁用写入口。消费方：RoleAdminServiceImpl 两写端点共用前置校验。
+     */
+    ROLE_ADMIN_IMMUTABLE("SYS-1043");
 
     /** 错误码字符串，格式 {@code <模块助记>-<4位数字>} */
     private final String code;

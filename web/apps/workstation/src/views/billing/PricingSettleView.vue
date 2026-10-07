@@ -334,7 +334,9 @@ async function handleSettle(): Promise<void> {
         <el-input v-model="patientId" placeholder="患者号" class="pricing-settle-input" clearable />
         <el-input v-model="visitId" placeholder="就诊号" class="pricing-settle-input" clearable />
         <el-button :loading="feesLoading" @click="handleQueryFees">查询费用</el-button>
-        <el-button @click="openManual">手工计费</el-button>
+        <!-- 手工计费入口（PR-4F #3）：v-perm 直挂——弹窗提交按钮随本入口同码不可达（入口
+             隐藏则弹窗打不开），免重复挂接 -->
+        <el-button v-perm="'billing:charge:btn:manual'" @click="openManual">手工计费</el-button>
         <!-- 支付方式选择（W-41）：预结算出网携值、确认文案联动；医保档仅可预览拆分，
              结算入口前置守卫拦截（通道待 W-80 接入） -->
         <el-select v-model="payerType" class="pricing-settle-payer">
@@ -427,9 +429,14 @@ async function handleSettle(): Promise<void> {
           <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
         </el-table-column>
       </el-table>
+      <!-- 收费员结算动作（PR-4F #4）：预结算与确认结算同码 v-perm 直挂——权限决定在不在
+           DOM，preview 草稿/在途等数据态决定可不可点，两者正交叠加互不覆盖 -->
       <div class="pricing-settle-actions">
-        <el-button :loading="previewing" @click="handlePreview">预结算</el-button>
+        <el-button v-perm="'billing:charge:btn:settle'" :loading="previewing" @click="handlePreview"
+          >预结算</el-button
+        >
         <el-button
+          v-perm="'billing:charge:btn:settle'"
           type="primary"
           :disabled="preview === null"
           :loading="settling"

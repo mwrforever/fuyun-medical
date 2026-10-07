@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
 import { createDispenseReturn, dispensePlans, reviewTasks } from '@/api/pharmacy';
 import type { DispensePlanReturnableVO, DispensePlanVO, ReviewTaskVO } from '@/api/pharmacy';
+import { permDirective } from '@/directives/perm';
 import { router } from '@/router';
 import InpatientDispenseView from './InpatientDispenseView.vue';
 
@@ -160,7 +161,9 @@ function returnableMock(partial: Partial<DispensePlanReturnableVO> = {}): Dispen
 
 /**
  * 会话种子（auth store 从 sessionStorage 恢复：签收人=登录用户 u1/王药师——PdaView.spec
- * seedAuthSession 同款形态；userId 置空用于「会话缺身份」拦截分支）。
+ * seedAuthSession 同款形态；userId 置空用于「会话缺身份」拦截分支）；permissions 含
+ * #20/#21 两元素码（PR-4F：行内动作经 rowActions hasPerm 清单过滤承载，真实 PHARMACIST
+ * 会话经登录契约导出含码，既有用例行内按钮照常出位、断言语义不变）。
  */
 function seedAuthSession(userId = 'u1', displayName = '王药师'): void {
   sessionStorage.setItem(
@@ -174,6 +177,7 @@ function seedAuthSession(userId = 'u1', displayName = '王药师'): void {
         displayName,
         orgId: null,
         roles: ['pharmacist'],
+        permissions: ['pharmacy:dispense:btn:plan', 'pharmacy:dispense:btn:return'],
       },
     }),
   );
@@ -671,6 +675,73 @@ describe('药房住院摆药页', () => {
     const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
     await flushPromises();
     expect(wrapper.text()).toContain('暂无摆药计划');
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(InpatientDispenseView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 #20 时摆药五步与生成/签收隐藏而退药入口不受扰（双码互不干扰）', async () => {
+    vi.mocked(dispensePlans.list).mockResolvedValue({
+      content: [
+        // CREATED 行（摆药开始）+ DELIVERED 行（退药）+ PIVAS 行（贴签——纯读不挂码）
+        planMock({ planNo: 'DP1', status: 'CREATED' }),
+        planMock({ planNo: 'DP6', status: 'DELIVERED' }),
+        planMock({ planNo: 'DP7', planType: 'PIVAS', status: 'CREATED' }),
+      ],
+      page: '0',
+      size: '200',
+      total: '3',
+    });
+    // 仅含退药码 #21 的会话：摆药族（#20）行内动作与生成/签收入口全隐藏
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u1',
+          loginName: 'pharmacistdemo',
+          displayName: '王药师',
+          orgId: null,
+          roles: ['pharmacist'],
+          permissions: ['pharmacy:dispense:btn:return'],
+        },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // #20 族：行内「摆药开始」经 rowActions 清单过滤隐藏；「生成摆药计划」经 v-perm 移除
+    expect(buttonTexts).not.toContain('摆药开始');
+    expect(buttonTexts).not.toContain('生成摆药计划');
+    // #21 族退药入口不受 #20 缺码影响（DELIVERED 行照常出位）
+    expect(buttonTexts).toContain('退药');
+    // 贴签为纯读数据面（附件 A 元素列未列）不挂码，保持可见
+    expect(buttonTexts).toContain('贴签');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 #20/#21 时摆药/退药动作与生成入口全量出位', async () => {
+    vi.mocked(dispensePlans.list).mockResolvedValue({
+      content: [
+        planMock({ planNo: 'DP1', status: 'CREATED' }),
+        planMock({ planNo: 'DP6', status: 'DELIVERED' }),
+      ],
+      page: '0',
+      size: '200',
+      total: '2',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('摆药开始');
+    expect(buttonTexts).toContain('生成摆药计划');
+    expect(buttonTexts).toContain('退药');
     wrapper.unmount();
   });
 });

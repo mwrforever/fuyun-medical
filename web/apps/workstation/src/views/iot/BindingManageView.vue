@@ -318,7 +318,12 @@ onMounted(() => {
               placeholder="如：术后监护"
               aria-label="绑定原因"
             ></textarea>
+            <!-- 确认绑定（PR-4F #33「绑定」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+                 DOM 移除（D-34）；右栏绑定表单常驻（非弹窗），绑定 POST 以本按钮为唯一
+                 出口，无码会话表单可填不可出网；:loading/:disabled 在途数据态与权限判定
+                 两层正交 -->
             <el-button
+              v-perm="'iot:binding:btn:manage'"
               type="primary"
               class="binding-submit"
               :loading="binding"
@@ -344,7 +349,12 @@ onMounted(() => {
       ></textarea>
       <template #footer>
         <el-button size="small" @click="unbindVisible = false">取消</el-button>
+        <!-- 确认解绑（PR-4F #33「解绑」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+             DOM 移除（D-34），解绑 DELETE 以本按钮为唯一出口：行内「解绑」入口按盘点
+             口径不挂码，无码会话仅可开窗读上下文不可出网；:loading/:disabled 在途数据态
+             与权限判定两层正交 -->
         <el-button
+          v-perm="'iot:binding:btn:manage'"
           type="danger"
           size="small"
           :loading="unbinding"

@@ -167,7 +167,10 @@ onMounted(() => {
               <el-table-column label="操作" width="130" class-name="fuy-ops-8">
                 <template #default="{ row }">
                   <template v-if="row.status === 'PENDING'">
+                    <!-- 审方通过/驳回（PR-4F #24，PHARMACIST 绑定）同码 v-perm 直挂——
+                         无码 DOM 移除（D-34）；驳回弹窗「确认驳回」随入口免挂接 -->
                     <el-button
+                      v-perm="'pharmacy:review:btn:audit'"
                       link
                       type="primary"
                       size="small"
@@ -177,6 +180,7 @@ onMounted(() => {
                       >通过</el-button
                     >
                     <el-button
+                      v-perm="'pharmacy:review:btn:audit'"
                       link
                       type="danger"
                       size="small"

@@ -24,8 +24,12 @@ import type { AdmissionVO, BedMapVO } from '@/api/inpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
 import { usePagedList } from '@/composables/usePagedList';
+import { useAuthStore } from '@/stores/auth';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
+
+// 元素权限判定入口（PR-4F F8）：医生建单码行内与运算（#13）、登记员/护士入区码 v-perm（#14）
+const auth = useAuthStore();
 
 /** 住院证状态中文词表（CANCELLED/COMPLETED 兜底直显原文） */
 const STATUS_LABELS: Record<string, string> = {
@@ -360,8 +364,13 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="150" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 行内动作（PR-4F #13）：医生建单码与票据状态数据态行内与运算（权限在
+                       外数据在内，两层独立判定）；登记选择为 #14 入区链路前置，建单与登记
+                       两类角色共用（纯 UI 选中不出网），故不挂元素码 -->
                   <el-button
-                    v-if="row.status === 'WAITING'"
+                    v-if="
+                      row.status === 'WAITING' && auth.hasPerm('inpatient:admission:btn:create')
+                    "
                     link
                     type="primary"
                     size="small"
@@ -377,7 +386,10 @@ onMounted(() => {
                     >登记</el-button
                   >
                   <el-button
-                    v-if="row.status === 'WAITING' || row.status === 'SCHEDULED'"
+                    v-if="
+                      (row.status === 'WAITING' || row.status === 'SCHEDULED') &&
+                      auth.hasPerm('inpatient:admission:btn:create')
+                    "
                     link
                     type="danger"
                     size="small"
@@ -467,7 +479,10 @@ onMounted(() => {
               maxlength="255"
               placeholder="入院诊断摘要"
             ></textarea>
+            <!-- 创建住院证（PR-4F #13）：医生建单码 v-perm 直挂——与 creating 在途数据态
+                 正交叠加 -->
             <el-button
+              v-perm="'inpatient:admission:btn:create'"
               type="primary"
               class="admission-submit"
               :loading="creating"
@@ -490,7 +505,10 @@ onMounted(() => {
               {{ item.label }}
             </option>
           </select>
+          <!-- 入区登记确认（PR-4F #14）：登记员/护士码 v-perm 直挂——与 selectedAdmission
+               选中数据态 :disabled 正交叠加（F6④ 扩绑后 NURSE 可入页办理） -->
           <el-button
+            v-perm="'inpatient:admission:btn:register'"
             type="primary"
             class="admission-submit"
             :loading="registering"

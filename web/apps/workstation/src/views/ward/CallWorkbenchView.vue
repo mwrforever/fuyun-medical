@@ -283,8 +283,13 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="操作" width="196" class-name="fuy-ops-8">
             <template #default="{ row }">
+              <!-- 呼叫闭环五动作（PR-4F #39，NURSE 绑定）v-perm 同码直挂——应答/处理/
+                   完成/转接/取消全生命周期单码收口，无码 DOM 移除（D-34）；CREATED/
+                   ANSWERED/IN_PROGRESS 状态机 v-if 数据态与权限判定两层正交；完成弹窗
+                   「确认完成」随入口不可达免挂接 -->
               <el-button
                 v-if="row.status === 'CREATED'"
+                v-perm="'ward:call:btn:handle'"
                 link
                 type="primary"
                 size="small"
@@ -293,6 +298,7 @@ onMounted(() => {
               >
               <el-button
                 v-if="row.status === 'ANSWERED'"
+                v-perm="'ward:call:btn:handle'"
                 link
                 type="primary"
                 size="small"
@@ -301,6 +307,7 @@ onMounted(() => {
               >
               <el-button
                 v-if="row.status === 'IN_PROGRESS'"
+                v-perm="'ward:call:btn:handle'"
                 link
                 type="success"
                 size="small"
@@ -313,6 +320,7 @@ onMounted(() => {
                   row.status === 'ANSWERED' ||
                   row.status === 'IN_PROGRESS'
                 "
+                v-perm="'ward:call:btn:handle'"
                 link
                 type="warning"
                 size="small"
@@ -321,6 +329,7 @@ onMounted(() => {
               >
               <el-button
                 v-if="row.status !== 'COMPLETED' && row.status !== 'CANCELLED'"
+                v-perm="'ward:call:btn:handle'"
                 link
                 type="danger"
                 size="small"

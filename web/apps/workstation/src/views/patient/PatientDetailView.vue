@@ -11,6 +11,7 @@ import 'element-plus/es/components/message-box/style/css';
 import { changeFreeze, getPatient } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
 import { useAsyncTask } from '@/composables/useAsyncTask';
+import { useAuthStore } from '@/stores/auth';
 import {
   patientArchiveSourceText,
   patientRegisterChannelText,
@@ -20,6 +21,8 @@ import {
 } from '@/utils/patientDisplay';
 
 const route = useRoute();
+// 元素权限判定入口（PR-4F F8）：冻结/解冻按钮行内与运算消费（盘点 §3.5 口径）
+const auth = useAuthStore();
 
 /** 患者 id：路由参数以 string 承载雪花 ID（禁 number 处理，web A.3-6） */
 const patientId = computed(() => String(route.params.patientId ?? ''));
@@ -104,15 +107,17 @@ async function handleChangeFreeze(freeze: boolean): Promise<void> {
             >
           </span>
           <span class="patient-detail-actions">
-            <!-- 冻结/解冻成对呈现：仅正常档可冻结、仅冻结档可解冻（已合并档只读）；loading 即在途态 -->
+            <!-- 冻结/解冻成对呈现：仅正常档可冻结、仅冻结档可解冻（已合并档只读）；loading 即在途态。
+                 冻结权限（PR-4F #2）：患者状态数据态与元素权限行内与运算——权限在外数据在内，
+                 两层独立判定（无码全隐藏 D-34，状态不符仅不渲染） -->
             <el-button
-              v-if="patient?.status === 'NORMAL'"
+              v-if="patient?.status === 'NORMAL' && auth.hasPerm('patient:archive:btn:freeze')"
               :loading="freezing"
               @click="handleChangeFreeze(true)"
               >冻结</el-button
             >
             <el-button
-              v-if="patient?.status === 'FROZEN'"
+              v-if="patient?.status === 'FROZEN' && auth.hasPerm('patient:archive:btn:freeze')"
               :loading="freezing"
               @click="handleChangeFreeze(false)"
               >解冻</el-button

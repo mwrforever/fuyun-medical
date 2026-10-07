@@ -17,7 +17,7 @@ public enum RoleStatus {
     /** 启用：角色可被授予用户且授权生效 */
     ACTIVE("ACTIVE"),
 
-    /** 停用：禁配新用户（存量用户会话内角色摘要不回溯撤销，重新登录后失效） */
+    /** 停用：禁配新用户（停用变更即踢出该角色全部在线会话，重新登录后不再携带该角色） */
     DISABLED("DISABLED");
 
     /** 存储值：DB 列写入（@EnumValue）与 JSON 输出（@JsonValue getCode）共用的业务 code */

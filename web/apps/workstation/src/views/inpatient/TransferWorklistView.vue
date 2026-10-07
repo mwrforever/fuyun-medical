@@ -241,7 +241,10 @@ onMounted(() => {
               核对不通过
             </label>
           </div>
+          <!-- 提交批量核对（PR-4F #18）：医生核对码 v-perm 直挂——与 submitting 在途数据态
+               :disabled 正交叠加（权限决定在不在 DOM，在途决定可不可点） -->
           <el-button
+            v-perm="'inpatient:transfer:btn:check'"
             type="primary"
             class="transfer-submit"
             :loading="submitting"

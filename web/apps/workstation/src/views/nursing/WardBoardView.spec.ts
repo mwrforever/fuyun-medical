@@ -24,6 +24,7 @@ import {
   wardPatients,
 } from '@/api/nursing';
 import type { VitalSignVO, WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
+import { permDirective } from '@/directives/perm';
 import WardBoardView from './WardBoardView.vue';
 
 vi.mock('@/api/nursing', () => ({
@@ -98,7 +99,9 @@ if (!('ResizeObserver' in globalThis)) {
   };
 }
 
-/** 会话种子（auth store 从 sessionStorage 恢复：当班护士=登录用户 u1/李护士） */
+/** 会话种子（auth store 从 sessionStorage 恢复：当班护士=登录用户 u1/李护士；
+ * permissions 含本视图四码 #25/#26/#27/#28——真实 NURSE 会话经登录契约导出含码，
+ * 既有用例语义不变） */
 function seedAuthSession(): void {
   sessionStorage.setItem(
     'fy:workstation:auth',
@@ -111,6 +114,31 @@ function seedAuthSession(): void {
         displayName: '李护士',
         orgId: null,
         roles: ['nurse'],
+        permissions: [
+          'nursing:ward:btn:vital',
+          'nursing:ward:btn:record',
+          'nursing:ward:btn:task',
+          'nursing:ward:btn:handover',
+        ],
+      },
+    }),
+  );
+}
+
+/** 按指定码集覆写会话种子（PR-4F 权限态正反例：构造「含部分码/无码」会话形态） */
+function seedAuthSessionWithPermissions(permissions: string[]): void {
+  sessionStorage.setItem(
+    'fy:workstation:auth',
+    JSON.stringify({
+      token: 'test-token',
+      refreshToken: 'test-refresh',
+      user: {
+        userId: 'u1',
+        loginName: 'nursedemo',
+        displayName: '李护士',
+        orgId: null,
+        roles: ['nurse'],
+        permissions,
       },
     }),
   );
@@ -791,5 +819,92 @@ describe('护士工作站', () => {
     expect(doneButton.attributes('disabled')).toBeDefined();
     wrapper.unmount();
     wrapper2.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(WardBoardView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 nursing:ward:btn:vital 时体征录入与待复核操作隐藏且不扰他码（D-34）', async () => {
+    // 仅含任务码 #27 的会话：体征族（#25）隐藏、任务族（#27）可见——同视图多码互不干扰
+    seedAuthSessionWithPermissions(['nursing:ward:btn:task']);
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // #25 vital 族三按钮（录入体征为常驻入口；确认/驳回随待复核行数据出位）无码全隐藏
+    expect(buttonTexts).not.toContain('录入体征');
+    // #27 task 族「生成常规任务」不受 #25 缺码影响
+    expect(buttonTexts).toContain('生成常规任务');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 nursing:ward:btn:vital 时体征录入与待复核操作可见', async () => {
+    vi.mocked(vitalSigns.pendingReview).mockResolvedValue([
+      { id: '9001', measuredAt: '2026-09-23T07:00:00', temperature: 36.8, source: 'IOT' },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('录入体征');
+    // 待复核行出位后确认/驳回（与录入入口同码）可见
+    expect(buttonTexts).toContain('确认');
+    expect(buttonTexts).toContain('驳回');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话无 nursing:ward:btn:task 时任务/责任分配族隐藏且不扰他码（D-34）', async () => {
+    vi.mocked(tasks.list).mockResolvedValue([
+      {
+        id: '9400',
+        taskNo: 'T20260923001',
+        patientId: '1932000000000000001',
+        visitId: 'I20260923000000001',
+        wardId: 'W01',
+        bedNo: '03-01',
+        taskType: 'TURN',
+        planTime: '2026-09-23 06:00:00',
+        status: 'PENDING',
+      },
+    ]);
+    // 仅含体征码 #25 的会话：任务族（#27）隐藏、体征族（#25）可见——互不干扰反向验证
+    seedAuthSessionWithPermissions(['nursing:ward:btn:vital']);
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // #27 task 族五口（生成/认领/完成/取消/责任分配增删）无码全隐藏
+    expect(buttonTexts).not.toContain('生成常规任务');
+    expect(buttonTexts).not.toContain('认领');
+    expect(buttonTexts).not.toContain('完成');
+    expect(buttonTexts).not.toContain('新增分配');
+    // #25 vital 族「录入体征」不受 #27 缺码影响
+    expect(buttonTexts).toContain('录入体征');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 nursing:ward:btn:task 时任务与责任分配入口可见', async () => {
+    vi.mocked(tasks.list).mockResolvedValue([
+      {
+        id: '9400',
+        taskNo: 'T20260923001',
+        patientId: '1932000000000000001',
+        visitId: 'I20260923000000001',
+        wardId: 'W01',
+        bedNo: '03-01',
+        taskType: 'TURN',
+        planTime: '2026-09-23 06:00:00',
+        status: 'PENDING',
+      },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('生成常规任务');
+    expect(buttonTexts).toContain('认领');
+    expect(buttonTexts).toContain('完成');
+    expect(buttonTexts).toContain('新增分配');
+    wrapper.unmount();
   });
 });

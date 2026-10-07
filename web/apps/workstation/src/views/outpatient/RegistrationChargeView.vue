@@ -16,7 +16,11 @@ import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
 import { useAsyncTask } from '@/composables/useAsyncTask';
 import { usePagedList } from '@/composables/usePagedList';
+import { useAuthStore } from '@/stores/auth';
 import { fenToYuanDisplay } from '@/utils/money';
+
+// 元素权限判定入口（PR-4F F8）：挂号按钮 v-perm 直挂（#12）、结算收费面板 hasPerm 包裹（#4）
+const auth = useAuthStore();
 
 /** 号别中文词表（生成物 apptType 五值枚举的展示映射；V705 appt-type 字典同源） */
 const APPT_TYPE_LABELS: Record<string, string> = {
@@ -474,7 +478,10 @@ onBeforeUnmount(() => {
             <el-descriptions-item label="渠道">窗口（WINDOW）</el-descriptions-item>
           </el-descriptions>
           <div class="registration-charge-submit">
+            <!-- 挂号入口（PR-4F #12）：v-perm 直挂——与 canRegister/registering 数据态
+                 :disabled 正交叠加（权限决定在不在 DOM，选号完整度决定可不可点） -->
             <el-button
+              v-perm="'outpatient:registration:btn:register'"
               type="primary"
               class="registration-charge-submit-btn"
               :disabled="!canRegister || registering"
@@ -548,7 +555,12 @@ onBeforeUnmount(() => {
                     <span class="registration-charge-total-unit">元（自费）</span>
                   </p>
                 </template>
-                <div class="registration-charge-pay-actions">
+                <!-- 收费员结算区（PR-4F #4）：面板码复用 billing:charge:btn:settle——与外层
+                     患者选中数据态 template 条件嵌套叠加（权限在外、数据在内，两层独立判定） -->
+                <div
+                  v-if="auth.hasPerm('billing:charge:btn:settle')"
+                  class="registration-charge-pay-actions"
+                >
                   <el-button
                     v-if="preview === null"
                     type="primary"

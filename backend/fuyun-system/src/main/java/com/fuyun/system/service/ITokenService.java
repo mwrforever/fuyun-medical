@@ -5,6 +5,7 @@ import com.fuyun.system.record.SessionData;
 import com.fuyun.system.record.SessionUser;
 import com.fuyun.system.record.TokenPair;
 import java.time.Duration;
+import java.util.Set;
 
 /**
  * 令牌服务契约（D-2 轻量 HMAC 令牌 + Redis 会话，BRIEF-PR3-01 §1）。
@@ -95,4 +96,18 @@ public interface ITokenService {
      * @param sid 会话标识（令牌 claims 中的 sid），非空
      */
     void evict(String sid);
+
+    /**
+     * 按角色清理会话键（PR-4F W-96③ 权限变更生效链路）：SCAN 全量会话键（禁 KEYS 全量阻塞），
+     * 逐键读值解析会话，角色摘要与目标集交集非空即删键——受影响角色的在线会话被踢出重登，
+     * permissions 快照随重登按新矩阵刷新（会话承载快照的失效通道，F4）。
+     *
+     * <p>健壮性：单键会话值非法（存储层脏数据）warn 留痕跳过该键不抛，后续键继续处理——
+     * 单键脏数据不阻断整批清理。调用方为权限矩阵变更消费者（治理命名队列单实例消费语义，
+     * 会话清理只需做一次）；REDIS 基础设施异常原样上抛交消费失败处置（settleFailure 走有界重试）。
+     *
+     * @param roleCodes 受影响角色编码集，非空且不含空串；来源：变更事件载荷的角色码单元素集
+     * @return 实际清理的会话键计数（含零：目标角色无在线会话的常态）
+     */
+    int evictSessionsByRoles(Set<String> roleCodes);
 }

@@ -1,7 +1,7 @@
 // 认证会话 store 单测（BRIEF-PR3-01 §4 + BUG-14 权限点集）：登录写 state+sessionStorage、
 // 登出清空并回登录页（api 失败也必须完成本地登出）、isLoggedIn 计算、会话恢复与损坏数据防御、
 // 权限点集派生与 hasRoutePermission 两态判定（PR-4D 空集语义反转：未登记放行/登记且不含拒绝，
-// 空集=无任何权限全拒）；api 层以 mock 承载
+// 空集=无任何权限全拒）、hasPerm 元素码判定（PR-4F 独立建模：空集无未登记放行态）；api 层以 mock 承载
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { login as loginApiMock, logout as logoutApiMock } from '@/api/auth';
@@ -195,6 +195,33 @@ describe('认证会话 store', () => {
     expect(auth.hasRoutePermission('patient:archive:search')).toBe(false);
     auth.user = guardUser();
     expect(auth.hasRoutePermission('billing:refund:approve')).toBe(false);
+  });
+
+  it('hasPerm：元素码在会话权限集内返回 true，不在返回 false（独立于路由语义）', () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: {
+          userId: 1,
+          displayName: '测',
+          permissions: ['nursing:ward:btn:task', 'GET /api/v1/nursing/tasks'],
+        },
+      }),
+    );
+    const auth = useAuthStore();
+    expect(auth.hasPerm('nursing:ward:btn:task')).toBe(true);
+    expect(auth.hasPerm('billing:refund:btn:approve')).toBe(false);
+  });
+
+  it('hasPerm：空权限会话对任意码返回 false（空集=无任何权限，元素面无未登记放行态）', () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const auth = useAuthStore();
+    expect(auth.hasPerm('nursing:ward:btn:task')).toBe(false);
   });
 
   it('会话恢复保留权限点集（刷新标签页后守卫判定数据源不丢失）', () => {

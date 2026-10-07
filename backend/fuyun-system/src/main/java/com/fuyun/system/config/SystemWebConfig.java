@@ -6,8 +6,10 @@ import com.fuyun.system.controller.AuthController;
 import com.fuyun.system.controller.DictController;
 import com.fuyun.system.controller.DictTypeController;
 import com.fuyun.system.controller.DictVersionController;
+import com.fuyun.system.controller.PermissionAdminController;
 import com.fuyun.system.controller.PracticeController;
 import com.fuyun.system.controller.PracticeGrantController;
+import com.fuyun.system.controller.RoleAdminController;
 import com.fuyun.system.convert.AuthConverter;
 import com.fuyun.system.convert.DictConverter;
 import com.fuyun.system.internal.AuditLogAspect;
@@ -25,8 +27,10 @@ import com.fuyun.system.service.impl.DictItemServiceImpl;
 import com.fuyun.system.service.impl.DictQueryServiceImpl;
 import com.fuyun.system.service.impl.DictTypeServiceImpl;
 import com.fuyun.system.service.impl.DictVersionServiceImpl;
+import com.fuyun.system.service.impl.PermissionAdminServiceImpl;
 import com.fuyun.system.service.impl.PracticeCheckPortImpl;
 import com.fuyun.system.service.impl.PracticeServiceImpl;
+import com.fuyun.system.service.impl.RoleAdminServiceImpl;
 import com.fuyun.system.service.impl.RoleServiceImpl;
 import com.fuyun.system.service.impl.TokenServiceImpl;
 import com.fuyun.system.service.impl.UserServiceImpl;
@@ -46,7 +50,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 系统模块 Web 装配（BRIEF-PR3-01 §1.5/§3.2）：认证拦截器注册（401 白名单策略）+
  * 认证与字典域链路 Bean 装配集中点（Task 8 追加：PracticeCheckPort 跨模块 api 面实现——
  * M03 开单执业授权强校验进程内消费通道）；PR-4D 追加 403 鉴权面（PermissionRegistry
- * 启动装载 + AuthorizationInterceptor 第二道拦截器，W-37 主体构件）。
+ * 启动装载 + AuthorizationInterceptor 第二道拦截器，W-37 主体构件）；PR-4F 追加权限
+ * 管理台读链路两服务两端点（RoleAdminServiceImpl/PermissionAdminServiceImpl 与
+ * RoleAdminController/PermissionAdminController，Task 4）。
  *
  * <p>com.fuyun.system 包不在 @SpringBootApplication 扫描范围（com.fuyun.app.*）内，
  * 本类经 fuyun-app SystemConfig @Import 生效（PR #4 既有裁决：装配归 app，不放宽扫描）；
@@ -75,7 +81,11 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     PracticeServiceImpl.class,
     PracticeCheckPortImpl.class,
     PracticeController.class,
-    PracticeGrantController.class
+    PracticeGrantController.class,
+    RoleAdminServiceImpl.class,
+    RoleAdminController.class,
+    PermissionAdminServiceImpl.class,
+    PermissionAdminController.class
 })
 public class SystemWebConfig implements WebMvcConfigurer {
 

@@ -1,8 +1,9 @@
 // 路由权限面与 MENU 种子跨层一致性守护（PR-4D 评审 D-1 修复环）：workstation 路由表
-// meta.permission 消费的 MENU 权限码与后端 V1116 种子 MENU 段必须双向一致——
+// meta.permission 消费的 MENU 权限码与后端 V1116+V1120 种子 MENU 段必须双向一致——
 // 「新路由登记权限码而未种子化」（前端守卫放行、后端 403 矩阵无绑定可挂）与
 // 「种子码无路由消费」（僵尸码）两类漂移此前无 CI 断言锚定，本 spec 将既有的
-// 精确一致状态变为机器守护（评审 D-1：当前一致为事实非缺陷，漂移面才是缺口）
+// 精确一致状态变为机器守护（评审 D-1：当前一致为事实非缺陷，漂移面才是缺口）；
+// PR-4F 扩源 V1120（管理台 MENU 码 system:permission:manage 种子化于 ELEMENT 种子文件）
 /// <reference types="node" />
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,26 +13,31 @@ import { router } from './index';
 // V1116 种子 MENU 段行形态：SELECT <id>, '<perm_code>', '<perm_name>', 'MENU'
 const MENU_ROW_PATTERN = /SELECT \d+, '([^']+)', '[^']*', 'MENU'/g;
 
-/** 从 V1116 种子 SQL 的 MENU 段提取权限码集合（提取面非空由用例内断言守护，正则失效即红） */
+/** 从 V1116+V1120 种子 SQL 提取 MENU 权限码集合（V1120 新增管理台 MENU 码，PR-4F 扩源） */
 function loadMenuSeedCodes(): Set<string> {
-  // 前提：与 pnpm test 同口径在 web/ 根执行（process.cwd()=web/，种子在仓库 backend/ 侧）；
-  // ?raw 静态导入不可用——Vite server.fs 严格模式拒绝 workspace root 外文件（Denied ID）
-  const seedPath = resolve(
+  const systemMigrations = resolve(
     process.cwd(),
-    '../backend/fuyun-system/src/main/resources/db/migration/system/V1116__seed_full_permissions.sql',
+    '../backend/fuyun-system/src/main/resources/db/migration/system/',
   );
-  const sql = readFileSync(seedPath, 'utf-8');
-  // 段标记找不到时 indexOf 返回 -1，slice 仅取末字符、提取出空集——失败方向安全（断言①红）
-  const menuSection = sql.slice(sql.indexOf('3. MENU 权限点'));
+  const sql1116 = readFileSync(
+    resolve(systemMigrations, 'V1116__seed_full_permissions.sql'),
+    'utf-8',
+  );
+  const sql1120 = readFileSync(
+    resolve(systemMigrations, 'V1120__seed_element_permissions.sql'),
+    'utf-8',
+  );
   const codes = new Set<string>();
-  for (const match of menuSection.matchAll(MENU_ROW_PATTERN)) {
-    codes.add(match[1]);
-  }
+  // V1116：MENU 段标记后提取（段标记失效时 slice 取末段、提取面收缩由断言①守护）
+  const menuSection = sql1116.slice(sql1116.indexOf('3. MENU 权限点'));
+  for (const match of menuSection.matchAll(MENU_ROW_PATTERN)) codes.add(match[1]);
+  // V1120：全文提取（该文件 MENU 行唯一，ELEMENT/API 行 perm_type 列不匹配正则天然出界）
+  for (const match of sql1120.matchAll(MENU_ROW_PATTERN)) codes.add(match[1]);
   return codes;
 }
 
 describe('路由权限面与 MENU 种子跨层一致性（PR-4D 评审 D-1 守护）', () => {
-  it('路由 meta.permission 码与 V1116 MENU 种子码双向一致（新码须双侧同步登记）', () => {
+  it('路由 meta.permission 码与 V1116+V1120 MENU 种子码双向一致（新码须双侧同步登记）', () => {
     const seedCodes = loadMenuSeedCodes();
     // 断言①种子提取面自证：正则或段落标记失效（0 码假象）直接红，防空集假绿
     expect(seedCodes.size).toBeGreaterThan(0);

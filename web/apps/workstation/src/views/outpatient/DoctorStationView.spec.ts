@@ -19,6 +19,7 @@ import {
   openPrescription,
 } from '@/api/outpatient';
 import type { ClinicOrderVO, DoctorQueueItemVO, VisitVO } from '@/api/outpatient';
+import { permDirective } from '@/directives/perm';
 import DoctorStationView from './DoctorStationView.vue';
 
 vi.mock('@/api/outpatient', () => ({
@@ -78,7 +79,9 @@ function findButton(wrapper: VueWrapper, text: string): DOMWrapper<Element> {
   return button;
 }
 
-/** 会话种子（auth store 从 sessionStorage 恢复：出诊医生=登录用户 u1/张三） */
+/** 会话种子（auth store 从 sessionStorage 恢复：出诊医生=登录用户 u1/张三；
+ * permissions 含本页元素码——真实 DOCTOR 会话经登录契约导出含码，既有用例按钮保留、
+ * 断言语义不变，D-21 申报规范，评审 D-I1 全局指令补齐） */
 function seedAuthSession(): void {
   sessionStorage.setItem(
     'fy:workstation:auth',
@@ -91,6 +94,7 @@ function seedAuthSession(): void {
         displayName: '张三',
         orgId: null,
         roles: ['doctor'],
+        permissions: ['outpatient:doctor:btn:admit', 'outpatient:doctor:btn:order'],
       },
     }),
   );
@@ -401,6 +405,42 @@ describe('门诊医生站', () => {
       skinTestRequired: false,
       items: [{ drugId: '3001', quantity: '1', frequency: undefined }],
     });
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 v-perm 指令（pinia 已由 beforeEach 激活；main.ts 全局注册仅应用装配态） */
+  function mountView() {
+    return mount(DoctorStationView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 outpatient:doctor:btn:admit 时接诊按钮不渲染（D-34 无码全隐藏）', async () => {
+    // 覆写 beforeEach 种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u1' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('候诊列表');
+    // 中列空态文案含「…选择患者并接诊」，以按钮文案精确断言接诊入口的 DOM 移除
+    expect(wrapper.findAll('button').some((b) => b.text() === '接诊')).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 outpatient:doctor:btn:admit 时接诊按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 'u1', permissions: ['outpatient:doctor:btn:admit'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '接诊')).toBe(true);
     wrapper.unmount();
   });
 });

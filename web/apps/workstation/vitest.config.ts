@@ -29,6 +29,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     include: ['src/**/*.spec.ts'],
+    // 全局测试装配（src/test-setup.ts）：v-perm 指令全局注册一处收口（评审 D-I1）
+    setupFiles: ['./src/test-setup.ts'],
     server: {
       deps: {
         // element-plus 按需样式（resolver 注入 + ElMessage 手动引入）经 Node 原生加载会因

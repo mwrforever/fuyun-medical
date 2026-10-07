@@ -10,6 +10,7 @@ import { ElMessage } from 'element-plus';
 import { executions, infusions } from '@/api/nursing';
 import type { OrderExecutionVO } from '@/api/nursing';
 import { infusionBoard } from '@/api/ward';
+import { permDirective } from '@/directives/perm';
 import { router } from '@/router';
 import ExecutionWorkbenchView from './ExecutionWorkbenchView.vue';
 
@@ -61,7 +62,8 @@ if (!('ResizeObserver' in globalThis)) {
   };
 }
 
-/** 会话种子（auth store 从 sessionStorage 恢复：执行人=登录用户 u1/李护士） */
+/** 会话种子（auth store 从 sessionStorage 恢复：执行人=登录用户 u1/李护士；
+ * permissions 含 #29 元素码——真实 NURSE 会话经登录契约导出含码，既有用例语义不变） */
 function seedAuthSession(): void {
   sessionStorage.setItem(
     'fy:workstation:auth',
@@ -74,6 +76,7 @@ function seedAuthSession(): void {
         displayName: '李护士',
         orgId: null,
         roles: ['nurse'],
+        permissions: ['nursing:execution:btn:perform'],
       },
     }),
   );
@@ -243,6 +246,49 @@ describe('护理执行工作台页', () => {
     expect(wrapper.find('.exec-infusion-strip').text()).toContain('120');
     expect(wrapper.find('.exec-infusion-strip').text()).toContain('45');
     expect(wrapper.find('.exec-infusion-strip').text()).toContain('黄档预警');
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(ExecutionWorkbenchView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 nursing:execution:btn:perform 时抽屉五动作全隐藏（D-34 无码全移除）', async () => {
+    vi.mocked(executions.list).mockResolvedValue({
+      content: [rowMock({ executionNo: 'EX2026100100001', status: 'SIGNED' })],
+      total: '1',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u1' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('.exec-card').trigger('click');
+    await flushPromises();
+    // 抽屉可开（读面不受限）；动作容器由 v-if（状态机）渲染，内部按钮经 v-perm 逐个
+    // DOM 移除——无码即五动作全隐藏（D-34），容器残留空壳不构成可达入口
+    expect(wrapper.findComponent({ name: 'ElDrawer' }).props('modelValue')).toBe(true);
+    expect(wrapper.find('.exec-drawer-actions').findAll('button')).toHaveLength(0);
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 nursing:execution:btn:perform 时抽屉五动作按状态机出位', async () => {
+    vi.mocked(executions.list).mockResolvedValue({
+      content: [rowMock({ executionNo: 'EX2026100100001', status: 'SIGNED' })],
+      total: '1',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('.exec-card').trigger('click');
+    await flushPromises();
+    const buttons = wrapper.findAll('.exec-drawer-actions button').map((b) => b.text());
+    expect(buttons).toContain('核对');
+    expect(buttons).toContain('撤销');
     wrapper.unmount();
   });
 });

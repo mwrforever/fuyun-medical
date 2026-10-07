@@ -271,8 +271,21 @@ async function handleSubmit(): Promise<void> {
           <el-input v-model="form.informedConsentRef" placeholder="纸质凭证编号 / 电子签名引用" />
         </el-form-item>
         <el-form-item>
-          <el-button :loading="prechecking" @click="handlePrecheck">匹配预检</el-button>
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">建档</el-button>
+          <!-- 建档双入口（PR-4F #1）：预检与建档同码 v-perm 直挂——权限决定在不在 DOM，
+               loading/校验等数据态决定可不可点，两者正交叠加互不覆盖 -->
+          <el-button
+            v-perm="'patient:archive:btn:create'"
+            :loading="prechecking"
+            @click="handlePrecheck"
+            >匹配预检</el-button
+          >
+          <el-button
+            v-perm="'patient:archive:btn:create'"
+            type="primary"
+            :loading="submitting"
+            @click="handleSubmit"
+            >建档</el-button
+          >
         </el-form-item>
       </el-form>
     </el-card>

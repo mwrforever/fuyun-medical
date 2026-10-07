@@ -19,11 +19,17 @@ public final class SystemMessagingConstants {
     /** 执业授权变更事件类型：grant 登记/withdraw 停权广播（V5 种子 id=6 既有登记，零新增） */
     public static final String EVENT_PRACTICE_CHANGED = "system.practice.changed";
 
+    /** 权限矩阵变更事件类型：角色绑定覆写/启停广播（V1120 种子 id=84 登记，PR-4F W-96②） */
+    public static final String EVENT_PERMISSION_CHANGED = "system.permission.changed";
+
     /** 本模块域标识：发布方（producer）与消费方（consumer module）同源 */
     public static final String MODULE = "system";
 
     /** 字典发布消费队列：q.system.system.dict.published（构件命名规则同源推导） */
     public static final String QUEUE_DICT_PUBLISHED = "q.system.system.dict.published";
+
+    /** 权限矩阵变更消费队列：q.system.system.permission.changed（构件命名规则同源推导，单实例竞争消费承载会话清理） */
+    public static final String QUEUE_PERMISSION_CHANGED = "q.system.system.permission.changed";
 
     /** 纯常量类，禁止实例化（backend 宪法 A.2-6） */
     private SystemMessagingConstants() {}

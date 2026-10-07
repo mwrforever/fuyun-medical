@@ -8,8 +8,8 @@
  * 的模块——router 为路由器单例非视图组件，不在 web B.2-3 禁令之列）。
  *
  * <p>权限点集（user.permissions 派生）与 hasRoutePermission 两态判定供路由守卫与侧栏
- * 过滤共用（BUG-14 守卫骨架 + PR-4D 空集语义收紧，单一口径防两处漂移）；数据源已由
- * 后端登录契约填实（PR-4D Task 5）。
+ * 过滤共用（BUG-14 守卫骨架 + PR-4D 空集语义收紧，单一口径防两处漂移）；hasPerm 元素码
+ * 判定供 v-perm 指令与视图显式调用消费（PR-4F F8）。数据源已由后端登录契约填实（PR-4D Task 5）。
  */
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
@@ -98,6 +98,18 @@ export const useAuthStore = defineStore('auth', () => {
     }
     // 空集=无任何权限：includes 恒 false，已登记权限点的路由一律拒绝（PR-4D 语义反转）
     return permissions.value.includes(permission);
+  }
+
+  /**
+   * 元素权限判定（PR-4F F8 双入口之一，D-3 独立建模——禁复用 hasRoutePermission 的
+   * undefined→true 路由语义）：元素面无「未登记」态，无码即无权限。
+   *
+   * @param code 元素权限码（四段 域:功能:btn|panel:动作），非空；来源=v-perm 指令或视图显式调用
+   * @return true 会话权限集含该码（DOM 保留）；false 不含（DOM 移除，D-34）
+   */
+  function hasPerm(code: string): boolean {
+    // 消费 permissions computed（F2 三态码全集：路由码+API 码+元素码混出），空集恒 false
+    return permissions.value.includes(code);
   }
 
   /** 从 sessionStorage 恢复会话（标签页刷新后保活；损坏数据丢弃并清残留键） */
@@ -198,6 +210,7 @@ export const useAuthStore = defineStore('auth', () => {
     isLoggedIn,
     permissions,
     hasRoutePermission,
+    hasPerm,
     login,
     logout,
     loadFromStorage,

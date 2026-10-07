@@ -461,8 +461,10 @@ onMounted(() => {
               />
             </div>
           </template>
-          <!-- 接诊主按钮（顶部常驻 §3.2） -->
+          <!-- 接诊主按钮（顶部常驻 §3.2）；医生接诊码（PR-4F #10）v-perm 直挂——与
+               admitting 在途/选中行数据态 :disabled 正交叠加 -->
           <el-button
+            v-perm="'outpatient:doctor:btn:admit'"
             type="primary"
             class="doctor-station-admit-btn"
             :loading="admitting"
@@ -643,7 +645,10 @@ onMounted(() => {
           <template #header>
             <div class="doctor-station-side-head">
               <span>开检查检验单</span>
+              <!-- 开单入口（PR-4F #11）：医嘱开立码 v-perm 直挂——折叠表单默认收起，入口
+                   隐藏则表单不可展开、提交按钮随容器不可达（免重复挂接） -->
               <el-button
+                v-perm="'outpatient:doctor:btn:order'"
                 link
                 type="primary"
                 :disabled="currentVisit === null"
@@ -703,7 +708,10 @@ onMounted(() => {
           <template #header>
             <div class="doctor-station-side-head">
               <span>开处方</span>
+              <!-- 开方入口（PR-4F #11）：与开单同码 v-perm 直挂——折叠表单默认收起，
+                   入口隐藏则表单不可展开、提交按钮随容器不可达 -->
               <el-button
+                v-perm="'outpatient:doctor:btn:order'"
                 link
                 type="primary"
                 :disabled="currentVisit === null"
@@ -796,7 +804,10 @@ onMounted(() => {
               aria-label="在途单据数"
               >{{ ongoingOrderCount }}</span
             >
+            <!-- 诊毕按钮（PR-4F #10）：与接诊同码 v-perm 直挂——与 canFinish 双条件数据态
+                 :disabled 正交叠加（权限决定在不在 DOM，在途单据清空与否决定可不可点） -->
             <el-button
+              v-perm="'outpatient:doctor:btn:admit'"
               type="danger"
               plain
               :loading="finishing"

@@ -259,8 +259,11 @@ onMounted(loadQueue);
               </el-table-column>
             </el-table>
             <div class="dispense-workbench-actions">
-              <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，三动作互斥共用 dispensing -->
+              <!-- 在途防抖（W-22⑥）：:disabled 叠加在途标志 + :loading 双保险，三动作互斥共用 dispensing；
+                   配药/核对/发药签名三入口同码 v-perm 直挂（PR-4F #19，PHARMACIST 绑定）——
+                   无码 DOM 移除（D-34），与 isPicker 双签 :disabled 数据态正交叠加 -->
               <el-button
+                v-perm="'pharmacy:dispense:btn:issue'"
                 type="primary"
                 :disabled="dispense.status !== 'CREATED' || dispensing"
                 :loading="dispensing"
@@ -268,6 +271,7 @@ onMounted(loadQueue);
                 >配药</el-button
               >
               <el-button
+                v-perm="'pharmacy:dispense:btn:issue'"
                 type="warning"
                 :disabled="dispense.status !== 'PICKING' || isPicker() || dispensing"
                 :loading="dispensing"
@@ -276,6 +280,7 @@ onMounted(loadQueue);
                 >核对</el-button
               >
               <el-button
+                v-perm="'pharmacy:dispense:btn:issue'"
                 type="success"
                 :disabled="dispense.status !== 'PICKED' || isPicker() || dispensing"
                 :loading="dispensing"

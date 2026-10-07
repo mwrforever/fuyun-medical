@@ -8,8 +8,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { createDrug, mapInsurance, searchDrugs, updateDrug } from '@/api/pharmacy';
 import type { DrugVO } from '@/api/pharmacy';
+import { permDirective } from '@/directives/perm';
 import DrugDictView from './DrugDictView.vue';
 
 vi.mock('@/api/pharmacy', () => ({
@@ -90,7 +93,31 @@ function drugRow(overrides: Partial<DrugVO>): DrugVO {
 }
 
 describe('药品字典页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #22/#23）：真实 PHARMACIST 会话经登录契约导出含建档/变更码；
+    // #23 医保对照为 ADMIN 专属码（V1121 零绑定行），PHARMACIST 会话实况不含——但本页
+    // 既有用例覆盖「医保对照」链路（对照弹窗提交/在途），按既有形态播种含码保语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u9',
+          loginName: 'pharmacistdemo',
+          displayName: '王药师',
+          orgId: null,
+          roles: ['pharmacist'],
+          permissions: ['pharmacy:drug:btn:maintain', 'pharmacy:drug:btn:insurance-mapping'],
+        },
+      }),
+    );
     vi.mocked(searchDrugs).mockReset();
     vi.mocked(createDrug).mockReset();
     vi.mocked(updateDrug).mockReset();
@@ -244,6 +271,63 @@ describe('药品字典页', () => {
     expect(vi.mocked(createDrug)).toHaveBeenCalledWith(
       expect.objectContaining({ drugCode: 'D002', genericName: '布洛芬片' }),
     );
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(DrugDictView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：PHARMACIST 会话（无 #23）医保对照隐藏而建档/变更可见（ADMIN 专属码）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    // 业务角色会话：仅含 #22 建档/变更码，无 #23 医保对照码（V1121 该码 ADMIN 专属零绑定行）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u9',
+          loginName: 'pharmacistdemo',
+          displayName: '王药师',
+          orgId: null,
+          roles: ['pharmacist'],
+          permissions: ['pharmacy:drug:btn:maintain'],
+        },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // 医保对照（#23）隐藏；药品建档/变更（#22）可见——双码互不干扰
+    expect(buttonTexts).not.toContain('医保对照');
+    expect(buttonTexts).toContain('药品建档');
+    expect(buttonTexts).toContain('变更');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：ADMIN 会话经全表导出含 #23 时医保对照可见', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    // ADMIN 会话经权限全表导出含码（运行期全放自动可见）：beforeEach 种子已含 #23
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('医保对照');
+    expect(buttonTexts).toContain('药品建档');
+    expect(buttonTexts).toContain('变更');
     wrapper.unmount();
   });
 });

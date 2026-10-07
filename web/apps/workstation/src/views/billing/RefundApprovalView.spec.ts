@@ -8,6 +8,8 @@ import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessageBox, ElSelect } from 'element-plus';
 import type { MessageBoxData } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import {
   approveRefund,
   executeRefund,
@@ -17,6 +19,7 @@ import {
   rejectRefund,
 } from '@/api/billing';
 import type { RefundVO } from '@/api/billing';
+import { permDirective } from '@/directives/perm';
 import RefundApprovalView from './RefundApprovalView.vue';
 
 vi.mock('@/api/billing', () => ({
@@ -80,6 +83,29 @@ function queueRow(status: string): RefundVO {
 }
 
 describe('退费审批页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 DOCTOR/CASHIER 会话
+   * 经登录契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u1',
+          permissions: [
+            'billing:refund:btn:apply',
+            'billing:refund:btn:approve',
+            'billing:refund:btn:execute',
+          ],
+        },
+      }),
+    );
+  }
+
   beforeEach(() => {
     vi.mocked(getSettlement).mockReset();
     vi.mocked(listFees).mockReset();
@@ -91,6 +117,9 @@ describe('退费审批页', () => {
     // 挂载即加载队列：默认空页兜底，防未 stub resolve 断链
     vi.mocked(listRefunds).mockResolvedValue({ content: [], page: 0, size: 20, total: '0' });
     vi.mocked(approveRefund).mockResolvedValue();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('空结算号点查询结算被前置拦截，不触达结算与费用接口', async () => {
@@ -269,6 +298,63 @@ describe('退费审批页', () => {
       // 终态不可逆：三动作全禁用（防误点后靠后端报错兜底的体验断层）
       expect(button.attributes('disabled')).toBeDefined();
     }
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(RefundApprovalView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 billing:refund:btn:apply 时查询结算后申请退费按钮不渲染（D-34）', async () => {
+    vi.mocked(getSettlement).mockResolvedValue({
+      id: '801',
+      settleNo: 'STL-1',
+      visitId: 'V001',
+      totalAmount: '3500',
+      status: 'SETTLED',
+    });
+    vi.mocked(listFees).mockResolvedValue({ content: [], page: 0, size: 20, total: '0' });
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    // 按结算号查询带出摘要区（申请退费入口的数据态前置）
+    await wrapper.find('input[placeholder="结算号"]').setValue('STL-1');
+    await clickButton(wrapper, '查询结算');
+    await flushPromises();
+    expect(wrapper.text()).toContain('STL-1');
+    expect(wrapper.text()).not.toContain('申请退费');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 billing:refund:btn:apply 时查询结算后申请退费按钮渲染', async () => {
+    vi.mocked(getSettlement).mockResolvedValue({
+      id: '801',
+      settleNo: 'STL-1',
+      visitId: 'V001',
+      totalAmount: '3500',
+      status: 'SETTLED',
+    });
+    vi.mocked(listFees).mockResolvedValue({ content: [], page: 0, size: 20, total: '0' });
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['billing:refund:btn:apply'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('input[placeholder="结算号"]').setValue('STL-1');
+    await clickButton(wrapper, '查询结算');
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '申请退费')).toBe(true);
     wrapper.unmount();
   });
 });

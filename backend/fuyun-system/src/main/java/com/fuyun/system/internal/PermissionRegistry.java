@@ -32,10 +32,11 @@ import org.springframework.web.util.pattern.PathPatternParser;
  * 单次解析微秒级。
  *
  * <p>装配与生命周期：Bean 注册归 SystemWebConfig @Bean 方法（构造器注入三 mapper），
- * 装配后显式调 {@link #load()} 一次；<b>权限数据变更须重启生效</b>，运行期动态刷新归
- * PR-4F（Redis pub/sub 通知各实例重载的演进注记）。{@link #load()} 幂等可重载：重复
- * 调用清空重建（构建新快照后整体替换引用，并发读始终看到一致版本），该语义供单测与
- * 未来刷新通道复用。
+ * 装配后显式调 {@link #load()} 一次；权限数据变更经 system.permission.changed MQ 广播
+ * （fy.topic + 每实例匿名排他队列 + 治理命名队列，PR-4F F3/F4 实装）触发 {@link #load()}
+ * 运行期重载——各实例 403 矩阵实时生效，无需重启（双实例 e2e 已实证）。{@link #load()}
+ * 幂等可重载：重复调用清空重建（构建新快照后整体替换引用，并发读始终看到一致版本），
+ * 广播重复消费无害。
  *
  * <p>数据装载为三步单表查询（禁连表，照 RoleServiceImpl.findRoleCodesByUserId 先例）：
  * ①sys_permission 全量 API 行（perm_type='API'，deleted=0 由 @TableLogic 自动携带）；

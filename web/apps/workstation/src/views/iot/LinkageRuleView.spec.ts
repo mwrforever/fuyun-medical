@@ -11,8 +11,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { linkageLogs, linkageRules } from '@/api/iot';
 import type { LinkageLogVO, LinkageRuleVO } from '@/api/iot';
+import { permDirective } from '@/directives/perm';
 import LinkageRuleView from './LinkageRuleView.vue';
 
 vi.mock('@/api/iot', () => ({
@@ -126,7 +129,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('联动规则页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #36）：真实 IOT_ADMIN 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u5',
+          loginName: 'iotadmindemo',
+          displayName: '陆物联',
+          orgId: null,
+          roles: ['iot_admin'],
+          permissions: ['iot:linkage:btn:manage'],
+        },
+      }),
+    );
     for (const fn of [
       linkageRules.list,
       linkageRules.create,
@@ -370,5 +395,57 @@ describe('联动规则页', () => {
     await flushPromises();
     expect(ElMessageBox.confirm).not.toHaveBeenCalled();
     expect(wrapper.find('input[aria-label="规则名称"]').isVisible()).toBe(false);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(LinkageRuleView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 iot:linkage:btn:manage 时新建/编辑/删除/重试全隐藏（D-34）', async () => {
+    vi.mocked(linkageRules.list).mockResolvedValue([ruleMock()]);
+    vi.mocked(linkageLogs.page).mockResolvedValue({
+      content: [logMock({ actionResult: 'FAILED' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u5' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // 规则新建/编辑/删除与失败重试四个写口无码全隐藏
+    expect(buttonTexts).not.toContain('新建规则');
+    expect(buttonTexts).not.toContain('编辑');
+    expect(buttonTexts).not.toContain('删除');
+    expect(buttonTexts).not.toContain('重试');
+    // 规则/日志读面不受元素码影响
+    expect(wrapper.text()).toContain('危急告警转呼叫');
+    expect(wrapper.text()).toContain('LK20260926001');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 iot:linkage:btn:manage 时规则写面与失败重试可见', async () => {
+    vi.mocked(linkageRules.list).mockResolvedValue([ruleMock()]);
+    vi.mocked(linkageLogs.page).mockResolvedValue({
+      content: [logMock({ actionResult: 'FAILED' })],
+      page: '0',
+      size: '20',
+      total: '1',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('新建规则');
+    expect(buttonTexts).toContain('编辑');
+    expect(buttonTexts).toContain('删除');
+    expect(buttonTexts).toContain('重试');
+    wrapper.unmount();
   });
 });

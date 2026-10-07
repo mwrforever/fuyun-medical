@@ -8,16 +8,27 @@ import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElFormItem, ElMessageBox, ElSelect } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { onBeforeRouteLeave } from 'vue-router';
 import { createPatient, matchCheck } from '@/api/patient';
+import { permDirective } from '@/directives/perm';
 import PatientCreateView from './PatientCreateView.vue';
 
 // useRouter/onBeforeRouteLeave 替身：建档成功后的跳转以 push spy 断言；离开守卫回调经
-// onBeforeRouteLeave spy 捕获后由用例直调（组件脱离真实路由上下文单测守卫行为）
+// onBeforeRouteLeave spy 捕获后由用例直调（组件脱离真实路由上下文单测守卫行为）。
+// createRouter/createWebHistory 最小壳：v-perm 判定链引入 auth store → 模块级 import
+// @/router（PR-4F #1 后本 spec 挂接元素权限），替身面须覆盖其模块级调用（单测不导航）
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }));
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: pushMock }),
   onBeforeRouteLeave: vi.fn(),
+  createRouter: vi.fn(() => ({
+    currentRoute: { value: { path: '/' } },
+    push: vi.fn(),
+    beforeEach: vi.fn(),
+  })),
+  createWebHistory: vi.fn(() => ({})),
 }));
 
 vi.mock('@/api/patient', () => ({
@@ -59,12 +70,31 @@ async function fillRequired(wrapper: VueWrapper, withConsent: boolean): Promise<
 }
 
 describe('患者建档页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 REGISTRAR/DOCTOR/NURSE
+   * 会话经登录契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: { userId: 'u1', permissions: ['patient:archive:btn:create'] },
+      }),
+    );
+  }
+
   beforeEach(() => {
     vi.mocked(matchCheck).mockReset();
     vi.mocked(createPatient).mockReset();
     pushMock.mockReset();
     vi.mocked(onBeforeRouteLeave).mockReset();
     vi.mocked(ElMessageBox.confirm).mockClear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('知情同意凭证未填点击建档被校验拦截，不调用建档接口', async () => {
@@ -190,6 +220,42 @@ describe('患者建档页', () => {
       (() => Promise<boolean>) | undefined;
     await expect(guard?.()).resolves.toBe(true);
     expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(PatientCreateView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 patient:archive:btn:create 时匹配预检按钮不渲染（D-34 无码全隐藏）', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('患者建档');
+    });
+    expect(wrapper.text()).not.toContain('匹配预检');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 patient:archive:btn:create 时匹配预检按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['patient:archive:btn:create'] },
+      }),
+    );
+    const wrapper = mountView();
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('匹配预检');
+    });
     wrapper.unmount();
   });
 });

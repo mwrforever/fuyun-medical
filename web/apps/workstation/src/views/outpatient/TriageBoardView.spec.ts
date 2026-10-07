@@ -9,8 +9,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { adjustTriage, callNext, checkIn, getQueueSnapshot, passTicket } from '@/api/outpatient';
 import type { QueueTicketVO } from '@/api/outpatient';
+import { permDirective } from '@/directives/perm';
 import TriageBoardView from './TriageBoardView.vue';
 
 vi.mock('@/api/outpatient', () => ({
@@ -80,6 +83,25 @@ function ticketMock(partial: Partial<QueueTicketVO>): QueueTicketVO {
 }
 
 describe('分诊台', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 NURSE 会话经登录
+   * 契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 全局指令补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u1',
+          permissions: ['outpatient:queue:btn:call', 'outpatient:triage:btn:manage'],
+        },
+      }),
+    );
+  }
+
   beforeEach(() => {
     vi.mocked(checkIn).mockReset();
     vi.mocked(adjustTriage).mockReset();
@@ -90,6 +112,9 @@ describe('分诊台', () => {
     vi.mocked(ElMessage.success).mockClear();
     // 快照兜底空队列：防未 stub 的 resolve 断链（mount 即首拉）
     vi.mocked(getQueueSnapshot).mockResolvedValue([]);
+    pinia = createPinia();
+    setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('渲染断言：报到输入/诊区切换/轮询提示与队列表空态齐备', async () => {
@@ -288,6 +313,40 @@ describe('分诊台', () => {
     await clickButton(wrapper, '叫号');
     await flushPromises();
     expect(vi.mocked(callNext)).toHaveBeenCalledWith({ deptCode: 'DEPT-INT', doctorId: 'd2' });
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(TriageBoardView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 outpatient:triage:btn:manage 时分诊报到按钮不渲染（D-34 无码全隐藏）', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('候诊队列');
+    expect(wrapper.text()).not.toContain('分诊报到');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 outpatient:triage:btn:manage 时分诊报到按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['outpatient:triage:btn:manage'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '分诊报到')).toBe(true);
     wrapper.unmount();
   });
 });

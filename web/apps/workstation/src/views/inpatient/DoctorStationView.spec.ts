@@ -9,10 +9,13 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { orders, visits } from '@/api/inpatient';
 import type { MedicalOrderVO } from '@/api/inpatient';
 import { wardPatients } from '@/api/nursing';
 import type { WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
+import { permDirective } from '@/directives/perm';
 import DoctorStationView from './DoctorStationView.vue';
 
 vi.mock('@/api/inpatient', () => ({
@@ -175,6 +178,22 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('住院医生站', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
+  /** 会话种子（auth store 从 sessionStorage 恢复）：含本页元素码——真实 DOCTOR 会话经登录
+   * 契约导出含码，既有用例按钮保留、断言语义不变（D-21 申报规范，评审 D-I1 全局指令补齐） */
+  function seedAuthSession(): void {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: { userId: 'u1', permissions: ['inpatient:station:btn:order'] },
+      }),
+    );
+  }
+
   beforeEach(() => {
     for (const fn of [
       orders.create,
@@ -202,6 +221,9 @@ describe('住院医生站', () => {
       status: 'CREATED',
       entries: [],
     });
+    pinia = createPinia();
+    setActivePinia(pinia);
+    seedAuthSession();
   });
 
   it('在院患者列表加载渲染护理级别与欠费标识（病区维度）', async () => {
@@ -481,5 +503,39 @@ describe('住院医生站', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('当前病区暂无在院患者');
     expect(wrapper.text()).not.toContain('I2026092500001');
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(DoctorStationView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 inpatient:station:btn:order 时保存医嘱按钮不渲染（D-34 无码全隐藏）', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 1 } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('闭环追溯');
+    expect(wrapper.text()).not.toContain('保存医嘱');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 inpatient:station:btn:order 时保存医嘱按钮渲染', async () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, permissions: ['inpatient:station:btn:order'] },
+      }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.findAll('button').some((b) => b.text() === '保存医嘱')).toBe(true);
+    wrapper.unmount();
   });
 });

@@ -402,7 +402,17 @@ onMounted(() => {
               <span class="ward-assign-scope fuy-num">{{
                 row.assignmentType === 'BED' ? `管床 ${row.bedNo ?? '—'}` : '责任患者'
               }}</span>
-              <el-button link type="danger" size="small" @click="onUnassign(row)">移除</el-button>
+              <!-- 责任分配增删（PR-4F #27 并入任务族，盘点 §1.1 收敛）：移除/新增分配与任务
+                   五族按钮同码 v-perm 直挂；展开表单内「确认」提交随入口免挂接（入口隐藏
+                   即表单不可展开）；班次 select 为读面过滤不挂码 -->
+              <el-button
+                v-perm="'nursing:ward:btn:task'"
+                link
+                type="danger"
+                size="small"
+                @click="onUnassign(row)"
+                >移除</el-button
+              >
             </div>
             <el-empty
               v-if="assignmentList.length === 0"
@@ -411,7 +421,12 @@ onMounted(() => {
             />
           </div>
           <div v-if="!assignFormVisible" class="ward-assign-add">
-            <el-button size="small" @click="assignFormVisible = true">新增分配</el-button>
+            <el-button
+              v-perm="'nursing:ward:btn:task'"
+              size="small"
+              @click="assignFormVisible = true"
+              >新增分配</el-button
+            >
           </div>
           <div v-else class="ward-assign-form">
             <el-input v-model="assignForm.nurseId" placeholder="护士工号" />
@@ -572,7 +587,10 @@ onMounted(() => {
                 />
               </div>
             </div>
+            <!-- 体征录入（PR-4F #25，NURSE 绑定）v-perm 直挂：与 :disabled 选患者数据态
+                 正交；录入字段网格为表单数据面不挂码 -->
             <el-button
+              v-perm="'nursing:ward:btn:vital'"
               type="primary"
               class="ward-vital-submit"
               :loading="recording"
@@ -601,7 +619,11 @@ onMounted(() => {
               class="ward-vital-input ward-vital-unit"
               placeholder="单位"
             />
+            <!-- 出入量提交（PR-4F #26 IO/评估/特殊事件并族，盘点 §1.1）：v-perm 直挂；
+                 头部「出入量快录」切换为面板显隐前置（附件 A 元素列未列）不挂码——
+                 无码仅面板可见而提交入口隐藏，fail-closed 不弱化 -->
             <el-button
+              v-perm="'nursing:ward:btn:record'"
               size="small"
               :loading="ioRecording"
               :disabled="ioRecording"
@@ -656,7 +678,10 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="操作" width="140" class-name="fuy-ops-8">
               <template #default="{ row }">
+                <!-- 复审确认/驳回（PR-4F #25）与录入体征同码 v-perm 直挂（体征族闭环：
+                     录入→复核两端口同码收口） -->
                 <el-button
+                  v-perm="'nursing:ward:btn:vital'"
                   link
                   type="primary"
                   size="small"
@@ -665,6 +690,7 @@ onMounted(() => {
                   >确认</el-button
                 >
                 <el-button
+                  v-perm="'nursing:ward:btn:vital'"
                   link
                   type="danger"
                   size="small"
@@ -712,7 +738,10 @@ onMounted(() => {
                 </el-radio-button>
               </el-radio-group>
             </div>
+            <!-- 护理评估提交（PR-4F #26 IO/评估/特殊事件并族）v-perm 直挂；量表选择
+                 select 与答题 radio 为表单数据面不挂码 -->
             <el-button
+              v-perm="'nursing:ward:btn:record'"
               type="primary"
               class="ward-scale-submit"
               :loading="assessing"
@@ -763,8 +792,11 @@ onMounted(() => {
             <div class="ward-board-card-head">
               <span>护理任务</span>
               <div class="ward-board-task-head">
-                <!-- 常规模板批量生成入口（Task 9 面：确认后按病区+当日生成） -->
+                <!-- 常规模板批量生成入口（Task 9 面：确认后按病区+当日生成）；任务族五
+                     按钮（PR-4F #27，NURSE 绑定）同码 v-perm 直挂——状态筛选 select 为
+                     读面过滤不挂码 -->
                 <el-button
+                  v-perm="'nursing:ward:btn:task'"
                   size="small"
                   :loading="actingTaskNo === '__routine__'"
                   :disabled="actingTaskNo !== null"
@@ -840,9 +872,12 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="150" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 任务行内三动作（认领/完成/取消，PR-4F #27）与生成入口同码 v-perm
+                       直挂；:disabled 在途数据态正交叠加 -->
                   <!-- 待执行任务可认领（Task 9：PENDING → 执行中，认领人留痕） -->
                   <el-button
                     v-if="row.status === 'PENDING'"
+                    v-perm="'nursing:ward:btn:task'"
                     link
                     type="primary"
                     size="small"
@@ -851,6 +886,7 @@ onMounted(() => {
                     >认领</el-button
                   >
                   <el-button
+                    v-perm="'nursing:ward:btn:task'"
                     link
                     type="primary"
                     size="small"
@@ -859,6 +895,7 @@ onMounted(() => {
                     >完成</el-button
                   >
                   <el-button
+                    v-perm="'nursing:ward:btn:task'"
                     link
                     type="danger"
                     size="small"
@@ -878,8 +915,12 @@ onMounted(() => {
           <template #header>
             <div class="ward-board-card-head">
               <span>交接班双签</span>
+              <!-- 交班生成/完成（PR-4F #28，NURSE 绑定）同码 v-perm 直挂；接班护士工号
+                   输入框为「完成交接」的随行数据面（附件 A 元素列未列）不挂码——
+                   无码仅生成/完成入口隐藏，双签链路整体不可达 -->
               <el-button
                 v-if="handover === null"
+                v-perm="'nursing:ward:btn:handover'"
                 type="primary"
                 size="small"
                 :loading="generating"
@@ -927,6 +968,7 @@ onMounted(() => {
                   :disabled="handover.status === 'COMPLETED'"
                 />
                 <el-button
+                  v-perm="'nursing:ward:btn:handover'"
                   type="primary"
                   size="small"
                   :loading="completingHandover"
@@ -1117,7 +1159,10 @@ onMounted(() => {
             placeholder="备注（选填）"
             class="ward-chart-event-remark"
           />
+          <!-- 特殊事件录入提交（PR-4F #26 IO/评估/特殊事件并族）v-perm 直挂；事件类型
+               select 与备注输入为表单数据面不挂码；上月/下月翻页为读面不挂码 -->
           <el-button
+            v-perm="'nursing:ward:btn:record'"
             type="primary"
             :loading="specialEventRecording"
             :disabled="specialEventRecording"

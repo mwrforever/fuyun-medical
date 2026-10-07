@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { adverseEvents } from '@/api/nursing';
 import type { AdverseEventVO } from '@/api/nursing';
+import { permDirective } from '@/directives/perm';
 import { router } from '@/router';
 import AdverseEventView from './AdverseEventView.vue';
 
@@ -54,7 +55,8 @@ if (!('ResizeObserver' in globalThis)) {
   };
 }
 
-/** 会话种子（auth store 从 sessionStorage 恢复：操作人=登录用户 u1/李护士） */
+/** 会话种子（auth store 从 sessionStorage 恢复：操作人=登录用户 u1/李护士；
+ * permissions 含 #31 元素码——真实 NURSE 会话经登录契约导出含码，既有用例语义不变） */
 function seedAuthSession(): void {
   sessionStorage.setItem(
     'fy:workstation:auth',
@@ -67,6 +69,7 @@ function seedAuthSession(): void {
         displayName: '李护士',
         orgId: null,
         roles: ['nurse'],
+        permissions: ['nursing:adverse-event:btn:manage'],
       },
     }),
   );
@@ -205,6 +208,48 @@ describe('护理不良事件上报页', () => {
       handlerId: 'u1',
       handlingNote: '处置记录',
     });
+    wrapper.unmount();
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(AdverseEventView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 nursing:adverse-event:btn:manage 时上报与行内操作全隐藏（D-34）', async () => {
+    vi.mocked(adverseEvents.list).mockResolvedValue({
+      content: [eventMock()],
+      total: '1',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u1' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).not.toContain('上报事件');
+    expect(buttonTexts).not.toContain('处理');
+    expect(buttonTexts).not.toContain('退回');
+    // 列表读面不受元素码影响（单号仍渲染）
+    expect(wrapper.text()).toContain('AE2026100100001');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 nursing:adverse-event:btn:manage 时上报入口与行内操作可见', async () => {
+    vi.mocked(adverseEvents.list).mockResolvedValue({
+      content: [eventMock()],
+      total: '1',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('上报事件');
+    expect(buttonTexts).toContain('处理');
+    expect(buttonTexts).toContain('退回');
     wrapper.unmount();
   });
 });
