@@ -7,8 +7,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { wardCalls } from '@/api/ward';
 import type { WardCallVO } from '@/api/ward';
+import { permDirective } from '@/directives/perm';
 import CallWorkbenchView from './CallWorkbenchView.vue';
 
 vi.mock('@/api/ward', () => ({
@@ -120,7 +123,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('病区呼叫工作台', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #39）：真实 NURSE 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u1',
+          loginName: 'nursedemo',
+          displayName: '李护士',
+          orgId: null,
+          roles: ['nurse'],
+          permissions: ['ward:call:btn:handle'],
+        },
+      }),
+    );
     for (const fn of [
       wardCalls.page,
       wardCalls.create,
@@ -258,5 +283,65 @@ describe('病区呼叫工作台', () => {
     const wrapper = mount(CallWorkbenchView);
     await flushPromises();
     expect(wrapper.text()).toContain('声音提示本批次未接入');
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(CallWorkbenchView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 ward:call:btn:handle 时闭环五动作全隐藏（D-34）', async () => {
+    // 三态行齐备（待应答/已应答/处理中）驱动应答/处理/完成/转接/取消五按钮全部出位
+    vi.mocked(wardCalls.page).mockResolvedValue({
+      content: [
+        callMock({ callNo: 'WC20260926001', status: 'CREATED' }),
+        callMock({ id: '402', callNo: 'WC20260926002', status: 'ANSWERED' }),
+        callMock({ id: '403', callNo: 'WC20260926003', status: 'IN_PROGRESS' }),
+      ],
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u1' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // 呼叫闭环五动作无码全隐藏（D-34 无码 DOM 移除）
+    expect(buttonTexts).not.toContain('应答');
+    expect(buttonTexts).not.toContain('处理');
+    expect(buttonTexts).not.toContain('完成');
+    expect(buttonTexts).not.toContain('转接');
+    expect(buttonTexts).not.toContain('取消');
+    // 呼叫清单读面不受元素码影响
+    expect(wrapper.text()).toContain('WC20260926001');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 ward:call:btn:handle 时闭环五动作按状态机出位可见', async () => {
+    vi.mocked(wardCalls.page).mockResolvedValue({
+      content: [
+        callMock({ callNo: 'WC20260926001', status: 'CREATED' }),
+        callMock({ id: '402', callNo: 'WC20260926002', status: 'ANSWERED' }),
+        callMock({ id: '403', callNo: 'WC20260926003', status: 'IN_PROGRESS' }),
+      ],
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('应答');
+    expect(buttonTexts).toContain('处理');
+    expect(buttonTexts).toContain('完成');
+    expect(buttonTexts).toContain('转接');
+    expect(buttonTexts).toContain('取消');
+    wrapper.unmount();
   });
 });

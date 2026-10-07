@@ -9,9 +9,12 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { telemetry } from '@/api/iot';
 import { coldChain } from '@/api/ward';
 import type { ColdChainArchiveVO, ColdChainRecordVO } from '@/api/ward';
+import { permDirective } from '@/directives/perm';
 import ColdChainView from './ColdChainView.vue';
 
 vi.mock('@/api/iot', () => ({
@@ -111,7 +114,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('冷链台账页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #40）：真实 IOT_ADMIN 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u5',
+          loginName: 'iotadmindemo',
+          displayName: '陆物联',
+          orgId: null,
+          roles: ['iot_admin'],
+          permissions: ['ward:coldchain:btn:manage'],
+        },
+      }),
+    );
     for (const fn of [
       coldChain.page,
       coldChain.create,
@@ -300,5 +325,49 @@ describe('冷链台账页', () => {
     const polyline = wrapper.find('svg polyline');
     expect(polyline.exists()).toBe(true);
     expect(polyline.attributes('points')?.trim().split(/\s+/)).toHaveLength(3);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(ColdChainView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 ward:coldchain:btn:manage 时建档/登记出网口全隐藏（D-34）', async () => {
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u5' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    // 建档入口（盘点口径不挂码）可开窗读表单，保存出网口无码隐藏
+    await clickButton(wrapper, '新建档案');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('保存档案');
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    // 详情读窗的登记出网口同样隐藏（详情入口与查询曲线为读面不挂码）
+    await clickRowButton(wrapper, 'CC20260926001', '详情');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('提交登记');
+    // 台账读面不受元素码影响
+    expect(wrapper.text()).toContain('CC20260926001');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 ward:coldchain:btn:manage 时保存档案与提交登记可见', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await clickButton(wrapper, '新建档案');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('保存档案');
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    await clickRowButton(wrapper, 'CC20260926001', '详情');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('提交登记');
+    wrapper.unmount();
   });
 });

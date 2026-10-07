@@ -327,7 +327,16 @@ onMounted(() => {
           <template #header>
             <div class="linkage-card-head">
               <span>规则列表（共 {{ rows.length }} 条）</span>
-              <el-button type="primary" size="small" @click="openCreate">新建规则</el-button>
+              <!-- 新建规则（PR-4F #36，IOT_ADMIN 绑定）v-perm 直挂——无码 DOM 移除（D-34）；
+                   编辑/删除/重试同码收口联动规则全生命周期写面；规则弹窗「保存规则」提交
+                   随容器免挂接（入口隐藏即弹窗不可达） -->
+              <el-button
+                v-perm="'iot:linkage:btn:manage'"
+                type="primary"
+                size="small"
+                @click="openCreate"
+                >新建规则</el-button
+              >
             </div>
           </template>
           <div v-loading="listLoading">
@@ -367,10 +376,18 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="110" class-name="fuy-ops-8">
                 <template #default="{ row }">
-                  <el-button link type="primary" size="small" @click="openEdit(row)"
+                  <!-- 编辑/删除（PR-4F #36）与新建同码 v-perm 直挂——编辑弹窗提交随容器；
+                       删除在途 :loading/:disabled 数据态与权限判定两层正交 -->
+                  <el-button
+                    v-perm="'iot:linkage:btn:manage'"
+                    link
+                    type="primary"
+                    size="small"
+                    @click="openEdit(row)"
                     >编辑</el-button
                   >
                   <el-button
+                    v-perm="'iot:linkage:btn:manage'"
                     link
                     type="danger"
                     size="small"
@@ -443,8 +460,11 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="64" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 失败重试（PR-4F #36）与规则写面同码 v-perm 直挂——FAILED v-if 状态机
+                       数据态与权限判定两层正交；在途守卫防重复投递联动动作 -->
                   <el-button
                     v-if="row.actionResult === 'FAILED'"
+                    v-perm="'iot:linkage:btn:manage'"
                     link
                     type="primary"
                     size="small"

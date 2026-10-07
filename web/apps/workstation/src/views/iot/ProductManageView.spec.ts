@@ -9,8 +9,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { metrics, products } from '@/api/iot';
 import type { ProductVO } from '@/api/iot';
+import { permDirective } from '@/directives/perm';
 import ProductManageView from './ProductManageView.vue';
 
 vi.mock('@/api/iot', () => ({
@@ -98,7 +101,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('产品与物模型管理页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #37）：真实 IOT_ADMIN 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u5',
+          loginName: 'iotadmindemo',
+          displayName: '陆物联',
+          orgId: null,
+          roles: ['iot_admin'],
+          permissions: ['iot:product:btn:manage'],
+        },
+      }),
+    );
     for (const fn of [
       products.list,
       products.create,
@@ -490,5 +515,67 @@ describe('产品与物模型管理页', () => {
     expect(remaining).toHaveLength(1);
     expect((remaining[0].element as HTMLInputElement).value).toBe('defibrillate');
     expect(remaining[0].element).toBe(secondInputEl);
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(ProductManageView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 iot:product:btn:manage 时上架/同步与映射/命令保存口全隐藏（D-34）', async () => {
+    vi.mocked(products.list).mockResolvedValue({
+      content: threeStateProducts(),
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u5' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    // 上架提交口与行内同步口无码全隐藏
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).not.toContain('上架产品');
+    expect(buttonTexts).not.toContain('同步');
+    // 映射/命令弹窗入口（盘点口径不挂码）可开窗，弹窗内出网口无码隐藏
+    await clickButton(wrapper, '术语映射');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('保存映射');
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    await clickButton(wrapper, '命令登记');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).not.toContain('保存命令');
+    // 产品列表读面不受元素码影响
+    expect(wrapper.text()).toContain('监护仪');
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 iot:product:btn:manage 时上架/同步与映射/命令保存口可见', async () => {
+    vi.mocked(products.list).mockResolvedValue({
+      content: threeStateProducts(),
+      page: '0',
+      size: '20',
+      total: '3',
+    });
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('上架产品');
+    expect(buttonTexts).toContain('同步');
+    await clickButton(wrapper, '术语映射');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('保存映射');
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    await clickButton(wrapper, '命令登记');
+    await flushPromises();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('保存命令');
+    wrapper.unmount();
   });
 });

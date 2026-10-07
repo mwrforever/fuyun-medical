@@ -393,7 +393,12 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="200" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 模型同步（PR-4F #37「模型同步」出网把守位，IOT_ADMIN 绑定）v-perm
+                       直挂——无码 DOM 移除（D-34）；「术语映射」「命令登记」为弹窗入口按
+                       盘点口径不挂码（弹窗 footer 出网按钮单独把守）；同步在途 :loading
+                       数据态与权限判定两层正交 -->
                   <el-button
+                    v-perm="'iot:product:btn:manage'"
                     link
                     type="primary"
                     size="small"
@@ -475,7 +480,12 @@ onMounted(() => {
               rows="2"
               aria-label="产品描述"
             ></textarea>
+            <!-- 上架产品（PR-4F #37「新建」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+                 DOM 移除（D-34）；右栏上架表单常驻（非弹窗），创建 POST 以本按钮为唯一
+                 出口，无码会话表单可填不可出网；:loading/:disabled 在途数据态与权限判定
+                 两层正交 -->
             <el-button
+              v-perm="'iot:product:btn:manage'"
               type="primary"
               class="product-submit"
               :loading="creating"
@@ -521,7 +531,12 @@ onMounted(() => {
       <el-button size="small" @click="addMappingRow">增行</el-button>
       <template #footer>
         <el-button size="small" @click="mappingVisible = false">取消</el-button>
+        <!-- 保存映射（PR-4F #37「指标映射」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+             DOM 移除（D-34），PUT 整组替换以本按钮为唯一出口：入口「术语映射」按盘点口径
+             不挂码，无码会话仅可开窗查看不可出网；行内删除/增行为草稿纯本地态不挂码；
+             :loading/:disabled 在途数据态与权限判定两层正交 -->
         <el-button
+          v-perm="'iot:product:btn:manage'"
           type="primary"
           size="small"
           :loading="mappingSaving"
@@ -568,7 +583,12 @@ onMounted(() => {
       <el-button size="small" @click="addCommandRow">增行</el-button>
       <template #footer>
         <el-button size="small" @click="commandVisible = false">取消</el-button>
+        <!-- 保存命令（PR-4F #37「命令模板」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+             DOM 移除（D-34），白名单 PUT 以本按钮为唯一出口：入口「命令登记」按盘点口径
+             不挂码，无码会话仅可开窗查看不可出网；行内删除/增行为草稿纯本地态不挂码；
+             :loading/:disabled 在途数据态与权限判定两层正交 -->
         <el-button
+          v-perm="'iot:product:btn:manage'"
           type="primary"
           size="small"
           :loading="commandSaving"

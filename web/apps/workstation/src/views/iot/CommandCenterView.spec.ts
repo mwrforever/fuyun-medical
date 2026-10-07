@@ -8,8 +8,11 @@ import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
+import { createPinia, setActivePinia } from 'pinia';
+import type { Pinia } from 'pinia';
 import { commands, devices } from '@/api/iot';
 import type { CommandLogVO, DeviceVO } from '@/api/iot';
+import { permDirective } from '@/directives/perm';
 import CommandCenterView from './CommandCenterView.vue';
 
 vi.mock('@/api/iot', () => ({
@@ -94,7 +97,29 @@ async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
 }
 
 describe('命令中心页', () => {
+  /** 文件级 Pinia：v-perm 指令读取 auth 会话 store（元素权限判定），每用例新实例防串扰 */
+  let pinia: Pinia;
+
   beforeEach(() => {
+    sessionStorage.clear();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    // 会话种子（PR-4F #34）：真实 IOT_ADMIN 会话经登录契约导出含码，既有用例语义不变
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 'test-token',
+        refreshToken: 'test-refresh',
+        user: {
+          userId: 'u5',
+          loginName: 'iotadmindemo',
+          displayName: '陆物联',
+          orgId: null,
+          roles: ['iot_admin'],
+          permissions: ['iot:command:btn:issue'],
+        },
+      }),
+    );
     for (const fn of [commands.confirmChallenge, commands.issue, commands.page, devices.list]) {
       vi.mocked(fn).mockReset();
     }
@@ -252,5 +277,39 @@ describe('命令中心页', () => {
     expect(commands.page).toHaveBeenLastCalledWith(
       expect.objectContaining({ status: 'FAILED', page: 0, size: 50 }),
     );
+  });
+
+  /** PR-4F 权限态挂载：注入 pinia 与 v-perm 指令（main.ts 全局注册仅应用装配态，单测自备） */
+  function mountView() {
+    return mount(CommandCenterView, {
+      global: { plugins: [pinia], directives: { perm: permDirective } },
+    });
+  }
+
+  it('PR-4F 权限态：会话无 iot:command:btn:issue 时两步下发按钮全隐藏（D-34）', async () => {
+    // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u5' } }),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    // 获取挑战与确认下发两步出网口无码全隐藏（缺任一步即断链，无法完成下发）
+    expect(buttonTexts).not.toContain('第一步：获取挑战');
+    expect(buttonTexts).not.toContain('第二步：确认下发');
+    // 下发台表单与日志读面不受元素码影响
+    expect(wrapper.text()).toContain('命令下发台');
+    expect(wrapper.find('select[aria-label="下发设备"]').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('PR-4F 权限态：会话含 iot:command:btn:issue 时两步下发按钮可见', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const buttonTexts = wrapper.findAll('button').map((b) => b.text());
+    expect(buttonTexts).toContain('第一步：获取挑战');
+    expect(buttonTexts).toContain('第二步：确认下发');
+    wrapper.unmount();
   });
 });

@@ -477,13 +477,22 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="200" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 规则编辑/删除（PR-4F #32，IOT_ADMIN 绑定）v-perm 直挂——无码 DOM 移除
+                       （D-34）；「模拟回放」入口与右栏规则表单按盘点口径不挂码（回放与建档
+                       出网口另行把守）；删除在途 :loading 数据态与权限判定两层正交 -->
                   <el-button link type="primary" size="small" @click="openSimulate(row)"
                     >模拟回放</el-button
                   >
-                  <el-button link type="primary" size="small" @click="openEdit(row)"
+                  <el-button
+                    v-perm="'iot:alarm-rule:btn:manage'"
+                    link
+                    type="primary"
+                    size="small"
+                    @click="openEdit(row)"
                     >编辑</el-button
                   >
                   <el-button
+                    v-perm="'iot:alarm-rule:btn:manage'"
                     link
                     type="danger"
                     size="small"
@@ -690,8 +699,13 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="操作" width="120" class-name="fuy-ops-8">
             <template #default="{ row }">
+              <!-- 告警确认/关闭（PR-4F #32 并入告警规则管理码——同族互斥两态并码为盘点
+                   §1.1 既定裁定；IOT_ADMIN 绑定）v-perm 直挂——无码 DOM 移除（D-34）；
+                   ACTIVE/ACKNOWLEDGED 状态机 v-if 数据态与权限判定两层正交；关闭弹窗
+                   「确认关闭」随入口不可达免挂接 -->
               <el-button
                 v-if="row.status === 'ACTIVE'"
+                v-perm="'iot:alarm-rule:btn:manage'"
                 link
                 type="primary"
                 size="small"
@@ -701,6 +715,7 @@ onMounted(() => {
               >
               <el-button
                 v-if="row.status === 'ACTIVE' || row.status === 'ACKNOWLEDGED'"
+                v-perm="'iot:alarm-rule:btn:manage'"
                 link
                 type="danger"
                 size="small"
@@ -737,7 +752,12 @@ onMounted(() => {
           />
         </div>
       </div>
+      <!-- 开始回放（PR-4F #32「模拟」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+           DOM 移除（D-34），回放 POST 以本按钮为唯一出口：入口「模拟回放」按盘点口径
+           不挂码，无码会话仅可开窗读摘要不可出网；:loading/:disabled 在途数据态与权限
+           判定两层正交 -->
       <el-button
+        v-perm="'iot:alarm-rule:btn:manage'"
         type="primary"
         size="small"
         :loading="simulating"

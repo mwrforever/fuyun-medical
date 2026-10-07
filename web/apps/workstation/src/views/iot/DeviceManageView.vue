@@ -283,10 +283,14 @@ onMounted(() => {
               </el-table-column>
               <el-table-column label="操作" width="220" class-name="fuy-ops-8">
                 <template #default="{ row }">
+                  <!-- 凭证重置/停用（PR-4F #35，IOT_ADMIN 绑定）v-perm 直挂——无码 DOM
+                       移除（D-34）；「影子」为只读查询抽屉入口不挂码；停用 v-if 状态机
+                       与在途 :loading 数据态和权限判定两层正交 -->
                   <el-button link type="primary" size="small" @click="openShadow(row)"
                     >影子</el-button
                   >
                   <el-button
+                    v-perm="'iot:device:btn:manage'"
                     link
                     type="primary"
                     size="small"
@@ -296,6 +300,7 @@ onMounted(() => {
                   >
                   <el-button
                     v-if="row.status !== 'DISABLED'"
+                    v-perm="'iot:device:btn:manage'"
                     link
                     type="danger"
                     size="small"
@@ -364,7 +369,12 @@ onMounted(() => {
               <option value="C">C 网关子设备</option>
               <option value="D">D 对端移交</option>
             </select>
+            <!-- 注册设备（PR-4F #35「注册」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+                 DOM 移除（D-34）；右栏注册表单常驻（非弹窗），注册 POST 以本按钮为唯一
+                 出口，无码会话表单可填不可出网；:loading/:disabled 在途数据态与权限判定
+                 两层正交 -->
             <el-button
+              v-perm="'iot:device:btn:manage'"
               type="primary"
               class="device-submit"
               :loading="registering"

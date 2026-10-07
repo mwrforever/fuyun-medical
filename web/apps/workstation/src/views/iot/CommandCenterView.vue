@@ -228,8 +228,13 @@ onMounted(() => {
 
             <!-- 两步门禁：第一步签发挑战 → 第二步携 challengeId 下发（两按钮常驻，
                  第二步未取得挑战前置禁用，禁绕过时序） -->
+            <!-- 命令下发两步按钮（PR-4F #34，IOT_ADMIN 绑定）v-perm 同码直挂——获取挑战
+                 与确认下发任一步缺码即断链，无码 DOM 移除（D-34）；:disabled 时序门禁
+                 （第二步须先取得挑战）与权限判定两层正交；「放弃本次挑战」为纯本地态
+                 重置不出网不挂码 -->
             <div class="command-challenge-step">
               <el-button
+                v-perm="'iot:command:btn:issue'"
                 type="primary"
                 class="command-submit"
                 :loading="confirming"
@@ -242,6 +247,7 @@ onMounted(() => {
                 {{ challengeExpiryText }}
               </p>
               <el-button
+                v-perm="'iot:command:btn:issue'"
                 type="primary"
                 class="command-submit"
                 :loading="issuing"

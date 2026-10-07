@@ -426,7 +426,12 @@ onMounted(() => {
       />
       <template #footer>
         <el-button size="small" @click="createVisible = false">取消</el-button>
+        <!-- 保存档案（PR-4F #40「新建档案」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+             DOM 移除（D-34），建档 POST 以本按钮为唯一出口：入口「新建档案」按盘点口径
+             不挂码，无码会话仅可开窗查看不可出网；:loading/:disabled 在途数据态与权限
+             判定两层正交 -->
         <el-button
+          v-perm="'ward:coldchain:btn:manage'"
           type="primary"
           size="small"
           :loading="creating"
@@ -545,7 +550,12 @@ onMounted(() => {
           placeholder="如：温度正常，门封完好"
           aria-label="登记内容"
         ></textarea>
+        <!-- 提交登记（PR-4F #40「登记记录」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——
+             无码 DOM 移除（D-34），巡检/告警处置/偏差记录 POST 以本按钮为唯一出口：
+             「详情」入口与「查询曲线」为读面不挂码；:loading/:disabled 在途数据态与
+             权限判定两层正交 -->
         <el-button
+          v-perm="'ward:coldchain:btn:manage'"
           type="primary"
           size="small"
           :loading="registering"
