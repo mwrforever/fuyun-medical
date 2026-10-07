@@ -326,7 +326,7 @@ class MessagingGovernanceIT {
 
     @Test
     @Order(1)
-    @DisplayName("冻结登记断言：event_registry 八十三条（id 74–83）种子行齐全且全部 ACTIVE，system.dict.published 生产方为 system")
+    @DisplayName("冻结登记断言：event_registry 八十四条（id 74–84）种子行齐全且全部 ACTIVE，system.dict.published 生产方为 system")
     void seedRegistryRowsAreFrozenAndActive() {
         // 总量口径：V5 七条 + V403 iot 一条 + V105 患者域八条（id 9–16）+ V605 billing 域八条
         // （id 17–24）+ V702 pharmacy 域七条（id 25–31）+ V204 outpatient 域九条（id 32–40）
@@ -337,14 +337,15 @@ class MessagingGovernanceIT {
         //   ward.cold-chain.alert-archived，P2 PR-2 Task 12 种子与断言同任务先例）
         //   + V1109 nursing 一条（id 83 nursing.adverse-event.reported，P2 PR-3 Task 2 种子——
         //   来源迁移 V1109，本断言与其同任务落盘）
+        //   + V1120 system 一条（id 84 system.permission.changed，P2 PR-4F Task 2 种子——断言随动收口）
         Integer totalRows =
                 jdbcTemplate.queryForObject("SELECT count(*) FROM integration.event_registry", Integer.class);
-        assertThat(totalRows).isEqualTo(83);
+        assertThat(totalRows).isEqualTo(84);
         Integer activeRows = jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM integration.event_registry WHERE status = ?",
                 Integer.class,
                 MessagingConstants.REGISTRY_STATUS_ACTIVE);
-        assertThat(activeRows).isEqualTo(83);
+        assertThat(activeRows).isEqualTo(84);
         String producer = jdbcTemplate.queryForObject(
                 "SELECT producer_module FROM integration.event_registry WHERE event_type = ?",
                 String.class,
