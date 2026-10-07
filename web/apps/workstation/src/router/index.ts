@@ -127,8 +127,9 @@ export const router = createRouter({
           meta: { permission: 'nursing:ward:view' },
         },
         {
-          // 护理执行工作台（PR-3 Task 14）：医嘱执行单四列看板+闭环追溯抽屉；权限点按
-          // iot 先例 router meta 前端门禁形态（system 无业务权限码种子，零后端触碰）
+          // 护理执行工作台（PR-3 Task 14）：医嘱执行单四列看板+闭环追溯抽屉；PR-3 建页时
+          // system 尚无业务权限码种子故按纯前端门禁登记（iot 先例），PR-4D 起 V1116 已种
+          // 本码 MENU 点且 V1117 绑 NURSE，路由守卫消费后端种子（F 册收口时注释随实况更正）
           path: 'nursing/execution',
           name: 'nursing-execution',
           component: () => import('@/views/nursing/ExecutionWorkbenchView.vue'),
@@ -179,8 +180,9 @@ export const router = createRouter({
         },
         {
           // 药房住院摆药页（PR-3 Task 16）：计划五状态列看板+摆药流五步+PIVAS 贴签+退药
-          // 入口；权限点按 nursing:execution:perform 先例 router meta 前端门禁形态
-          // （system 无业务权限码种子，零后端触碰）
+          // 入口；PR-3 建页时 system 尚无业务权限码种子故按纯前端门禁登记
+          // （nursing:execution 先例），PR-4D 起 V1116 已种本码 MENU 点且 V1117 绑
+          // PHARMACIST，路由守卫消费后端种子（F 册收口时注释随实况更正）
           path: 'pharmacy/inpatient-dispense',
           name: 'pharmacy-inpatient-dispense',
           component: () => import('@/views/pharmacy/InpatientDispenseView.vue'),
