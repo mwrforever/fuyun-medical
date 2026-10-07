@@ -12,6 +12,7 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
 import com.fuyun.system.entity.PermissionEntity;
@@ -191,12 +192,16 @@ class RoleAdminServiceImplTest {
 
         // 删 A：逻辑删除（@TableLogic 由 delete(wrapper) 转 UPDATE deleted=1，无物理 DELETE）
         verify(rolePermissionMapper).delete(any());
-        // 插 C：仅赋 roleId/permissionId，id 留空由 ASSIGN_ID 雪花生成（与 V1121 种子固定号段天然分离）
+        // 插 C：仅赋 roleId/permissionId 与操作人（未登录态 null 由库默认 'system' 承接），
+        // id 留空由 ASSIGN_ID 雪花生成（与 V1121 种子固定号段天然分离）
         ArgumentCaptor<RolePermissionEntity> insertCaptor = ArgumentCaptor.forClass(RolePermissionEntity.class);
         verify(rolePermissionMapper).insert(insertCaptor.capture());
         assertThat(insertCaptor.getValue().getRoleId()).isEqualTo(roleIdOfNurse);
         assertThat(insertCaptor.getValue().getPermissionId()).isEqualTo(idC);
         assertThat(insertCaptor.getValue().getId()).isNull();
+        // 未登录态（无操作人上下文）口径：createdBy/updatedBy 置 null 交库默认承接（评审 C-I2）
+        assertThat(insertCaptor.getValue().getCreatedBy()).isNull();
+        assertThat(insertCaptor.getValue().getUpdatedBy()).isNull();
         // B 保留（既删侧无 idB、插侧仅 idC，times(1) 默认语义已锁单次删单次插）
         verify(eventPublisher).publishEvent(new PermissionMatrixChangedEvent("NURSE"));
     }
@@ -291,7 +296,44 @@ class RoleAdminServiceImplTest {
         verify(eventPublisher).publishEvent(new PermissionMatrixChangedEvent("NURSE"));
     }
 
+    @Test
+    @DisplayName("覆写插入行注入操作人：OperatorContextHolder 承载 createdBy/updatedBy（照 PracticeServiceImpl 先例，评审 C-I2）")
+    void overwritePermissionsInjectsOperatorIntoInsertedRows() {
+        when(roleMapper.selectList(any())).thenReturn(List.of(roleOf("NURSE")));
+        when(rolePermissionMapper.selectList(any())).thenReturn(List.of());
+        when(permissionMapper.selectList(any())).thenReturn(List.of(perm(idA, "A")));
+        // 模拟认证链路已写入的操作人上下文（AuthTokenInterceptor 按会话 userId 注入）
+        OperatorContextHolder.set("it-operator-01");
+        try {
+            service.overwritePermissions("NURSE", List.of("A"));
+        } finally {
+            // 请求结束必须清理，防线程复用串号污染后续用例
+            OperatorContextHolder.clear();
+        }
+        ArgumentCaptor<RolePermissionEntity> insertCaptor = ArgumentCaptor.forClass(RolePermissionEntity.class);
+        verify(rolePermissionMapper).insert(insertCaptor.capture());
+        assertThat(insertCaptor.getValue().getCreatedBy()).isEqualTo("it-operator-01");
+        assertThat(insertCaptor.getValue().getUpdatedBy()).isEqualTo("it-operator-01");
+    }
+
     // ---------------------------------------------------------------- 写链：角色启停（Task 5）
+
+    @Test
+    @DisplayName("同值启停短路：ACTIVE→ACTIVE 零写零事件（重复保存不广播不踢会话，评审 A-I1）")
+    void updateStatusSkipsWriteAndEventWhenStatusUnchanged() {
+        when(roleMapper.selectList(any())).thenReturn(List.of(roleOf("NURSE")));
+        when(rolePermissionMapper.selectList(any())).thenReturn(List.of(bind(roleIdOfNurse, 11L)));
+        when(permissionMapper.selectByIds(any())).thenReturn(List.of(perm(11L, "nursing:ward:btn:task")));
+
+        RoleAdminVO result = service.updateStatus("NURSE", "ACTIVE");
+
+        // 同值不落库不发事件：完整事件链会把该角色全部在线会话无意义登出（与覆写双空短路对齐）
+        verify(roleMapper, never()).updateById(any(RoleEntity.class));
+        verify(eventPublisher, never()).publishEvent(any());
+        // 返回仍组装完整视图：status=现态，permCodes=当前绑定码集实查
+        assertThat(result.status()).isEqualTo("ACTIVE");
+        assertThat(result.permCodes()).containsExactly("nursing:ward:btn:task");
+    }
 
     @Test
     @DisplayName("角色启停合法值：status 落库 + 发事件，VO 回组装当前绑定码集")

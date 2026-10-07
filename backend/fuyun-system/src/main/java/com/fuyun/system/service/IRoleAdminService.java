@@ -56,8 +56,10 @@ public interface IRoleAdminService {
      *
      * <p>执行流程（方法级事务）：校验链同覆写（SYS-1041 角色定位 / SYS-1043 ADMIN 拒绝）
      * + status 值校验（未知值经 RoleStatus.fromCode 收口 SYS-1031/400，既有码复用）→
-     * updateById 落启停状态 → 事务内发布 {@code PermissionMatrixChangedEvent}（停用角色的
-     * 存量会话摘要不回溯撤销、重新登录失效——RoleStatus javadoc 口径，刷新广播归 Task 6）。
+     * 同值短路（目标态与现态一致时零写零事件直返，重复保存不广播不踢会话——评审 A-I1）→
+     * updateById 落启停状态 → 事务内发布 {@code PermissionMatrixChangedEvent}（启停即踢出
+     * 该角色全部在线会话、重新登录后按新状态生效——RoleStatus javadoc 口径，刷新广播归
+     * Task 6）。
      *
      * @param roleCode 角色编码，非空；来源：管理端路径参数
      * @param status   目标状态 code（ACTIVE/DISABLED），非空；来源：管理端请求体

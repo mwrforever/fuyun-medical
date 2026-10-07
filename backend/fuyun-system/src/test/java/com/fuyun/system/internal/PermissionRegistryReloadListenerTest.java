@@ -23,6 +23,7 @@ import com.fuyun.system.constants.SystemMessagingConstants;
 import com.fuyun.system.service.ITokenService;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -133,6 +134,25 @@ class PermissionRegistryReloadListenerTest {
     }
 
     @Test
+    @DisplayName("坏载荷失败收尾：载荷类型不符包成 IllegalStateException 上抛，settleFailure 留痕零业务动作（评审 B-I1）")
+    void wrapsBadPayloadAsIllegalStateAndSettlesFailure() {
+        when(idempotencyService.tryAcquire(EVENT_ID, SystemMessagingConstants.MODULE))
+                .thenReturn(true);
+
+        // roleCode 为嵌套对象：treeToValue 无法还原 String 契约字段（MismatchedInputException）
+        assertThatThrownBy(() -> listener.onPermissionMatrixChanged(message(toJson(badPayloadEnvelope()))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("权限矩阵变更载荷与契约不符");
+        // 失败收尾必须执行（释放前置键 + FAILED 留痕）——受检异常透出绕过此步即坏载荷无台账无死信
+        verify(idempotencyService).settleFailure(recordCaptor.capture(), any(IllegalStateException.class));
+        assertThat(recordCaptor.getValue().eventId()).isEqualTo(EVENT_ID);
+        verify(idempotencyService, never()).recordProcessed(any());
+        // 零业务动作：解析失败先于重载与会话清理（避免半套生效动作）
+        verify(permissionRegistry, never()).load();
+        verify(tokenService, never()).evictSessionsByRoles(any());
+    }
+
+    @Test
     @DisplayName("广播入口：仅重载本实例 Registry 不触会话清理与幂等；重载失败吞异常留痕不外抛（降级旧矩阵生效）")
     void broadcastReloadsRegistryOnlyAndSwallowsReloadFailure() {
         // 正常广播：每实例本地重载，会话清理归治理命名队列单实例消费，不经幂等服务
@@ -159,6 +179,18 @@ class PermissionRegistryReloadListenerTest {
                 "1",
                 TRACE_ID,
                 testObjectMapper().valueToTree(new PermissionMatrixChangedPayload(ROLE_CODE)));
+    }
+
+    /** 构造坏载荷信封样本：roleCode 为嵌套对象（String 契约字段无法还原），信封五要素本身合规 */
+    private EventEnvelope badPayloadEnvelope() {
+        return new EventEnvelope(
+                EVENT_ID,
+                OCCURRED_AT,
+                SystemMessagingConstants.MODULE,
+                SystemMessagingConstants.EVENT_PERMISSION_CHANGED,
+                "1",
+                TRACE_ID,
+                testObjectMapper().valueToTree(Map.of("roleCode", Map.of("bad", true))));
     }
 
     /** 信封序列化为线格式 JSON（与生产发布侧同构，序列化失败属测试资产缺陷直接抛出） */

@@ -73,8 +73,17 @@ public class PermissionRegistryReloadListener {
      * 治理命名队列消费入口（幂等三步范式，DictPublishedListener 同款）：重载 Registry +
      * 清理受影响角色会话键。单实例消费语义（共享队列竞争消费）恰好承载「会话清理只需做一次」。
      */
+    /**
+     * 治理命名队列消费入口（幂等三步范式，DictPublishedListener 同款）：重载 Registry +
+     * 清理受影响角色会话键。单实例消费语义（共享队列竞争消费）恰好承载「会话清理只需做一次」。
+     *
+     * @param message 原始消息帧，非空；来源：fy.topic 路由至本模块消费队列的信封线格式
+     * @throws IllegalStateException 载荷与契约不符（roleCode 缺失或类型错误）——包装修正
+     *                               受检解析异常后按业务失败处置（settleFailure 失败收尾后重抛
+     *                               走死信），禁止受检异常透出绕过失败收尾（评审 B-I1）
+     */
     @RabbitListener(queues = SystemMessagingConstants.QUEUE_PERMISSION_CHANGED)
-    public void onPermissionMatrixChanged(Message message) throws JsonProcessingException {
+    public void onPermissionMatrixChanged(Message message) {
         // UTF-8 解码 → codec.fromJson 合规校验 → 幂等三步（tryAcquire 重复跳过 / recordProcessed / settleFailure 重抛）
         // → 业务动作：permissionRegistry.load() + tokenService.evictSessionsByRoles(Set.of(payload.roleCode()))
         // 原文进 codec：__TypeId__ 头不作消费依据（CF-1 冻结约定）；不合规信封上抛交有界重试转死信
@@ -96,8 +105,15 @@ public class PermissionRegistryReloadListener {
                 envelope.occurredAt(),
                 SystemMessagingConstants.MODULE);
         try {
-            PermissionMatrixChangedPayload payload =
-                    objectMapper.treeToValue(envelope.payload(), PermissionMatrixChangedPayload.class);
+            PermissionMatrixChangedPayload payload;
+            try {
+                payload = objectMapper.treeToValue(envelope.payload(), PermissionMatrixChangedPayload.class);
+            } catch (JsonProcessingException e) {
+                // 载荷不合规（缺字段/类型错）等同业务失败：包成 RuntimeException 上抛，由范式③ settleFailure
+                // 失败收尾（释放前置键 + FAILED 留痕）后重抛走有界重试进 fy.dlx——受检异常直接透出会脱离
+                // catch(RuntimeException) 使失败收尾不执行、坏载荷无台账无死信（评审 B-I1，DictPublishedListener 同款）
+                throw new IllegalStateException("权限矩阵变更载荷与契约不符：event_id=" + envelope.eventId(), e);
+            }
             permissionRegistry.load();
             int evicted = tokenService.evictSessionsByRoles(Set.of(payload.roleCode()));
             log.info(

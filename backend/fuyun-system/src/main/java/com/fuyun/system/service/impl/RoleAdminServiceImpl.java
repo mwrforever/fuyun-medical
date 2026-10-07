@@ -1,6 +1,7 @@
 package com.fuyun.system.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fuyun.common.context.OperatorContextHolder;
 import com.fuyun.common.exception.BizException;
 import com.fuyun.system.api.SystemErrorCode;
 import com.fuyun.system.constants.SecurityConstants;
@@ -34,8 +35,9 @@ import org.springframework.transaction.annotation.Transactional;
  * 只读查询方法级只读事务（A.4.2-7）。
  *
  * <p>写链（Task 5，方法级写事务）：矩阵全量覆写=载荷去重保序→未登记码校验（SYS-1042 零写
- * 拒绝）→diff 删插（逻辑删除+ASSIGN_ID 插入）→双空幂等短路不发事件；角色启停=值域校验
- * （SYS-1031 复用）+updateById。两写路径均经事务内发布 PermissionMatrixChangedEvent
+ * 拒绝）→diff 删插（逻辑删除+ASSIGN_ID 插入，插入行经 OperatorContextHolder 注入操作人）
+ * →双空幂等短路不发事件；角色启停=值域校验（SYS-1031 复用）+同值短路+updateById。两写
+ * 路径定位角色行均携带 FOR UPDATE（串行化同角色并发写）并经事务内发布 PermissionMatrixChangedEvent
  * （AFTER_COMMIT 消费归 Task 6），ADMIN 一律 SYS-1043 拒绝（运行期全放语义，D3）。
  *
  * <p>装配说明：com.fuyun.system 不在组件扫描范围，Bean 注册点为 SystemWebConfig @Import。
@@ -167,6 +169,9 @@ public class RoleAdminServiceImpl implements IRoleAdminService {
         // 删除侧 = 既有−载荷：含绑定指向已删权限点的残行（不在载荷 id 集即入删除侧，覆写顺带清理）
         List<Long> toRemoveIds =
                 existingIds.stream().filter(id -> !payloadIds.contains(id)).toList();
+        // 操作人应用层注入（A.4.2-9，照 PracticeServiceImpl.grant 先例）：插入行行级归因随管理台
+        // 操作者落库；未登录态（上下文为空）置 null 由库默认 'system' 承接（评审 C-I2）
+        String operator = OperatorContextHolder.get();
         // 插入侧 = 载荷−既有：保持载荷序（管理台提交序即落库序）
         List<RolePermissionEntity> toInsert = distinctCodes.stream()
                 .map(idByCode::get)
@@ -175,6 +180,8 @@ public class RoleAdminServiceImpl implements IRoleAdminService {
                     RolePermissionEntity binding = new RolePermissionEntity();
                     binding.setRoleId(role.getId());
                     binding.setPermissionId(id);
+                    binding.setCreatedBy(operator);
+                    binding.setUpdatedBy(operator);
                     return binding;
                 })
                 .toList();
@@ -205,11 +212,17 @@ public class RoleAdminServiceImpl implements IRoleAdminService {
         // 校验链同覆写（SYS-1041/SYS-1043）+ status 值域（未知值经 fromCode 收口 SYS-1031，既有码复用）
         RoleEntity role = locateWritableRole(roleCode);
         RoleStatus next = RoleStatus.fromCode(status);
+        // 同值短路（评审 A-I1）：重复提交同状态零写零事件——否则每次无变化保存都会走完整事件链，
+        // 将该角色全部在线会话无意义登出（与覆写路径的双空幂等短路对齐）
+        if (role.getStatus() == next) {
+            log.debug("角色启停同值短路：roleCode={}，status={}（零写零事件不踢会话）", roleCode, next.getCode());
+            return toVO(role, loadPermCodes(role.getId()));
+        }
         // 仅状态列实质变更：updateById 非空字段策略下其余投影列回写原值（updated_at 由触发器维护）
         role.setStatus(next);
         roleMapper.updateById(role);
         log.info("角色启停完成：roleCode={}，status={}", roleCode, next.getCode());
-        // 事务上下文内发布矩阵变更事件（停用角色存量会话摘要不回溯撤销、重登录失效——广播归 Task 6）
+        // 事务上下文内发布矩阵变更事件（启停即踢出该角色全部在线会话、重新登录后按新状态生效——广播归 Task 6）
         eventPublisher.publishEvent(new PermissionMatrixChangedEvent(roleCode));
         return toVO(role, loadPermCodes(role.getId()));
     }
@@ -217,13 +230,18 @@ public class RoleAdminServiceImpl implements IRoleAdminService {
     /**
      * 写路径共用前置校验：角色码定位 + ADMIN 不可维护拒绝（两写端点同链，Task 5）。
      *
+     * <p>并发语义（评审 C-I1）：定位查询携带 FOR UPDATE 锁定角色行至事务提交——串行化同角色
+     * 并发覆写/启停。无锁时覆写的读-diff-写基于语句时点快照交错提交，终态为两载荷并集
+     * （丢失更新，静默扩张权限面）；锁后并发写退化为后写者完整覆盖（last-writer-wins）。
+     *
      * @param roleCode 角色编码，非空；来源：管理端路径参数
      * @return 定位到的角色实体（VO 组装五字段投影），非空
      * @throws BizException SYS-1041（角色不存在，404——误传/已删角色码）、SYS-1043（ADMIN
      *                      不可维护，400——运行期全放语义无绑定行可维护，D3 注记延伸）
      */
     private RoleEntity locateWritableRole(String roleCode) {
-        // 按码定位（deleted=0 由 @TableLogic 携带；唯一码至多一行，selectList 形态与读链一致）
+        // 按码定位（deleted=0 由 @TableLogic 携带；唯一码至多一行，selectList 形态与读链一致）；
+        // 行锁串行化同角色并发写路径（评审 C-I1，见方法 javadoc 并发语义段）
         List<RoleEntity> roles = roleMapper.selectList(Wrappers.<RoleEntity>lambdaQuery()
                 .eq(RoleEntity::getRoleCode, roleCode)
                 .select(
@@ -231,7 +249,8 @@ public class RoleAdminServiceImpl implements IRoleAdminService {
                         RoleEntity::getRoleCode,
                         RoleEntity::getRoleName,
                         RoleEntity::getStatus,
-                        RoleEntity::getDataScopeType));
+                        RoleEntity::getDataScopeType)
+                .last("FOR UPDATE"));
         if (roles.isEmpty()) {
             log.warn("管理台写操作被拒（角色不存在）：roleCode={}", roleCode);
             throw new BizException(SystemErrorCode.ROLE_NOT_FOUND, HttpStatus.NOT_FOUND, "角色不存在：" + roleCode);
