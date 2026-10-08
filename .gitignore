@@ -28,3 +28,10 @@ web/api-docs.json
 # 全仓风险扫描报告与分片（2026-09-28 graph 任务 N0 约定：本地留存禁 add -f）
 docs/bugs/
 docs/pref/
+# impeccable 设计工作区：mocks 样稿/brief 契约/decision 留痕/qualitybar 参考图为交付物入库（2026-10-08 批次2 立项裁决）；运行态与 web app 级 .impeccable 不入库
+.impeccable/hook.cache.json
+.impeccable/questions/
+.impeccable/review/
+web/apps/workstation/.impeccable/
+# 单文件 >1MB 红线剔除（qualitybar 参考图 1.1MB）
+.impeccable/qualitybar/splitflap-board.png

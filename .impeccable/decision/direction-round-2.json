@@ -1,0 +1,13 @@
+{
+  "decision": "direction-round-2",
+  "date": "2026-10-08",
+  "status": "灭失重建留痕（原件 direction-round-2.json 于 2026-10-08 21:40 前后灭失，本件依批次 1 交接文档 §2 记载重建，决策事实以交接文档为准）",
+  "context": "批次 1 终审后用户被呈批「方向重掷」决策页（拟重掷视觉世界）",
+  "user_action": "用户关闭方向重掷决策页，确认「我的设计稿上的设计不是很明确吗」",
+  "resolution": {
+    "rejected_seed": "efd8b4da（重掷作废）",
+    "confirmed": ".impeccable/mocks/paper-chart/ 样稿 = 构图权威；批次 1 被推翻的是实现而非设计稿",
+    "implication": "批次 2 以样稿为构图权威兼最低设计要求推进全站换血；实现须在样稿之上更细致打磨（更美观精致、高级视觉、流畅动效交互、高渲染性能）"
+  },
+  "witness": "docs/progress/2026-10-08-UI重设计批次1纸质病案换血执行.md §2「方向二次钉定」条目"
+}
