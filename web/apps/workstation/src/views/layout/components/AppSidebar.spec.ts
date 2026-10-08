@@ -208,6 +208,27 @@ describe('侧栏树形菜单', () => {
     expect(rootItem?.text()).toBe('');
     wrapper.unmount();
   });
+
+  it('树形进场级联挂类与级联序锚点（琢段动效）：el-menu 挂 fuy-tree-stagger，行级联序=品牌头 0/顶层项 1/组块自 2 递增（原始序内联，封顶由 motion.css min() 执行）', () => {
+    injectSession(allMenuPermissions());
+    const wrapper = mount(AppSidebar, { global: { plugins: [pinia, router] } });
+
+    // 断言业务结果：进场级联挂类在位（motion.css .fuy-tree-stagger 唯一定义处的消费锚）；
+    // 行元素内联 --fuy-stagger-index 承载级联序——顶层项第 1 档、首组第 2 档、末组第 10
+    // 档（原始序直传，min() 封顶属样式层职责不进模板）；叶项内联序=组内序（0 起，供
+    // fuy-leaf-reveal-in 展开显影 delay 取值）。样式断言用空白容忍正则（jsdom 序列化
+    // 冒号后带空格；\b 防前缀误配，如 1 不匹配 10）
+    expect(wrapper.find('.fuy-menu').classes()).toContain('fuy-tree-stagger');
+    expect(wrapper.find('.fuy-tree-root').attributes('style')).toMatch(
+      /--fuy-stagger-index:\s*1\b/,
+    );
+    const groupLis = wrapper.findAll('.el-sub-menu');
+    expect(groupLis[0]?.attributes('style')).toMatch(/--fuy-stagger-index:\s*2\b/);
+    expect(groupLis[8]?.attributes('style')).toMatch(/--fuy-stagger-index:\s*10\b/);
+    const firstLeafOfFirstGroup = groupLis[0]?.find('.el-menu-item');
+    expect(firstLeafOfFirstGroup?.attributes('style')).toMatch(/--fuy-stagger-index:\s*0\b/);
+    wrapper.unmount();
+  });
 });
 
 describe('图标注册表 MENU_ICON_REGISTRY（契约 §1 守护）', () => {
