@@ -1,0 +1,143 @@
+{
+  "title": "富云 HIS · 视觉世界决策",
+  "question": "骰子指派了「刷手服青绿」。保留它、选一张挑战者、选类别标准，或重掷。",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "刷手服青绿 Scrub",
+      "kicker": "THE ROLL",
+      "lineage": "手术室刷手服与器械台的色彩规程",
+      "thesis": "全院穿进临床职业色——刷手青绿承载壳层，白大褂白承载工作面，让「蓝色 admin」退场。",
+      "palette": ["#0F766E", "#14B8A6", "#FAFAF9", "#FFB000", "#B00020"],
+      "materials": ["哑光织物青绿", "白瓷面板", "1px 发丝缝"],
+      "viewport": "左侧 240px 刷手青绿导轨＝岗位工作台导航（医生/护士/药师/收费员/设备科，切岗即切组）；顶栏白瓷条载全局患者检索与告警铃；首页上排四枚体征卡（候诊/在床/待审/告警——tabular 数字＋左缘状态色带），下排待办医嘱表与 STOMP 实时事件流；签名动效「体征脉冲」住在体征数字上。",
+      "risk": "青绿大面积误用会滑向「消毒水」观感；壳色上的白字对比度必须钉在 4.5:1 以上。",
+      "raised": [
+        {
+          "from": "challenger-splitflap",
+          "raise": "实时数字变更做一次逐位翻动级联（仅 transform，reduced-motion 直切）；行灯语义并入状态色带——琥珀＝延迟、红＝停用，网格永不因状态移动。"
+        },
+        {
+          "from": "challenger-darkconsole",
+          "raise": "面板以 1px 发丝缝分割取代投影；破坏性操作强制孤立留白、保持描边态直至聚焦。"
+        },
+        {
+          "from": "challenger-centrerail",
+          "raise": "全站分隔线与刻度按 1 设备像素绘制——高 DPI 不糊、缩放重排不糊。"
+        },
+        {
+          "from": "challenger-verticalfeed",
+          "raise": "弹层与抽屉用硬 snap 开合，杜绝半开中间态。"
+        }
+      ],
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "岗位导轨", "x": 0, "y": 0, "w": 2, "h": 10, "accent": true },
+          { "label": "顶栏·检索/告警", "x": 2, "y": 0, "w": 10, "h": 1 },
+          { "label": "体征卡×4", "x": 2, "y": 1, "w": 10, "h": 2 },
+          { "label": "待办医嘱表", "x": 2, "y": 3, "w": 6, "h": 7 },
+          { "label": "实时事件流", "x": 8, "y": 3, "w": 4, "h": 7 }
+        ]
+      }
+    },
+    {
+      "id": "model-pick",
+      "label": "院区导视 Wayfinding",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "三甲医院建筑导视——科室牌、楼层色带、吊牌箭头",
+      "thesis": "把「3 秒找到科室」的导视法则搬进软件——岗位即楼层、业务域即科室牌，菜单重组获得原生隐喻。",
+      "palette": ["#0E7490", "#F8F7F4", "#1C1917", "#F59E0B"],
+      "materials": ["拉丝铝牌面", "大号楼层数字", "分区色带"],
+      "viewport": "顶部一条横向「楼层色带」承载岗位导航（大标签＋编号），左侧科室牌列表做二级导航；首页以大号数字牌呈现体征，签名动效「路径箭头」在页面切换时推进指示。",
+      "risk": "本类别最易被猜中的落点——医疗产品人人想做导视；执行不坚决就滑向景点导视模仿。",
+      "case": "最直接命中「菜单胡乱排列」痛点——IA 重组即导视重组；天花板高，但熟悉感也最高。",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "楼层色带·岗位", "x": 0, "y": 0, "w": 12, "h": 2, "accent": true },
+          { "label": "科室牌列表", "x": 0, "y": 2, "w": 3, "h": 8 },
+          { "label": "大号数字牌", "x": 3, "y": 2, "w": 9, "h": 4 },
+          { "label": "工作表区", "x": 3, "y": 6, "w": 9, "h": 4 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-splitflap",
+      "label": "翻牌班次板 Split-Flap",
+      "verdict": "competitive",
+      "lineage": "车站翻牌班次板与医院叫号屏",
+      "thesis": "全院实时状态是一块班次板——行是实体、列永不移动、变化逐字翻动。",
+      "palette": ["#0B0B0B", "#F2F2F2", "#FFB000", "#B00020"],
+      "materials": ["哑黑翻牌面", "拉丝钢框", "琥珀行灯"],
+      "viewport": "深色壳：主工作区是一块持续翻动的实时板（候诊/床位/告警固定列网格，状态改行不改格），左侧窄钢轨做岗位导航；签名动效＝逐字级联翻转。",
+      "case": "实时推送机制的绝佳具象，认同与清晰度双强；输在全天阅读工效与常驻动画的性能/可及税。",
+      "risk": "深色全天工效存疑；reduced-motion 下级联必须直切——签名动效在无障碍模式下自残。",
+      "hero": "https://impeccable.style/worlds/cards/signals-instruments-split-flap-concourse-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/signals-instruments-split-flap-concourse.webp",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "钢轨岗位导航", "x": 0, "y": 0, "w": 2, "h": 10, "accent": true },
+          { "label": "实时翻牌板", "x": 2, "y": 0, "w": 10, "h": 8 },
+          { "label": "筛选/操作条", "x": 2, "y": 8, "w": 10, "h": 2 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-darkconsole",
+      "label": "石墨控制台 Graphite",
+      "verdict": "competitive",
+      "lineage": "深色开发者控制台与 DICOM 阅片暗室",
+      "thesis": "石墨底、发丝缝分割、语法化状态色——给全天操作一个不刺眼的暗室。",
+      "palette": ["#0D1117", "#151A22", "#262C36", "#79C0FF"],
+      "materials": ["石墨面板", "1px 发丝缝", "钢面材质"],
+      "viewport": "石墨底三栏：窄轨岗位导航 / 中央工作区（体征卡＋医嘱表）/ 右缘实时事件流，面板全以发丝缝分割；破坏性操作孤立；签名动效＝面板单轴展开。",
+      "case": "医生阅片暗室认同强、破坏隔离纪律极佳；输在门诊白日环境与三端统一（大屏已暗色，工作站再暗则两端失衡）。",
+      "risk": "明亮门诊与打印/截图场景失效；全站深色对老花医护不友好。",
+      "hero": "https://impeccable.style/worlds/cards/digital-design-canon-dark-first-developer-console-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/digital-design-canon-dark-first-developer-console.webp",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "窄轨岗位导航", "x": 0, "y": 0, "w": 2, "h": 10, "accent": true },
+          { "label": "中央工作区", "x": 2, "y": 0, "w": 7, "h": 10 },
+          { "label": "实时事件流", "x": 9, "y": 0, "w": 3, "h": 10 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-centrerail",
+      "label": "中央索引轨评注版",
+      "verdict": "declined",
+      "lineage": "评注版经典（校勘本）排版",
+      "palette": ["#1C1917", "#F5F0E6", "#B91C1C"],
+      "materials": ["铁黑墨", "朱红索引轨", "无涂布纸"],
+      "viewport": "双栏小字文书绕中央朱红索引轨，批注悬于宽余白。",
+      "case": "融合不佳——中央索引轨是文书导航语法，硬套工作站壳伤任务清晰度；更适合未来的电子病历文书界面。",
+      "kept": "「刻线不糊」纪律已并入指派方向。",
+      "hero": "https://impeccable.style/worlds/cards/rw-centre-rail-reference-setting-hero.webp"
+    }
+  ],
+  "reroll": {
+    "registers": ["safer", "bolder"]
+  },
+  "buildPath": {
+    "value": "code",
+    "toggle": false
+  },
+  "canon": true,
+  "canonCard": {
+    "label": "类别标准",
+    "thesis": "这个类别一贯交付的样子——蓝白企业 admin——用最高工艺正直执行到底。",
+    "palette": ["#FFFFFF", "#111827", "#2563EB"],
+    "materials": ["干净网格", "组件库主题化"],
+    "viewport": "访客预期的标准排布：侧栏＋卡片＋表格，工艺拉满。",
+    "risk": "以设计与竞品无法区分。"
+  },
+  "steer": true
+}

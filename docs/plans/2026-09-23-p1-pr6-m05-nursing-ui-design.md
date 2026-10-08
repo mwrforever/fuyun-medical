@@ -1,5 +1,7 @@
 # PR-6 M05 护理模块 · 前端 UI 设计规范
 
+> ⚠ **已废弃（2026-10-08 用户裁决「废弃 spec，标记后续按照 impeccable 的设计流程来实现」）**：本文整体废弃（连同其引用的 PR-5 设计文档通用地基一并失效），不再作为任何 UI 实现的设计权威，仅供历史证据与反参照保留。现行设计唯一依据：根目录 `DESIGN.md` + surface brief 方向契约 + `.impeccable/mocks/paper-chart/` 样稿（构图权威）；执行编排见 `docs/prompt/2026-10-08-graph-批次2纸质病案全站换血.md`（裁决留痕：根 `CHANGELOG.md` 2026-10-08 批次 2 立项 P0 条目）。
+
 > **文档定位**：PR-6 计划（M05 护理模块）Task 12 前端任务的**唯一视觉与交互权威**，覆盖护士站页（`/nursing/ward`）与 PDA 页（`/pda`）两页及体温单符号渲染规范。SDD 实现者按本文落码，spec 断言值以本文冻结契约（§5.3 符号类名、§3 区块类名）为准。
 > **增量规范**：PR-5 设计文档（`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md`）§2–§7 为通用地基（token 四文件、布局栅格、交互三态、动效参数、性能红线），**冲突以本文件为准**。本文不重复定义任何 PR-5 既有 token / 工具类 / keyframes，只做增量声明。
 > **约束来源**：全局 `~/.zcode/AGENTS.md` + `web/AGENTS.md` + M05 Spec（`docs/specs/modules/05-nursing.md`，体温单符号以 Spec §2 调研依据 2 与调研依据 6 为**内容唯一权威**）。

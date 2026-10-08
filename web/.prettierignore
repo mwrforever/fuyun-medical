@@ -12,3 +12,5 @@ packages/shared/src/api.d.ts
 api-docs.json
 # 维护型文档（宪法 AGENTS.md 等）为手工维护，排除格式门禁避免重排 churn；格式门禁只管代码
 *.md
+# 浏览器调试会话运行态（.gitignore 同源排除；本地验证产生的快照 yml 不参与格式门禁）
+.playwright-cli/

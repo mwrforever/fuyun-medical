@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>首页 · 富云医护工作站（纸质病案样稿）</title>
+<link rel="stylesheet" href="./paper-chart.css">
+</head>
+<body>
+
+<!-- 壳层：蓝黑墨书脊导轨 · 树形菜单（批次2 册1 契约 §3：9 分组+34 项全量，
+     图标为 @element-plus/icons-vue 2.3.2 包内真实 SVG path 内联，组图标与项图标不重名） -->
+<!-- 收起开关：隐藏复选驱动纯 CSS 展开 240px ↔ 收起 64px 图标条，宽度瞬切零动画 -->
+<input type="checkbox" id="rail-fold" class="rail-fold" tabindex="-1" aria-hidden="true">
+<aside class="rail rail--tree">
+  <div class="brand"><span class="brand-mark brand-mark--full">富云</span><span class="brand-mark brand-mark--fold">富</span></div>
+  <nav class="tree" aria-label="主导航">
+    <a class="tree-leaf tree-leaf--top" href="./home.html" aria-current="page" data-fullname="首页"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 128 128 447.936V896h255.936V640H640v256h255.936V447.936z"/></svg><span class="tree-leaf-name">首页</span></a>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-0" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 512a192 192 0 1 0 0-384 192 192 0 0 0 0 384m0 64a256 256 0 1 1 0-512 256 256 0 0 1 0 512m320 320v-96a96 96 0 0 0-96-96H288a96 96 0 0 0-96 96v96a32 32 0 1 1-64 0v-96a160 160 0 0 1 160-160h448a160 160 0 0 1 160 160v96a32 32 0 1 1-64 0"/></svg><span class="tree-group-name">患者管理</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="患者管理">
+        <li><a class="tree-leaf" href="./form-management.html" data-fullname="患者建档"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M832 384H576V128H192v768h640zm-26.496-64L640 154.496V320zM160 64h480l256 256v608a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32m320 512V448h64v128h128v64H544v128h-64V640H352v-64z"/></svg><span class="tree-leaf-name">患者建档</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="患者检索"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="m795.904 750.72 124.992 124.928a32 32 0 0 1-45.248 45.248L750.656 795.904a416 416 0 1 1 45.248-45.248zM480 832a352 352 0 1 0 0-704 352 352 0 0 0 0 704"/></svg><span class="tree-leaf-name">患者检索</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-1" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M192 256a64 64 0 0 0-64 64v448a64 64 0 0 0 64 64h640a64 64 0 0 0 64-64V320a64 64 0 0 0-64-64zm0-64h640a128 128 0 0 1 128 128v448a128 128 0 0 1-128 128H192A128 128 0 0 1 64 768V320a128 128 0 0 1 128-128"/><path d="M544 512h96a32 32 0 0 1 0 64h-96v96a32 32 0 0 1-64 0v-96h-96a32 32 0 0 1 0-64h96v-96a32 32 0 0 1 64 0zM352 128v64h320v-64zm-32-64h384a32 32 0 0 1 32 32v128a32 32 0 0 1-32 32H320a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32"/></svg><span class="tree-group-name">门诊服务</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="门诊服务">
+        <li><a class="tree-leaf" href="#" data-fullname="挂号收费"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M192 128v768h640V128zm-32-64h704a32 32 0 0 1 32 32v832a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32m160 448h384v64H320zm0-192h192v64H320zm0 384h384v64H320z"/></svg><span class="tree-leaf-name">挂号收费</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="分诊台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 896a384 384 0 1 0 0-768 384 384 0 0 0 0 768m0 64a448 448 0 1 1 0-896 448 448 0 0 1 0 896"/><path d="M725.888 315.008C676.48 428.672 624 513.28 568.576 568.64c-55.424 55.424-139.968 107.904-253.568 157.312a12.8 12.8 0 0 1-16.896-16.832c49.536-113.728 102.016-198.272 157.312-253.632 55.36-55.296 139.904-107.776 253.632-157.312a12.8 12.8 0 0 1 16.832 16.832"/></svg><span class="tree-leaf-name">分诊台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="门诊医生站"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="m199.04 672.64 193.984 112 224-387.968-193.92-112-224 388.032zm-23.872 60.16 32.896 148.288 144.896-45.696zM455.04 229.248l193.92 112 56.704-98.112-193.984-112zM104.32 708.8l384-665.024 304.768 175.936L409.152 884.8h.064l-248.448 78.336zm384 254.272v-64h448v64z"/></svg><span class="tree-leaf-name">门诊医生站</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-2" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M640 288h-64V128H128v704h384v32a32 32 0 0 0 32 32H96a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32h512a32 32 0 0 1 32 32z"/><path d="M128 320v512h768V320zm-32-64h832a32 32 0 0 1 32 32v576a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V288a32 32 0 0 1 32-32"/><path d="M704 640a64 64 0 1 1 0-128 64 64 0 0 1 0 128"/></svg><span class="tree-group-name">收费管理</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="收费管理">
+        <li><a class="tree-leaf" href="#" data-fullname="划价结算"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M224 318.336V896h576V318.336L552.512 115.84a64 64 0 0 0-81.024 0zM593.024 66.304l259.2 212.096A32 32 0 0 1 864 303.168V928a32 32 0 0 1-32 32H192a32 32 0 0 1-32-32V303.168a32 32 0 0 1 11.712-24.768l259.2-212.096a128 128 0 0 1 162.112 0"/><path d="M512 448a64 64 0 1 0 0-128 64 64 0 0 0 0 128m0 64a128 128 0 1 1 0-256 128 128 0 0 1 0 256"/></svg><span class="tree-leaf-name">划价结算</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="退费审批"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M224 704h576V318.336L552.512 115.84a64 64 0 0 0-81.024 0L224 318.336zm0 64v128h576V768zM593.024 66.304l259.2 212.096A32 32 0 0 1 864 303.168V928a32 32 0 0 1-32 32H192a32 32 0 0 1-32-32V303.168a32 32 0 0 1 11.712-24.768l259.2-212.096a128 128 0 0 1 162.112 0"/><path d="M512 448a64 64 0 1 0 0-128 64 64 0 0 0 0 128m0 64a128 128 0 1 1 0-256 128 128 0 0 1 0 256"/></svg><span class="tree-leaf-name">退费审批</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="一日清单"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M704 192h160v736H160V192h160v64h384zM288 512h448v-64H288zm0 256h448v-64H288zm96-576V96h256v96z"/></svg><span class="tree-leaf-name">一日清单</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-3" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M317.056 128 128 344.064V896h768V344.064L706.944 128zm-14.528-64h418.944a32 32 0 0 1 24.064 10.88l206.528 236.096A32 32 0 0 1 960 332.032V928a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V332.032a32 32 0 0 1 7.936-21.12L278.4 75.008A32 32 0 0 1 302.528 64"/><path d="M64 320h896v64H64z"/><path d="M448 327.872V640h128V327.872L526.08 128h-28.16zM448 64h128l64 256v352a32 32 0 0 1-32 32H416a32 32 0 0 1-32-32V320z"/></svg><span class="tree-group-name">药房管理</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="药房管理">
+        <li><a class="tree-leaf" href="#" data-fullname="药品字典"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="m512 863.36 384-54.848v-638.72L525.568 222.72a96 96 0 0 1-27.136 0L128 169.792v638.72zM137.024 106.432l370.432 52.928a32 32 0 0 0 9.088 0l370.432-52.928A64 64 0 0 1 960 169.792v638.72a64 64 0 0 1-54.976 63.36l-388.48 55.488a32 32 0 0 1-9.088 0l-388.48-55.488A64 64 0 0 1 64 808.512v-638.72a64 64 0 0 1 73.024-63.36"/><path d="M480 192h64v704h-64z"/></svg><span class="tree-leaf-name">药品字典</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="发药工作台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M704 288h131.072a32 32 0 0 1 31.808 28.8L886.4 512h-64.384l-16-160H704v96a32 32 0 1 1-64 0v-96H384v96a32 32 0 0 1-64 0v-96H217.92l-51.2 512H512v64H131.328a32 32 0 0 1-31.808-35.2l57.6-576a32 32 0 0 1 31.808-28.8H320v-22.336C320 154.688 405.504 64 512 64s192 90.688 192 201.664v22.4zm-64 0v-22.336C640 189.248 582.272 128 512 128s-128 61.248-128 137.664v22.4h256zm201.408 483.84L768 698.496V928a32 32 0 1 1-64 0V698.496l-73.344 73.344a32 32 0 1 1-45.248-45.248l128-128a32 32 0 0 1 45.248 0l128 128a32 32 0 1 1-45.248 45.248"/></svg><span class="tree-leaf-name">发药工作台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="退药受理"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M832 384H192v448h640zM96 320h832V128H96zm800 64v480a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V384H64a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32h896a32 32 0 0 1 32 32v256a32 32 0 0 1-32 32zM416 512h192a32 32 0 0 1 0 64H416a32 32 0 0 1 0-64"/></svg><span class="tree-leaf-name">退药受理</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="住院审方台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M805.504 320 640 154.496V320zM832 384H576V128H192v768h640zM160 64h480l256 256v608a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32m318.4 582.144 180.992-180.992L704.64 510.4 478.4 736.64 320 578.304l45.248-45.312z"/></svg><span class="tree-leaf-name">住院审方台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="住院摆药台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M368 833c-13.3 0-24.5 4.5-33.5 13.5S321 866.7 321 880s4.5 24.5 13.5 33.5 20.2 13.8 33.5 14.5c13.3-.7 24.5-5.5 33.5-14.5S415 893.3 415 880s-4.5-24.5-13.5-33.5S381.3 833 368 833m439-193c7.4 0 13.8-2.2 19.5-6.5S836 623.3 838 616l112-448c2-10-.2-19.2-6.5-27.5S929 128 919 128H96c-9.3 0-17 3-23 9s-9 13.7-9 23 3 17 9 23 13.7 9 23 9h96v576h672c9.3 0 17-3 23-9s9-13.7 9-23-3-17-9-23-13.7-9-23-9H256v-64zM256 192h622l-96 384H256zm432 641c-13.3 0-24.5 4.5-33.5 13.5S641 866.7 641 880s4.5 24.5 13.5 33.5 20.2 13.8 33.5 14.5c13.3-.7 24.5-5.5 33.5-14.5S735 893.3 735 880s-4.5-24.5-13.5-33.5S701.3 833 688 833"/></svg><span class="tree-leaf-name">住院摆药台</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-4" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M192 128v768h640V128zm-32-64h704a32 32 0 0 1 32 32v832a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32"/><path d="M672 128h64v768h-64zM96 192h128q32 0 32 32t-32 32H96q-32 0-32-32t32-32m0 192h128q32 0 32 32t-32 32H96q-32 0-32-32t32-32m0 192h128q32 0 32 32t-32 32H96q-32 0-32-32t32-32m0 192h128q32 0 32 32t-32 32H96q-32 0-32-32t32-32"/></svg><span class="tree-group-name">护理管理</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="护理管理">
+        <li><a class="tree-leaf" href="#" data-fullname="护士站"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 64a64 64 0 0 1 64 64v64H448v-64a64 64 0 0 1 64-64"/><path d="M256 768h512V448a256 256 0 1 0-512 0zm256-640a320 320 0 0 1 320 320v384H192V448a320 320 0 0 1 320-320"/><path d="M96 768h832q32 0 32 32t-32 32H96q-32 0-32-32t32-32m352 128h128a64 64 0 0 1-128 0"/></svg><span class="tree-leaf-name">护士站</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="护理执行工作台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M280.768 753.728 691.456 167.04a32 32 0 1 1 52.416 36.672L314.24 817.472a32 32 0 0 1-45.44 7.296l-230.4-172.8a32 32 0 0 1 38.4-51.2zM736 448a32 32 0 1 1 0-64h192a32 32 0 1 1 0 64zM608 640a32 32 0 0 1 0-64h319.936a32 32 0 1 1 0 64zM480 832a32 32 0 1 1 0-64h447.936a32 32 0 1 1 0 64z"/></svg><span class="tree-leaf-name">护理执行工作台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="不良事件上报"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 64a448 448 0 1 1 0 896 448 448 0 0 1 0-896m0 832a384 384 0 0 0 0-768 384 384 0 0 0 0 768m48-176a48 48 0 1 1-96 0 48 48 0 0 1 96 0m-48-464a32 32 0 0 1 32 32v288a32 32 0 0 1-64 0V288a32 32 0 0 1 32-32"/></svg><span class="tree-leaf-name">不良事件上报</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="PDA 扫码"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M224 768v96.064a64 64 0 0 0 64 64h448a64 64 0 0 0 64-64V768zm0-64h576V160a64 64 0 0 0-64-64H288a64 64 0 0 0-64 64zm32 288a96 96 0 0 1-96-96V128a96 96 0 0 1 96-96h512a96 96 0 0 1 96 96v768a96 96 0 0 1-96 96zm304-144a48 48 0 1 1-96 0 48 48 0 0 1 96 0"/></svg><span class="tree-leaf-name">PDA 扫码</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-5" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M192 128v704h384V128zm-32-64h448a32 32 0 0 1 32 32v768a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V96a32 32 0 0 1 32-32"/><path d="M256 256h256v64H256zm0 192h256v64H256zm0 192h256v64H256zm384-128h128v64H640zm0 128h128v64H640zM64 832h896v64H64z"/><path d="M640 384v448h192V384zm-32-64h256a32 32 0 0 1 32 32v512a32 32 0 0 1-32 32H608a32 32 0 0 1-32-32V352a32 32 0 0 1 32-32"/></svg><span class="tree-group-name">住院管理</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="住院管理">
+        <li><a class="tree-leaf" href="#" data-fullname="入院登记台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M480 320h192c21.33 0 32-10.67 32-32s-10.67-32-32-32H480c-21.33 0-32 10.67-32 32s10.67 32 32 32"/><path d="M887.01 72.99C881.01 67 873.34 64 864 64H160c-9.35 0-17.02 3-23.01 8.99C131 78.99 128 86.66 128 96v832c0 9.35 2.99 17.02 8.99 23.01S150.66 960 160 960h704c9.35 0 17.02-2.99 23.01-8.99S896 937.34 896 928V96c0-9.35-3-17.02-8.99-23.01M192 896V128h96v768zm640 0H352V128h480z"/><path d="M480 512h192c21.33 0 32-10.67 32-32s-10.67-32-32-32H480c-21.33 0-32 10.67-32 32s10.67 32 32 32m0 192h192c21.33 0 32-10.67 32-32s-10.67-32-32-32H480c-21.33 0-32 10.67-32 32s10.67 32 32 32"/></svg><span class="tree-leaf-name">入院登记台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="病区床位图"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M640 384v256H384V384zm64 0h192v256H704zm-64 512H384V704h256zm64 0V704h192v192zm-64-768v192H384V128zm64 0h192v192H704zM320 384v256H128V384zm0 512H128V704h192zm0-768v192H128V128z"/></svg><span class="tree-leaf-name">病区床位图</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="住院医生站"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M389.44 768a96.064 96.064 0 0 1 181.12 0H896v64H570.56a96.064 96.064 0 0 1-181.12 0H128v-64zm192-288a96.064 96.064 0 0 1 181.12 0H896v64H762.56a96.064 96.064 0 0 1-181.12 0H128v-64zm-320-288a96.064 96.064 0 0 1 181.12 0H896v64H442.56a96.064 96.064 0 0 1-181.12 0H128v-64z"/></svg><span class="tree-leaf-name">住院医生站</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="转抄工作台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M768 832a128 128 0 0 1-128 128H192A128 128 0 0 1 64 832V384a128 128 0 0 1 128-128v64a64 64 0 0 0-64 64v448a64 64 0 0 0 64 64h448a64 64 0 0 0 64-64z"/><path d="M384 128a64 64 0 0 0-64 64v448a64 64 0 0 0 64 64h448a64 64 0 0 0 64-64V192a64 64 0 0 0-64-64zm0-64h448a128 128 0 0 1 128 128v448a128 128 0 0 1-128 128H384a128 128 0 0 1-128-128V192A128 128 0 0 1 384 64"/></svg><span class="tree-leaf-name">转抄工作台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="出院管理"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M922.5 229.5c-24.32-24.34-54.49-36.84-90.5-37.5H704v-64c-.68-17.98-7.02-32.98-19.01-44.99S658.01 64.66 640 64H384c-17.98.68-32.98 7.02-44.99 19.01S320.66 110 320 128v64H192c-35.99.68-66.16 13.18-90.5 37.5S64.66 283.99 64 320v448c.68 35.99 13.18 66.16 37.5 90.5s54.49 36.84 90.5 37.5h640c35.99-.68 66.16-13.18 90.5-37.5s36.84-54.49 37.5-90.5V320c-.68-35.99-13.18-66.16-37.5-90.5M384 128h256v64H384zM256 832h-64c-17.98-.68-32.98-7.02-44.99-19.01S128.66 786.01 128 768V448h128zm448 0H320V448h384zm192-64c-.68 17.98-7.02 32.98-19.01 44.99S850.01 831.34 832 832h-64V448h128zm0-384H128v-64c.69-17.98 7.02-32.98 19.01-44.99S173.99 256.66 192 256h640c17.98.69 32.98 7.02 44.99 19.01S895.34 301.99 896 320z"/></svg><span class="tree-leaf-name">出院管理</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-6" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M320 256a64 64 0 0 0-64 64v384a64 64 0 0 0 64 64h384a64 64 0 0 0 64-64V320a64 64 0 0 0-64-64zm0-64h384a128 128 0 0 1 128 128v384a128 128 0 0 1-128 128H320a128 128 0 0 1-128-128V320a128 128 0 0 1 128-128"/><path d="M512 64a32 32 0 0 1 32 32v128h-64V96a32 32 0 0 1 32-32m160 0a32 32 0 0 1 32 32v128h-64V96a32 32 0 0 1 32-32m-320 0a32 32 0 0 1 32 32v128h-64V96a32 32 0 0 1 32-32m160 896a32 32 0 0 1-32-32V800h64v128a32 32 0 0 1-32 32m160 0a32 32 0 0 1-32-32V800h64v128a32 32 0 0 1-32 32m-320 0a32 32 0 0 1-32-32V800h64v128a32 32 0 0 1-32 32M64 512a32 32 0 0 1 32-32h128v64H96a32 32 0 0 1-32-32m0-160a32 32 0 0 1 32-32h128v64H96a32 32 0 0 1-32-32m0 320a32 32 0 0 1 32-32h128v64H96a32 32 0 0 1-32-32m896-160a32 32 0 0 1-32 32H800v-64h128a32 32 0 0 1 32 32m0-160a32 32 0 0 1-32 32H800v-64h128a32 32 0 0 1 32 32m0 320a32 32 0 0 1-32 32H800v-64h128a32 32 0 0 1 32 32"/></svg><span class="tree-group-name">IoT 管理</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="IoT 管理">
+        <li><a class="tree-leaf" href="#" data-fullname="产品与物模型"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M128 384v448h768V384zm-32-64h832a32 32 0 0 1 32 32v512a32 32 0 0 1-32 32H96a32 32 0 0 1-32-32V352a32 32 0 0 1 32-32m64-128h704v64H160zm96-128h512v64H256z"/></svg><span class="tree-leaf-name">产品与物模型</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="设备管理"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 896a384 384 0 1 0 0-768 384 384 0 0 0 0 768m0 64a448 448 0 1 1 0-896 448 448 0 0 1 0 896"/><path d="M192 512a320 320 0 1 1 640 0 32 32 0 1 1-64 0 256 256 0 1 0-512 0 32 32 0 0 1-64 0"/><path d="M570.432 627.84A96 96 0 1 1 509.568 608l60.992-187.776A32 32 0 1 1 631.424 440l-60.992 187.776zM502.08 734.464a32 32 0 1 0 19.84-60.928 32 32 0 0 0-19.84 60.928"/></svg><span class="tree-leaf-name">设备管理</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="设备绑定"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M640 384v64H448a128 128 0 0 0-128 128v128a128 128 0 0 0 128 128h320a128 128 0 0 0 128-128V576a128 128 0 0 0-64-110.848V394.88c74.56 26.368 128 97.472 128 181.056v128a192 192 0 0 1-192 192H448a192 192 0 0 1-192-192V576a192 192 0 0 1 192-192z"/><path d="M384 640v-64h192a128 128 0 0 0 128-128V320a128 128 0 0 0-128-128H256a128 128 0 0 0-128 128v128a128 128 0 0 0 64 110.848v70.272A192.06 192.06 0 0 1 64 448V320a192 192 0 0 1 192-192h320a192 192 0 0 1 192 192v128a192 192 0 0 1-192 192z"/></svg><span class="tree-leaf-name">设备绑定</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="告警规则"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M512 832a320 320 0 1 0 0-640 320 320 0 0 0 0 640m0 64a384 384 0 1 1 0-768 384 384 0 0 1 0 768"/><path d="m292.288 824.576 55.424 32-48 83.136a32 32 0 1 1-55.424-32zm439.424 0-55.424 32 48 83.136a32 32 0 1 0 55.424-32zM512 512h160a32 32 0 1 1 0 64H480a32 32 0 0 1-32-32V320a32 32 0 0 1 64 0zM90.496 312.256A160 160 0 0 1 312.32 90.496l-46.848 46.848a96 96 0 0 0-128 128L90.56 312.256zm835.264 0A160 160 0 0 0 704 90.496l46.848 46.848a96 96 0 0 1 128 128z"/></svg><span class="tree-leaf-name">告警规则</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="命令中心"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="m64 448 832-320-128 704-446.08-243.328L832 192 242.816 545.472zm256 512V657.024L512 768z"/></svg><span class="tree-leaf-name">命令中心</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="联动规则"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M715.648 625.152 670.4 579.904l90.496-90.56c75.008-74.944 85.12-186.368 22.656-248.896-62.528-62.464-173.952-52.352-248.96 22.656L444.16 353.6l-45.248-45.248 90.496-90.496c100.032-99.968 251.968-110.08 339.456-22.656 87.488 87.488 77.312 239.424-22.656 339.456l-90.496 90.496zm-90.496 90.496-90.496 90.496C434.624 906.112 282.688 916.224 195.2 828.8c-87.488-87.488-77.312-239.424 22.656-339.456l90.496-90.496 45.248 45.248-90.496 90.56c-75.008 74.944-85.12 186.368-22.656 248.896 62.528 62.464 173.952 52.352 248.96-22.656l90.496-90.496zm0-362.048 45.248 45.248L398.848 670.4 353.6 625.152z"/></svg><span class="tree-leaf-name">联动规则</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="质量看板"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M128 896V128h768v768zm291.712-327.296 128 102.4 180.16-201.792-47.744-42.624-139.84 156.608-128-102.4-180.16 201.792 47.744 42.624zM816 352a48 48 0 1 0-96 0 48 48 0 0 0 96 0"/></svg><span class="tree-leaf-name">质量看板</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-7" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M544 768v128h192a32 32 0 1 1 0 64H288a32 32 0 1 1 0-64h192V768H192A128 128 0 0 1 64 640V256a128 128 0 0 1 128-128h640a128 128 0 0 1 128 128v384a128 128 0 0 1-128 128zM192 192a64 64 0 0 0-64 64v384a64 64 0 0 0 64 64h640a64 64 0 0 0 64-64V256a64 64 0 0 0-64-64z"/></svg><span class="tree-group-name">病区视图</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="病区视图">
+        <li><a class="tree-leaf" href="#" data-fullname="输液看板"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="m739.328 291.328-35.2-6.592-12.8-33.408a192.064 192.064 0 0 0-365.952 23.232l-9.92 40.896-41.472 7.04a176.32 176.32 0 0 0-146.24 173.568c0 97.28 78.72 175.936 175.808 175.936h400a192 192 0 0 0 35.776-380.672M959.552 480a256 256 0 0 1-256 256h-400A239.81 239.81 0 0 1 63.744 496.192a240.32 240.32 0 0 1 199.488-236.8 256.128 256.128 0 0 1 487.872-30.976A256.064 256.064 0 0 1 959.552 480M224 800a32 32 0 0 1 32 32v96a32 32 0 1 1-64 0v-96a32 32 0 0 1 32-32m192 0a32 32 0 0 1 32 32v96a32 32 0 1 1-64 0v-96a32 32 0 0 1 32-32m192 0a32 32 0 0 1 32 32v96a32 32 0 1 1-64 0v-96a32 32 0 0 1 32-32m192 0a32 32 0 0 1 32 32v96a32 32 0 1 1-64 0v-96a32 32 0 0 1 32-32"/></svg><span class="tree-leaf-name">输液看板</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="呼叫工作台"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M864 409.6a192 192 0 0 1-37.888 349.44A256.064 256.064 0 0 1 576 960h-96a32 32 0 1 1 0-64h96a192.06 192.06 0 0 0 181.12-128H736a32 32 0 0 1-32-32V416a32 32 0 0 1 32-32h32c10.368 0 20.544.832 30.528 2.432a288 288 0 0 0-573.056 0A193 193 0 0 1 256 384h32a32 32 0 0 1 32 32v320a32 32 0 0 1-32 32h-32a192 192 0 0 1-96-358.4 352 352 0 0 1 704 0M256 448a128 128 0 1 0 0 256zm640 128a128 128 0 0 0-128-128v256a128 128 0 0 0 128-128"/></svg><span class="tree-leaf-name">呼叫工作台</span></a></li>
+        <li><a class="tree-leaf" href="#" data-fullname="冷链台账"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M256 448h512V160a32 32 0 0 0-32-32H288a32 32 0 0 0-32 32zm0 64v352a32 32 0 0 0 32 32h448a32 32 0 0 0 32-32V512zm32-448h448a96 96 0 0 1 96 96v704a96 96 0 0 1-96 96H288a96 96 0 0 1-96-96V160a96 96 0 0 1 96-96m32 224h64v96h-64zm0 288h64v96h-64z"/></svg><span class="tree-leaf-name">冷链台账</span></a></li>
+      </ul>
+    </div>
+    <div class="tree-group">
+      <input type="checkbox" class="tree-fold" id="tfold-8" checked tabindex="-1" aria-hidden="true">
+      <button type="button" class="tree-group-head" aria-expanded="true"><svg class="tree-ico tree-ico--group" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M600.704 64a32 32 0 0 1 30.464 22.208l35.2 109.376c14.784 7.232 28.928 15.36 42.432 24.512l112.384-24.192a32 32 0 0 1 34.432 15.36L944.32 364.8a32 32 0 0 1-4.032 37.504l-77.12 85.12a357 357 0 0 1 0 49.024l77.12 85.248a32 32 0 0 1 4.032 37.504l-88.704 153.6a32 32 0 0 1-34.432 15.296L708.8 803.904c-13.44 9.088-27.648 17.28-42.368 24.512l-35.264 109.376A32 32 0 0 1 600.704 960H423.296a32 32 0 0 1-30.464-22.208L357.696 828.48a352 352 0 0 1-42.56-24.64l-112.32 24.256a32 32 0 0 1-34.432-15.36L79.68 659.2a32 32 0 0 1 4.032-37.504l77.12-85.248a357 357 0 0 1 0-48.896l-77.12-85.248A32 32 0 0 1 79.68 364.8l88.704-153.6a32 32 0 0 1 34.432-15.296l112.32 24.256c13.568-9.152 27.776-17.408 42.56-24.64l35.2-109.312A32 32 0 0 1 423.232 64H600.64zm-23.424 64H446.72l-36.352 113.088-24.512 11.968a294 294 0 0 0-34.816 20.096l-22.656 15.36-116.224-25.088-65.28 113.152 79.68 88.192-1.92 27.136a293 293 0 0 0 0 40.192l1.92 27.136-79.808 88.192 65.344 113.152 116.224-25.024 22.656 15.296a294 294 0 0 0 34.816 20.096l24.512 11.968L446.72 896h130.688l36.48-113.152 24.448-11.904a288 288 0 0 0 34.752-20.096l22.592-15.296 116.288 25.024 65.28-113.152-79.744-88.192 1.92-27.136a293 293 0 0 0 0-40.256l-1.92-27.136 79.808-88.128-65.344-113.152-116.288 24.96-22.592-15.232a288 288 0 0 0-34.752-20.096l-24.448-11.904L577.344 128zM512 320a192 192 0 1 1 0 384 192 192 0 0 1 0-384m0 64a128 128 0 1 0 0 256 128 128 0 0 0 0-256"/></svg><span class="tree-group-name">系统</span><i class="tree-caret" aria-hidden="true"></i></button>
+      <ul class="tree-list" data-group="系统">
+        <li><a class="tree-leaf" href="#" data-fullname="权限管理"><svg class="tree-ico" viewBox="0 0 1024 1024" fill="currentColor" aria-hidden="true"><path d="M448 456.064V96a32 32 0 0 1 32-32.064L672 64a32 32 0 0 1 0 64H512v128h160a32 32 0 0 1 0 64H512v128a256 256 0 1 1-64 8.064M512 896a192 192 0 1 0 0-384 192 192 0 0 0 0 384"/></svg><span class="tree-leaf-name">权限管理</span></a></li>
+      </ul>
+    </div>
+  </nav>
+</aside>
+
+<div class="main">
+  <header class="topbar">
+    <button class="nav-toggle" aria-label="折叠导航"><span></span><span></span><span></span></button>
+    <span class="crumb">首页</span>
+    <span class="site-name">富云医护工作站</span>
+    <div class="top-right">
+      <button class="text-btn">患者检索</button>
+      <button class="user-btn">系统管理员 <i class="caret"></i></button>
+    </div>
+  </header>
+
+  <main class="page page--dash">
+    <!-- 问候行：页级 2px 墨规收底（批次2 契约 §4：身份印已删，批注行=登录名 · 日期） -->
+    <section class="doc-head">
+      <h1 style="font-size: 20px; font-weight: 600;">上午好，系统管理员</h1>
+      <span class="doc-desc"><span class="note">登录名 admin · <time>2026-10-08 周四</time></span></span>
+    </section>
+
+    <!-- 指标带：真实业务域关键计数，直接坐在纸上，竖发丝分隔（非卡片）；
+         数据源均为已建后端能力：挂号收费 / 分诊台 / 发药工作台 / 护理执行 / 床位图 / IoT 设备管理 -->
+    <section class="stat-strip fuy-stagger" aria-label="全院关键指标">
+      <div class="stat" style="--fuy-stagger-index: 0;">
+        <span class="stat-label">今日挂号</span>
+        <span class="stat-value">1,284</span>
+        <span class="stat-delta">较昨日 +6.2%</span>
+      </div>
+      <div class="stat" style="--fuy-stagger-index: 1;">
+        <span class="stat-label">当前候诊</span>
+        <span class="stat-value">37</span>
+        <span class="stat-delta"><span class="zhu">Ⅰ级 2</span><span class="stamp stamp--solid stat-stamp">危</span></span>
+      </div>
+      <div class="stat" style="--fuy-stagger-index: 2;">
+        <span class="stat-label">待发药处方</span>
+        <span class="stat-value">34</span>
+        <span class="stat-delta">审方待复核 3</span>
+      </div>
+      <div class="stat" style="--fuy-stagger-index: 3;">
+        <span class="stat-label">待执行医嘱</span>
+        <span class="stat-value">21</span>
+        <span class="stat-delta">本班次</span>
+      </div>
+      <div class="stat" style="--fuy-stagger-index: 4;">
+        <span class="stat-label">在院患者</span>
+        <span class="stat-value">812</span>
+        <span class="stat-delta">床位占用 86.4%</span>
+      </div>
+      <div class="stat" style="--fuy-stagger-index: 5;">
+        <span class="stat-label">设备在线</span>
+        <span class="stat-value">296<span style="font-size: 15px; font-weight: 600; color: var(--fuy-ink-2);">/312</span></span>
+        <span class="stat-delta">离线 3 · 维修中 13</span>
+      </div>
+    </section>
+
+    <div class="dash-grid">
+      <!-- 主栏：体温单式趋势图（近 14 日门诊接诊，当期 vs 上周同期） -->
+      <div class="dash-main">
+        <section aria-label="门诊接诊趋势">
+          <div class="trend-head">
+            <h2 class="trend-title">门诊接诊 · 近 14 日</h2>
+            <span class="trend-legend"><i class="key"></i>当日</span>
+            <span class="trend-legend"><i class="key key--dashed"></i>上周同期</span>
+            <span class="note trend-note">周同比 +4.8%</span>
+          </div>
+          <svg class="trend-chart" viewBox="0 0 720 264" role="img"
+               aria-label="近 14 日门诊接诊趋势：当前 1284 人次，整体高于上周同期">
+            <!-- 纵参考值 -->
+            <text class="chart-reflabel" x="0" y="54">1600</text>
+            <text class="chart-reflabel" x="0" y="141">1200</text>
+            <text class="chart-reflabel" x="0" y="228">800</text>
+            <!-- 横向刻度纸格线（体温单语法） -->
+            <line class="chart-rule" x1="36" y1="50" x2="700" y2="50"/>
+            <line class="chart-ref"  x1="36" y1="137" x2="700" y2="137"/>
+            <line class="chart-rule" x1="36" y1="224" x2="700" y2="224"/>
+            <!-- 纵向淡格线（每 3 日） -->
+            <line class="chart-rule" x1="141.5" y1="44" x2="141.5" y2="224"/>
+            <line class="chart-rule" x1="243.1" y1="44" x2="243.1" y2="224"/>
+            <line class="chart-rule" x1="344.6" y1="44" x2="344.6" y2="224"/>
+            <line class="chart-rule" x1="446.2" y1="44" x2="446.2" y2="224"/>
+            <line class="chart-rule" x1="547.7" y1="44" x2="547.7" y2="224"/>
+            <line class="chart-rule" x1="649.2" y1="44" x2="649.2" y2="224"/>
+            <!-- 上周同期（灰墨虚线） -->
+            <polyline class="chart-line-comp"
+              points="40,178.3 90.8,160.9 141.5,193.6 192.3,141.4 243.1,130.5 293.8,150 344.6,137 395.4,169.6 446.2,119.6 496.9,132.7 547.7,152.3 598.5,145.8 649.2,126.2"/>
+            <!-- 当日（墨线） -->
+            <polyline class="chart-line-main"
+              points="40,163.1 90.8,147.9 141.5,184.9 192.3,128.3 243.1,113.1 293.8,139.2 344.6,124 395.4,160.9 446.2,104.4 496.9,119.6 547.7,141.4 598.5,132.7 649.2,113.1 700,118.7"/>
+            <circle cx="700" cy="118.7" r="3.5" fill="var(--fuy-ink)"/>
+            <text class="chart-val" x="700" y="102" text-anchor="end">1,284</text>
+            <!-- 日期刻度 -->
+            <text class="chart-tick" x="40" y="252">09-25</text>
+            <text class="chart-tick" x="192.3" y="252">09-28</text>
+            <text class="chart-tick" x="344.6" y="252">10-01</text>
+            <text class="chart-tick" x="496.9" y="252">10-04</text>
+            <text class="chart-tick" x="700" y="252" text-anchor="end">10-08</text>
+          </svg>
+        </section>
+        <!-- 全院流转一行（文书行内数字语法） -->
+        <p class="ward-line">今日入院 <b>42</b> · 今日出院 <b>35</b> · 预出院 <b>8</b> · 手术 <b>18</b> 台 · 输液中 <b>96</b> · 呼叫未接 <b>2</b></p>
+
+        <!-- 各诊区候诊：来自分诊台的实时队列（合计与指标带「当前候诊」严格对账） -->
+        <section style="margin-top: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--fuy-rule-strong);" aria-label="各诊区候诊">
+          <div class="trend-head">
+            <h2 class="trend-title">各诊区候诊 · 实时</h2>
+            <span class="note trend-note">更新于 10:42 · 来自分诊台</span>
+          </div>
+          <table class="fuy-table" style="margin-top: 6px;">
+            <thead>
+              <tr><th>诊区</th><th class="num-right">候诊</th><th class="num-right">Ⅰ级</th><th class="num-right">最长等待</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>内科诊区</td><td class="num-right">11</td><td class="num-right">—</td><td class="num-right">18 分</td></tr>
+              <tr><td>儿科诊区</td><td class="num-right">9</td><td class="num-right">—</td><td class="num-right">14 分</td></tr>
+              <tr><td>外科诊区</td><td class="num-right">8</td><td class="num-right">—</td><td class="num-right">11 分</td></tr>
+              <tr><td>骨科诊区</td><td class="num-right">5</td><td class="num-right">—</td><td class="num-right">9 分</td></tr>
+              <tr><td>急诊科</td><td class="num-right">4</td><td class="num-right" style="color: var(--fuy-zhu); font-weight: 600;">2</td><td class="num-right">4 分</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- 侧栏：实时事件流（STOMP 真实链路：/ws/iot 告警分发 + 业务域事件） -->
+      <aside class="dash-side">
+        <section aria-label="实时事件">
+          <div class="stream-head-row">
+            <h2 class="trend-title">实时事件</h2>
+            <span class="live"><i class="live-dot"></i>STOMP 已连接</span>
+          </div>
+          <div class="stream">
+            <div class="stream-item">
+              <time class="stream-time">10:42</time>
+              <div class="stream-body">
+                <div class="stream-meta">检验科 · 危急值<span class="stamp stamp--solid">危</span></div>
+                <p class="stream-text">血钾 6.8 mmol/L —— 消化内科 12 床 王建国（住院）</p>
+              </div>
+            </div>
+            <div class="stream-item">
+              <time class="stream-time">10:37</time>
+              <div class="stream-body">
+                <div class="stream-meta">输液看板</div>
+                <p class="stream-text">3F-12 床输液泵余量低于 15%，预告警</p>
+              </div>
+            </div>
+            <div class="stream-item">
+              <time class="stream-time">10:30</time>
+              <div class="stream-body">
+                <div class="stream-meta">分诊台<span class="stamp stamp--solid">危</span></div>
+                <p class="stream-text">门诊 Ⅰ级 1 名（胸痛），已入抢救室</p>
+              </div>
+            </div>
+            <div class="stream-item is-warning">
+              <time class="stream-time">10:21</time>
+              <div class="stream-body">
+                <div class="stream-meta">呼叫工作台</div>
+                <p class="stream-text">5F-08 床呼叫未应答已 2 分钟</p>
+              </div>
+            </div>
+            <div class="stream-item is-warning">
+              <time class="stream-time">10:15</time>
+              <div class="stream-body">
+                <div class="stream-meta">住院审方台</div>
+                <p class="stream-text">1 张处方存在相互作用待复核（华法林 + 阿司匹林）</p>
+              </div>
+            </div>
+            <div class="stream-item">
+              <time class="stream-time">10:04</time>
+              <div class="stream-body">
+                <div class="stream-meta">冷链台账</div>
+                <p class="stream-text">2 号药品冷藏柜温度 8.2℃ 越限，现已恢复</p>
+              </div>
+            </div>
+            <div class="stream-item">
+              <time class="stream-time">09:58</time>
+              <div class="stream-body">
+                <div class="stream-meta">护士站</div>
+                <p class="stream-text">3F 长期医嘱本班 12 条执行完成</p>
+              </div>
+            </div>
+            <div class="stream-item">
+              <time class="stream-time">09:45</time>
+              <div class="stream-body">
+                <div class="stream-meta">系统</div>
+                <p class="stream-text">昨日数据库备份校验通过</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 常用入口：紧凑链接条（来自 menu.ts 真实路由） -->
+        <section aria-label="常用入口">
+          <h2 class="trend-title">常用入口</h2>
+          <nav class="qn-grid">
+            <a class="qn-link" href="#"><span class="abbr">挂</span>挂号收费</a>
+            <a class="qn-link" href="#"><span class="abbr">分</span>分诊台</a>
+            <a class="qn-link" href="#"><span class="abbr">医</span>门诊医生站</a>
+            <a class="qn-link" href="#"><span class="abbr">发</span>发药工作台</a>
+            <a class="qn-link" href="#"><span class="abbr">护</span>护士站</a>
+            <a class="qn-link" href="#"><span class="abbr">床</span>病区床位图</a>
+            <a class="qn-link" href="./form-management.html"><span class="abbr">档</span>患者建档</a>
+            <a class="qn-link" href="#"><span class="abbr">查</span>患者检索</a>
+          </nav>
+        </section>
+      </aside>
+    </div>
+
+    <p class="mock-foot">设计样稿 ·「纸质病案」视觉世界 · 指标与事件均为按真实功能域编写的合成示例</p>
+  </main>
+</div>
+
+<script>
+  // 树形侧栏交互（样稿级极少量脚本，动画均由 CSS 瞬切承载）：
+  // 1) 顶栏开关翻转 #rail-fold，纯 CSS 完成 240px↔64px 换轨（零宽度过渡）；
+  // 2) 分组头按钮翻转各组隐藏复选（勾选=展开）并同步 aria-expanded（键盘可达）。
+  (function () {
+    document.querySelector('.nav-toggle').addEventListener('click', function () {
+      var fold = document.getElementById('rail-fold');
+      fold.checked = !fold.checked;
+    });
+    document.querySelectorAll('.tree-group-head').forEach(function (head) {
+      head.addEventListener('click', function () {
+        var fold = head.previousElementSibling;
+        fold.checked = !fold.checked;
+        head.setAttribute('aria-expanded', fold.checked ? 'true' : 'false');
+      });
+    });
+  })();
+</script>
+</body>
+</html>

@@ -1,5 +1,7 @@
-// 登录页单测（BRIEF-PR3-01 §4）：空表单提交被校验拦截、有效提交调用认证链路并跳转首页；
+// 登录页单测（BRIEF-PR3-01 §4 + 批次 2 册 1 契约 §2 纸墨门面）：空表单提交被校验拦截、
+// 有效提交调用认证链路并跳转首页、门面视觉锚点在位（品牌字标/请登录副题/墨规面板/双字段）；
 // api 层 mock 承载（不打真实网络），错误弹窗口径归 http.spec 覆盖，本文件不重复断言。
+// 视觉锚点只锚类名与文案（不绑 EP 内部结构，重构不破）；jsdom 不计算样式，墨规以承载类名锚定。
 // 注：beforeEach 预导航登录页（消除路由器安装期初始导航与用例交互的竞争），
 // 全文件共享单一 Pinia——守卫经挂载 app 上下文解析 store，逐用例换实例会割裂会话语义。
 import { mount } from '@vue/test-utils';
@@ -49,6 +51,22 @@ describe('登录页', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('渲染纸墨门面锚点与登录表单骨架（品牌字标/请登录副题/墨规面板/双字段）', () => {
+    const wrapper = mount(LoginView, { global: { plugins: [pinia, router] } });
+
+    // 品牌字标「富云」与「请登录」文案锚点（契约 §2，文案语义零漂移）
+    expect(wrapper.find('.login-brand').text()).toBe('富云');
+    expect(wrapper.find('.login-panel-title').text()).toBe('富云医院信息系统 · 请登录');
+
+    // 表单区为 2px 墨规收底的封面面板（.login-panel 承载墨规下缘，样式存在性以类名锚定）
+    expect(wrapper.find('.login-panel').exists()).toBe(true);
+
+    // 表单骨架：登录名/口令双字段 + 登录按钮
+    expect(wrapper.findAll('input')).toHaveLength(2);
+    expect(wrapper.find('button').text()).toBe('登录');
+    wrapper.unmount();
   });
 
   it('空表单提交被校验拦截，不触发登录调用', async () => {

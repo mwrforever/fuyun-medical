@@ -196,22 +196,9 @@
   outline-color: #ffffff;
 }
 
-/* 分组标题：xs/600、letter-spacing 1px、书脊弱字纸纱（EP 默认口径偏大偏散，收编压紧） */
-.fuy-menu .el-menu-item-group__title {
-  font-size: var(--fuy-font-size-xs);
-  font-weight: 600;
-  letter-spacing: 1px;
-  color: var(--fuy-shell-dim);
-}
-
-/* 折叠态隐藏分组标题：64px 宽度下四字标题竖排不可读，分组语义由菜单项缩写承接 */
-.fuy-menu.el-menu--collapse .el-menu-item-group__title {
-  display: none;
-}
-
-/* 折叠态单字缩写严格居中（折叠态缩略形态）：EP 折叠项默认左 padding 使单字在 64px 项宽内
-   偏左，归零后水平居中交由 justify-content 承担——.el-menu-item 是 flex 容器，匿名文本项
-   参与 flex 分布，text-align 对其无效（终审 P1 实测字位左坠的根因） */
+/* 收起态顶层项图标严格居中（收起态缩略形态，现渲染 el-icon+#title tooltip 全名）：EP 折叠项
+   默认左 padding 使图标在 64px 项宽内偏左，归零后水平居中交由 justify-content 承担——
+   .el-menu-item 是 flex 容器，图标作为 flex 子项参与分布，text-align 对其无效 */
 .fuy-menu.el-menu--collapse .el-menu-item {
   padding: 0;
   justify-content: center;
@@ -249,6 +236,58 @@
 .fuy-menu-brand.is-fold {
   letter-spacing: 0;
   padding: 0 8px;
+}
+
+/* ===== 收起态弹层收编（全局层：EP 弹层 teleported 至 body，组件 scoped 无法触达；
+   2026-10-08 批次 2 审查修复自 AppSidebar.vue 非 scoped 块迁入，消费方仅 AppSidebar）=====
+   仅以 .fuy-tree-popper 挂类前缀组合选择器覆盖（.fuy-snap-popper 同款先例，非裸改 .el-*），
+   色值全部引用既有 token，零新色值 */
+
+/* 弹层与 tooltip 瞬切零动画（契约 §3 铁律）：压制 EP tooltip 淡入（el-fade-in-linear）
+   与收起态组弹层缩放过渡（el-zoom-in-left），出现/离开均直切 */
+.fuy-tree-popper.el-fade-in-linear-enter-active,
+.fuy-tree-popper.el-fade-in-linear-leave-active,
+.fuy-tree-popper.el-zoom-in-left-enter-active,
+.fuy-tree-popper.el-zoom-in-left-leave-active {
+  transition: none;
+}
+
+/* 收起态组弹层（EP 内建 popover）落纸墨世界（样稿 .tree-list 收起态同构）：176px 最小宽
+   + 6px 内边距；底色/圆角/阴影走 EP 已映射值（卡面亮纸白 #fdfcf8 + 4px + 唯一阴影） */
+.fuy-tree-popper .el-menu--popup {
+  min-width: 176px;
+  padding: var(--fuy-space-1) var(--fuy-space-1);
+  /* 悬停底/文字色经 EP 变量通道注入纸面族（弹层不在 .fuy-menu 下，变量需就地下发）；
+     底色同须就地下发——EP .el-menu 走 --el-menu-bg-color（:root 默认纯白
+     --el-fill-color-blank）绕过 --el-bg-color-overlay 映射，不补则弹层内菜单白底直出 */
+  --el-menu-hover-bg-color: var(--fuy-palette-gray-50);
+  --el-menu-text-color: var(--fuy-color-text-emphasis);
+  --el-menu-bg-color: var(--fuy-surface-card);
+}
+
+/* 弹层浮起阴影（DESIGN「唯一阴影给弹层」，样稿浮层/tooltip 均带同源阴影）：EP 2.14.5
+   popper 本体无 box-shadow 规则（只有背景+1px 描边），浮起层级感缺失，补唯一阴影
+   token；组弹层与收起态 tooltip 全名弹层同语法（样稿「弹层语法与浮层一致」） */
+.fuy-tree-popper.el-popper {
+  box-shadow: var(--fuy-shadow-md);
+}
+
+/* 弹层叶项密排（样稿 34px/13px/400 墨字同构）：弹层长在纸上非墨脊，文字用浓墨 */
+.fuy-tree-popper .el-menu--popup .el-menu-item {
+  height: 34px;
+  padding: 0 var(--fuy-space-2) 0 var(--fuy-space-3);
+  margin: 0;
+  border-radius: var(--fuy-radius-sm);
+  font-size: var(--fuy-font-size-sm);
+  line-height: 34px;
+}
+
+/* 弹层选中叶项：墨洗纸底 + 墨字 600（墨洗防「朱=危急」语义误读；药丸反白是墨脊上的
+   语法，纸面上选中用墨洗底，样稿 #e9e7de 同值） */
+.fuy-tree-popper .el-menu--popup .el-menu-item.is-active {
+  background: var(--fuy-palette-brand-100);
+  color: var(--fuy-color-text-emphasis);
+  font-weight: 600;
 }
 
 /* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */

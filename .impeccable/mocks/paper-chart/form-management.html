@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>患者建档 · 富云医护工作站（纸质病案样稿）</title>
+<link rel="stylesheet" href="./paper-chart.css">
+</head>
+<body>
+
+<!-- 壳层：蓝黑墨书脊导轨 -->
+<aside class="rail">
+  <div class="brand"><span class="brand-mark">富云</span></div>
+  <div class="posts" role="group" aria-label="岗位切换">
+    <button class="post-chip" aria-pressed="true">全部</button>
+    <button class="post-chip" aria-pressed="false">医生</button>
+    <button class="post-chip" aria-pressed="false">护士</button>
+    <button class="post-chip" aria-pressed="false">药师</button>
+    <button class="post-chip" aria-pressed="false">收费员</button>
+    <button class="post-chip" aria-pressed="false">设备科</button>
+  </div>
+  <nav class="menu">
+    <div class="menu-group-title">常用</div>
+    <a class="menu-item" href="./home.html">首页</a>
+    <div class="menu-group-title">患者管理</div>
+    <a class="menu-item" href="./form-management.html" aria-current="page">患者建档</a>
+    <a class="menu-item" href="#">患者检索</a>
+    <div class="menu-group-title">门诊服务</div>
+    <a class="menu-item" href="#">挂号收费</a>
+    <a class="menu-item" href="#">分诊台</a>
+    <a class="menu-item" href="#">门诊医生站</a>
+    <div class="menu-group-title">药房管理</div>
+    <a class="menu-item" href="#">药品字典</a>
+    <a class="menu-item" href="#">发药工作台</a>
+    <div class="menu-group-title">护理管理</div>
+    <a class="menu-item" href="#">护士站</a>
+    <a class="menu-item" href="#">执行工作台</a>
+  </nav>
+</aside>
+
+<div class="main">
+  <header class="topbar">
+    <button class="nav-toggle" aria-label="折叠导航"><span></span><span></span><span></span></button>
+    <span class="crumb">患者管理 / 患者建档</span>
+    <span class="site-name">富云医护工作站</span>
+    <div class="top-right">
+      <button class="text-btn">患者检索</button>
+      <button class="user-btn">系统管理员 <i class="caret"></i></button>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- 门牌页首：标题 + 模块编码 + 一行说明，页级 2px 墨规收底 -->
+    <section class="doc-head">
+      <h2>患者建档管理</h2>
+      <span class="doc-code">FU-M02 · 患者管理</span>
+      <span class="doc-desc">建档后证件号不可修改；证件号 / 手机号脱敏展示</span>
+    </section>
+
+    <!-- 工具条：检索是工具，不是页面主体 -->
+    <section class="card toolbar">
+      <input class="input" type="text" placeholder="姓名 / 证件号 / 手机号" aria-label="检索患者">
+      <span class="select" role="button" tabindex="0" aria-label="状态筛选">状态：全部 <i class="caret"></i></span>
+      <button class="btn btn--ink">查询</button>
+      <button class="btn btn--ghost">重置</button>
+      <span class="toolbar-spacer"></span>
+      <button class="btn btn--outline">新建患者</button>
+    </section>
+
+    <!-- 状态图例：色标永不单独承义，固定位置可查 -->
+    <section class="card legend">
+      <span class="legend-title">状态图例</span>
+      <span class="legend-item"><span class="state-dot">在档</span></span>
+      <span class="legend-item"><span class="tag tag--amber">冻结</span></span>
+      <span class="legend-item"><span class="struck">注销</span>&nbsp;<span class="stamp">销</span></span>
+      <span class="legend-item"><span class="stamp stamp--solid">敏</span>&nbsp;过敏标识</span>
+    </section>
+
+    <!-- 病历纸密排表格：危急/异常以印章与批注表达，批注必带「谁 · 何时」 -->
+    <section class="card table-wrap">
+      <table class="fuy-table">
+        <thead>
+          <tr>
+            <th>姓名</th><th>性别</th><th class="num-right">年龄</th><th>证件号（脱敏）</th><th>手机号（脱敏）</th><th>状态</th><th class="cell-note">批注</th><th class="th-sort" aria-sort="descending">建档时间 <i class="sort-caret"></i></th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="cell-name">张伟</td><td>男</td><td class="fuy-num num-right">34</td><td class="fuy-num">3301**********03X</td><td class="fuy-num">138****6721</td>
+            <td><span class="state-dot">在档</span></td>
+            <td class="cell-note note">—</td>
+            <td class="fuy-num">2026-03-12 09:24</td>
+            <td><button class="op-link">编辑</button><button class="op-link">履历</button></td>
+          </tr>
+          <tr>
+            <td class="cell-name">李慧如</td><td>女</td><td class="fuy-num num-right">28</td><td class="fuy-num">3301**********226</td><td class="fuy-num">139****0418</td>
+            <td><span class="state-dot">在档</span>&nbsp;<span class="stamp stamp--solid">敏</span></td>
+            <td class="cell-note note">青霉素过敏 · <time>2025-11-02</time> 王慧（护士长）</td>
+            <td class="fuy-num">2025-11-02 15:47</td>
+            <td><button class="op-link">编辑</button><button class="op-link">履历</button></td>
+          </tr>
+          <tr>
+            <td class="cell-name">王建国</td><td>男</td><td class="fuy-num num-right">67</td><td class="fuy-num">3301**********115</td><td class="fuy-num">137****9360</td>
+            <td><span class="tag tag--amber">冻结</span></td>
+            <td class="cell-note note">欠费冻结 · <time>2026-09-30</time> 收费处</td>
+            <td class="fuy-num">2024-06-18 10:03</td>
+            <td><button class="op-link">编辑</button><button class="op-link">履历</button></td>
+          </tr>
+          <tr class="is-void">
+            <td class="cell-name struck">陈小红</td><td>女</td><td class="fuy-num num-right">41</td><td class="fuy-num">3301**********049</td><td class="fuy-num">135****8827</td>
+            <td><span class="struck">注销</span>&nbsp;<span class="stamp">销</span></td>
+            <td class="cell-note note">重复建档注销 · <time>2026-07-18</time> 系统管理员</td>
+            <td class="fuy-num">2026-07-02 14:31</td>
+            <td><button class="op-link">履历</button></td>
+          </tr>
+          <tr>
+            <td class="cell-name">刘一宁</td><td>男</td><td class="fuy-num num-right">52</td><td class="fuy-num">3301**********537</td><td class="fuy-num">136****2045</td>
+            <td><span class="state-dot">在档</span></td>
+            <td class="cell-note note">—</td>
+            <td class="fuy-num">2025-02-09 08:56</td>
+            <td><button class="op-link">编辑</button><button class="op-link">履历</button></td>
+          </tr>
+          <tr>
+            <td class="cell-name">赵垒</td><td>男</td><td class="fuy-num num-right">45</td><td class="fuy-num">3301**********682</td><td class="fuy-num">158****7733</td>
+            <td><span class="tag tag--amber">冻结</span></td>
+            <td class="cell-note note">证件过期待核验 · <time>2026-09-12</time> 挂号窗口</td>
+            <td class="fuy-num">2023-12-25 11:12</td>
+            <td><button class="op-link">编辑</button><button class="op-link">履历</button></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="pagination">
+        <span>共 <span class="fuy-num">1,284</span> 条 · 每页 <span class="fuy-num">10</span> 条</span>
+        <div class="pager">
+          <button class="page-box" disabled>上一页</button>
+          <button class="page-box" aria-current="page">1</button>
+          <button class="page-box">2</button>
+          <button class="page-box">3</button>
+          <button class="page-box">…</button>
+          <button class="page-box">129</button>
+          <button class="page-box">下一页</button>
+        </div>
+      </div>
+    </section>
+
+    <p class="mock-foot">设计样稿 ·「纸质病案」视觉世界 · 数据为合成示例</p>
+  </main>
+</div>
+
+<!-- 新建患者抽屉（弹层：唯一阴影 + 硬 snap 进场）；本样稿固定展示打开态 -->
+<aside class="drawer" role="dialog" aria-label="新建患者">
+  <div class="drawer-head">
+    <h3>新建患者</h3>
+    <span class="note">保存后生成档案号，证件号不可修改</span>
+    <button class="drawer-close" aria-label="关闭">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div class="field-group">
+      <div class="field-group-title">基本信息</div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label" for="f-name">姓名<em>*</em></label>
+          <input class="input" id="f-name" type="text" value="张伟">
+        </div>
+        <div class="field">
+          <span class="field-label">性别<em>*</em></span>
+          <div class="radio-row">
+            <label><input type="radio" name="sex" checked>男</label>
+            <label><input type="radio" name="sex">女</label>
+          </div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label" for="f-birth">出生日期</label>
+          <input class="input" id="f-birth" type="text" value="1992-04-18">
+        </div>
+        <div class="field">
+          <span class="field-label">证件类型<em>*</em></span>
+          <span class="select" role="button" tabindex="0">居民身份证 <i class="caret"></i></span>
+        </div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="f-idno">证件号<em>*</em></label>
+        <input class="input input--error" id="f-idno" type="text" value="3301041992041803" aria-invalid="true" aria-describedby="f-idno-err">
+        <p class="field-error" id="f-idno-err">该证件号已存在在档患者：张伟（3301**********03X）· <a href="#">去检索该档案</a></p>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-group-title">联系方式</div>
+      <div class="field-row">
+        <div class="field">
+          <label class="field-label" for="f-phone">手机号<em>*</em></label>
+          <input class="input" id="f-phone" type="text" value="13857626721">
+        </div>
+        <div class="field"></div>
+      </div>
+      <div class="field">
+        <label class="field-label" for="f-addr">现居地址</label>
+        <textarea class="textarea" id="f-addr">杭州市西湖区文三路 138 号</textarea>
+      </div>
+    </div>
+
+    <div class="field-group">
+      <div class="field-group-title">备注</div>
+      <div class="field">
+        <textarea class="textarea" placeholder="过敏史、特殊情况等批注信息（批注将带操作人与时间）"></textarea>
+      </div>
+      <p class="note">批：重复建档须先检索确认；已注销档案的证件号不可复用 · <time>2026-10-01</time> 医务处</p>
+    </div>
+  </div>
+  <div class="drawer-foot">
+    <span class="hint">提交前将再次校验证件号唯一性</span>
+    <button class="btn btn--ghost">取消</button>
+    <button class="btn btn--ink">保存</button>
+  </div>
+</aside>
+
+</body>
+</html>

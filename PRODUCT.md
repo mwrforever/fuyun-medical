@@ -47,16 +47,22 @@ web
 - 动效：各 app `styles/motion.css` 为唯一 keyframes 来源；只动 transform / opacity，禁 width 动画；`prefers-reduced-motion` 全局兜底。
 - token 命名空间 `--fuy-*`，每 app 各持一份（workstation 含 `--el-*` 映射层），禁上收 packages/shared。
 - 类型契约 = openapi-typescript 生成物 `api.d.ts` 唯一来源；雪花 ID / 金额分值以 string 承载，前端不做金额计算。
-- 现状无图标库（未装 @element-plus/icons-vue）；引入图标方案属新依赖决策，走宪法流程。
+- 图标库 = @element-plus/icons-vue 2.3.2（仅 workstation，2026-10-08 批次 2 裁决引入，侧栏树形菜单组/项图标专用；EP 同源图标族精确锁版）。
 - web 宪法 C.7「谋建琢三段律」：任何 UI 变更强制加载 @ui-ux-pro-max（谋 / 建）与 @taste-skill（琢）技能依律执行。
 
 已裁决事项（2026-10-07 用户拍板，后续会话不得反复）：
 
 1. 前端现代化重设计覆盖**三端统一设计系统**，一次立项、按批次分端落地。
 2. 视觉世界**全新替换**：旧 P1-PR5 设计规范降级为证据与反参照；「富云」品牌名与上述宪法技术红线保留。
-3. workstation 侧栏导航**按岗位工作台彻底重组**（医生 / 护士 / 药师 / 收费员 / 设备科视角，总 Spec FU-M01-11），触及导航模型与权限过滤展示层。
+3. workstation 侧栏导航**按岗位工作台彻底重组**（医生 / 护士 / 药师 / 收费员 / 设备科视角，总 Spec FU-M01-11），触及导航模型与权限过滤展示层。**（此项已被 2026-10-08 批次 2 裁决取代：废除岗位筛选导航——RBAC 已承载权限过滤，侧栏改为父子树形菜单 + 组/项图标 + 64px 收起图标条 + 悬浮 tooltip，menu.ts 岗位维度零死代码清除；权限口径不变=路由 meta 单一事实源 + hasRoutePermission 过滤。）**
 
-明确未决：新品牌主色、图标方案、favicon 是否随本次重设计定稿——留待视觉方向提案时一并呈批。
+批次 2 补充裁决（2026-10-08 用户拍板，后续会话不得反复）：
+
+1. **设计流程换约**：旧 P1-PR5 UI 设计 spec 整体废弃，后续一切 UI 实现以 impeccable 流程产出物（DESIGN.md + surface brief 方向契约 + `.impeccable/mocks/paper-chart/` 样稿）为唯一设计依据。
+2. **样稿 = 构图权威兼最低设计要求**：实现须在样稿之上更细致打磨（更美观精致、高级视觉、流畅动效交互、高渲染性能），禁以「还原样稿」为完成标准。
+3. **合入免审批**（四册流水线执行期）：各册门禁全绿后直接合入 dev，免审批不免门禁（终审 finish review 与 /code-review 仍强制）。
+
+明确未决：新品牌 favicon 替换、朱色白底精确校准——另行呈批（原「图标方案」未决项已由批次 2 裁决落地）。
 
 ## Brand Commitments
 
@@ -67,7 +73,8 @@ web
 ## Evidence on Hand
 
 - 总 Spec：docs/specs/00-master-spec.md；模块 Spec：docs/specs/modules/01..20-*.md。
-- 事实设计规范：docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md（1199 行：token / 布局 / 组件 / 交互 / 动画参数 / 性能红线 / 全站迁移批次，批次 0 地基与批次 1 布局壳已落代码）；护理补充版 docs/plans/2026-09-23-p1-pr6-m05-nursing-ui-design.md。
+- **现行设计唯一依据**：DESIGN.md（根目录，批次 1 documenter 按建成品重写）+ surface brief 方向契约 + `.impeccable/mocks/paper-chart/` HTML 样稿（构图权威）。
+- 已废弃证据：docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md 与 docs/plans/2026-09-23-p1-pr6-m05-nursing-ui-design.md（旧 P1-PR5 视觉规范，2026-10-08 废弃，文件头已插废弃声明，仅供证据不作权威）。
 - 已落代码：三 app 各自 `src/styles/{tokens,motion,index}.css`；workstation 另有 element-plus.css 映射层；布局壳在 `web/apps/workstation/src/views/layout/`（MainLayout.vue + components/AppSidebar.vue、AppHeader.vue；菜单数据唯一来源为 views/layout/menu.ts 常量 MENU_ITEMS（2026-10-08 批次 1 自 AppSidebar 迁出，承载侧栏/折叠缩写/首页入口/岗位过滤四个消费面），权限过滤走路由 meta）。
 - 不得伪造：无真实 logo / 品牌素材、无用户调研数据、无成品截图资产（除非另行提供）。
 

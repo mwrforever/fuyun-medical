@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/paper-chart/*"
+        ],
+        "createdAt": "2026-10-08T03:35:36.457Z",
+        "reason": "用户锁定「纸质病案」世界（seed 21571ba6 pick 卡，决策轮留痕）：暖纸底是世界钉定材质而非类别默认落俗"
+      },
+      {
+        "rule": "border-accent-on-rounded",
+        "value": "*",
+        "files": [
+          ".impeccable/mocks/paper-chart/paper-chart.css"
+        ],
+        "createdAt": "2026-10-08T03:35:45.042Z",
+        "reason": "纯 CSS border 三角下拉指示符（零图标库纪律的既定产物），非卡片彩色描边——误报"
+      }
+    ]
+  }
+}

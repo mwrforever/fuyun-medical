@@ -1,5 +1,7 @@
 # PR-5 M03 门诊主流程 · 三应用前端 UI 设计规范
 
+> ⚠ **已废弃（2026-10-08 用户裁决「废弃 spec，标记后续按照 impeccable 的设计流程来实现」）**：本文整体废弃，不再作为任何 UI 实现的设计权威，仅供历史证据与反参照保留。现行设计唯一依据：根目录 `DESIGN.md` + surface brief 方向契约 + `.impeccable/mocks/paper-chart/` 样稿（构图权威）；执行编排见 `docs/prompt/2026-10-08-graph-批次2纸质病案全站换血.md`（裁决留痕：根 `CHANGELOG.md` 2026-10-08 批次 2 立项 P0 条目）。
+
 > **文档定位**：PR-5 计划（`docs/superpowers/plans/2026-09-20-p1-pr5-m03-outpatient.md`）的伴随设计规范，Task 13/14 前端任务的**唯一视觉权威**。SDD 实现者按本文落码，taste-skill 打磨者按本文对照。
 > **约束来源**：全局 `~/.zcode/AGENTS.md`（注释/日志/测试/死代码）+ `web/AGENTS.md`（组件红线/script setup/禁 any/api.d.ts 唯一来源/五连门禁）+ PR-5 计划 Global Constraints 前端三段（:58-61）。
 > **设计方法论**：ui-ux-pro-max 技能（优先级规则表：无障碍 → 触控交互 → 性能 → 风格 → 布局 → 字色 → 动效 → 表单）+ design-system 三层 token 架构（primitive → semantic → component）。
