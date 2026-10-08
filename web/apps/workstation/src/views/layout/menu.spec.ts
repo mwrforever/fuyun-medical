@@ -1,7 +1,9 @@
-// 岗位菜单模型纯函数单测：selectMenuItemsForPost（岗位过滤）与 groupMenuItems（分组聚合）
+// 岗位菜单模型单测：selectMenuItemsForPost（岗位过滤）与 groupMenuItems（分组聚合）
 // 三类场景全覆盖——正常（五岗位各取所得）、边界（全部/仅全部/恒显/纯函数无副作用）、
-// 异常（未知岗位键防御语义）。纯函数零挂载零 Pinia，断言面向业务结果（入口集合与分组序）。
+// 异常（未知岗位键防御语义）。过滤/聚合用例零挂载零 Pinia；末组「路由表同步守护」仅
+// 消费路由表做 resolve 存在性断言（不挂载组件），防菜单 index 指向已删路由静默落 404。
 import { describe, expect, it } from 'vitest';
+import { router } from '@/router';
 import {
   MENU_ITEMS,
   POST_OPTIONS,
@@ -110,5 +112,17 @@ describe('分组聚合 groupMenuItems', () => {
     const names = groupMenuItems(MENU_ITEMS).map((group) => group.name);
     expect(names).not.toContain('');
     expect(names).toContain('系统');
+  });
+});
+
+describe('菜单常量与路由表同步守护', () => {
+  it('MENU_ITEMS 每项 index 都命中真实路由（防菜单点击落 404：index 指向已删路由时 resolve 空 matched 会被当恒显项渲染）', () => {
+    for (const item of MENU_ITEMS) {
+      const resolved = router.resolve(item.index);
+      expect(
+        resolved.matched.length,
+        `菜单项 ${item.label}(${item.index}) 未命中任何路由`,
+      ).toBeGreaterThan(0);
+    }
   });
 });

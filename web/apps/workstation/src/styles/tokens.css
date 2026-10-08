@@ -111,10 +111,16 @@
   --fuy-radius-xl: 12px; /* el-dialog */
   --fuy-radius-full: 999px;
 
-  --fuy-shadow-md: 0 12px 28px rgba(19, 28, 51, 0.16); /* 弹层唯一阴影（蓝墨基色带偏移与模糊） */
+  /* 弹层唯一阴影（蓝墨基色带偏移与模糊）：新增消费仅限弹层——存量 LoginView 登录卡
+     box-shadow 为换血前反例，已登记 DESIGN.md「未收编残留」随批次 2 收编 */
+  --fuy-shadow-md: 0 12px 28px rgba(19, 28, 51, 0.16);
+
+  /* 石规色（颜色本体，供滚动条/虚缝等非 shorthand 场景取用；面板规线引用它组合，
+     防 #c6c0ae 字面量多点散布——校准终稿时单点改） */
+  --fuy-color-rule-stone: #c6c0ae;
 
   --fuy-border-hairline: 1px solid #dcd7c9; /* 发丝缝（卡内，纸面细缝） */
-  --fuy-border-panel: 1px solid #c6c0ae; /* 面板石规（面板级分界） */
+  --fuy-border-panel: 1px solid var(--fuy-color-rule-stone); /* 面板石规（面板级分界） */
 }
 
 /* ===== M05 护理模块增量（设计文档 §2.2 唯一清单，2026-09-23）=====
@@ -156,21 +162,21 @@
 
 /* ===== M04 住院模块增量（床位图五态色标，2026-09-25）=====
    三层纪律沿 M05 先例：全部为 semantic 层语义别名、零新色值（一律指向既有 token/palette）；
-   五态映射：空床绿/预占橙/占床青/消毒灰/维修红，实底白字徽标场景对比度沿源 token 达标值。 */
+   五态映射：空床绿/预占橙/占床墨/消毒灰/维修红，实底白字徽标场景对比度沿源 token 达标值。 */
 :root {
   --fuy-color-bed-free: var(--fuy-color-success-text); /* 空床（可分配）绿 */
   --fuy-color-bed-reserved: var(--fuy-palette-orange-700); /* 预占（已签床）橙 */
-  --fuy-color-bed-occupied: var(--fuy-color-brand); /* 占床（在院占用）青 */
+  --fuy-color-bed-occupied: var(--fuy-color-brand); /* 占床（在院占用）墨 */
   --fuy-color-bed-disinfecting: var(--fuy-color-info-text); /* 消毒中（终末消毒）灰 */
   --fuy-color-bed-maintenance: var(--fuy-color-danger-text); /* 维修中（禁分配）红 */
 }
 
 /* ===== M14 物联网模块增量（设备五态/物模型同步三态/规则三源徽标色标，2026-09-26）=====
    三层纪律沿 M04 床位图先例：全部为 semantic 层语义别名、零新色值（一律指向既有 token）；
-   设备五态映射：未激活青/在线绿/离线橙/异常红/停用灰；同步三态：同步中橙/已同步绿/失配红；
-   规则三源：设备报警透传红/平台阈值青/离线灰；徽标为描边文本场景，对比度沿源 token 达标值。 */
+   设备五态映射：未激活墨/在线绿/离线橙/异常红/停用灰；同步三态：同步中橙/已同步绿/失配红；
+   规则三源：设备报警透传红/平台阈值墨/离线灰；徽标为描边文本场景，对比度沿源 token 达标值。 */
 :root {
-  --fuy-color-device-inactive: var(--fuy-color-brand); /* 未激活（待激活接入）青 */
+  --fuy-color-device-inactive: var(--fuy-color-brand); /* 未激活（待激活接入）墨 */
   --fuy-color-device-online: var(--fuy-color-success-text); /* 在线绿 */
   --fuy-color-device-offline: var(--fuy-color-warning-text); /* 离线橙（需关注） */
   --fuy-color-device-abnormal: var(--fuy-color-danger-text); /* 异常红 */
@@ -203,7 +209,7 @@
   font-variant-numeric: tabular-nums; /* 全站数字等宽，列表与计数不跳宽 */
   caret-color: var(--fuy-color-brand); /* 插入符＝即墨（文书正在书写） */
   scrollbar-width: thin; /* 细滚动条（Firefox/Chromium 121+ 标准属性，可继承） */
-  scrollbar-color: #c6c0ae transparent; /* 穿纸细轴（石规同源，纸上滚动不破纸面） */
+  scrollbar-color: var(--fuy-color-rule-stone) transparent; /* 穿纸细轴（石规同源，纸上滚动不破纸面） */
 }
 
 /* 文字选区：朱洗浅底 + 墨字（文字选区即朱批标记，选区色不承载危急语义） */
@@ -224,7 +230,7 @@
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #c6c0ae;
+  background: var(--fuy-color-rule-stone);
   border-radius: var(--fuy-radius-full);
   border: 2px solid transparent;
   background-clip: content-box;

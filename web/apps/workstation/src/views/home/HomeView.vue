@@ -239,7 +239,7 @@ function staggerIndex(index: number): number {
 /* 诚实空态：石规虚缝弱形态（弱于业务面板），文案为真实权限语义 */
 .home-empty {
   padding: var(--fuy-space-10) var(--fuy-space-4);
-  border: 1px dashed #c6c0ae; /* 石规同值虚缝（--fuy-border-panel 为整段 shorthand，不可嵌套复用） */
+  border: 1px dashed var(--fuy-color-rule-stone); /* 石规色虚缝（颜色 token 单值引用；--fuy-border-panel 为整段 shorthand 不可嵌套） */
   border-radius: var(--fuy-radius-lg);
   text-align: center;
 }

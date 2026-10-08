@@ -61,14 +61,14 @@ web
 ## Brand Commitments
 
 - 中文名「富云」，拼音 fuyun；三端标题「富云医护工作站 / 富云患者门户 / 富云数据大屏」（workstation 标题被 App.spec 冒烟测试锁定，禁改名）。
-- 现主色为临床蓝 #0369a1（sky 系色阶）——此为现状记录而非不可变承诺（用户已裁决全新视觉世界替换）。
+- 现主色为蓝黑墨 #1e2a44（「墨即操作」，2026-10-08 批次 1 换血定稿；旧临床蓝 #0369a1 已随「刷手服青绿→纸质病案」世界推翻一并废弃）。
 - 无正式 logo 素材；favicon 为占位图（蓝底 #2563eb 圆角十字，与现主色不一致）。
 
 ## Evidence on Hand
 
 - 总 Spec：docs/specs/00-master-spec.md；模块 Spec：docs/specs/modules/01..20-*.md。
 - 事实设计规范：docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md（1199 行：token / 布局 / 组件 / 交互 / 动画参数 / 性能红线 / 全站迁移批次，批次 0 地基与批次 1 布局壳已落代码）；护理补充版 docs/plans/2026-09-23-p1-pr6-m05-nursing-ui-design.md。
-- 已落代码：三 app 各自 `src/styles/{tokens,motion,index}.css`；workstation 另有 element-plus.css 映射层；布局壳在 `web/apps/workstation/src/views/layout/`（MainLayout.vue + components/AppSidebar.vue、AppHeader.vue；菜单数据为 AppSidebar 内静态常量 MENU_ITEMS，权限过滤走路由 meta）。
+- 已落代码：三 app 各自 `src/styles/{tokens,motion,index}.css`；workstation 另有 element-plus.css 映射层；布局壳在 `web/apps/workstation/src/views/layout/`（MainLayout.vue + components/AppSidebar.vue、AppHeader.vue；菜单数据唯一来源为 views/layout/menu.ts 常量 MENU_ITEMS（2026-10-08 批次 1 自 AppSidebar 迁出，承载侧栏/折叠缩写/首页入口/岗位过滤四个消费面），权限过滤走路由 meta）。
 - 不得伪造：无真实 logo / 品牌素材、无用户调研数据、无成品截图资产（除非另行提供）。
 
 ## Product Principles

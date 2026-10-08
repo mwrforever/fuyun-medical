@@ -37,7 +37,9 @@
   --el-text-color-placeholder: #676d7b; /* 占位符＝弱墨 */
   --el-text-color-disabled: #a6abb8; /* 禁用文本＝褪墨 */
   /* 描边（纸质病案=面板石规一族，由深到浅为规线浓淡档） */
-  --el-border-color: #c6c0ae; /* 默认描边＝输入框石规 */
+  --el-border-color: var(
+    --fuy-color-rule-stone
+  ); /* 默认描边＝输入框石规（单向映射引用石规色本体） */
   --el-border-color-light: #d5d0c1; /* 浅一档石规 */
   --el-border-color-lighter: #ddd8ca; /* 更浅石规（近发丝） */
   --el-border-color-extra-light: #e7e3d6; /* 极浅石规（纸面发丝） */
