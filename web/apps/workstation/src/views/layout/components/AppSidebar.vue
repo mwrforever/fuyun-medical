@@ -107,6 +107,9 @@ export const MENU_ICON_REGISTRY: Record<string, Component> = {
 // 上班扫读第一优先，折叠是用户主动行为）；页项=el-menu-item 叶节点（项图标+全称，
 // 40px 高亮纸白药丸选中语法延续）；收起态=el-menu :collapse 图标条（64px，组图标悬浮
 // 弹出组内页项【EP 内建 popover】+ 顶层项 tooltip 全名，均瞬切零动画）。
+// 动效语法（2026-10-09 琢段打磨，瞬切铁律仅限 240↔64 宽度切换与弹层）：树形进场级联
+// （fuy-tree-stagger，仅初载一次，路由切换不重放）、组展开叶项显影（fuy-leaf-reveal-in）、
+// 箭头旋转/按压沉底/收起态图标放大三态微交互（120ms 档，只动 transform/opacity）。
 // 权限口径不变（BUG-14 守卫骨架 + PR-4D 空集语义）：经 hasRoutePermission 过滤路由
 // meta 权限点（单一事实源），空权限会话=仅恒显项（首页），契约空集诚实语义。
 import { computed } from 'vue';
@@ -187,10 +190,12 @@ const activeIndex = computed<string>(() => {
          导航）；收起态瞬切=EP 折叠宽度动画关闭（铁律禁 width 动画）；popper-effect=light
          使收起态 tooltip/组弹层落亮纸白卡面（纸墨世界）；popper-class 挂 .fuy-tree-popper
          供弹层瞬切与纸面收编（样式收编于 element-plus.css .fuy-tree-popper 段，弹层
-         teleported 至 body） -->
+         teleported 至 body）。fuy-tree-stagger=树形进场级联（motion.css 唯一定义处）：
+         行内联 --fuy-stagger-index 排级联序（品牌头 0 → 顶层项 1 → 组块自 2 递增，5 档
+         封顶在 CSS min() 执行），仅初载播放一次，路由切换组件不重挂不重放 -->
     <div class="app-sidebar-menu">
       <el-menu
-        class="fuy-menu"
+        class="fuy-menu fuy-tree-stagger"
         :default-active="activeIndex"
         :default-openeds="defaultOpeneds"
         :collapse="collapsed"
@@ -205,18 +210,32 @@ const activeIndex = computed<string>(() => {
           :key="item.index"
           class="fuy-tree-root"
           :index="item.index"
+          :style="{ '--fuy-stagger-index': 1 }"
         >
           <el-icon><component :is="MENU_ICON_REGISTRY[item.icon]" /></el-icon>
           <template #title>{{ item.label }}</template>
         </el-menu-item>
         <!-- 分组父节点：组图标+组名（span 供 EP 收起态隐藏规则命中）+展开箭头（EP 内建）；
-             键盘可达随 el-sub-menu 内建 aria（aria-expanded/aria-haspopup） -->
-        <el-sub-menu v-for="group in MENU_GROUPS" :key="group.name" :index="group.name">
+             键盘可达随 el-sub-menu 内建 aria（aria-expanded/aria-haspopup）；级联序=组块
+             原始序自 2 递增（超 5 档并发由 motion.css min() 封顶） -->
+        <el-sub-menu
+          v-for="(group, groupIndex) in MENU_GROUPS"
+          :key="group.name"
+          :index="group.name"
+          :style="{ '--fuy-stagger-index': 2 + groupIndex }"
+        >
           <template #title>
             <el-icon><component :is="MENU_ICON_REGISTRY[group.icon]" /></el-icon>
             <span>{{ group.name }}</span>
           </template>
-          <el-menu-item v-for="item in group.items" :key="item.index" :index="item.index">
+          <!-- 叶项级联序=组内序（0 起）：供叶项展开显影动画的 delay 取值（motion.css
+               fuy-leaf-reveal-in，2 档封顶），非进场 stagger 通道 -->
+          <el-menu-item
+            v-for="(item, leafIndex) in group.items"
+            :key="item.index"
+            :index="item.index"
+            :style="{ '--fuy-stagger-index': leafIndex }"
+          >
             <el-icon><component :is="MENU_ICON_REGISTRY[item.icon]" /></el-icon>
             <template #title>{{ item.label }}</template>
           </el-menu-item>
@@ -242,6 +261,13 @@ const activeIndex = computed<string>(() => {
   background: var(--fuy-shell-bg);
 }
 
+/* 品牌字标=树形进场级联第 0 档（首拍锚点，后续 顶层项 1 → 组块自 2 递增）：消费
+   motion.css 全局 fuy-rise（组件内零 keyframes 定义，唯一来源铁律），backwards fill
+   终态零残留 transform；仅初载播一次（组件挂载一次），路由切换不重放 */
+.app-sidebar-head .fuy-menu-brand {
+  animation: fuy-rise var(--fuy-motion-slow) var(--fuy-ease-enter) backwards;
+}
+
 /* 菜单滚动容器：滚动收敛在此层，品牌头吸附不随内容滚走 */
 .app-sidebar-menu {
   padding-bottom: var(--fuy-space-4);
@@ -258,10 +284,21 @@ const activeIndex = computed<string>(() => {
 }
 
 /* 图标统一 16px 线性形态（样稿 .tree-ico 同值）：el-icon 以 1em 缩放 svg，容器级字号
-   即图标尺寸；右侧 8px 呼吸与样稿 gap 9/10px 同档 */
+   即图标尺寸；右侧 8px 呼吸与样稿 gap 9/10px 同档；transform 120ms 过渡供收起态
+   悬停放大微交互（下方 rail 段）承载 */
 .fuy-menu :deep(.el-icon) {
   margin-right: var(--fuy-space-2);
   font-size: 16px;
+  transition: transform var(--fuy-motion-fast) var(--fuy-ease-standard);
+}
+
+/* 分组叶项展开显影（motion.css fuy-leaf-reveal-in 唯一定义处）：组展开/侧栏自图标条
+   展开时新揭示叶项自组头下方 4px 沉降显影，delay=组内序内联 --fuy-stagger-index、
+   min() 2 档封顶（≤80ms，节奏起伏而响应不迟滞）；折叠离场随 v-show 直切零动画；
+   backwards fill 终态零残留，:active 按压 transform 不被 animation 级联占位 */
+.fuy-menu :deep(.el-menu--inline .el-menu-item) {
+  animation: fuy-leaf-reveal-in var(--fuy-motion-base) var(--fuy-ease-enter) backwards;
+  animation-delay: calc(min(var(--fuy-stagger-index, 0), 2) * var(--fuy-motion-stagger));
 }
 
 /* 组头图标 17px 微占层级优势（样稿 .tree-ico--group 17px 对叶项 16px）：组与项的扫读
@@ -271,24 +308,50 @@ const activeIndex = computed<string>(() => {
 }
 
 /* 分组父节点（组头）：40px 高与页项同拍，药丸收边同语法（左右 8px 收边 + 2px 直角）；
-   组名 14px/500 纸纱（样稿 .tree-group-head 同款，父节点以字重与缩进区分叶项而非字号） */
+   组名 14px/500 纸纱（样稿 .tree-group-head 同款，父节点以字重与缩进区分叶项而非字号）；
+   过渡含 transform 供按压沉底微交互（与页项同拍） */
 .fuy-menu :deep(.el-sub-menu__title) {
   display: flex;
   align-items: center;
   margin: 0 var(--fuy-space-2);
   border-radius: var(--fuy-radius-sm);
   font-weight: 500;
-  transition: background-color var(--fuy-motion-fast) var(--fuy-ease-standard);
+  transition:
+    background-color var(--fuy-motion-fast) var(--fuy-ease-standard),
+    transform var(--fuy-motion-fast) var(--fuy-ease-standard);
 }
 
-/* 展开箭头：靠右缘（margin-left:auto），弱化 55% 不抢组名，旋转瞬切（契约铁律：组展开
-   折叠零动画——EP 内建 .3s transform 过渡一并关闭） */
+/* 按压态（触觉反馈第三态，与悬停/焦点构成三态全覆盖）：行/组头按下沉 1px——纸上的行
+   被指尖按下落一档的触感，只动 transform（合成器路径）；悬停/按压/聚焦三态 120ms
+   同档，节奏统一不散灶。页项过渡在 element-plus.css 仅 background-color（共享层并行
+   冻结），此处挂类通道补 transform 一项（特异性恒压，非裸改 .el-*） */
+.fuy-menu :deep(.el-menu-item) {
+  transition:
+    background-color var(--fuy-motion-fast) var(--fuy-ease-standard),
+    transform var(--fuy-motion-fast) var(--fuy-ease-standard);
+}
+
+.fuy-menu :deep(.el-menu-item:active),
+.fuy-menu :deep(.el-sub-menu__title:active) {
+  transform: translateY(1px);
+}
+
+/* 展开箭头：靠右缘（margin-left:auto），弱化 55% 不抢组名；旋转/增亮 120ms（2026-10-09
+   放宽口径：组展开折叠节奏仅限 transform/opacity 红线——箭头旋转是「组态翻转」的语义
+   动效，EP 以内联 rotateZ(180deg) 翻转、此处只供过渡节奏；height 折叠动画保持关闭） */
 .fuy-menu :deep(.el-sub-menu__icon-arrow) {
   margin-right: 0;
   margin-left: auto;
   font-size: 12px;
   opacity: 0.55;
-  transition: none;
+  transition:
+    transform var(--fuy-motion-fast) var(--fuy-ease-standard),
+    opacity var(--fuy-motion-fast) var(--fuy-ease-standard);
+}
+
+/* 组头悬停时箭头增亮：悬停反馈不止底色，可动件（箭头）同步点亮提示可按 */
+.fuy-menu :deep(.el-sub-menu__title:hover .el-sub-menu__icon-arrow) {
+  opacity: 0.9;
 }
 
 /* 组内展开/折叠瞬切（契约铁律）：EP 内联子菜单走 ElCollapseTransition（max-height 过渡），
@@ -327,5 +390,13 @@ const activeIndex = computed<string>(() => {
 .fuy-menu.el-menu--collapse :deep(.el-menu-item.is-active) {
   margin-right: var(--fuy-space-4);
   margin-left: var(--fuy-space-4);
+}
+
+/* 收起态图标条悬停放大（图标条上图标即全部可供性，hover 放大 1.1 提供除底色外的第二
+   重悬停反馈）：只动 transform（scale 合成器路径，120ms 同档），展开态树形菜单不放此
+   微交互（行内有全称文字，图标放大反而破坏基线对齐） */
+.fuy-menu.el-menu--collapse :deep(.el-menu-item:hover > .el-icon),
+.fuy-menu.el-menu--collapse :deep(.el-sub-menu__title:hover > .el-icon) {
+  transform: scale(1.1);
 }
 </style>

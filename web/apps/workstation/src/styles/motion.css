@@ -43,6 +43,33 @@
   }
 }
 
+/* 壳层树形进场级联（侧栏初载一次）：挂 el-menu（消费方仅 AppSidebar）。与 .fuy-stagger
+   同语法但 fill 用 backwards 而非 both——终态零残留 transform（动画结束即让出 animation
+   级联，叶项/行级的 :active 按压 transform 微交互可生效）；路由切换不重放（侧栏组件
+   挂载一次，行元素持久不重建，动画仅随挂载播放一次）。级联序由消费方模板内联
+   --fuy-stagger-index（原始序），此处以 min() 统一执行 5 档封顶（步长 40ms，第 6 项起
+   与末档并发），防逐行超长级联拖沓 */
+.fuy-tree-stagger > * {
+  animation: fuy-rise var(--fuy-motion-slow) var(--fuy-ease-enter) backwards;
+  animation-delay: calc(min(var(--fuy-stagger-index, 0), 5) * var(--fuy-motion-stagger));
+}
+
+/* 分组叶项展开显影（组展开/侧栏展开时新揭示叶项的进场节奏，消费方仅 AppSidebar
+   .fuy-menu 段）：自组头下方 4px 沉降显影（展开=自上而下揭示的语义方向），base 档
+   enter 缓动；组折叠即随 v-show 隐没（离场直切，与弹层硬 snap「硬进直切」同语法）。
+   delay 以组内序内联 --fuy-stagger-index 承载，min() 2 档封顶（展开响应 ≤80ms，节奏
+   起伏而不迟滞）；keyframes 唯一来源铁律：定义只落本文件 */
+@keyframes fuy-leaf-reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* 列表项增删 FLIP：Vue 内建 TransitionGroup 的 move class 即 FLIP（transform 反演播放），
    零依赖；用法 <TransitionGroup name="fuy-flip" tag="tbody">；
    进入 200ms / 移位 320ms / 离场 120ms（离场快于进场）；轮询 merge 更新时稳定 key 才触发 */
@@ -142,5 +169,48 @@
   .fuy-loading-essential::after {
     animation-duration: 1.5s !important;
     animation-iteration-count: infinite !important;
+  }
+}
+
+/* ===== 登录页 v2 进场编排（批次 2 册 1 契约 §2，keyframes 唯一来源集中落位，消费方仅 LoginView）===== */
+
+/* 标签架插签入档：登录页左栏病案标签自纸层下方升起 14px，如插入封皮页块的签牌——
+   比 fuy-rise（8px）更深一档的升距，区分「页面元素浮现」与「签牌插签入档」两种进场语义；
+   消费方以 backwards fill 在 delay 期压 from 态，终态零残留 transform */
+@keyframes fuy-login-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 字段级校验错误沉落显影：弹层硬 snap 语法的域内同源变体（上 4px 沉落 + 显影），
+   base 档 enter 缓动——校验错误呈现有入场节奏，不生硬跳变 */
+@keyframes fuy-login-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* reduced-motion 补充兜底（V1 修订教训）：reduce 下除压时长外必须同时压
+   animation-delay / transition-delay——进场编排的 delay 最长 520ms，只压时长不压延
+   会留下「延迟闪现」（元素按原节奏逐个迟到后才瞬时出现），违背「reduce 下全部动画/
+   过渡直达终态」的严格口径。独立成块补充延迟归零，不触碰上方既有兜底规则；
+   归零对豁免类无副作用（fuy-loading-essential 无延迟依赖） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
   }
 }
