@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  门诊逐日人次趋势聚合映射（VisitStatsMapper.sumDailyVisits，宪法 A.4.3-15 复杂聚合走 mapper+XML；
+  FeeRecordMapper.dailyListSummary 同款先例）。
+  口径：按北京钟面自然日分组（registered_at AT TIME ZONE 'Asia/Shanghai'，与 common TimeConstants
+  .HEALTHCARE_TZ 同源——SQL 侧无法引用 Java 常量，字面量同值留痕，时区漂移属契约变更）；
+  @TableLogic 不作用于原生 SQL，deleted=0 显式补齐；窗口谓词作用同一北京钟面日表达式保证与
+  分组键同口径。约束：GROUP BY stat_date + ORDER BY stat_date 升序唯一顺序（A.4.3-15/17）。
+  加载路径：MP starter 默认 mapper-locations=classpath*:/mapper/**/*.xml，零配置生效。
+-->
+<mapper namespace="com.fuyun.outpatient.mapper.VisitStatsMapper">
+
+    <!-- 聚合投影按构造器映射到 record（DailyVisitTrendRow 规范构造器，列名与组件名一一同源） -->
+    <resultMap id="dailyVisitTrendRowMap" type="com.fuyun.outpatient.api.OutpatientWorkloadStats$DailyVisitTrendRow">
+        <constructor>
+            <arg column="stat_date" javaType="java.time.LocalDate"/>
+            <arg column="visit_count" javaType="long"/>
+            <arg column="emergency_count" javaType="long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 逐日人次聚合：全类型 COUNT 与急诊 FILTER 单次扫描双序列，stat_date 升序 -->
+    <select id="sumDailyVisits" resultMap="dailyVisitTrendRowMap">
+        SELECT (registered_at AT TIME ZONE 'Asia/Shanghai')::date AS stat_date,
+               COUNT(*)                                           AS visit_count,
+               COUNT(*) FILTER (WHERE visit_type = 'EMERGENCY')   AS emergency_count
+        FROM outpatient.visit
+        WHERE deleted = 0
+          AND (registered_at AT TIME ZONE 'Asia/Shanghai')::date &gt;= #{fromDate}
+          AND (registered_at AT TIME ZONE 'Asia/Shanghai')::date &lt;= #{toDate}
+        GROUP BY stat_date
+        ORDER BY stat_date
+    </select>
+</mapper>

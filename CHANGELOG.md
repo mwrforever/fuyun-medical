@@ -2,6 +2,11 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-09 · 批次 2 册 2 后端聚合（fuyun-ops 首切片 · 四模块统计接口位）
+
+- **范围依据**：立项计划册 2「后端范围」7 项（`docs/superpowers/plans/2026-10-08-批次2-纸质病案全站换血-立项计划.md` §2，2026-10-09 追认为范围唯一来源）——fuyun-ops 模块骨架装配、两聚合端点（`GET /api/v1/ops/workbench/overview|events`）、四业务模块统计接口位（outpatient/billing/pharmacy/nursing 各补只读统计 Port，fuyun-ops 经 api 包聚合调用，禁跨模块直查）、outpatient 新增 `VisitStatsMapper.xml` GROUP BY 聚合（14 日趋势数据源）、overview Redis 快照缓存 TTL 5s（NurseBoardServiceImpl GC13 同款先例）、事件流五源（复用 /ws/iot、/ws/nursing、/ws/outpatient 三既有 STOMP 端点主题 + billing 待支付/pharmacy 待配药两 HTTP 轮询派生源 + 危急值 M07 缺位降级空数组带判别标志）、聚合 service 单测 100% + Testcontainers 集成测试同 commit。
+- **边界申报**：fuyun-ops 本切片自身零表（`db/migration/ops/` 保持空目录，号段制无占位）；四模块统计 Port 均为只读新增（零既有行为修改）；零新依赖（全部既有 starter 与模块间依赖，M19 指标中台/上报/绩效等完整职责归后续批次）。**计划外必要新增（调研发现）**：两新端点受 RbacMatrixIT 第①组「全量端点登记对照」D4 完整性门禁约束（新增端点未登记权限点即红），照 V1116/V1120 先例补 `V1122__seed_ops_workbench_permissions.sql` 权限种子（fuyun-system 迁移目录，V500+ 通用段合规、版本唯一、乱序守卫通过；两码 ADMIN 专属不种绑定行——F5 先例，业务角色绑定随 M19 驾驶舱权限域后续批次展开），不属自建 schema。
+
 ## 2026-10-09 · 批次 2 规格修订（动效要求纠偏 · 登录页完全重构契约 v2 · 立项计划追认）
 
 - **动效要求纠偏裁决（2026-10-09 用户裁决）**：批次 2 派遣链中出现的「不要设计动效交互」「零入场动画」类表述与用户真实要求（更美观精致、高级视觉、**流畅丰富的动效交互**、高渲染性能）完全偏离。根因=执行文档 N1 节「克制动效零入场动画」措辞被册 1 契约 §2 固化为禁令并传导至 P1/V3 派遣。修订：执行文档 N1 步骤②登录页构图契约表述改为「丰富动效交互+高级视觉+高渲染性能（动效语法遵 DESIGN.md，新增 keyframes 落 motion.css）」。不可推翻项保留：DESIGN.md 世界动效语法（时长三档/缓动家族/stagger 进场/FLIP/弹层硬 snap）照用；禁 width/height 动画；侧栏折叠瞬切零动画；motion.css 为全站唯一 keyframes 来源；prefers-reduced-motion 全局兜底。

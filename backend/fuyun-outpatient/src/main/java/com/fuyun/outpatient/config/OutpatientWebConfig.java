@@ -16,6 +16,7 @@ import com.fuyun.outpatient.service.impl.ChargingServiceImpl;
 import com.fuyun.outpatient.service.impl.ClinicOrderServiceImpl;
 import com.fuyun.outpatient.service.impl.OutpatientCareRelationQuery;
 import com.fuyun.outpatient.service.impl.OutpatientOngoingVisitQuery;
+import com.fuyun.outpatient.service.impl.OutpatientStatsPortImpl;
 import com.fuyun.outpatient.service.impl.ScheduleServiceImpl;
 import com.fuyun.outpatient.service.impl.TriageServiceImpl;
 import com.fuyun.outpatient.service.impl.VisitIdIssuerImpl;
@@ -32,7 +33,8 @@ import org.springframework.context.annotation.Import;
  * 直挂 OutpatientWebSocketConfig，不入本清单）。Task 8 追加：医生站 visit/开单两服务、CareRelationQuery
  * SPI 实现（patient unmask 第二道门禁 D-16 收紧）与医生站/申请单两控制器（fee.created 监听器归
  * OutpatientMessagingConfig）。EX-29 追加：portal 匿名预约证件号频控守卫（临时缓解②，
- * M18 患者账号体系上线后随归属校验退役）。
+ * M18 患者账号体系上线后随归属校验退役）。批次 2 册 2 追加：门诊工作量统计端口
+ * （OutpatientStatsPort 承载——M03 → M19 统计接口位，只读聚合零既有行为修改）。
  */
 @Configuration
 @Import({
@@ -55,6 +57,7 @@ import org.springframework.context.annotation.Import;
     ChargingServiceImpl.class,
     OutpatientCareRelationQuery.class,
     VisitController.class,
-    OrderController.class
+    OrderController.class,
+    OutpatientStatsPortImpl.class
 })
 public class OutpatientWebConfig {}

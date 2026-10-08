@@ -23,6 +23,7 @@ import com.fuyun.nursing.service.impl.NurseBoardServiceImpl;
 import com.fuyun.nursing.service.impl.NursingAssessmentServiceImpl;
 import com.fuyun.nursing.service.impl.NursingOngoingVisitQuery;
 import com.fuyun.nursing.service.impl.NursingRecordServiceImpl;
+import com.fuyun.nursing.service.impl.NursingStatsPortImpl;
 import com.fuyun.nursing.service.impl.NursingTaskLinkagePortImpl;
 import com.fuyun.nursing.service.impl.NursingTaskServiceImpl;
 import com.fuyun.nursing.service.impl.OrderExecutionGenerateServiceImpl;
@@ -105,6 +106,8 @@ import org.springframework.context.annotation.Import;
     OrderExecutionController.class,
     InfusionController.class,
     AdverseEventController.class,
-    BoardController.class
+    BoardController.class,
+    // 批次 2 册 2 追加：护理工作量统计端口（NursingStatsPort 承载——M05 → M19 统计接口位，只读聚合）
+    NursingStatsPortImpl.class
 })
 public class NursingWebConfig {}
