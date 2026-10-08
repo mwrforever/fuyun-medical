@@ -210,7 +210,6 @@ async function handleSubmit(): Promise<void> {
    左栏 · 世界叙事面（墨脊书脊＝病历夹封皮）
    ============================================================ */
 .login-spine {
-  position: relative;
   display: flex;
   flex-direction: column;
   background: var(--fuy-shell-bg);
@@ -400,7 +399,6 @@ async function handleSubmit(): Promise<void> {
    右栏 · 表单工作面（纸面三级：工作面沉底，登录表为搁在纸上的卡面）
    ============================================================ */
 .login-face {
-  position: relative;
   display: grid;
   place-items: center;
   padding: var(--fuy-space-12) var(--fuy-space-10) var(--fuy-space-16);
@@ -471,8 +469,20 @@ async function handleSubmit(): Promise<void> {
   color: var(--fuy-color-text-secondary);
 }
 
-/* 错误提示入场节奏：上 4px 沉落 + 显影（motion.css fuy-login-note-in，弹层硬
-   snap 语法的域内同源变体），base 档 enter 缓动——错误每次出现都有入场不跳变 */
+/* 错误提示入场节奏（R1 审查修复 major#1，机制如实登记）：EP 2.14.5 form-item 错误
+   节点包在 <TransitionGroup name="el-zoom-in-top"> 内，.el-zoom-in-top-enter/leave-active
+   自带 transition var(--el-transition-md-fade)（transform+opacity 各 0.3s）；CSS 级联
+   中过渡存续期（0-300ms）优先于动画，会把下方 fuy-login-note-in 的 transform 完全
+   压过使其视觉无效——故先以两条 :deep 压制 EP 内建过渡（AppSidebar 压 collapse-
+   transition 同款挂类手法、.fuy-snap-popper 同族定点收编，非裸改 .el-*），动画才
+   真实生效：上 4px 沉落 + 显影（motion.css fuy-login-note-in，弹层硬 snap 语法的
+   域内同源变体），base 档 enter 缓动，错误每次出现都有入场不跳变；离场同步压制
+   后直切消失（弹层硬 snap「离开直切」同语法），不残留二次节奏 */
+.login-panel :deep(.el-zoom-in-top-enter-active),
+.login-panel :deep(.el-zoom-in-top-leave-active) {
+  transition: none;
+}
+
 .login-panel :deep(.el-form-item__error) {
   font-size: var(--fuy-font-size-xs);
   color: var(--fuy-color-danger-text);
