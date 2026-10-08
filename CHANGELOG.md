@@ -2,6 +2,37 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-08 · UI 重设计批次 2 立项 P0（纸质病案全站换血四册流水线开工 · 宪法四裁决登记）
+
+- **图标库引入裁决（2026-10-08 用户指令「需引入图标库」）**：workstation 新增运行时依赖
+  `@element-plus/icons-vue` **2.3.2 精确锁版**（`-E` 无前缀；EP 2.14.5 同源图标族，与
+  element-plus 内置依赖版本一致零漂移），仅 workstation 安装（portal/bigscreen 不装）；
+  web/AGENTS.md C.2 表同步增行；用途限定=侧栏树形菜单组/项图标 + 折叠态图标条。
+  此裁决终结 DESIGN.md 工程红线 5「零新增运行时依赖（含图标库）」中的图标库禁令
+  （红线其余部分不变；DESIGN.md 全文重写归批次 2 册 4 N14，届时同步）。
+- **岗位筛选导航废除裁决（2026-10-08 用户指令，推翻 2026-10-07 裁决 3 的「按岗位工作台
+  彻底重组」方向）**：RBAC 访问控制已承载权限过滤，侧栏不再按岗位筛选——改为**父子树形
+  菜单**（分组=可折叠父节点 el-sub-menu）+ 组/项图标 + 侧栏整体收起 64px 图标条 +
+  悬浮 tooltip 全名 + 瞬切零动画；menu.ts 岗位维度整体删除
+  （posts/abbr/POST_OPTIONS/selectMenuItemsForPost/POST_SELECTION_KEY 零死代码清除，
+  随动类型 PostKey/PostSelection 同除）；MainLayout 删岗位 provide、HomeView 删岗位消费。
+  权限口径不变：路由 meta 单一事实源 + 消费方 hasRoutePermission 过滤（BUG-14 空集语义）。
+- **样稿入库裁决（2026-10-08 用户钉定「我的设计稿上的设计不是很明确吗」）**：
+  `.impeccable/mocks/paper-chart/` 样稿=构图权威**且升格为最低设计要求**（实现须在其上
+  更细致打磨：更美观精致、高级视觉、流畅动效交互、高渲染性能——禁以「还原样稿」为
+  完成标准）；样稿源文件（paper-chart.css + home.html + form-management.html，及批次 2
+  扩册 login.html）按交付物入库；`.impeccable/` 运行态（hook.cache/questions/review/
+  工作站级 .impeccable）不入库（.gitignore 排除）。
+- **旧 UI spec 废弃裁决（2026-10-08 用户指令「废弃 spec，标记后续按照 impeccable 的
+  设计流程来实现」）**：`docs/plans/2026-09-20-p1-pr5-m03-outpatient-ui-design.md` 与
+  `docs/plans/2026-09-23-p1-pr6-m05-nursing-ui-design.md` 整体废弃（文件保留作证据，
+  文件头插废弃声明）；后续一切 UI 实现以 impeccable 流程产出物（DESIGN.md + surface
+  brief 方向契约 + 样稿）为唯一设计依据；PRODUCT.md Evidence 节同步刷新。
+- 附带留痕：批次 2 执行文档 `docs/prompt/2026-10-08-graph-批次2纸质病案全站换血.md`
+  （四册流水线 graph 编排）与本进度文件为执行唯一依据；2026-10-08 深夜会话开工核验
+  发现样稿三件套/契约 v2/立项计划等工作区资产灭失（详见进度文件 §0.5），依在位权威
+  （DESIGN.md/v1 brief/批次 1 已合入实现）重建，立项计划重建件待用户追认。
+
 ## 2026-10-08 · UI 重设计批次 1 换血执行（视觉世界推翻重锁「纸质病案 Paper Chart」）
 
 - **世界推翻裁决（2026-10-08 用户拍板）**：「刷手服青绿 Scrub」世界连同全部界面观感被推翻，

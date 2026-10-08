@@ -309,6 +309,9 @@ importers:
 
   apps/workstation:
     dependencies:
+      '@element-plus/icons-vue':
+        specifier: 2.3.2
+        version: 2.3.2
       '@fuyun/shared':
         specifier: workspace:*
         version: link:../../packages/shared
