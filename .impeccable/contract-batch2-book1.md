@@ -85,7 +85,7 @@
 - **menu.ts 数据模型**：`SidebarMenuItem` 删 posts/abbr 两字段与岗位族类型/常量/函数（PostKey/PostSelection/POST_OPTIONS/selectMenuItemsForPost/POST_SELECTION_KEY 零死代码）；增 `icon: string` 字段（项图标名，值域=§1.2 表）；分组结构沿 `groupMenuItems` 聚合（`MenuGroup` 增 `icon: string`，值域=§1.1 表）。
 - **树形形态**：分组=可折叠父节点（el-sub-menu，组图标+组名+展开箭头）；页项=叶节点（项图标+全称，40px 高药丸选中语法延续——亮纸白药丸墨字 600 字重）；**默认全展开**（上班扫读第一优先，折叠是用户主动行为）。
 - **收起态**（侧栏整体收起 64px）：图标条形态——组图标列（组内页项收纳于组图标悬浮 popover/tooltip 层）；页项图标严格居中；**悬浮 tooltip 全名**（el-tooltip，瞬切零动画）；当前选中项药丸压缩为图标块高亮。
-- **瞬切零动画**（铁律）：侧栏展开↔收起、菜单组展开↔折叠均无过渡动画（EP 折叠动画关闭）；tooltip 无淡入。
+- **瞬切零动画（铁律 · 2026-10-09 裁决收敛口径）**：瞬切面收敛为两处——侧栏 240↔64 宽度切换、弹层硬 snap（tooltip/ popover 无淡入，EP 折叠动画关闭）；分组展开/折叠内的叶项显影、展开箭头旋转等 transform/opacity 节奏动效属 2026-10-09 动效纠偏裁决放行面（原文留痕见 CHANGELOG 2026-10-09 条目），禁 height/width 动画红线不变。
 - **MainLayout**：删岗位 provide 与岗位状态持有；侧栏宽度态（展开 240px/收起 64px）持有权留 MainLayout（折叠开关事件上行），不新增 store。
 - **AppHeader 不动**（顶栏四件已合规；折叠开关/站点名/患者检索/用户下拉原样）。
 - **权限口径不变**：消费方 hasRoutePermission 过滤（BUG-14 空集语义）；空权限会话=侧栏仅恒显项+诚实空态。
