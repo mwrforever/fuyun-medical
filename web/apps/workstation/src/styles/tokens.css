@@ -1,43 +1,51 @@
 /**
- * 医护工作站设计 token（设计文档 §2.2-§2.5 唯一来源，批次 0 落盘零重写）。
- * 三层架构：primitive（原始色阶）→ semantic（语义用途）；命名空间 --fuy-* 与
- * Element Plus --el-* 完全隔离，单向赋值仅允许出现在 element-plus.css 映射文件中。
- * 亮色场景：白天临床环境高密度操作台，文本对比度全部满足白底 ≥4.5:1。
+ * 医护工作站设计 token（「纸质病案 Paper Chart」世界，2026-10-08 用户锁定视觉方向，
+ * 同日整体推翻「刷手服青绿 Scrub」旧世界）。
+ * 三层架构：primitive（原始色阶）→ semantic（语义用途）→ 浏览器原生面收编（选区/插入符/
+ * 滚动条/焦点环/等宽数字）；命名空间 --fuy-* 与 Element Plus --el-* 完全隔离，单向赋值
+ * 仅允许出现在 element-plus.css 映射文件中。
+ * 世界语法：纸白工作面（工作面沉纸白/卡面亮纸白/表单域最亮纸面三级）+ 蓝黑墨承文
+ * （浓墨/灰墨/弱墨三级）+ 印泥朱只承状态（危急/停用/作废，永不装饰）；
+ * 规线三级——2px 墨规=页级、1px 石规=面板级、1px 发丝=卡内；壳层=蓝黑墨书脊（病历夹封皮）；
+ * 状态色唯一映射（琥珀=警示/冻结、绿=确认/在档，色带永不单独承义）；
+ * 中文黑体系统栈 + tabular 等宽数字；8px 基线高密度网格。
+ * token 名对存量 38 视图保持兼容（仅值换血），零消费的旧 token 已随本次换血清理。
  */
 
-/* 品牌色阶（primitive）：临床蓝，与 Element Plus 默认 #409EFF 区分，医疗稳重感 */
+/* 品牌色阶（primitive）：蓝黑墨系——浓墨承载主操作（「墨即操作」），与 EP 默认 #409EFF 区分 */
 :root {
-  --fuy-palette-brand-50: #f0f9ff; /* 悬停底 */
-  --fuy-palette-brand-100: #e0f2fe; /* 选中底 */
-  --fuy-palette-brand-200: #bae6fd;
-  --fuy-palette-brand-400: #38bdf8; /* bigscreen 暗底品牌亮青共用值 */
-  --fuy-palette-brand-600: #0284c7; /* 链接/图标强调（白底文字用 ≥#0369a1） */
-  --fuy-palette-brand-700: #0369a1; /* 品牌主色 */
-  --fuy-palette-brand-800: #075985;
-  --fuy-palette-brand-900: #0c4a6e; /* 深文本/按压 */
-  --fuy-palette-gray-50: #f9fafb;
-  --fuy-palette-gray-600: #4b5563;
-  --fuy-palette-gray-800: #1f2937;
-  --fuy-palette-red-700: #b91c1c;
-  --fuy-palette-amber-700: #b45309;
-  --fuy-palette-green-800: #166534;
-  --fuy-palette-red-600: #dc2626;
-  --fuy-palette-orange-700: #c2410c;
-  --fuy-palette-blue-700: #1d4ed8;
-  --fuy-palette-slate-ink: #0f172a; /* 阴影基色 */
+  --fuy-palette-brand-50: #efece1; /* 纸面悬停暖底 */
+  --fuy-palette-brand-100: #e9e7de; /* 墨洗纸一档，选中态底（存量消费全是选中场景，墨洗防「朱=危急」语义误读） */
+  --fuy-palette-brand-200: #2b3a5e; /* 墨描边强调一档 */
+  --fuy-palette-brand-700: #1e2a44; /* 品牌主色＝浓墨（「墨即操作」，白底对比 ~14:1） */
+  --fuy-palette-brand-900: #131c33; /* 书脊深墨/按压 */
+
+  /* 中性阶（primitive）：纸墨系蓝黑调，正文全部满足白底 ≥4.5:1 */
+  --fuy-palette-gray-50: #efece1; /* 悬停底 */
+  --fuy-palette-gray-600: #565d6e; /* 次要文本 6.3:1（灰墨） */
+  --fuy-palette-gray-800: #1e2a44; /* 强调文本/浓墨 */
+
+  /* 状态色阶（primitive）：琥珀=警示/冻结、朱=危急/停用/作废、绿=确认/在档（唯一映射）；
+     印泥朱为状态专用色，禁作装饰 */
+  --fuy-palette-red-700: #b42318; /* 印泥朱（白底 ~6.5:1），危急/停用/作废文字 */
+  --fuy-palette-amber-700: #b45309; /* 警示/冻结（分诊临床惯例色，属状态语义非装饰） */
+  --fuy-palette-green-800: #1f7a33; /* 确认/在档 */
+  --fuy-palette-red-600: #b42318; /* 实底徽标底同印泥朱 */
+  --fuy-palette-red-800: #8f1a12; /* 朱深一档，供按压/hover */
+  --fuy-palette-orange-700: #c2410c; /* 分诊四级/体温单临床惯例色，属状态语义非装饰 */
+  --fuy-palette-blue-700: #1d4ed8; /* 分诊四级/体温单临床惯例色，属状态语义非装饰 */
 }
 
 /* 语义色（亮色）：文本全部满足白底 ≥4.5:1 */
 :root {
-  --fuy-color-brand: var(--fuy-palette-brand-700); /* 主操作/选中 */
-  --fuy-color-brand-strong: var(--fuy-palette-brand-900); /* 按压 */
-  --fuy-color-text-emphasis: var(--fuy-palette-gray-800); /* 关键数字/姓名 */
-  --fuy-color-text-secondary: var(--fuy-palette-gray-600); /* 次要说明 */
-  --fuy-color-success-text: #1f7a33; /* 5.4:1，已发药/已结算 */
+  --fuy-color-brand: var(--fuy-palette-brand-700); /* 主操作/选中＝浓墨（墨即操作） */
+  --fuy-color-text-emphasis: var(--fuy-palette-gray-800); /* 关键数字/姓名＝浓墨 */
+  --fuy-color-text-secondary: var(--fuy-palette-gray-600); /* 次要说明＝灰墨 */
+  --fuy-color-success-text: #1f7a33; /* 5.4:1，已发药/已结算（确认/在档） */
   --fuy-color-warning-text: var(--fuy-palette-amber-700); /* 5.0:1，待支付/待配药 */
-  --fuy-color-danger-text: var(--fuy-palette-red-700); /* 6.5:1，已退号/异常 */
-  --fuy-color-info-text: var(--fuy-palette-gray-600); /* 7.6:1，中性态 */
-  --fuy-color-focus-ring: rgba(3, 105, 161, 0.35); /* 键盘焦点环 */
+  --fuy-color-danger-text: var(--fuy-palette-red-700); /* 6.5:1，已退号/异常（印泥朱） */
+  --fuy-color-info-text: var(--fuy-palette-gray-600); /* 6.3:1，中性态（灰墨） */
+  --fuy-color-focus-ring: rgba(30, 42, 68, 0.35); /* 键盘焦点环（墨焦点环） */
 
   /* 诊区分级语义色（预检分诊四级，实底白字徽标场景，均 ≥4.5:1） */
   --fuy-color-triage-l1: var(--fuy-palette-red-600); /* Ⅰ级-危 4.8:1 */
@@ -45,20 +53,31 @@
   --fuy-color-triage-l3: var(--fuy-palette-amber-700); /* Ⅲ级-重 5.0:1 */
   --fuy-color-triage-l4: var(--fuy-palette-blue-700); /* Ⅳ级-普 6.7:1 */
 
-  /* 票据状态语义（映射见设计文档 §4.3；此处为文本/描边用色，全部复用上列 AA 达标值） */
-  --fuy-color-state-waiting: var(--fuy-color-brand);
-  --fuy-color-state-called: var(--fuy-color-warning-text);
-  --fuy-color-state-serving: var(--fuy-color-success-text);
-  --fuy-color-state-served: var(--fuy-color-info-text);
+  /* 票据状态语义（已流转态文本/描边用色；复用上列 AA 达标值） */
   --fuy-color-state-passed: var(--fuy-palette-orange-700);
-  /* 仅限删除线弱化态（tag strike），不作正文文字色——弱化语义不承载唯一信息 */
-  --fuy-color-state-cancelled: #9ca3af;
 }
 
-/* 字号阶梯（高密度，px 精确值）：13px/22px 行高为一屏可见行数优先的表格基线 */
+/* 面与壳（semantic）：纸白三级承载工作面，蓝黑墨书脊承载导轨壳层 */
+:root {
+  --fuy-surface-page: #f5f3ec; /* 工作面纸白（沉一档） */
+  --fuy-surface-card: #fdfcf8; /* 卡面亮纸白 */
+  --fuy-surface-input: #ffffff; /* 表单域最亮纸面 */
+  --fuy-shell-bg: #1a2540; /* 蓝黑墨书脊＝病历夹封皮 */
+  --fuy-shell-hover: rgba(253, 252, 248, 0.08); /* 书脊悬停纸纱 */
+  --fuy-shell-hairline: #131c33; /* 书脊深墨缝（缝在封皮上） */
+  --fuy-shell-text: rgba(253, 252, 248, 0.88); /* 书脊正文 */
+  --fuy-shell-dim: rgba(253, 252, 248, 0.62); /* 书脊弱字（分组标题/时间戳） */
+}
+
+/* 字体栈（primitive）：中文黑体系统栈，零网络字体依赖 */
+:root {
+  --fuy-font-family-base: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+}
+
+/* 字号阶梯（高密度，px 精确值）：13px/22px 行高为一屏可见行数优先的病历密排表格基线 */
 :root {
   --fuy-font-size-xs: 12px; /* 表格脚注/时间戳 */
-  --fuy-font-size-sm: 13px; /* 高密度表格正文/表头 */
+  --fuy-font-size-sm: 13px; /* 高密度表格正文/表头（病历密排） */
   --fuy-font-size-md: 14px; /* 页面正文基线（与 EP base 一致） */
   --fuy-font-size-lg: 16px; /* 卡片标题 */
   --fuy-font-size-xl: 18px; /* 页面标题 */
@@ -69,7 +88,7 @@
 /* 行高/字重口径：正文 1.5、标题 1.3；正文 400、标题/表头 600、关键数字 700。
    所有数字列与计数一律加 .fuy-num（tabular-nums）防宽度跳动（工具类见 element-plus.css） */
 
-/* 间距系统（4px 基数）：卡内 padding space-4、卡间 space-3、表单行距 space-3 */
+/* 间距系统（8px 基线高密度网格，4px 细分）：卡内 padding space-4、卡间 space-3、表单行距 space-3 */
 :root {
   --fuy-space-1: 4px;
   --fuy-space-2: 8px;
@@ -83,21 +102,19 @@
   --fuy-space-16: 64px;
 }
 
-/* 圆角/阴影/描边：workstation 卡片默认无阴影（1px 描边，密度优先），仅 hover 与弹层用 sm/md */
+/* 圆角/描边：workstation 面板以规线三级分割（2px 墨规=页级 / 1px 石规=面板 / 1px 发丝=卡内，
+   无投影堆叠），仅弹层浮起用阴影（唯一阴影给弹层） */
 :root {
-  --fuy-radius-sm: 2px; /* tag、分诊级别徽标 */
+  --fuy-radius-sm: 2px; /* tag、分诊级别徽标、药丸选中态、印章 */
   --fuy-radius-md: 4px; /* input/button（与 EP 默认一致，勿改） */
   --fuy-radius-lg: 8px; /* el-card 覆盖 */
-  --fuy-radius-xl: 12px; /* el-dialog、portal 卡片 */
+  --fuy-radius-xl: 12px; /* el-dialog */
   --fuy-radius-full: 999px;
 
-  --fuy-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --fuy-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
-  --fuy-shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.12);
-  --fuy-screen-glow: 0 0 24px rgba(56, 189, 248, 0.25); /* 仅当前叫号卡 */
+  --fuy-shadow-md: 0 12px 28px rgba(19, 28, 51, 0.16); /* 弹层唯一阴影（蓝墨基色带偏移与模糊） */
 
-  --fuy-border-hairline: 1px solid #e5e7eb; /* portal/bigscreen 亮暗各自覆盖 */
-  --fuy-screen-border-hairline: 1px solid #1e3a52;
+  --fuy-border-hairline: 1px solid #dcd7c9; /* 发丝缝（卡内，纸面细缝） */
+  --fuy-border-panel: 1px solid #c6c0ae; /* 面板石规（面板级分界） */
 }
 
 /* ===== M05 护理模块增量（设计文档 §2.2 唯一清单，2026-09-23）=====
@@ -122,7 +139,7 @@
   --fuy-chart-pulse-color: var(
     --fuy-palette-red-600
   ); /* 脉搏/心率/物理降温/短绌/事件竖线（红笔惯例）4.8:1 */
-  --fuy-chart-grid-color: #e5e7eb; /* 网格细线（与 --fuy-border-hairline 同值，SVG stroke 场景别名） */
+  --fuy-chart-grid-color: #dcd7c9; /* 网格细线（与 --fuy-border-hairline 同值，SVG stroke 场景别名） */
   --fuy-chart-text-color: var(--fuy-palette-gray-600); /* 刻度与底栏文字 */
 
   /* 体温单几何（§5.2 坐标系冻结值；SVG viewBox 计算唯一来源） */
@@ -139,21 +156,21 @@
 
 /* ===== M04 住院模块增量（床位图五态色标，2026-09-25）=====
    三层纪律沿 M05 先例：全部为 semantic 层语义别名、零新色值（一律指向既有 token/palette）；
-   五态映射：空床绿/预占橙/占床蓝/消毒灰/维修红，实底白字徽标场景对比度沿源 token 达标值。 */
+   五态映射：空床绿/预占橙/占床青/消毒灰/维修红，实底白字徽标场景对比度沿源 token 达标值。 */
 :root {
   --fuy-color-bed-free: var(--fuy-color-success-text); /* 空床（可分配）绿 */
   --fuy-color-bed-reserved: var(--fuy-palette-orange-700); /* 预占（已签床）橙 */
-  --fuy-color-bed-occupied: var(--fuy-color-brand); /* 占床（在院占用）蓝 */
+  --fuy-color-bed-occupied: var(--fuy-color-brand); /* 占床（在院占用）青 */
   --fuy-color-bed-disinfecting: var(--fuy-color-info-text); /* 消毒中（终末消毒）灰 */
   --fuy-color-bed-maintenance: var(--fuy-color-danger-text); /* 维修中（禁分配）红 */
 }
 
 /* ===== M14 物联网模块增量（设备五态/物模型同步三态/规则三源徽标色标，2026-09-26）=====
    三层纪律沿 M04 床位图先例：全部为 semantic 层语义别名、零新色值（一律指向既有 token）；
-   设备五态映射：未激活蓝/在线绿/离线橙/异常红/停用灰；同步三态：同步中橙/已同步绿/失配红；
-   规则三源：设备报警透传红/平台阈值蓝/离线灰；徽标为描边文本场景，对比度沿源 token 达标值。 */
+   设备五态映射：未激活青/在线绿/离线橙/异常红/停用灰；同步三态：同步中橙/已同步绿/失配红；
+   规则三源：设备报警透传红/平台阈值青/离线灰；徽标为描边文本场景，对比度沿源 token 达标值。 */
 :root {
-  --fuy-color-device-inactive: var(--fuy-color-brand); /* 未激活（待激活接入）蓝 */
+  --fuy-color-device-inactive: var(--fuy-color-brand); /* 未激活（待激活接入）青 */
   --fuy-color-device-online: var(--fuy-color-success-text); /* 在线绿 */
   --fuy-color-device-offline: var(--fuy-color-warning-text); /* 离线橙（需关注） */
   --fuy-color-device-abnormal: var(--fuy-color-danger-text); /* 异常红 */
@@ -176,4 +193,42 @@
   --fuy-color-infusion-yellow: var(--fuy-color-warning-text); /* 黄档预警（≤15ml） */
   --fuy-color-infusion-orange: var(--fuy-palette-orange-700); /* 橙档告急（≤10ml） */
   --fuy-color-infusion-red: var(--fuy-color-danger-text); /* 红档危急（≤5ml） */
+}
+
+/* ===== 浏览器原生面收编（「建成 vs 拼装」分界线）=====
+   焦点环/文字选区/输入插入符/滚动条/等宽数字全部在 token 层定调，全局继承生效；
+   焦点环永远可见，键盘导航不依赖色觉单通道（outline 自动跟随元素圆角） */
+:root {
+  font-family: var(--fuy-font-family-base);
+  font-variant-numeric: tabular-nums; /* 全站数字等宽，列表与计数不跳宽 */
+  caret-color: var(--fuy-color-brand); /* 插入符＝即墨（文书正在书写） */
+  scrollbar-width: thin; /* 细滚动条（Firefox/Chromium 121+ 标准属性，可继承） */
+  scrollbar-color: #c6c0ae transparent; /* 穿纸细轴（石规同源，纸上滚动不破纸面） */
+}
+
+/* 文字选区：朱洗浅底 + 墨字（文字选区即朱批标记，选区色不承载危急语义） */
+::selection {
+  background: #f0d9d3;
+  color: var(--fuy-color-text-emphasis);
+}
+
+/* 键盘焦点环（全站强制）：仅 outline，禁改元素形状；导轨墨脊面上由消费处覆写白色 */
+:focus-visible {
+  outline: 2px solid var(--fuy-color-brand); /* 即墨焦点环 */
+  outline-offset: 2px;
+}
+
+/* WebKit 滚动条兜底（旧 Chromium 不识别标准 scrollbar-color）：穿纸细轴 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c6c0ae;
+  border-radius: var(--fuy-radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

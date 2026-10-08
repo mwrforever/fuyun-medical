@@ -1,5 +1,6 @@
 /**
- * Element Plus 定制层（仅 workstation）：主色梯度覆盖 + 高密度工具类 + 状态标签辅助类。
+ * Element Plus 定制层（仅 workstation）：主色梯度覆盖 + 中性面映射 + 字体映射 +
+ * 高密度工具类 + 状态标签辅助类 + 墨脊书脊导轨菜单收编（「纸质病案 Paper Chart」世界）。
  * 红线：不修改 EP 主题 SCSS 编译（先 CSS 变量条款）；一切 --el-* 覆盖经 :root:root
  * 双写或 .fuy-* 挂类承载，禁止全局裸改 .el-* 组件选择器。
  */
@@ -7,23 +8,65 @@
 /* 主色映射（:root:root 双写提高特异性 0,2,0）：按需引入的 EP base 样式在运行期注入
    :root 变量，同特异性下依赖注入顺序不可靠——双写后无论加载顺序恒定生效。
    功能色（success/warning/danger/info）保留 EP 默认值不动，与存量页面硬编码语义一致。
-   注意：本块使全站主色由 EP 默认 #409eff 统一切换为临床蓝 #0369a1，属批次 0 预期内的
-   全局视觉变化（设计文档 §9.2.3 主色全局变化声明）。 */
+   注意：本块使全站主色由 EP 默认 #409eff 统一切换为浓墨 #1e2a44——「墨即操作」，
+   主按钮=墨色实底，属「纸质病案」世界换血预期内的全局视觉变化（2026-10-08 用户锁定）。 */
 :root:root {
-  --el-color-primary: #0369a1;
-  /* light-N = 主色混入 N×10% 白（EP 官方混色公式同源计算） */
-  --el-color-primary-light-3: #4f96bd; /* hover */
-  --el-color-primary-light-5: #81b4d0;
-  --el-color-primary-light-7: #b3d2e3;
-  --el-color-primary-light-8: #cde1ec; /* 边框 */
-  --el-color-primary-light-9: #e6f0f6; /* 浅底 */
-  --el-color-primary-dark-2: #025481; /* active */
+  --el-color-primary: #1e2a44;
+  /* light-N = N×10% 白混入主色（EP 官方混色公式同源核算取整） */
+  --el-color-primary-light-3: #626a7c; /* hover（灰墨一档） */
+  --el-color-primary-light-5: #8f95a2;
+  --el-color-primary-light-7: #bcbfc7;
+  --el-color-primary-light-8: #d2d4da; /* 边框 */
+  --el-color-primary-light-9: #e9eaec; /* 浅底 */
+  --el-color-primary-dark-2: #182236; /* active（书脊深墨一档） */
+  /* 字体栈映射：EP 组件字体统一走中文黑体系统栈（唯一来源 tokens.css --fuy-font-family-base） */
+  --el-font-family: var(--fuy-font-family-base);
+
+  /* ===== EP 中性面映射（「纸质病案」= EP 组件基底全部落纸墨世界）=====
+     EP 默认中性面是冷灰系（#909399 族），与纸白/墨字并用会出现「灰塑料」杂色；
+     此处把 bg/text/border/fill 四族逐一映射到纸面三级与墨字三级，EP 组件即自然
+     长在纸上。变量名均经 EP 2.14.5 base.css 验证在位，禁造不存在的变量名。 */
+  /* 纸面三级（纸质病案=卡面亮纸白/工作面沉纸白/表单域最亮纸面） */
+  --el-bg-color: #fdfcf8; /* 组件基底＝卡面亮纸白 */
+  --el-bg-color-overlay: #fdfcf8; /* 弹层基底＝卡面亮纸白（弹层是浮起的一页纸） */
+  --el-bg-color-page: #f5f3ec; /* 页面基底＝工作面纸白 */
+  /* 墨字三级（纸质病案=浓墨承文/灰墨批注/弱墨脚注） */
+  --el-text-color-primary: #1e2a44; /* 主文本＝浓墨 */
+  --el-text-color-regular: #1e2a44; /* 常规文本＝文书正文同墨 */
+  --el-text-color-secondary: #565d6e; /* 次要文本＝灰墨 */
+  --el-text-color-placeholder: #676d7b; /* 占位符＝弱墨 */
+  --el-text-color-disabled: #a6abb8; /* 禁用文本＝褪墨 */
+  /* 描边（纸质病案=面板石规一族，由深到浅为规线浓淡档） */
+  --el-border-color: #c6c0ae; /* 默认描边＝输入框石规 */
+  --el-border-color-light: #d5d0c1; /* 浅一档石规 */
+  --el-border-color-lighter: #ddd8ca; /* 更浅石规（近发丝） */
+  --el-border-color-extra-light: #e7e3d6; /* 极浅石规（纸面发丝） */
+  --el-border-color-dark: #a49e8b; /* 深一档石规（悬停加重） */
+  --el-border-color-darker: #8a8471; /* 最深石规（激活/选中描边） */
+  --el-border-color-hover: #565d6e; /* 悬停描边＝灰墨 */
+  /* 填充（纸质病案=纸面暖底一族，表头纸/行悬停纸与样稿同值） */
+  --el-fill-color: #efece1; /* 默认填充＝纸面悬停暖底 */
+  --el-fill-color-dark: #e5e1d4; /* 深一档暖底（悬停/按压） */
+  --el-fill-color-light: #f2efe5; /* 表头纸（与样稿 thead 同值） */
+  --el-fill-color-lighter: #f6f3ea; /* 行悬停纸面（与样稿 tbody tr:hover 同值） */
+  --el-fill-color-extra-light: #faf8f2; /* 极浅暖底 */
+  --el-fill-color-blank: #ffffff; /* 空白填充＝表单域最亮纸面 */
+  /* 禁用三态（EP disabled 变量族，褪墨+纸面弱形态） */
+  --el-disabled-bg-color: #f6f3ea;
+  --el-disabled-text-color: #a6abb8;
+  --el-disabled-border-color: #ddd8ca;
+  /* 遮罩（纸质病案=墨纱：弹层之下覆一层蓝黑墨纱，纸上页内页） */
+  --el-mask-color: rgba(30, 42, 68, 0.45);
+  /* 阴影（纸质病案=唯一阴影给弹层，蓝墨基色带偏移与模糊，与 tokens.css --fuy-shadow-md 同源） */
+  --el-box-shadow: 0 12px 28px rgba(19, 28, 51, 0.16);
+  --el-box-shadow-light: 0 12px 28px rgba(19, 28, 51, 0.16);
+  --el-box-shadow-lighter: 0 4px 12px rgba(19, 28, 51, 0.1);
 }
 
 /* el-table 高密度模式：挂载方式为 <el-table> 外层卡片或自身加 class="fuy-dense"，
    13px/22px 行高密集但可读；禁与 size="small" 双轨混用（fuy-dense 唯一） */
 .fuy-dense .el-table {
-  --el-table-row-hover-bg-color: var(--fuy-palette-brand-50);
+  --el-table-row-hover-bg-color: var(--el-fill-color-lighter); /* 行悬停纸面（样稿 #f6f3ea） */
   font-size: var(--fuy-font-size-sm); /* 13px */
 }
 .fuy-dense .el-table .el-table__cell {
@@ -62,8 +105,11 @@
   --el-tag-text-color: var(--fuy-color-danger-text);
 }
 .fuy-tag-strike {
-  text-decoration: line-through; /* 删除线弱化态：取消/作废语义，弱化后不承载唯一信息 */
-  opacity: 0.75;
+  /* 朱笔划销＝作废语义三通道之一（划销+印章+图例）：灰墨弱化但保信息，单元格全对比度 */
+  color: var(--fuy-color-text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--fuy-color-danger-text);
+  text-decoration-thickness: 1.5px;
 }
 
 /* 分诊级别徽标（预检分诊四级，实底白字 span，非 el-tag）：取值一律来自
@@ -104,52 +150,56 @@
   gap: var(--fuy-space-3);
 }
 
-/* 菜单收编类（§9.2.2 第五枚，§9.3.1 布局树定稿；批次 1 落盘，兑现批次 0 的 TODO(batch-1)）。
+/* 菜单收编类（蓝黑墨书脊导轨形态，2026-10-08「纸质病案」世界换血重写；消费方仅 AppSidebar）。
    三枚职责：.fuy-menu 承载菜单项高/字号/悬停/选中态变量与后代覆盖（挂 el-menu）；
-   .fuy-menu-head 承载侧栏品牌头布局；.fuy-menu-brand 承载品牌字标本体（展开「富云」/折叠「富」共用）。
-   后代选择器均带 .fuy-menu 前缀挂类（.fuy-dense 同款先例），特异性恒压 EP 按需注入样式，不依赖加载顺序 */
+   .fuy-menu-head 承载导轨品牌头布局；.fuy-menu-brand 承载品牌字标本体（展开「富云」/
+   折叠「富」共用）。后代选择器均带 .fuy-menu 前缀挂类（.fuy-dense 同款先例），特异性恒压
+   EP 按需注入样式，不依赖加载顺序 */
 .fuy-menu {
-  /* 菜单项高 40px（EP 默认 56px，密度优先压低）；悬停底灰-50 由变量注入 EP 悬停通道 */
+  /* 菜单项高 40px（EP 默认 56px，密度优先压低）；导轨选中/悬停通道经 EP 变量注入：
+     底色透明让 aside 墨脊透出，文字用纸纱（对墨脊底 ≥4.5:1），悬停纸纱加深 */
   --el-menu-item-height: 40px;
-  --el-menu-hover-bg-color: var(--fuy-palette-gray-50);
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: var(--fuy-shell-text);
+  --el-menu-hover-bg-color: var(--fuy-shell-hover);
+  --el-menu-active-color: var(--fuy-color-text-emphasis);
+  --el-menu-hover-text-color: var(--fuy-shell-text);
   /* 菜单项字号经 EP 变量通道覆盖：EP 在 .el-menu-item 直接声明 font-size，容器级
      font-size 继承打不过直接声明，写容器级属死覆盖 */
   --el-menu-item-font-size: var(--fuy-font-size-md);
-  /* 右边框经 EP 变量通道置透明：侧栏分隔线由 aside 边框承载，若写 border-right: none
-     则与 EP 懒加载注入的 .el-menu { border-right: solid 1px ... } 同特异性平局且
-     EP 必然后注入，EP 胜出会致 1px 右边框回归、与 aside 边框双线 */
+  /* 右边框经 EP 变量通道置透明：导轨分隔线由 aside 边框（深青发丝缝）承载，若写
+     border-right: none 则与 EP 懒加载注入的 .el-menu { border-right: ... } 同特异性
+     平局且 EP 必然后注入，EP 胜出会致 1px 右边框回归、与 aside 边框双线 */
   --el-menu-border-color: transparent;
 }
 
-/* 菜单项：悬停底色 120ms 过渡（单元素状态反馈，§9.3.1 布局树点名；relative 供选中色条定位） */
+/* 菜单项＝导轨上的亮纸白药丸坯：左右 8px 收边 + 2px 直角（悬停 120ms 过渡，单元素状态反馈；
+   relative 供选中色条定位；静态 margin 不属动画，禁改 width 铁律不受影响） */
 .fuy-menu .el-menu-item {
   position: relative;
+  margin: 0 var(--fuy-space-2);
+  border-radius: var(--fuy-radius-sm);
   transition: background-color var(--fuy-motion-fast) var(--fuy-ease-standard);
 }
 
-/* 选中态：底 brand-50 + 文字 brand-700（压过 EP 的 .el-menu-item.is-active 主色文字） */
+/* 选中态：亮纸白药丸 + 墨字（墨脊书脊上的「胸牌」，形状即选中通道） */
 .fuy-menu .el-menu-item.is-active {
-  background: var(--fuy-palette-brand-50);
-  color: var(--fuy-palette-brand-700);
+  background: var(--fuy-surface-card);
+  color: var(--fuy-color-text-emphasis);
+  font-weight: 600;
 }
 
-/* 选中态左缘 3px 品牌色条（§9.3.1 布局树）：位置指示不依赖色觉单通道 */
-.fuy-menu .el-menu-item.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--fuy-color-brand);
+/* 导轨上键盘焦点环改白色：即墨环在墨脊底上不可见，焦点永远可见是底线 */
+.fuy-menu .el-menu-item:focus-visible {
+  outline-color: #ffffff;
 }
 
-/* 分组标题：xs/600、letter-spacing 0.5px、次要色（EP 默认口径偏大偏散，收编压紧） */
+/* 分组标题：xs/600、letter-spacing 1px、书脊弱字纸纱（EP 默认口径偏大偏散，收编压紧） */
 .fuy-menu .el-menu-item-group__title {
   font-size: var(--fuy-font-size-xs);
   font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--el-text-color-secondary);
+  letter-spacing: 1px;
+  color: var(--fuy-shell-dim);
 }
 
 /* 折叠态隐藏分组标题：64px 宽度下四字标题竖排不可读，分组语义由菜单项缩写承接 */
@@ -157,23 +207,26 @@
   display: none;
 }
 
-/* 折叠态单字缩写严格居中（§9.3.1 折叠态 24×24 缩略形态）：EP 折叠项默认左 padding 使
-   单字在 64px 项宽内偏左，归零后由 text-align 承担水平居中（批次 1 移交打磨项） */
+/* 折叠态单字缩写严格居中（折叠态缩略形态）：EP 折叠项默认左 padding 使单字在 64px 项宽内
+   偏左，归零后水平居中交由 justify-content 承担——.el-menu-item 是 flex 容器，匿名文本项
+   参与 flex 分布，text-align 对其无效（终审 P1 实测字位左坠的根因） */
 .fuy-menu.el-menu--collapse .el-menu-item {
   padding: 0;
-  text-align: center;
+  justify-content: center;
+  text-align: center; /* 兜底非 flex 形态（EP 版本差异防回归），与 justify-content 双保险 */
 }
 
-/* 侧栏品牌头：高 48px flex 居中（§9.3.1 布局树第一层） */
+/* 侧栏品牌头：高 56px 与顶栏同高对齐（墨脊书脊与亮纸白顶条的横向接缝齐平） */
 .fuy-menu-head {
-  height: 48px;
+  height: 56px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* 品牌字标本体：brand-700 底白字，展开态「富云」/折叠态「富」单字共用一套形态；
-   24px 高与菜单项 40px 形成头区-菜单密度对比，radius-md 与 input/button 圆角口径一致 */
+/* 品牌字标本体＝墨脊上的亮纸白字标：纸白底墨字，展开态「富云」疏排（样稿字标 letter-spacing
+   4px）/折叠态「富」单字共用一套形态；24px 高与菜单项 40px 形成头区-菜单密度对比，
+   radius-md 与 input/button 圆角口径一致 */
 .fuy-menu-brand {
   display: inline-flex;
   align-items: center;
@@ -182,10 +235,18 @@
   height: 24px;
   padding: 0 6px;
   border-radius: var(--fuy-radius-md);
-  background: var(--fuy-palette-brand-700);
-  color: #fff;
-  font-size: var(--fuy-font-size-md); /* 品牌字标 14px（§9.3.1 布局树定稿，禁降 sm） */
+  background: var(--fuy-surface-card);
+  color: var(--fuy-palette-brand-900);
+  font-size: var(--fuy-font-size-md); /* 品牌字标 14px（禁降 sm） */
   font-weight: 700;
+  letter-spacing: 4px;
+}
+
+/* 折叠态单字字距补偿：单字挂 4px 尾随字距会在 64px 导轨内视觉偏左，归零并放宽水平
+   padding 保单字居中（与折叠菜单项 text-align 居中同语法） */
+.fuy-menu-brand.is-fold {
+  letter-spacing: 0;
+  padding: 0 8px;
 }
 
 /* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */
