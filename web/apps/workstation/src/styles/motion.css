@@ -3,8 +3,7 @@
  * prefers-reduced-motion 全局兜底。
  * 铁律：动画属性仅 transform 与 opacity（叠加层用伪元素 opacity 承载底色脉冲）；
  * 零 width/height/top/left 动画；本文件为全站唯一 keyframes 来源，页面零新增。
- * 级联参考实现：岗位换装 FLIP（views/layout/components/AppSidebar.vue playGroupsFlip——
- * pre-flush 捕获旧位 → nextTick 反演 → 强制回流 → 逐组级联归位），全站列表重排沿此范式。
+ * 级联先例：.fuy-stagger 以子元素内联 --fuy-stagger-index 指定级联序（本文件下文）。
  * 键盘焦点环已收编至 tokens.css 浏览器原生面段（:focus-visible 唯一定义处）。
  */
 

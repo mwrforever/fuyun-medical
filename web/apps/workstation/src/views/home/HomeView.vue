@@ -1,42 +1,19 @@
 <script setup lang="ts">
-// 岗位工作台首页（「纸质病案」世界）：门牌页首（问候 + 岗位描边印 + 批注行，2px 墨规收底）
-// + 常用入口紧凑链接条 + 诚实空态。报表式构图的指标带/趋势图/事件流属裁剪区——无真实
-// API 支撑一律不落（零伪数据），接真实 API 后归位（批次 2+）。
+// 工作站首页（「纸质病案」世界 · 删岗后口径，批次 2 册 1 契约 §4）：门牌页首（问候语 +
+// 「登录名 · 日期」批注行，2px 墨规收底；岗位描边印已随岗位维度废除移除）+ 常用入口
+// 紧凑链接条 + 诚实空态。报表式构图的指标带/趋势图/事件流属裁剪区——无真实 API 支撑
+// 一律不落（零伪数据），接真实 API 后归位（批次 2+）。
 // 入口数据来自菜单常量（../layout/menu.ts）的真实路由入口——同一份数据既驱动侧栏也驱动
-// 本页链接条，零出网、零伪数据（无首页聚合 API，引入调用即属推测性设计）；过滤 = 权限
-// （auth.hasRoutePermission，与侧栏同口径）∩ 岗位（POST_SELECTION_KEY 注入值，由
-// MainLayout provide）。首页自身不入链接条（当前页自引用无意义）。
-import { computed, inject } from 'vue';
+// 本页链接条，零出网、零伪数据（无首页聚合 API，引入调用即属推测性设计）；过滤口径=
+// 仅权限单道（auth.hasRoutePermission，与侧栏同口径；原「权限∩岗位双道」随岗位废除
+// 收敛为权限单道）。首页自身不入链接条（当前页自引用无意义）。
+import { computed } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
-import {
-  MENU_ITEMS,
-  POST_OPTIONS,
-  POST_SELECTION_KEY,
-  selectMenuItemsForPost,
-  type PostSelection,
-  type SidebarMenuItem,
-} from '../layout/menu';
+import { MENU_ITEMS, type SidebarMenuItem } from '../layout/menu';
 
 const authStore = useAuthStore();
 const router = useRouter();
-
-/**
- * 当前岗位（布局壳下行，只读）：独立挂载（如单测直挂）无 provide 时兜底「全部」，
- * 防御语义与侧栏 props 默认值一致。
- */
-const postState = inject(POST_SELECTION_KEY, undefined);
-const post = computed<PostSelection>(() => postState?.value ?? 'all');
-
-/** 岗位展示名（批注行同源标签；未知键兜底「全部」防裸渲染 undefined） */
-const postLabel = computed(
-  () => POST_OPTIONS.find((option) => option.key === post.value)?.label ?? '全部',
-);
-
-/** 当前岗位单字（岗位描边印取字；未知键兜底「全」，与侧栏折叠 chip 同源同兜底） */
-const postAbbr = computed(
-  () => POST_OPTIONS.find((option) => option.key === post.value)?.abbr ?? '全',
-);
 
 /**
  * 按小时返回问候时段词（纯函数，钟点→文案可脱离系统时钟单测）：上午 <12 / 下午 <18 /
@@ -88,14 +65,28 @@ function routePermissionOf(index: string): string | undefined {
 }
 
 /**
- * 当前岗位高频入口：权限过滤 ∩ 岗位过滤，再剔除首页自身（当前页自引用无意义）；
+ * 常用入口：仅权限单道过滤（契约 §4 删岗后口径），再剔除首页自身（当前页自引用无意义）；
  * 顺序沿菜单常量稳定渲染序。
  */
 const entries = computed<SidebarMenuItem[]>(() =>
-  selectMenuItemsForPost(MENU_ITEMS, post.value)
-    .filter((item) => item.index !== '/')
-    .filter((item) => authStore.hasRoutePermission(routePermissionOf(item.index))),
+  MENU_ITEMS.filter((item) => item.index !== '/').filter((item) =>
+    authStore.hasRoutePermission(routePermissionOf(item.index)),
+  ),
 );
+
+/**
+ * 入口单字缩写（标签架语法保留）：菜单模型已不再携带缩写字段（批次 2 删岗随动清理），
+ * 缩写取页名首字派生（装饰性重复字符，aria-hidden 承载，非正文书文）。
+ * 已知首字重复为接受态（患×2/住×3/护×2/退×2/设×2，如患者建档/患者检索）：岗位 abbr
+ * 废除后按首字派生的必然结果，属维持现状的认可留痕——缩写块为装饰性第二通道，名称
+ * 文字并列在侧承载区分，功能无损（契约 §4「语法不变」）。
+ *
+ * @param item 菜单项（label 首字即缩写源）
+ * @return 单字缩写（PDA 等英文页名取首字母）
+ */
+function initialOf(item: SidebarMenuItem): string {
+  return item.label.charAt(0);
+}
 
 /** 进场级联序（≤5 封顶，第 6 项起并发，与 motion.css stagger 约定一致） */
 function staggerIndex(index: number): number {
@@ -105,13 +96,12 @@ function staggerIndex(index: number): number {
 
 <template>
   <section class="fuy-page">
-    <!-- 门牌页首：问候语 + 岗位描边印（墨印承身份，危急才用朱印）+「谁·何时」批注行，
-         页级 2px 墨规收底（样稿 .doc-head 同构） -->
+    <!-- 门牌页首：问候语 +「谁·何时」批注行（登录名 · 日期），页级 2px 墨规收底
+         （样稿 .doc-head 同构；岗位描边印已随批次 2 删岗移除） -->
     <header class="home-doc-head">
       <h1 class="home-doc-title">{{ greeting }}，{{ displayName }}</h1>
-      <span class="home-post-stamp" aria-hidden="true">{{ postAbbr }}</span>
       <span class="home-doc-note">
-        当前岗位：{{ postLabel }} · 登录名 {{ loginName }} · <time>{{ todayLabel }}</time>
+        登录名 {{ loginName }} · <time>{{ todayLabel }}</time>
       </span>
     </header>
 
@@ -127,17 +117,17 @@ function staggerIndex(index: number): number {
           :to="item.index"
           :style="{ '--fuy-stagger-index': staggerIndex(index) }"
         >
-          <span class="home-quick-abbr" aria-hidden="true">{{ item.abbr }}</span>
+          <span class="home-quick-mark" aria-hidden="true">{{ initialOf(item) }}</span>
           <span class="home-quick-link-label">{{ item.label }}</span>
         </RouterLink>
       </nav>
     </template>
 
-    <!-- 诚实空态：该岗位经权限∩岗位过滤后确无入口时的真实语义（非占位 lorem） -->
+    <!-- 诚实空态：权限过滤后确无入口时的真实语义（非占位 lorem） -->
     <div v-else class="home-empty">
-      <p class="home-empty-title">该岗位暂无可视入口</p>
+      <p class="home-empty-title">暂无可视入口</p>
       <p class="home-empty-hint">
-        当前会话未被授予任何{{ postLabel }}业务功能的访问权限，请联系管理员确认权限分配。
+        当前会话未被授予任何业务功能的访问权限，请联系管理员确认权限分配。
       </p>
     </div>
   </section>
@@ -162,24 +152,6 @@ function staggerIndex(index: number): number {
   font-weight: 600;
   line-height: 1.3;
   color: var(--fuy-color-text-emphasis);
-}
-
-/* 岗位描边印：墨印承身份标记（描边印章语法，样稿 .stamp 同形）——朱印只承危急状态，
-   岗位是身份不是危急，故用墨字描边印 */
-.home-post-stamp {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 4px;
-  border: 1.5px solid var(--fuy-color-text-emphasis);
-  border-radius: var(--fuy-radius-sm);
-  color: var(--fuy-color-text-emphasis);
-  font-size: var(--fuy-font-size-xs);
-  font-weight: 600;
-  line-height: 1;
 }
 
 /* 批注行：文书页边注语法（「谁·何时」必带），弱墨小字不抢问候主语 */
@@ -221,8 +193,8 @@ function staggerIndex(index: number): number {
   background: var(--fuy-palette-gray-50);
 }
 
-/* 单字纸块缩写：淡墨纸块（沿用文字缩写体系，零图标库依赖），单字居中 */
-.home-quick-abbr {
+/* 单字纸块缩写：淡墨纸块（页名首字派生），单字居中 */
+.home-quick-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -230,7 +202,7 @@ function staggerIndex(index: number): number {
   width: 20px;
   height: 20px;
   border-radius: var(--fuy-radius-sm);
-  background: rgba(30, 42, 68, 0.08); /* 淡墨一成底（样稿 .abbr 同值） */
+  background: rgba(30, 42, 68, 0.08); /* 淡墨一成底（样稿单字纸块同值） */
   color: var(--fuy-color-text-emphasis);
   font-size: 11px; /* 20px 纸块内的缩写字号（样稿同值，装饰性重复字符非正文书文） */
   font-weight: 600;

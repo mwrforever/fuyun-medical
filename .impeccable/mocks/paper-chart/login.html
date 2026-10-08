@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · 富云医护工作站（纸质病案样稿）</title>
+<link rel="stylesheet" href="./paper-chart.css">
+<style>
+/* ============================================================
+   登录页 · 纸墨门面（册 1 契约 §2 静态样稿）
+   语义：病案夹的封面页——登录 = 翻开当日病案前的身份确认。
+   构图：纸面三级铺陈——整页工作面 #f5f3ec 为封皮，登录表单为
+         搁在封皮上的封面纸 #fdfcf8（石规围合 + 2px 墨规收底，
+         契约指定的页级规线移植），填写域 #ffffff 为最亮纸面。
+   红线：零投影样式（本页无弹层，层级只靠亮度差 + 规线）；
+         零入场动画（无关键帧与渐入编排，仅 120ms 交互反馈
+         过渡）；零新色值——颜色只取 paper-chart.css / DESIGN.md
+         既有 token 字面量（#626a7c / #182236 为 DESIGN.md
+         components 的 button-primary-hover/active 既有档，
+         #131c33 为 DESIGN.md 品牌字标字色）。
+   ============================================================ */
+
+/* ---------- 封皮版面（左区）：排印直接坐在工作面纸上 ---------- */
+.login-stage {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 左右非对称：左=封皮排印（无卡，坐在纸上），右=封面登录表；
+   大 gap 呼吸分隔，两区之间不设竖线——亮度差即分层，规线不越级 */
+.login-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(64px, 8vw, 112px);
+  padding: 48px 40px;
+}
+
+.cover {
+  max-width: 520px;
+}
+
+/* 品牌字标：中文黑体栈 700，字距 0.22em 拉出封皮排印的仪式感；
+   padding-left 同距补偿尾随字距，保证两字视觉居中；
+   字色取 DESIGN.md 品牌字标指定值 #131c33（--fuy-rail-deep） */
+.brand-large {
+  font-size: 60px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: 0.22em;
+  padding-left: 0.22em;
+  color: var(--fuy-rail-deep);
+}
+
+/* 封皮副行：PRODUCT.md 三位一体定位，灰墨疏排 */
+.cover-line {
+  margin-top: 18px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 2px;
+  color: var(--fuy-ink-2);
+}
+
+/* 封皮批注区：文书页边注语法，先身份域后时间 */
+.cover-notes {
+  margin-top: 64px;
+}
+.cover-posts {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fuy-ink);
+}
+.cover-note {
+  margin-top: 6px;
+}
+
+/* ---------- 封面登录表（右区）：卡面亮纸白 + 2px 墨规收底 ---------- */
+.login-panel {
+  width: 400px;
+  background: var(--fuy-card);
+  border: 1px solid var(--fuy-rule-strong);
+  /* 契约 §2：表单区 2px 墨规收底——页级压章线移植到门面，覆盖下缘石规 */
+  border-bottom: 2px solid var(--fuy-rule-ink);
+  border-radius: 8px;
+  padding: 32px 32px 28px;
+}
+
+/* 卡头：副题「富云医院信息系统 · 请登录」（「请登录」为现行文案锚点，
+   语义忠实 LoginView）+ 描边墨印「签」；发丝线为卡内细缝 */
+.login-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--fuy-rule);
+}
+.login-panel-head h2 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--fuy-ink);
+}
+.login-seal {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1.5px solid var(--fuy-ink);
+  border-radius: 2px;
+  color: var(--fuy-ink);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* 字段：label 关联 + 必填朱星号（语义标记先例）；行距 18px */
+.login-field {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.login-field label {
+  font-size: 13px;
+  color: var(--fuy-ink-2);
+}
+.login-field label em {
+  font-style: normal;
+  color: var(--fuy-zhu);
+  margin-left: 2px;
+}
+
+/* 输入域：三级最亮纸面 #ffffff，石规描边；聚焦 = 描边转墨 + 2px 墨
+   outline（全站焦点环语法，本页零投影故以 outline 承环） */
+.login-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--fuy-input);
+  border: 1px solid var(--fuy-rule-strong);
+  border-radius: 4px;
+  font-size: 14px;
+  color: var(--fuy-ink);
+  caret-color: var(--fuy-ink);
+  transition: border-color var(--fuy-t-fast) var(--fuy-ease-standard);
+}
+.login-input::placeholder {
+  color: var(--fuy-ink-3);
+}
+.login-input:focus {
+  outline: 2px solid var(--fuy-ink);
+  outline-offset: 1px;
+  border-color: var(--fuy-ink);
+}
+
+/* 错误态（静态示例）：朱只承状态——朱描边 + 字段级朱字提示，
+   校验文案取现行 LoginView 规则口径，语义零改动 */
+.login-input--error {
+  border-color: var(--fuy-zhu);
+}
+.login-input--error:focus {
+  outline-color: var(--fuy-zhu);
+  border-color: var(--fuy-zhu);
+}
+.login-field-error {
+  font-size: 12px;
+  color: var(--fuy-zhu);
+}
+
+/* 登录按钮：「墨即操作」浓墨实底白字；悬停/按压取契约 §2 指定档
+   #626a7c / #182236；中文两字字距 + text-indent 补偿视觉居中 */
+.login-submit {
+  margin-top: 26px;
+  width: 100%;
+  height: 40px;
+  background: var(--fuy-ink);
+  border: 0;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 4px;
+  text-indent: 4px;
+  cursor: pointer;
+  transition: background-color var(--fuy-t-fast) var(--fuy-ease-standard);
+}
+.login-submit:hover {
+  background: #626a7c;
+}
+.login-submit:active {
+  background: #182236;
+}
+
+/* 合规注记：等保三级审计背景的真实性质提示（PRODUCT.md） */
+.login-audit {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--fuy-ink-3);
+  text-align: center;
+}
+
+/* ---------- 窄窗保底（非响应式设计，仅防样稿破版） ---------- */
+@media (max-width: 920px) {
+  .login-center {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 40px;
+    max-width: 460px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .login-panel {
+    width: auto;
+  }
+  .cover-notes {
+    margin-top: 40px;
+  }
+}
+
+/* reduced-motion 兜底：共享 paper-chart.css 已全局兜底，此处对页内
+   过渡再作独立声明，保证样稿单独打开时同样直达终态 */
+@media (prefers-reduced-motion: reduce) {
+  .login-input,
+  .login-submit {
+    transition-duration: 0.01ms;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="login-stage">
+  <div class="login-center">
+
+    <!-- 左区 · 封皮版面：排印直接坐在工作面纸上（无卡无投影） -->
+    <section class="cover" aria-label="系统门面">
+      <h1 class="brand-large">富云</h1>
+      <p class="cover-line">智慧服务 · 智慧医疗 · 智慧管理</p>
+      <div class="cover-notes">
+        <p class="cover-posts">面向医生、护士、药师、收费员、设备科</p>
+        <p class="cover-note note">身份确认后，翻开当日病案 · <time>2026-10-08 周四</time></p>
+      </div>
+    </section>
+
+    <!-- 右区 · 封面登录表：卡面亮纸白 + 2px 墨规收底；字段语义忠实现行 LoginView（登录名/口令/登录按钮） -->
+    <section class="login-panel" aria-label="登录表单">
+      <header class="login-panel-head">
+        <h2>富云医院信息系统 · 请登录</h2>
+        <!-- 描边墨印＝标记语法：登录即签认身份，纯装饰不承信息 -->
+        <span class="login-seal" aria-hidden="true">签</span>
+      </header>
+      <form aria-label="登录" onsubmit="return false;">
+        <div class="login-field">
+          <label for="login-name">登录名<em>*</em></label>
+          <input class="login-input" id="login-name" type="text"
+                 placeholder="请输入登录名" autocomplete="username">
+        </div>
+        <!-- 错误态静态示例：呈现字段级提示语法供实现端对照 -->
+        <div class="login-field">
+          <label for="login-password">口令<em>*</em></label>
+          <input class="login-input login-input--error" id="login-password" type="password"
+                 placeholder="请输入口令" autocomplete="current-password"
+                 aria-invalid="true" aria-describedby="login-password-err">
+          <p class="login-field-error" id="login-password-err">长度须为 4-64 个字符</p>
+        </div>
+        <button class="login-submit" type="submit">登录</button>
+      </form>
+      <p class="login-audit">登录行为纳入审计日志 · 留存不少于六个月</p>
+    </section>
+
+  </div>
+
+  <p class="mock-foot">设计样稿 ·「纸质病案」视觉世界 · 登录门面（册 1 契约 §2）</p>
+</div>
+
+</body>
+</html>

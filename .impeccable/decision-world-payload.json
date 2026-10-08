@@ -1,0 +1,168 @@
+{
+  "title": "选择富云新的视觉世界",
+  "question": "方向掷骰已定（seed 21571ba6）：保留分配方向「医院导视」，选备选或类别标准，或重掷。",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "医院导视标牌 Wayfinding",
+      "kicker": "THE ROLL",
+      "lineage": "中国医院导视与急救标识系统（公共信息设计传统）",
+      "thesis": "把整座医院的「3 秒找路」本领搬进系统：每页页首是一块科室门牌，分区用地面动线色带划分，状态是挂在内容上的标识牌——先知道往哪走，再看清要做什么。色彩只做语义：急救红=危急、安全绿=确认/通道、警示琥珀=延迟、信息蓝=常规，与全院状态唯一映射天然同构。",
+      "palette": ["#fbfbfa", "#1b1b18", "#d92c20", "#087443", "#dc6803", "#1570ef"],
+      "materials": ["铝板丝印标牌", "地面动线色带", "房号编码牌"],
+      "viewport": "左侧导航导轨+顶部白条不变；页首「门牌」：色标边条+粗黑页名+房号式编码；今日队列以挂牌阵列先行，密排工作表随后；右缘批注栏悬挂过敏/危急。",
+      "risk": "色块一旦越出语义用途就退化成「彩色按钮 admin」——红绿黄的稀缺性是这个世界生死线；bigscreen 远读变体需单独适配。",
+      "raised": [
+        { "from": "challenger-centre-rail", "raise": "页边批注区（apparatus）：过敏/危急/备注悬挂在内容侧缘，不占工作面。" },
+        { "from": "challenger-centre-rail", "raise": "同一套规线语法：全站分割线出自同一规线系统，一笔一像素。" },
+        { "from": "challenger-orienteering", "raise": "全站状态图例：每个工作面的色标在固定位置可查图例。" },
+        { "from": "challenger-zoo", "raise": "连续动线色带：分区分割升格为一条贯穿的「地面动线」语法。" },
+        { "from": "challenger-mixtape", "raise": "批注时间戳：每条批注带「谁/何时」。" },
+        { "from": "challenger-doujin", "raise": "划销形态：作废/停用态升格为标识性划销语法。" },
+        { "from": "challenger-emission", "raise": "线形状态通道：实线/虚线/半高/双线为标识牌的辅助状态通道（色弱增强）。" }
+      ],
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "导航导轨", "x": 0, "y": 0, "w": 2, "h": 10 },
+          { "label": "顶部白条", "x": 2, "y": 0, "w": 10, "h": 1 },
+          { "label": "门牌页首（色标带+粗黑页名+编码）", "x": 2, "y": 1, "w": 10, "h": 1, "accent": true },
+          { "label": "今日队列挂牌阵", "x": 2, "y": 2, "w": 6, "h": 4, "accent": true },
+          { "label": "密排工作表", "x": 8, "y": 2, "w": 4, "h": 6 },
+          { "label": "页边批注栏（过敏/危急）", "x": 2, "y": 6, "w": 6, "h": 2 },
+          { "label": "状态图例", "x": 2, "y": 9, "w": 6, "h": 1 }
+        ]
+      }
+    },
+    {
+      "id": "model-pick",
+      "label": "纸质病案 Paper Chart",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "体温单/医嘱单/检验单的密排文书传统",
+      "thesis": "整座系统穿进病历纸里：格线即版面，蓝黑墨字承数据，印泥朱承状态印章——医院自己用了百年的信息架构，密度与扫读的母语。",
+      "palette": ["#faf9f5", "#1e2a44", "#b42318", "#8a8a82"],
+      "materials": ["病历纸格线", "蓝黑墨水", "印章"],
+      "viewport": "患者身份条领衔；体温单式格线仪表区先行；医嘱单密排右侧；24 小时时间轴格线承生命体征。",
+      "risk": "医疗类产品的安全区——纸白表单是大多数人对「医疗软件」的默认想象，辨识度全靠执行密度；暖纸底有落俗风险。",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "导航导轨", "x": 0, "y": 0, "w": 2, "h": 10 },
+          { "label": "顶部白条", "x": 2, "y": 0, "w": 10, "h": 1 },
+          { "label": "患者身份条", "x": 2, "y": 1, "w": 10, "h": 1, "accent": true },
+          { "label": "体温单式格线仪表", "x": 2, "y": 2, "w": 7, "h": 5, "accent": true },
+          { "label": "医嘱单密排行", "x": 9, "y": 2, "w": 3, "h": 6 },
+          { "label": "24 小时时间轴格线", "x": 2, "y": 7, "w": 7, "h": 2 },
+          { "label": "脚注/图例", "x": 2, "y": 9, "w": 7, "h": 1 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-centre-rail",
+      "label": "中央轨批注本 Reference Setting",
+      "verdict": "competitive",
+      "lineage": "学术参考版排印（批注本）",
+      "thesis": "密排双栏绕中央键轨：中央是患者/对象轨，页边悬挂临床批注——把批注本的排印学做成工作台。",
+      "palette": ["#f2eee3", "#191714", "#c0392b"],
+      "materials": ["规线引擎", "朱红键轨", "页边批注"],
+      "viewport": "左密列候诊、中央朱键轨、右病历栏、页边批注 apparatus。",
+      "case": "融合干净：中央轨=患者上下文轨、页边=过敏/危急批注，产品清晰度拉满；输在急诊时刻的紧迫感弱于导视世界的公共性——持一轴，全程备选。",
+      "risk": "书卷气对 3 秒紧迫场景偏静；规线密度需要强执行纪律，否则散架。",
+      "board": "https://impeccable.style/worlds/cards/rw-centre-rail-reference-setting.webp",
+      "hero": "https://impeccable.style/worlds/cards/rw-centre-rail-reference-setting-hero.webp",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "导航导轨", "x": 0, "y": 0, "w": 2, "h": 10 },
+          { "label": "顶部白条", "x": 2, "y": 0, "w": 10, "h": 1 },
+          { "label": "左密列（候诊）", "x": 2, "y": 1, "w": 4, "h": 8 },
+          { "label": "中央朱键轨", "x": 6, "y": 1, "w": 1, "h": 9, "accent": true },
+          { "label": "右栏（病历正文）", "x": 7, "y": 1, "w": 3, "h": 8 },
+          { "label": "页边批注 apparatus", "x": 10, "y": 1, "w": 2, "h": 9 }
+        ]
+      }
+    },
+    {
+      "id": "challenger-orienteering",
+      "label": "定向地形图 Orienteering Map",
+      "verdict": "declined",
+      "lineage": "iso 定向越野地图与图例",
+      "palette": ["#ffffff", "#5b5b3f", "#a3551b", "#7c2d8c"],
+      "materials": ["等高线", "紫色路线"],
+      "case": "融合不佳：医护不识等高线图，受众识别轴落败；紫色任务动线与全院状态色唯一映射冲突，清晰度轴同败。",
+      "kept": "图例表纪律与「任务层永不改写底图」——已反哺分配方向。"
+    },
+    {
+      "id": "challenger-zoo",
+      "label": "动物园导览图 Zoo Guide",
+      "verdict": "declined",
+      "lineage": "动物园与花园导览地图",
+      "palette": ["#f5f1e4", "#8ed462", "#ff705d", "#2c2e2a"],
+      "materials": ["平涂色块", "海岸线分割"],
+      "case": "融合不佳：休闲导览语境与临床时间压力错位；全站 overshoot 动效伤专注且与 reduced-motion 兜底冲突。",
+      "kept": "单一连续分割语法——升格为分配方向的「地面动线色带」。"
+    },
+    {
+      "id": "challenger-mixtape",
+      "label": "卡带 J-card Mixtape",
+      "verdict": "declined",
+      "lineage": "手写卡带目录册",
+      "palette": ["#ffffff", "#1a3b8f", "#8a8a8a", "#c8102e"],
+      "materials": ["圆珠笔", "横线纸"],
+      "case": "融合不佳：卡带对 2026 年医护是上一代物件，代际错位；45 分钟容量约束在 HIS 无产品对应。",
+      "kept": "批注带「谁/何时」的时间戳——已反哺分配方向。"
+    },
+    {
+      "id": "challenger-doujin",
+      "label": "同人志场刊目录 Doujin Catalog",
+      "verdict": "declined",
+      "lineage": "同人展销会新闻纸场刊",
+      "palette": ["#d8d6d0", "#141414", "#c8102e"],
+      "materials": ["新闻纸", "邮戳缩略格"],
+      "case": "融合不佳：宅文化目录语境在医院完全错位；新闻纸灰底不合临床清洁感。",
+      "kept": "圆珠笔圈选/划销的手写状态形态——已反哺分配方向。"
+    },
+    {
+      "id": "challenger-emission",
+      "label": "光谱发射线轨 Emission-line Rail",
+      "verdict": "declined",
+      "lineage": "光谱图与发射线标注",
+      "palette": ["#1c1c1e", "#e8e4d8", "#f5d64c"],
+      "materials": ["炭黑连续谱", "发丝谱线"],
+      "case": "融合不佳：光谱图是检验科操作的工具（工具化身风险，模式规则禁止）；深炭底高密度中文可读性差；弃色相与状态双通道规则冲突。",
+      "kept": "线形状态通道（实/虚/半高/双线）——已反哺分配方向，作色弱增强第三通道。"
+    }
+  ],
+  "reroll": {
+    "registers": ["plain", "safer", "bolder"]
+  },
+  "buildPath": {
+    "value": "code",
+    "toggle": false
+  },
+  "canon": true,
+  "canonCard": {
+    "label": "经典 HIS 蓝白（类别标准）",
+    "thesis": "这个类别一直在出的那张脸：中性灰白底+临床蓝主色+标准表格表单，Element Plus 默认形态执行到极致。",
+    "palette": ["#ffffff", "#111827", "#2563eb"],
+    "materials": ["干净网格", "标准组件"],
+    "viewport": "侧栏+页头+检索表单+数据表格+分页——访问者预期的排布，做到完全位。",
+    "risk": "与所有竞品同脸，辨识度为零——这是常设出口，不是推荐。",
+    "wireframe": {
+      "cols": 12,
+      "rows": 10,
+      "regions": [
+        { "label": "侧栏导航", "x": 0, "y": 0, "w": 2, "h": 10 },
+        { "label": "页头", "x": 2, "y": 0, "w": 10, "h": 1 },
+        { "label": "页面标题", "x": 2, "y": 1, "w": 10, "h": 1 },
+        { "label": "检索表单", "x": 2, "y": 2, "w": 10, "h": 1 },
+        { "label": "数据表格", "x": 2, "y": 3, "w": 10, "h": 6, "accent": true },
+        { "label": "分页", "x": 2, "y": 9, "w": 10, "h": 1 }
+      ]
+    }
+  },
+  "steer": true
+}

@@ -1,19 +1,21 @@
-// 岗位工作台首页单测：门牌页首（displayName/loginName 沿用 auth store，空会话防御兜底）、
-// 常用入口链接条按「权限 ∩ 岗位」双道过滤（与侧栏同口径，入口经真实路由反查权限点）、
-// 岗位经布局壳 POST_SELECTION_KEY 注入、空权限会话渲染诚实空态。挂载需 router
-// （入口权限点经 router.resolve 反查），会话以直接注入 state 方式承载（假令牌资产）。
+// 工作站首页单测（批次 2 册 1 契约 §4 删岗后口径）：门牌页首（displayName/loginName 沿用
+// auth store，空会话防御兜底；批注行=「登录名 X · YYYY-MM-DD 周Z」无岗位段）、常用入口
+// 链接条仅权限单道过滤（与侧栏同口径，入口经真实路由反查权限点；原岗位注入通道已废除）、
+// 空权限会话渲染诚实空态。挂载需 router（入口权限点经 router.resolve 反查），会话以直接
+// 注入 state 方式承载（假令牌资产）。
 // 注：每用例新 Pinia 实例保证会话态互不串扰。
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
-import { computed } from 'vue';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { router } from '@/router';
 import { useAuthStore } from '@/stores/auth';
-import { POST_SELECTION_KEY, type PostSelection } from '@/views/layout/menu';
 import HomeView from './HomeView.vue';
 
-describe('workstation 岗位工作台首页', () => {
+/** 批注行日期格式锚点（YYYY-MM-DD 周X，中文星期单字） */
+const DATE_PATTERN = /\d{4}-\d{2}-\d{2} 周[日一二三四五六]/;
+
+describe('workstation 工作站首页', () => {
   /** 文件级 Pinia：每用例新实例保证会话态互不串扰 */
   let pinia: Pinia;
 
@@ -35,21 +37,6 @@ describe('workstation 岗位工作台首页', () => {
     };
   }
 
-  /**
-   * 以指定岗位挂载首页：经布局壳注入键 provide 岗位值（computed 只读，与生产 provide
-   * 形态一致）；缺省不 provide = 独立挂载防御场景（组件兜底「全部」）。
-   *
-   * @param post 岗位选择值；undefined 模拟无布局壳的直挂场景
-   */
-  function mountHome(post?: PostSelection) {
-    return mount(HomeView, {
-      global: {
-        plugins: [pinia, router],
-        ...(post !== undefined ? { provide: { [POST_SELECTION_KEY]: computed(() => post) } } : {}),
-      },
-    });
-  }
-
   beforeEach(async () => {
     sessionStorage.clear();
     pinia = createPinia();
@@ -58,70 +45,62 @@ describe('workstation 岗位工作台首页', () => {
     await router.push('/login');
   });
 
-  it('已登录渲染问候语、登录名与当前岗位标签（默认全部岗位）', () => {
+  it('已登录渲染问候语与「登录名 · 日期」批注行（删岗后无岗位段与岗位描边印）', () => {
     injectSession([]);
-    const wrapper = mountHome();
-    // 断言业务结果：问候区展示 displayName（时段词随钟点变，断言不绑钟点）+ loginName；
-    // 岗位标签为真实 UI 态默认值
+    const wrapper = mount(HomeView, { global: { plugins: [pinia, router] } });
+    // 断言业务结果：问候区展示 displayName（时段词随钟点变，断言不绑钟点）+ 批注行
+    // 「登录名 admin · YYYY-MM-DD 周X」；岗位维度废除后不再渲染「当前岗位」段与描边印
     expect(wrapper.text()).toContain('，系统管理员');
-    expect(wrapper.text()).toContain('admin');
-    expect(wrapper.text()).toContain('当前岗位：全部');
+    expect(wrapper.text()).toContain('登录名 admin ·');
+    expect(wrapper.text()).toMatch(DATE_PATTERN);
+    expect(wrapper.text()).not.toContain('当前岗位');
+    expect(wrapper.find('.home-post-stamp').exists()).toBe(false);
     wrapper.unmount();
   });
 
-  it('入口链接条仅渲染会话权限内的真实路由入口（与侧栏同权限口径）', () => {
+  it('入口链接条仅按权限单道过滤：跨业务域入口共存（删岗后不再岗位互斥）', () => {
     injectSession(['nursing:ward:view', 'pharmacy:dispense:issue']);
-    const wrapper = mountHome();
-    const links = wrapper.findAll('a.home-quick-link');
+    const wrapper = mount(HomeView, { global: { plugins: [pinia, router] } });
     // 断言取入口名称标签（.home-quick-link-label），避免整条文本（缩写+名称）拼接干扰
     const labels = wrapper
       .findAll('a.home-quick-link .home-quick-link-label')
       .map((node) => node.text());
-    // 集内权限入口可见；集外权限入口（挂号收费）隐藏
+    // 护理域与药房域入口同时可见（权限单道）；集外权限入口（挂号收费）隐藏；
+    // 首页自身不入链接条（当前页自引用无意义）
     expect(labels).toContain('护士站');
     expect(labels).toContain('发药工作台');
     expect(labels).not.toContain('挂号收费');
-    expect(links).toHaveLength(2);
+    expect(labels).not.toContain('首页');
+    expect(wrapper.findAll('a.home-quick-link')).toHaveLength(2);
     wrapper.unmount();
   });
 
-  it('岗位注入过滤链接条：药师岗位仅渲染药师口径入口（有权限但岗位不符者不出现）', () => {
-    injectSession([
-      'pharmacy:drug:maintain',
-      'pharmacy:dispense:issue',
-      'pharmacy:dispense:return',
-      'pharmacy:review:audit',
-      'pharmacy:dispense:inpatient',
-      'nursing:ward:view',
-    ]);
-    const wrapper = mountHome('pharmacist');
-    const labels = wrapper
-      .findAll('a.home-quick-link .home-quick-link-label')
+  it('入口缩写为页名首字派生的单字纸块（缩写字段废除后的标签架语法延续）', () => {
+    injectSession(['nursing:ward:view', 'pharmacy:dispense:issue']);
+    const wrapper = mount(HomeView, { global: { plugins: [pinia, router] } });
+    const initials = wrapper
+      .findAll('a.home-quick-link .home-quick-mark')
       .map((node) => node.text());
-    // 药师口径五入口齐；护士站虽在权限集内但岗位不符，不出现；岗位标签同步
-    expect(labels).toContain('药品字典');
-    expect(labels).toContain('发药工作台');
-    expect(labels).toContain('退药受理');
-    expect(labels).toContain('住院审方台');
-    expect(labels).toContain('住院摆药台');
-    expect(labels).not.toContain('护士站');
-    expect(wrapper.findAll('a.home-quick-link')).toHaveLength(5);
-    expect(wrapper.text()).toContain('当前岗位：药师');
+    // 单字缩写与页名首字一一对应（装饰性重复字符，aria-hidden 承载）；顺序沿菜单常量
+    // 首现序（发药工作台先于护士站）
+    expect(initials).toEqual(['发', '护']);
     wrapper.unmount();
   });
 
-  it('空权限会话在具体岗位下渲染诚实空态（真实权限语义非占位文案）', () => {
+  it('空权限会话渲染诚实空态（真实权限语义非占位文案），链接条不渲染', () => {
     injectSession([]);
-    const wrapper = mountHome('nurse');
-    // 断言业务结果：权限∩岗位过滤后零入口 → 空态弱形态，链接条不渲染
-    expect(wrapper.text()).toContain('该岗位暂无可视入口');
+    const wrapper = mount(HomeView, { global: { plugins: [pinia, router] } });
+    // 断言业务结果：权限过滤后零入口 → 空态弱形态，文案为真实权限语义且无岗位措辞
+    expect(wrapper.text()).toContain('暂无可视入口');
+    expect(wrapper.text()).toContain('当前会话未被授予任何业务功能的访问权限');
     expect(wrapper.find('a.home-quick-link').exists()).toBe(false);
     wrapper.unmount();
   });
 
-  it('空会话兜底渲染未登录防御文案（直挂场景不渲染裸 undefined）', () => {
-    const wrapper = mountHome();
+  it('空会话兜底渲染未登录防御文案（直挂场景不渲染裸 undefined，登录名以 — 占位）', () => {
+    const wrapper = mount(HomeView, { global: { plugins: [pinia, router] } });
     expect(wrapper.text()).toContain('，未登录用户');
+    expect(wrapper.text()).toContain('登录名 —');
     expect(wrapper.text()).not.toContain('undefined');
     wrapper.unmount();
   });

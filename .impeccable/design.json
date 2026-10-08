@@ -1,0 +1,650 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-08",
+  "title": "Design System: 富云医疗（fuyun-medical）三端统一设计系统 · 批次 1「纸质病案 Paper Chart」",
+  "extensions": {
+    "colorMeta": {
+      "ink-emphasis": {
+        "role": "primary",
+        "displayName": "浓墨 Ink Emphasis",
+        "canonical": "#1e2a44",
+        "tonalRamp": [
+          "#0d1424",
+          "#131c33",
+          "#1e2a44",
+          "#2b3a5e",
+          "#45557a",
+          "#626a7c",
+          "#8f95a2",
+          "#d2d4da"
+        ]
+      },
+      "ink-deep": {
+        "role": "primary",
+        "displayName": "书脊深墨 Ink Deep",
+        "canonical": "#131c33",
+        "tonalRamp": [
+          "#0b1120",
+          "#0d1424",
+          "#131c33",
+          "#1a2540",
+          "#1e2a44",
+          "#2b3a5e",
+          "#45557a",
+          "#8f95a2"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "灰墨 Ink Secondary",
+        "canonical": "#565d6e",
+        "tonalRamp": [
+          "#2f3440",
+          "#3d4350",
+          "#4a505f",
+          "#565d6e",
+          "#676d7b",
+          "#7b8190",
+          "#a6abb8",
+          "#c9cdd6"
+        ]
+      },
+      "ink-faint": {
+        "role": "neutral",
+        "displayName": "弱墨 Ink Faint",
+        "canonical": "#676d7b",
+        "tonalRamp": [
+          "#3d4350",
+          "#4a505f",
+          "#565d6e",
+          "#676d7b",
+          "#7b8190",
+          "#8f95a2",
+          "#a6abb8",
+          "#c9cdd6"
+        ]
+      },
+      "ink-washed": {
+        "role": "neutral",
+        "displayName": "褪墨 Ink Washed",
+        "canonical": "#a6abb8",
+        "tonalRamp": [
+          "#565d6e",
+          "#676d7b",
+          "#7b8190",
+          "#8f95a2",
+          "#a6abb8",
+          "#bcbfc7",
+          "#c9cdd6",
+          "#d2d4da"
+        ]
+      },
+      "paper-page": {
+        "role": "neutral",
+        "displayName": "工作面纸白 Paper Page",
+        "canonical": "#f5f3ec",
+        "tonalRamp": [
+          "#c6c0ae",
+          "#d5d0c1",
+          "#ddd8ca",
+          "#e7e3d6",
+          "#efece1",
+          "#f2efe5",
+          "#f5f3ec",
+          "#fdfcf8"
+        ]
+      },
+      "paper-card": {
+        "role": "neutral",
+        "displayName": "卡面亮纸白 Paper Card",
+        "canonical": "#fdfcf8",
+        "tonalRamp": [
+          "#e7e3d6",
+          "#efece1",
+          "#f2efe5",
+          "#f5f3ec",
+          "#f6f3ea",
+          "#faf8f2",
+          "#fdfcf8",
+          "#ffffff"
+        ]
+      },
+      "paper-input": {
+        "role": "neutral",
+        "displayName": "表单域最亮纸面 Paper Input",
+        "canonical": "#ffffff",
+        "tonalRamp": [
+          "#efece1",
+          "#f2efe5",
+          "#f5f3ec",
+          "#f6f3ea",
+          "#faf8f2",
+          "#fdfcf8",
+          "#ffffff",
+          "#ffffff"
+        ]
+      },
+      "paper-hover": {
+        "role": "neutral",
+        "displayName": "纸面悬停暖底 Paper Hover",
+        "canonical": "#efece1",
+        "tonalRamp": [
+          "#a49e8b",
+          "#c6c0ae",
+          "#d5d0c1",
+          "#e5e1d4",
+          "#e9e7de",
+          "#efece1",
+          "#f2efe5",
+          "#f6f3ea"
+        ]
+      },
+      "paper-wash": {
+        "role": "neutral",
+        "displayName": "墨洗纸 Paper Wash",
+        "canonical": "#e9e7de",
+        "tonalRamp": [
+          "#a49e8b",
+          "#c6c0ae",
+          "#d5d0c1",
+          "#e0dccd",
+          "#e5e1d4",
+          "#e9e7de",
+          "#efece1",
+          "#f2efe5"
+        ]
+      },
+      "header-paper": {
+        "role": "neutral",
+        "displayName": "表头纸 Header Paper",
+        "canonical": "#f2efe5",
+        "tonalRamp": [
+          "#c6c0ae",
+          "#d5d0c1",
+          "#ddd8ca",
+          "#e5e1d4",
+          "#e9e7de",
+          "#efece1",
+          "#f2efe5",
+          "#f6f3ea"
+        ]
+      },
+      "row-hover-paper": {
+        "role": "neutral",
+        "displayName": "行悬停纸 Row Hover Paper",
+        "canonical": "#f6f3ea",
+        "tonalRamp": [
+          "#d5d0c1",
+          "#e5e1d4",
+          "#e9e7de",
+          "#efece1",
+          "#f2efe5",
+          "#f5f3ec",
+          "#f6f3ea",
+          "#faf8f2"
+        ]
+      },
+      "shell-rail": {
+        "role": "neutral",
+        "displayName": "书脊 Shell Rail",
+        "canonical": "#1a2540",
+        "tonalRamp": [
+          "#0b1120",
+          "#0d1424",
+          "#131c33",
+          "#1a2540",
+          "#1e2a44",
+          "#2b3a5e",
+          "#45557a",
+          "#626a7c"
+        ]
+      },
+      "shell-text": {
+        "role": "neutral",
+        "displayName": "书脊纸纱 Shell Text",
+        "canonical": "rgba(253, 252, 248, 0.88)",
+        "tonalRamp": [
+          "#1a2540",
+          "#45557a",
+          "#8f95a2",
+          "#c6c0ae",
+          "#dcd7c9",
+          "#efece1",
+          "#fdfcf8",
+          "#ffffff"
+        ]
+      },
+      "shell-dim": {
+        "role": "neutral",
+        "displayName": "书脊弱字 Shell Dim",
+        "canonical": "rgba(253, 252, 248, 0.62)",
+        "tonalRamp": [
+          "#1a2540",
+          "#2b3a5e",
+          "#45557a",
+          "#8f95a2",
+          "#c6c0ae",
+          "#dcd7c9",
+          "#f5f3ec",
+          "#fdfcf8"
+        ]
+      },
+      "seal-red": {
+        "role": "semantic",
+        "displayName": "印泥朱 Seal Red",
+        "canonical": "#b42318",
+        "tonalRamp": [
+          "#5c120c",
+          "#8f1a12",
+          "#b42318",
+          "#c94436",
+          "#dd6a5c",
+          "#e9988e",
+          "#f2c1ba",
+          "#f9e0dc"
+        ]
+      },
+      "seal-red-deep": {
+        "role": "semantic",
+        "displayName": "朱深 Seal Red Deep",
+        "canonical": "#8f1a12",
+        "tonalRamp": [
+          "#4a0e08",
+          "#5c120c",
+          "#8f1a12",
+          "#b42318",
+          "#c94436",
+          "#dd6a5c",
+          "#eeb0a7",
+          "#f7dbd6"
+        ]
+      },
+      "wash-red": {
+        "role": "semantic",
+        "displayName": "朱洗 Wash Red",
+        "canonical": "#f0d9d3",
+        "tonalRamp": [
+          "#8f1a12",
+          "#b42318",
+          "#c94436",
+          "#dd6a5c",
+          "#e9a79d",
+          "#f0d9d3",
+          "#f5e6e2",
+          "#faf3f1"
+        ]
+      },
+      "status-green": {
+        "role": "semantic",
+        "displayName": "确认绿 Status Green",
+        "canonical": "#1f7a33",
+        "tonalRamp": [
+          "#14532d",
+          "#166534",
+          "#1f7a33",
+          "#2e9445",
+          "#55b06a",
+          "#86cd95",
+          "#b8e3c1",
+          "#dcf3e1"
+        ]
+      },
+      "status-amber": {
+        "role": "semantic",
+        "displayName": "警示琥珀 Status Amber",
+        "canonical": "#b45309",
+        "tonalRamp": [
+          "#78350f",
+          "#92400e",
+          "#b45309",
+          "#c96a14",
+          "#d98530",
+          "#e5a05a",
+          "#efc496",
+          "#f8e6cf"
+        ]
+      },
+      "triage-orange": {
+        "role": "semantic",
+        "displayName": "徽标橙 Triage Orange",
+        "canonical": "#c2410c",
+        "tonalRamp": [
+          "#7c2d12",
+          "#9a3412",
+          "#c2410c",
+          "#d1541f",
+          "#dd6f3d",
+          "#e78f63",
+          "#f0b594",
+          "#f8dcc7"
+        ]
+      },
+      "triage-blue": {
+        "role": "semantic",
+        "displayName": "分诊蓝 Triage Blue",
+        "canonical": "#1d4ed8",
+        "tonalRamp": [
+          "#1e3a8a",
+          "#1e40af",
+          "#1d4ed8",
+          "#3556e0",
+          "#5b74e6",
+          "#8799ed",
+          "#b4c1f4",
+          "#dde4fa"
+        ]
+      },
+      "rule-stone": {
+        "role": "neutral",
+        "displayName": "石规 Rule Stone",
+        "canonical": "#c6c0ae",
+        "tonalRamp": [
+          "#8a8471",
+          "#a49e8b",
+          "#c6c0ae",
+          "#d5d0c1",
+          "#dcd7c9",
+          "#ddd8ca",
+          "#e7e3d6",
+          "#efece1"
+        ]
+      },
+      "rule-hairline": {
+        "role": "neutral",
+        "displayName": "发丝 Rule Hairline",
+        "canonical": "#dcd7c9",
+        "tonalRamp": [
+          "#a49e8b",
+          "#c6c0ae",
+          "#d5d0c1",
+          "#dcd7c9",
+          "#ddd8ca",
+          "#e7e3d6",
+          "#efece1",
+          "#f5f3ec"
+        ]
+      },
+      "focus-ring": {
+        "role": "semantic",
+        "displayName": "墨焦点环 Focus Ring",
+        "canonical": "rgba(30, 42, 68, 0.35)",
+        "tonalRamp": [
+          "#131c33",
+          "#1a2540",
+          "#1e2a44",
+          "#2b3a5e",
+          "#45557a",
+          "#626a7c",
+          "#8f95a2",
+          "#bcbfc7"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "key-count": {
+        "displayName": "关键计数",
+        "purpose": "候诊数/今日挂号数等大数字，必配 tabular-nums。"
+      },
+      "home-title": {
+        "displayName": "门牌标题",
+        "purpose": "首页门牌页首问候行（20px 与样稿门牌标题同档）。"
+      },
+      "heading-page": {
+        "displayName": "页面标题",
+        "purpose": "页面标题（18px）。"
+      },
+      "heading-card": {
+        "displayName": "卡片标题",
+        "purpose": "卡片标题、顶栏站点名「富云医护工作站」。"
+      },
+      "body": {
+        "displayName": "正文",
+        "purpose": "页面正文基线 14px/1.5，与 EP base 一致。"
+      },
+      "body-dense": {
+        "displayName": "病历密排",
+        "purpose": ".fuy-dense 表格正文/表头，13px/22px 一屏行数优先。"
+      },
+      "caption": {
+        "displayName": "脚注",
+        "purpose": "表格脚注/时间戳/批注行/徽标文字/分组标题（分组标题 600+1px 字距）。"
+      }
+    },
+    "shadows": [
+      {
+        "name": "fuy-shadow-md",
+        "value": "0 12px 28px rgba(19, 28, 51, 0.16)",
+        "purpose": "全系统唯一投影（蓝墨基色）：仅用于脱离版面的浮起层（EP popper/dialog，弹层是浮起的一页纸）；面板堆叠一律规线三级分割，禁投影。"
+      },
+      {
+        "name": "fuy-shadow-lighter",
+        "value": "0 4px 12px rgba(19, 28, 51, 0.1)",
+        "purpose": "唯一阴影的 EP 同源浅档（--el-box-shadow-lighter），仅供 EP 弹层内部消费，页面不得直接取用。"
+      }
+    ],
+    "motion": [
+      {
+        "name": "fuy-motion-fast",
+        "value": "120ms",
+        "purpose": "悬停/按压/微反馈。"
+      },
+      {
+        "name": "fuy-motion-base",
+        "value": "200ms",
+        "purpose": "显隐过渡/状态翻转。"
+      },
+      {
+        "name": "fuy-motion-slow",
+        "value": "320ms",
+        "purpose": "进场/FLIP/场景级。"
+      },
+      {
+        "name": "fuy-ease-standard",
+        "value": "cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "默认缓动：位移/尺寸。"
+      },
+      {
+        "name": "fuy-ease-enter",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "进场减速（快出缓停）。"
+      },
+      {
+        "name": "fuy-ease-exit",
+        "value": "cubic-bezier(0.4, 0, 1, 1)",
+        "purpose": "离场加速。"
+      },
+      {
+        "name": "fuy-ease-emphasis",
+        "value": "cubic-bezier(0.19, 1, 0.22, 1)",
+        "purpose": "强调减速：成功确认时刻，无过冲。"
+      },
+      {
+        "name": "fuy-motion-stagger",
+        "value": "40ms",
+        "purpose": "进场/翻牌级联步长，≤5 档封顶，第 6 项起并发。"
+      },
+      {
+        "name": "fuy-snap-popper",
+        "value": "animation: fuy-snap-popper-in 120ms cubic-bezier(0.2, 0, 0, 1) both（translateY(-4px)→0 + opacity）",
+        "purpose": "弹层硬 snap：弹层是一页翻起的纸，硬进不回弹；离开直切；popper-class 挂 .fuy-snap-popper（motion.css 唯一定义处）。"
+      },
+      {
+        "name": "reduced-motion-fallback",
+        "value": "@media (prefers-reduced-motion: reduce) { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }",
+        "purpose": "全局兜底直达终态；唯一豁免类 .fuy-loading-essential（加载指示停转=卡死误判）保留 1.5s 循环。"
+      },
+      {
+        "name": "fuy-pulse (batch-2 TODO)",
+        "value": "未落地——motion.css TODO(fuy-pulse) 预留位",
+        "purpose": "签名动效「体征脉冲」随批次 2 STOMP 告警徽标接入（载体=顶栏告警铃未读数）；无真实数据源不落地、不留死代码。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "导轨菜单项（亮纸白药丸选中）",
+      "kind": "nav",
+      "refersTo": "nav-menu-item-active",
+      "description": "墨脊书脊导轨上的菜单项：透明底纸纱字，选中反白为亮纸白药丸+墨字+600 字重，形状即选中通道。",
+      "html": "<nav class=\"ds-rail\" aria-label=\"示例导轨\"><a class=\"ds-rail-item\" href=\"#\">首页</a><a class=\"ds-rail-item is-active\" href=\"#\" aria-current=\"page\">患者检索</a><a class=\"ds-rail-item\" href=\"#\">挂号收费</a></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 2px; background: var(--fuy-shell-bg, #1a2540); padding: 8px 0; width: 240px; } .ds-rail-item { position: relative; display: flex; align-items: center; height: 40px; margin: 0 8px; padding: 0 12px; border-radius: var(--fuy-radius-sm, 2px); color: var(--fuy-shell-text, rgba(253, 252, 248, 0.88)); font-size: var(--fuy-font-size-md, 14px); text-decoration: none; transition: background-color var(--fuy-motion-fast, 120ms) var(--fuy-ease-standard, cubic-bezier(0.2, 0, 0, 1)); } .ds-rail-item:hover { background: var(--fuy-shell-hover, rgba(253, 252, 248, 0.08)); } .ds-rail-item.is-active { background: var(--fuy-surface-card, #fdfcf8); color: var(--fuy-color-text-emphasis, #1e2a44); font-weight: 600; } .ds-rail-item:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }"
+    },
+    {
+      "name": "岗位切换 chip",
+      "kind": "chip",
+      "refersTo": "post-chip-active",
+      "description": "墨脊导轨上的六枚 28px chip 三列网格（示三枚）：选中态与菜单同语法反白为亮纸白药丸；aria-pressed 表达选中。",
+      "html": "<div class=\"ds-posts\" role=\"group\" aria-label=\"岗位切换\"><button type=\"button\" class=\"ds-post is-active\" aria-pressed=\"true\">全部</button><button type=\"button\" class=\"ds-post\" aria-pressed=\"false\">医生</button><button type=\"button\" class=\"ds-post\" aria-pressed=\"false\">护士</button></div>",
+      "css": ".ds-posts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; background: var(--fuy-shell-bg, #1a2540); padding: 8px 12px 12px; width: 240px; } .ds-post { height: 28px; padding: 0; border: none; border-radius: var(--fuy-radius-sm, 2px); background: transparent; color: var(--fuy-shell-text, rgba(253, 252, 248, 0.88)); font-family: inherit; font-size: var(--fuy-font-size-xs, 12px); font-weight: 500; cursor: pointer; transition: background-color var(--fuy-motion-fast, 120ms) var(--fuy-ease-standard, cubic-bezier(0.2, 0, 0, 1)); } .ds-post:hover { background: var(--fuy-shell-hover, rgba(253, 252, 248, 0.08)); } .ds-post.is-active { background: var(--fuy-surface-card, #fdfcf8); color: var(--fuy-color-text-emphasis, #1e2a44); font-weight: 600; } .ds-post:focus-visible { outline: 2px solid #ffffff; outline-offset: 2px; }"
+    },
+    {
+      "name": "品牌字标（亮纸白字标）",
+      "kind": "custom",
+      "description": "墨脊书脊上的亮纸白字标：纸白底墨字「富云」，折叠态「富」单字共用一套形态；24px 高居中于 56px 品牌头，700 字重、字距 4px（折叠态归零）。",
+      "html": "<div class=\"ds-head\"><span class=\"ds-brand\">富云</span></div>",
+      "css": ".ds-head { display: flex; align-items: center; justify-content: center; height: 56px; background: var(--fuy-shell-bg, #1a2540); border-bottom: 1px solid var(--fuy-shell-hairline, #131c33); width: 240px; } .ds-brand { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: var(--fuy-radius-md, 4px); background: var(--fuy-surface-card, #fdfcf8); color: var(--fuy-palette-brand-900, #131c33); font-size: var(--fuy-font-size-md, 14px); font-weight: 700; letter-spacing: 4px; }"
+    },
+    {
+      "name": "门牌页首 + 岗位描边印",
+      "kind": "custom",
+      "description": "文书页眉语法：问候语 20px/600 + 岗位描边印（1.5px 浓墨描边、墨字——朱印只承危急，身份用墨印）+「谁·何时」批注行；2px 墨规收底。",
+      "html": "<header class=\"ds-doc-head\"><h1 class=\"ds-doc-title\">上午好，张医生</h1><span class=\"ds-post-stamp\" aria-hidden=\"true\">医</span><span class=\"ds-doc-note\">当前岗位：医生 · 登录名 zhang · 2026-10-08 周四</span></header>",
+      "css": ".ds-doc-head { display: flex; align-items: baseline; gap: 12px; padding: 4px 4px 12px; border-bottom: 2px solid var(--fuy-color-text-emphasis, #1e2a44); } .ds-doc-title { margin: 0; color: var(--fuy-color-text-emphasis, #1e2a44); font-size: var(--fuy-font-size-2xl, 20px); font-weight: 600; line-height: 1.3; } .ds-post-stamp { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 22px; height: 22px; padding: 0 4px; border: 1.5px solid var(--fuy-color-text-emphasis, #1e2a44); border-radius: var(--fuy-radius-sm, 2px); color: var(--fuy-color-text-emphasis, #1e2a44); font-size: var(--fuy-font-size-xs, 12px); font-weight: 600; line-height: 1; } .ds-doc-note { color: var(--fuy-color-info-text, #565d6e); font-size: var(--fuy-font-size-xs, 12px); }"
+    },
+    {
+      "name": "常用入口链接（病案标签架）",
+      "kind": "custom",
+      "refersTo": "home-quick-link",
+      "description": "零描边零卡片的标签架位：单字淡墨纸块缩写 + 名称 13px 浓墨；悬停纸面暖底点亮；stagger 进场。",
+      "html": "<nav class=\"ds-links\" aria-label=\"常用入口\"><a class=\"ds-link\" href=\"#\"><span class=\"ds-link-abbr\" aria-hidden=\"true\">查</span><span class=\"ds-link-label\">患者检索</span></a><a class=\"ds-link\" href=\"#\"><span class=\"ds-link-abbr\" aria-hidden=\"true\">挂</span><span class=\"ds-link-label\">挂号收费</span></a><a class=\"ds-link\" href=\"#\"><span class=\"ds-link-abbr\" aria-hidden=\"true\">发</span><span class=\"ds-link-label\">发药工作台</span></a></nav>",
+      "css": ".ds-links { display: flex; flex-wrap: wrap; gap: 6px 10px; } .ds-link { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: var(--fuy-radius-md, 4px); color: var(--fuy-color-text-emphasis, #1e2a44); font-size: var(--fuy-font-size-sm, 13px); text-decoration: none; transition: background-color var(--fuy-motion-fast, 120ms) var(--fuy-ease-standard, cubic-bezier(0.2, 0, 0, 1)); } .ds-link:hover { background: var(--fuy-palette-gray-50, #efece1); } .ds-link:focus-visible { outline: 2px solid var(--fuy-color-brand, #1e2a44); outline-offset: 2px; } .ds-link-abbr { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 20px; height: 20px; border-radius: var(--fuy-radius-sm, 2px); background: rgba(30, 42, 68, 0.08); color: var(--fuy-color-text-emphasis, #1e2a44); font-size: 11px; font-weight: 600; }"
+    },
+    {
+      "name": "分诊四级徽标",
+      "kind": "custom",
+      "refersTo": "triage-badge-l1",
+      "description": "预检分诊四级实底白字徽标（22px 高，2px 圆角）；色值只取 --fuy-color-triage-l1..l4，实底必配文字通道。",
+      "html": "<span class=\"ds-triage-group\"><span class=\"ds-triage ds-triage--l1\">Ⅰ危</span><span class=\"ds-triage ds-triage--l2\">Ⅱ急</span><span class=\"ds-triage ds-triage--l3\">Ⅲ重</span><span class=\"ds-triage ds-triage--l4\">Ⅳ普</span></span>",
+      "css": ".ds-triage-group { display: inline-flex; gap: 8px; } .ds-triage { display: inline-block; min-width: 28px; padding: 0 8px; height: 22px; line-height: 22px; border-radius: var(--fuy-radius-sm, 2px); color: #ffffff; font-size: var(--fuy-font-size-xs, 12px); font-weight: 600; text-align: center; } .ds-triage--l1 { background: var(--fuy-color-triage-l1, #b42318); } .ds-triage--l2 { background: var(--fuy-color-triage-l2, #c2410c); } .ds-triage--l3 { background: var(--fuy-color-triage-l3, #b45309); } .ds-triage--l4 { background: var(--fuy-color-triage-l4, #1d4ed8); }"
+    },
+    {
+      "name": "主按钮（墨即操作）",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "主操作按钮：EP --el-color-primary 经单向映射即浓墨 #1e2a44 实底白字；悬停 light-3、激活 dark-2；4px 圆角与 EP 默认一致。",
+      "html": "<button type=\"button\" class=\"ds-btn-primary\">保存</button>",
+      "css": ".ds-btn-primary { padding: 8px 16px; border: none; border-radius: var(--fuy-radius-md, 4px); background: #1e2a44; color: #ffffff; font-family: inherit; font-size: var(--fuy-font-size-md, 14px); cursor: pointer; transition: background-color var(--fuy-motion-fast, 120ms) var(--fuy-ease-standard, cubic-bezier(0.2, 0, 0, 1)); } .ds-btn-primary:hover { background: #626a7c; } .ds-btn-primary:active { background: #182236; } .ds-btn-primary:focus-visible { outline: 2px solid var(--fuy-color-brand, #1e2a44); outline-offset: 2px; }"
+    },
+    {
+      "name": "顶栏文字按钮",
+      "kind": "button",
+      "description": "亮纸白顶条透明底按钮家族（折叠开关/患者检索同语法）：悬停纸面暖底，灰墨承文悬停转墨（色彩不承载唯一语义）。",
+      "html": "<button type=\"button\" class=\"ds-btn-ghost\">患者检索</button>",
+      "css": ".ds-btn-ghost { height: 32px; padding: 0 12px; border: none; border-radius: var(--fuy-radius-md, 4px); background: transparent; color: var(--fuy-color-text-secondary, #565d6e); font-family: inherit; font-size: var(--fuy-font-size-sm, 13px); cursor: pointer; transition: background-color var(--fuy-motion-fast, 120ms) var(--fuy-ease-standard, cubic-bezier(0.2, 0, 0, 1)), color var(--fuy-motion-fast, 120ms) var(--fuy-ease-standard, cubic-bezier(0.2, 0, 0, 1)); } .ds-btn-ghost:hover { background: var(--fuy-palette-gray-50, #efece1); color: var(--fuy-color-text-emphasis, #1e2a44); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--fuy-color-brand, #1e2a44); outline-offset: 2px; }"
+    },
+    {
+      "name": "朱笔划销标签",
+      "kind": "custom",
+      "description": "朱批印章语法·作废式：line-through 1.5px 印泥朱划线 + 灰墨字——弱化不删信息，划销+印章+图例三通道之一。",
+      "html": "<span class=\"ds-strike\">阿莫西林胶囊（已作废）</span>",
+      "css": ".ds-strike { color: var(--fuy-color-text-secondary, #565d6e); text-decoration: line-through; text-decoration-color: var(--fuy-color-danger-text, #b42318); text-decoration-thickness: 1.5px; font-size: var(--fuy-font-size-sm, 13px); }"
+    },
+    {
+      "name": "诚实空态卡",
+      "kind": "custom",
+      "description": "石规虚缝弱形态空态：真实权限语义文案，禁止占位 lorem；虚线是「这里本来什么都没有」的形状语义。",
+      "html": "<div class=\"ds-empty\" role=\"status\"><p class=\"ds-empty-title\">该岗位暂无可视入口</p><p class=\"ds-empty-hint\">当前会话未被授予任何业务功能的访问权限，请联系管理员确认权限分配。</p></div>",
+      "css": ".ds-empty { max-width: 480px; padding: 40px 16px; border: 1px dashed #c6c0ae; border-radius: var(--fuy-radius-lg, 8px); text-align: center; background: var(--fuy-surface-page, #f5f3ec); } .ds-empty-title { margin: 0; color: var(--fuy-color-text-emphasis, #1e2a44); font-size: var(--fuy-font-size-md, 14px); font-weight: 600; } .ds-empty-hint { margin: 8px 0 0; color: var(--fuy-color-text-secondary, #565d6e); font-size: var(--fuy-font-size-sm, 13px); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "纸质病案 Paper Chart——病案纸上的文书工作台",
+    "overview": "全院操作发生在纸质病案的物质世界里：页面即文书，纸白承载工作面、蓝黑墨承文、印泥朱只承状态。本系统拒绝「蓝色 admin」的类别默认脸，也拒绝首页均质卡片罗列——品牌感活在规线三级、密排表格与朱批印章的精确里，绝不抢操作。这是一个为高密度、长时间、时间压力下的临床操作构建的系统：一屏可见行数优先于装饰表达，扫读性与任务完成率优先于视觉惊喜。信息以「双通道」抵达：状态色永远伴随文字（或形状/字重）第二通道，形状本身即选中语言（墨脊书脊上的亮纸白药丸），关闭动效后一切信息仍然完整。纸的层级靠亮度差不靠投影：工作面沉纸白、卡面亮纸白、表单域最亮纸面；深度由规线三级表达，唯一阴影只给弹层。医护打开工作站如翻开当日病案——门牌页首、岗位描边印、「谁·何时」批注行、常用入口如病案标签架三秒直达业务。世界「纸质病案 Paper Chart」2026-10-08 用户锁定（seed 21571ba6），同日推翻「刷手服青绿 Scrub」（seed 261b0951）。批次 1 换血面=壳层+首页+styles 三 CSS；其余 37 视图凭 token 名兼容自动承继，off-world 残留（TASK.md W-103）随批次 2 收编。",
+    "keyCharacteristics": [
+      "纸白三级承载工作面：工作面 #f5f3ec 沉一档、卡面 #fdfcf8 亮一档、表单域 #ffffff 最亮——纸的层级靠亮度差，不靠投影",
+      "蓝黑墨三级承文：浓墨 #1e2a44 承正文与主操作（墨即操作）、灰墨 #565d6e 批注、弱墨脚注",
+      "印泥朱 #b42318 只承状态（危急/停用/作废），永不装饰",
+      "状态唯一映射：绿=确认/在档、琥珀=警示/冻结、朱=危急、灰=弱化；色永不单独承义（必配文字/形状第二通道）",
+      "规线三级：2px 墨规=页级、1px 石规=面板、1px 发丝=卡内；唯一阴影给弹层",
+      "朱批印章语法：描边印=标记、实底印=危急/强状态、朱笔划销=作废、批注带「谁·何时」",
+      "壳层=蓝黑墨书脊导轨 #1a2540 + 亮纸白药丸选中系（形状即选中通道）",
+      "中文黑体系统栈零网络字体 + 全站 tabular 等宽数字；病历密排 13px/22px",
+      "浏览器原生面收编：朱洗选区、即墨插入符、穿纸细轴、墨焦点环",
+      "动效只动 transform / opacity；motion.css 是全站唯一 keyframes 来源；弹层硬 snap；reduced-motion 全局兜底"
+    ],
+    "rules": [
+      {
+        "name": "印泥朱只承状态 Rule",
+        "body": "印泥朱 #b42318 只出现在危急/停用/作废三类状态上——状态文字、实底徽标、朱笔划销线、朱洗选区。禁止作装饰：标题、品牌图形、悬停底、大面积铺色一律不得用朱。朱的稀缺性就是危急的可辨识性。",
+        "section": "colors"
+      },
+      {
+        "name": "状态唯一映射 Rule",
+        "body": "状态语义全院唯一：绿=确认/在档、琥珀=警示/冻结、朱=危急/停用/作废、灰=弱化。任何状态色永不单独承义——色标/色带必须伴随文字（或形状/字重）第二通道；任何页面不得私造第四种状态语义色。",
+        "section": "colors"
+      },
+      {
+        "name": "墨即操作 Rule",
+        "body": "主操作=浓墨实底（EP primary 映射后 #1e2a44），品牌色与操作色是同一滴墨——纸上写过的字和签下的确认同色。任何职业色/彩色系不得充当品牌主色：品牌感活在纸墨材质里，不在某个彩色按钮上。",
+        "section": "colors"
+      },
+      {
+        "name": "零新色值 Rule",
+        "body": "新模块的色彩需求只允许在 semantic 层加语义别名指向既有 palette（M04/M05/M14/M16 先例）；临床惯例色（体温蓝/脉搏红/分诊橙）必须收编为 token 后取用，页面禁止自造色值。",
+        "section": "colors"
+      },
+      {
+        "name": "单向映射 Rule",
+        "body": "--fuy-* → --el-* 的赋值只允许出现在 styles/element-plus.css 一个文件里，经 :root:root 双写（特异性 0,2,0）或 .fuy-* 挂类承载；全仓库禁止裸改 .el-* 组件选择器、禁止改 EP 主题 SCSS 编译。方向是单向的：EP 变量可以吃 fuy 值，fuy 层永不引用 el 值。",
+        "section": "colors"
+      },
+      {
+        "name": "数字不跳宽 Rule",
+        "body": "全站数字一律等宽（tabular-nums 在 :root 全局生效 + .fuy-num 兜底）：列表数字列、计数、金额在轮询刷新时宽度恒定，不因数位变化引起行内抖动。金额场景金额以 string 承载、前端不做计算。",
+        "section": "typography"
+      },
+      {
+        "name": "规线不越级 Rule",
+        "body": "页级分割用 2px 墨规，面板分界用 1px 石规，卡内细节用 1px 发丝；2px 线不下沉到卡内，发丝线不充当页级收底。深度只有两级：版面内（规线分割）与版面外浮起（唯一阴影 token）。",
+        "section": "elevation"
+      },
+      {
+        "name": "唯一阴影给弹层 Rule",
+        "body": "投影只属于脱离版面的浮起层（popper/dialog）；卡与卡的层级差靠纸面亮度（#fdfcf8 vs #f5f3ec）与一道规线表达，禁止投影堆叠。",
+        "section": "elevation"
+      },
+      {
+        "name": "形状即选中通道 Rule",
+        "body": "导轨上选中态 = 亮纸白药丸反白 + 墨字 + 600 字重，不依赖色觉单通道；菜单项与岗位 chip 共用同一语法。",
+        "section": "components"
+      },
+      {
+        "name": "焦点永远可见 Rule",
+        "body": "全站 :focus-visible 2px 墨 outline 强制（outline 自动跟随元素圆角）；墨脊导轨上覆写白色（即墨环在墨脊底上不可见）。",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do 用 .fuy-* 挂类或 CSS 变量通道定制 Element Plus（:root:root 双写 / .fuy-menu 同族挂类，特异性恒压 EP 按需注入，不依赖加载顺序）",
+      "Do 状态一律双通道：色标/色带 + 文字（或形状、字重）；取状态色只取语义别名 token，禁止页面自造色值",
+      "Do 所有数字加 .fuy-num（或依赖 :root 全局 tabular-nums），数字列宽度恒定不跳宽",
+      "Do 高密度表格统一 .fuy-dense（13px/22px）；列表重排动效沿 AppSidebar playGroupsFlip 的 FLIP 参考实现",
+      "Do 进场用 .fuy-stagger（子元素内联 --fuy-stagger-index，≤5 封顶）；弹层挂 .fuy-snap-popper 硬 snap",
+      "Do 面板分割沿规线三级（2px 墨规页级 / 1px 石规面板 / 1px 发丝卡内）；业务页根节点挂 .fuy-page；新模块色彩需求只允许 semantic 层语义别名指向既有 palette（M04/M05/M14/M16 先例）",
+      "Do 页级头部用 2px 墨规收底 +「谁·何时」批注行；身份标记用描边印（墨印），朱印只给危急",
+      "Do 键盘焦点环永远可见（全站 :focus-visible 2px 墨 outline；导轨上覆写白色；PDA 页用 --fuy-color-focus-ring 的 box-shadow 同源变体）",
+      "Do 空态诚实：真实权限/数据语义文案，石规虚缝弱形态，禁止占位假数据"
+    ],
+    "donts": [
+      "Don't 裸改 .el-* 组件选择器、禁改 EP 主题 SCSS 编译——定制只走 element-plus.css 的 --fuy-* → --el-* 单向映射或 .fuy-* 挂类；禁造不存在的 EP 变量名（须经 EP base.css 验证在位）",
+      "Don't 引入 Tailwind / UnoCSS——样式 = 纯 CSS 自定义属性 + scoped CSS（设计文档 §7.4 红线）",
+      "Don't 动画 width/height/top/left——只动 transform 与 opacity；侧栏折叠保持瞬切零动画",
+      "Don't 在 motion.css 之外新增 @keyframes——它是全站唯一 keyframes 来源，页面级动画零新增",
+      "Don't 把 token 上收 packages/shared——命名空间 --fuy-* 每 app 各持一份（workstation 含 --el-* 映射层；portal/bigscreen 批次 5 各建各的）",
+      "Don't 用印泥朱作装饰（标题/品牌图形/悬停底/大面积铺色）；禁止发明第四种状态语义色（绿/琥珀/朱/灰之外的分级场景用既有 palette 语义别名，且必配文字通道）",
+      "Don't 用持续闪烁表达状态——状态变化以「色标+文字+一次脉冲」抵达，脉冲载体批次 2 才接入，本批次不做假徽标",
+      "Don't 首页回退成均质卡片罗列或虚构指标带/趋势图/事件流——报表式构图的裁剪区无真实 API 不落（零伪数据）",
+      "Don't 为 workstation 预设移动端断点、引入图标库或变更 favicon——均属未决呈批事项，走宪法流程"
+    ]
+  }
+}
