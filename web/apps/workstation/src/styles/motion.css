@@ -214,3 +214,192 @@
     transition-delay: 0s !important;
   }
 }
+
+/* ===== 登录页 v3 门面动效（批次 2 册 1 契约 §2 v3 · 样稿 login.html v3.3 全量迁入，消费方仅 LoginView）=====
+   迁移纪律：样稿内联演示的 @keyframes 一律加 fuy-login- 前缀落本文件（全站唯一 keyframes
+   来源），组件内零 @keyframes；动画属性仅 transform / opacity。两处显式例外如实留痕：
+   ① fuy-login-frame-march 动 stroke-dashoffset——契约 §2 v3 钉定的「朱砂走线行军线」
+   承载属性（paint-only，载体是单枚 1.2px 描边 SVG 矩形，零布局代价）；
+   ② 样稿状态点的 box-shadow 扩散脉冲不迁（禁非合成属性动画），改由
+   fuy-login-pulse-halo 以伪元素 transform/opacity 等价承载。
+   reduced-motion 由上方两段全局兜底覆盖（时长/延迟双归零直达终态，各 keyframe 终态
+   均与静止基态等价，无「停在半途」残影）；提交按钮加载转轮经 .fuy-loading-essential
+   豁免保转（加载指示停转会被误读为卡死，状态语义） */
+
+/* stage 双栏卡片进场：自下方 24px 浮入 + 0.985 缩放归位（门面整体的第一笔） */
+@keyframes fuy-login-stage-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 级联进场：14px 上浮显影（品牌/封面标题/域标签/封面页脚/表头/分隔/表单/审计共用，
+   delay 由消费方内联变量承载） */
+@keyframes fuy-login-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 品牌钤印进场：1.8 倍旋入落章（-18° → 0.94 回弹 → 归位），印章家族的「盖下去」姿态 */
+@keyframes fuy-login-seal-in {
+  0% {
+    opacity: 0;
+    transform: scale(1.8) rotate(-18deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(0.94) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+/* 外部底纹层1 · 墨晕呼吸：三枚径向墨晕缓慢胀缩明灭（氛围层，极低频） */
+@keyframes fuy-login-ink-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+/* 外部底纹层2 · 缓旋双印：云/墨双印 130s/170s 极缓自转（正反两向） */
+@keyframes fuy-login-seal-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 外部底纹层3 · 祥云缓移：自左缘外整幅横移至右缘外（三云差速） */
+@keyframes fuy-login-cloud-drift {
+  from {
+    transform: translateX(-240px);
+  }
+  to {
+    transform: translateX(calc(100vw + 240px));
+  }
+}
+
+/* 外部底纹层4 · 浮墨字：书法大字自视口下缘整幅升出，途中两档淡入淡出 */
+@keyframes fuy-login-char-float {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.055;
+  }
+  82% {
+    opacity: 0.04;
+  }
+  100% {
+    transform: translateY(-132vh);
+    opacity: 0;
+  }
+}
+
+/* 外部底纹层5 · 底部双线流水：波纹贴片左移一个周期位（240px）循环成流水 */
+@keyframes fuy-login-wave-flow {
+  to {
+    transform: translateX(-240px);
+  }
+}
+
+/* 外部底纹层6 · 光带缓扫：斜向光带自左缘扫至右缘后隐没（一个 16s 周期） */
+@keyframes fuy-login-sheen {
+  0% {
+    transform: translateX(-60%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.45;
+  }
+  45% {
+    transform: translateX(60%);
+    opacity: 0.45;
+  }
+  55%,
+  100% {
+    transform: translateX(60%);
+    opacity: 0;
+  }
+}
+
+/* 页面级朱砂走线行军：描边框 dashoffset 递进一周（18+14=32px 周期 ×2 = 64px 位移，
+   与 dasharray 严格对齐防跳变；stroke-dashoffset 为契约显式例外，见块头注记） */
+@keyframes fuy-login-frame-march {
+  to {
+    stroke-dashoffset: -64;
+  }
+}
+
+/* 封面「启」/内页「归」书法底字呼吸：微转微缩明灭（底纹字的呼吸感，非正文不动） */
+@keyframes fuy-login-seal-breathe {
+  0%,
+  100% {
+    opacity: 0.05;
+    transform: rotate(-6deg) scale(1);
+  }
+  50% {
+    opacity: 0.09;
+    transform: rotate(-6deg) scale(1.03);
+  }
+}
+
+/* 字段错误抖动：左右 6px/4px 三段衰减（校验失败的可感反馈，随 EP is-error 挂载重放） */
+@keyframes fuy-login-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-6px);
+  }
+  40% {
+    transform: translateX(6px);
+  }
+  60% {
+    transform: translateX(-4px);
+  }
+  80% {
+    transform: translateX(4px);
+  }
+}
+
+/* 状态胶囊呼吸点光环：伪元素光环 scale 1→1.9 + 明灭（样稿 box-shadow 扩散脉冲的
+   transform/opacity 等价改写——box-shadow 逐帧重绘不迁，语法见块头注记②） */
+@keyframes fuy-login-pulse-halo {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.9);
+    opacity: 0.45;
+  }
+}
+
+/* 提交按钮加载转轮：纸白环自旋（reduced-motion 下经 .fuy-loading-essential 豁免保转） */
+@keyframes fuy-login-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
