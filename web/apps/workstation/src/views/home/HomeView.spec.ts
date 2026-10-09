@@ -20,7 +20,7 @@ const stomp = vi.hoisted(() => ({
     endpoint: string;
     destination: string;
     onFrame: (payload: unknown) => void;
-    unsubscribe: ReturnType<typeof vi.fn>;
+    unsubscribe: ReturnType<typeof vi.fn<() => void>>;
   }[],
   connectCalls: vi.fn(),
   disconnectCalls: vi.fn(),
