@@ -26,9 +26,9 @@ describe('workstation 应用冒烟', () => {
     await router.isReady();
     await flushPromises();
 
-    // 断言业务结果：默认拒绝生效，未登录落在登录页且渲染登录表单
+    // 断言业务结果：默认拒绝生效，未登录落在登录页且渲染病案门面（v3 契约锚点文案）
     expect(router.currentRoute.value.path).toBe('/login');
-    expect(wrapper.text()).toContain('请登录');
+    expect(wrapper.text()).toContain('启 · 当日病案');
     wrapper.unmount();
   });
 

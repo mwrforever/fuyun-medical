@@ -1,8 +1,8 @@
-// 登录页单测（批次 2 册 1 契约 §2 v2 两栏沉浸门面）：空表单提交被校验拦截、
-// 有效提交调用认证链路并跳转首页、门面视觉锚点在位（两栏骨架/墨脊品牌字标/
-// 请登录副题/墨规面板/双字段）；api 层 mock 承载（不打真实网络），错误弹窗口径
-// 归 http.spec 覆盖，本文件不重复断言。
-// 视觉锚点只锚类名与文案（不绑 EP 内部结构，重构不破）；jsdom 不计算样式，墨规以承载类名锚定。
+// 登录页单测（批次 2 册 1 契约 §2 v3「暖纸卷宗 + 朱砂印鉴」门面）：空表单提交被校验拦截、
+// 有效提交调用认证链路 →「启封成功」钤印浮层显示 → 编排后跳转首页、登录失败不钤印不跳转、
+// reduced-motion 编排缩短仍完整；门面视觉锚点在位（stage 双栏/封面品牌印/病案表头/双字段/
+// 审计注记）。api 层 mock 承载（不打真实网络），错误弹窗口径归 http.spec 覆盖，本文件不重复断言。
+// 视觉锚点只锚类名与文案（不绑 EP 内部结构，重构不破）；jsdom 不计算样式，装饰形态以类名锚定。
 // 注：beforeEach 预导航登录页（消除路由器安装期初始导航与用例交互的竞争），
 // 全文件共享单一 Pinia——守卫经挂载 app 上下文解析 store，逐用例换实例会割裂会话语义。
 import { mount } from '@vue/test-utils';
@@ -52,26 +52,28 @@ describe('登录页', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  it('渲染两栏沉浸门面锚点与登录表单骨架（墨脊字标/请登录副题/墨规面板/双字段）', () => {
+  it('渲染暖纸卷宗门面锚点与登录表单骨架（stage 双栏/品牌钤印/病案表头/双字段/审计/浮层常驻隐藏）', () => {
     const wrapper = mount(LoginView, { global: { plugins: [pinia, router] } });
 
-    // 两栏沉浸骨架：左墨脊叙事面 + 右纸面工作面（契约 §2 v2 构图，全站唯一全视口页）
-    expect(wrapper.find('.login-spine').exists()).toBe(true);
-    expect(wrapper.find('.login-face').exists()).toBe(true);
+    // stage 双栏卡片骨架：左封面 + 右病案内页（契约 §2 v3 构图，全站唯一全视口页）
+    expect(wrapper.find('.login-stage').exists()).toBe(true);
+    expect(wrapper.find('.login-cover').exists()).toBe(true);
+    expect(wrapper.find('.login-sheet').exists()).toBe(true);
 
-    // 品牌字标「富云」与「请登录」文案锚点（契约 §2，文案语义零漂移）
-    expect(wrapper.find('.spine-brand-mark').text()).toBe('富云');
-    expect(wrapper.find('.login-panel-title').text()).toBe('富云医院信息系统 · 请登录');
+    // 品牌钤印「富」与病案表头「启 · 当日病案」锚点（契约 §2 v3，文案语义零漂移）
+    expect(wrapper.find('.login-brand-mark').text()).toBe('富');
+    expect(wrapper.find('.login-sheet-title h2').text()).toBe('启 · 当日病案');
 
-    // 表单区为 2px 墨规收底的封面面板（.login-panel 承载墨规下缘，样式存在性以类名锚定）
-    expect(wrapper.find('.login-panel').exists()).toBe(true);
-
-    // 表单骨架：登录名/口令双字段 + 登录按钮（show-password 切换为 EP 内建非 button
-    // 元素，主提交按钮以类名精确定位，DOM 序不敏感）
+    // 表单骨架：登录名/口令双字段 + 登录按钮（主提交按钮为原生 button 载体，类名精确定位）
     expect(wrapper.findAll('input')).toHaveLength(2);
-    expect(wrapper.find('.login-submit').text()).toBe('登录');
+    expect(wrapper.find('.login-submit').text()).toBe('登 录');
+
+    // 审计注记（等保三级真实合规语义）与钤印浮层初始隐藏态（失败前不显示）
+    expect(wrapper.text()).toContain('登录行为纳入审计日志 · 留存不少于六个月');
+    expect(wrapper.find('.login-stamp-toast').classes()).not.toContain('is-show');
     wrapper.unmount();
   });
 
@@ -111,5 +113,76 @@ describe('登录页', () => {
       { timeout: 3000 },
     );
     wrapper.unmount();
+  }, 10000);
+
+  it('登录成功先钤「启封成功」印再跳转（浮层编排先于导航）', async () => {
+    vi.mocked(loginApiMock).mockResolvedValue(loginResponse());
+    const wrapper = mount(LoginView, { global: { plugins: [pinia, router] } });
+
+    const inputs = wrapper.findAll('input');
+    await inputs[0]?.setValue('admin');
+    await inputs[1]?.setValue('Fuyun@2026');
+    await wrapper.find('.login-submit').trigger('click');
+
+    // 钤印浮层在跳转编排（≤1000ms）前显示：等待登录 resolve 后浮层置显示态
+    await vi.waitFor(
+      () => {
+        expect(wrapper.find('.login-stamp-toast').classes()).toContain('is-show');
+      },
+      { timeout: 3000 },
+    );
+    // 编排完成后执行既有跳转（导航含懒加载布局动态导入，轮询等待真正完成）
+    await vi.waitFor(
+      () => {
+        expect(router.currentRoute.value.path).toBe('/');
+      },
+      { timeout: 5000 },
+    );
+    wrapper.unmount();
+  }, 12000);
+
+  it('登录失败不钤印不跳转（浮层保持隐藏，会话留在登录页）', async () => {
+    vi.mocked(loginApiMock).mockRejectedValue(new Error('凭据错误'));
+    const wrapper = mount(LoginView, { global: { plugins: [pinia, router] } });
+
+    const inputs = wrapper.findAll('input');
+    await inputs[0]?.setValue('admin');
+    await inputs[1]?.setValue('Fuyun@2026');
+    await wrapper.find('.login-submit').trigger('click');
+
+    // 登录调用确已发出且被拒绝（catch 终止流程，弹错归响应拦截器不在此断言）
+    await vi.waitFor(
+      () => {
+        expect(vi.mocked(loginApiMock)).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 3000 },
+    );
+    // 失败路径：浮层保持隐藏、路由不跳转
+    expect(wrapper.find('.login-stamp-toast').classes()).not.toContain('is-show');
+    expect(router.currentRoute.value.path).toBe('/login');
+    wrapper.unmount();
   });
+
+  it('reduced-motion 下钤印浮层直达终态、跳转编排缩短仍完整', async () => {
+    // stub matchMedia：指针精确 + 偏好减少动效均命中（jsdom 无 matchMedia，注入后脚本侧
+    // 走 reduce 分支——视差不启用、钤印延迟 1000ms→300ms）
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({ matches: true }));
+    vi.mocked(loginApiMock).mockResolvedValue(loginResponse());
+    const wrapper = mount(LoginView, { global: { plugins: [pinia, router] } });
+
+    const inputs = wrapper.findAll('input');
+    await inputs[0]?.setValue('admin');
+    await inputs[1]?.setValue('Fuyun@2026');
+    await wrapper.find('.login-submit').trigger('click');
+
+    // 编排缩短但链路完整：浮层显示 + 跳转达成（比常规编排提前完成）
+    await vi.waitFor(
+      () => {
+        expect(wrapper.find('.login-stamp-toast').classes()).toContain('is-show');
+        expect(router.currentRoute.value.path).toBe('/');
+      },
+      { timeout: 5000 },
+    );
+    wrapper.unmount();
+  }, 12000);
 });
