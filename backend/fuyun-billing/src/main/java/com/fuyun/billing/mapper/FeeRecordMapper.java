@@ -145,15 +145,17 @@ public interface FeeRecordMapper extends BaseMapper<FeeRecord> {
     long sumDailyValidAmount(@Param("date") LocalDate date);
 
     /**
-     * 待结算费用笔数（M13 → M19 统计接口位聚合，批次 2 册 2 新增）：PENDING/CONFIRMED 且未结算
-     * （settlement_id IS NULL）行计数——已结算/作废/退费终态行不构成待办；单标量聚合注解 SQL
-     * 形态照 {@link #sumUnsettledAmount} 先例；deleted=0 显式补齐。
+     * 待结算积压笔数（M13 → M19 统计接口位聚合，批次 2 册 2 新增）：PENDING/CONFIRMED 且未结算
+     * （settlement_id IS NULL）行<b>全量计数、无日期界</b>——积压待办语义（历史未结算费用同样是
+     * 待办），与 backend-report §五 契约行、{@link #sumUnsettledAmount} 无日期先例及同屏待发药
+     * 积压口径（PharmacyStatsPortImpl.pendingStats）三面对齐；已结算/作废/退费终态行不构成待办；
+     * 单标量聚合注解 SQL 形态照 {@link #sumUnsettledAmount} 先例；deleted=0 显式补齐（注解 SQL
+     * 不继承 @TableLogic）。
      *
-     * @param date 统计计费日（billing_date 口径），非空；来源：M19 工作台聚合
-     * @return 待结算笔数；无行返回 0
+     * @return 待结算积压笔数（跨日累积）；无行返回 0
      */
     @Select("SELECT COUNT(*) FROM billing.fee_record "
-            + "WHERE billing_date = #{date} AND status IN ('PENDING', 'CONFIRMED') "
+            + "WHERE status IN ('PENDING', 'CONFIRMED') "
             + "AND settlement_id IS NULL AND deleted = 0")
-    long countPendingUnsettled(@Param("date") LocalDate date);
+    long countPendingUnsettled();
 }

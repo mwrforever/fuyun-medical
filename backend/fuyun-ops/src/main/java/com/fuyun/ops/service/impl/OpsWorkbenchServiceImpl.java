@@ -61,9 +61,6 @@ public class OpsWorkbenchServiceImpl implements IOpsWorkbenchService {
     private static final Topic TOPIC_OUTPATIENT_QUEUE =
             new Topic("/ws/outpatient", "/topic/outpatient/queue/{deptCode}", "诊区候诊叫号推送（建队/叫号/过号）");
 
-    /** 事件流来源域词表：检验（危急值占位——M07 缺位注记） */
-    private static final String SOURCE_LAB = "lab";
-
     /** 四模块统计 Port 与缓存通道（构造器注入，宪法 A.1-7） */
     private final OutpatientStatsPort outpatientStatsPort;
 

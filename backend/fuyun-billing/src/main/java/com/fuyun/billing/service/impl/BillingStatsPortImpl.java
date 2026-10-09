@@ -47,7 +47,8 @@ public class BillingStatsPortImpl implements BillingStatsPort {
     public BillingWorkloadStats workloadStats(LocalDate date) {
         // 数据库读操作：单标量聚合两连查（mapper 注解 SQL，deleted=0 显式补齐）
         long todayIncomeFen = feeRecordMapper.sumDailyValidAmount(date);
-        long pendingSettleCount = feeRecordMapper.countPendingUnsettled(date);
+        // 待结算积压计数无日期界（积压待办口径，date 仅作用于收入合计与事件行集两段）
+        long pendingSettleCount = feeRecordMapper.countPendingUnsettled();
         List<PendingFeeEvent> pendingFeeEvents = loadPendingFeeEvents(date);
         return new BillingWorkloadStats(date, todayIncomeFen, pendingSettleCount, pendingFeeEvents);
     }

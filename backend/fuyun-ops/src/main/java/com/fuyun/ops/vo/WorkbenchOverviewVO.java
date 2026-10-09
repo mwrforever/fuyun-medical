@@ -30,7 +30,8 @@ public record WorkbenchOverviewVO(
      *                             非空
      * @param inHospitalCount      在院人数（nursing_ward_patient 在册投影行数），非空
      * @param pendingDispenseCount 待配药在途单数（pharmacy.dispense CREATED/PICKING 合计），非空
-     * @param pendingSettleCount   待结算费用笔数（billing 当日 PENDING/CONFIRMED 未结算），非空
+     * @param pendingSettleCount   待结算费用笔数（billing PENDING/CONFIRMED 且 settlement_id IS NULL
+     *                             全量积压，无日期界），非空
      */
     public record Metrics(
             long todayVisits,

@@ -33,7 +33,7 @@ public final class OpsConstants {
     /** 事件流类型词表：待配药（pharmacy HTTP 轮询派生源） */
     public static final String EVENT_TYPE_DISPENSE_PENDING = "DISPENSE_PENDING";
 
-    /** 事件流类型词表：危急值（M07 检验域缺位——类型占位随 M07 落地回填，勿删词表项） */
+    // TODO(M07): 危急值事件词表回填，计划于检验域 M07 批次引入
     public static final String EVENT_TYPE_CRITICAL_VALUE = "CRITICAL_VALUE";
 
     private OpsConstants() {}

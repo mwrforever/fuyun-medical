@@ -514,7 +514,7 @@ const updatedAt = computed(() =>
           >
             总览数据加载失败，趋势与候诊表暂缺。
           </div>
-          <div v-else key="main-skeleton" aria-hidden="true">
+          <div v-else key="main-skeleton" class="main-skeleton" aria-hidden="true">
             <div class="sk sk-trend"></div>
             <div class="sk sk-table-row"></div>
             <div class="sk sk-table-row"></div>
@@ -1066,6 +1066,12 @@ const updatedAt = computed(() =>
 .sk-table-row {
   height: 22px;
   margin-top: var(--fuy-space-2);
+}
+
+/* 主栏骨架容器（趋势区+候诊表区）min-height 锁 CLS：与内容态高度档对齐（1440 主流工作屏
+   基线下真实内容约 460px——趋势 SVG 随容器宽等比 + 候诊表区固定档），骨架→内容切换不塌陷跳变 */
+.main-skeleton {
+  min-height: 460px;
 }
 
 .sk-time {

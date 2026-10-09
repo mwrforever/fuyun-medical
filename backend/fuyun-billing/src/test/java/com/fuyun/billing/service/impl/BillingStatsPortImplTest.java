@@ -57,7 +57,7 @@ class BillingStatsPortImplTest {
     @DisplayName("①三段聚合：当日收入/待结算计数经 mapper 注解聚合+待支付事件行映射")
     void workloadStatsAggregatesThreeSegments() {
         when(feeRecordMapper.sumDailyValidAmount(DATE)).thenReturn(4567800L);
-        when(feeRecordMapper.countPendingUnsettled(DATE)).thenReturn(34L);
+        when(feeRecordMapper.countPendingUnsettled()).thenReturn(34L);
         OffsetDateTime chargedAt = OffsetDateTime.of(2026, 10, 9, 10, 30, 0, 0, ZoneOffset.UTC);
         when(feeRecordMapper.selectList(any())).thenReturn(List.of(feeRow("F1001", "血常规", 3500L, chargedAt)));
 
@@ -74,14 +74,14 @@ class BillingStatsPortImplTest {
         assertThat(event.chargedAt()).isEqualTo(chargedAt);
         // 两格聚合确经 mapper 注解 SQL（deleted=0 显式补齐的唯一执行点）
         verify(feeRecordMapper).sumDailyValidAmount(DATE);
-        verify(feeRecordMapper).countPendingUnsettled(DATE);
+        verify(feeRecordMapper).countPendingUnsettled();
     }
 
     @Test
     @DisplayName("②空数据零值视图：聚合零返回+事件空集，出参零值/空清单不造数")
     void workloadStatsReturnsZeroViewOnEmptyData() {
         when(feeRecordMapper.sumDailyValidAmount(DATE)).thenReturn(0L);
-        when(feeRecordMapper.countPendingUnsettled(DATE)).thenReturn(0L);
+        when(feeRecordMapper.countPendingUnsettled()).thenReturn(0L);
         when(feeRecordMapper.selectList(any())).thenReturn(List.of());
 
         BillingWorkloadStats stats = service.workloadStats(DATE);
