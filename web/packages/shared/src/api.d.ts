@@ -3774,6 +3774,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ops/workbench/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 工作台总览快照（指标六格+14 日趋势+候诊表，TTL 5s 缓存） */
+        get: operations["getOpsWorkbenchOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ops/workbench/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 工作台事件流（三 STOMP 主题指引+两轮询源待办+危急值降级段） */
+        get: operations["getOpsWorkbenchEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/nursing/ward-patients": {
         parameters: {
             query?: never;
@@ -7348,6 +7382,65 @@ export interface components {
             queueTime?: string;
             /** Format: int32 */
             calledCount?: number;
+        };
+        Metrics: {
+            /** @example 0 */
+            todayVisits?: string;
+            /** @example 0 */
+            waitingCount?: string;
+            /** @example 0 */
+            todayIncomeFen?: string;
+            /** @example 0 */
+            inHospitalCount?: string;
+            /** @example 0 */
+            pendingDispenseCount?: string;
+            /** @example 0 */
+            pendingSettleCount?: string;
+        };
+        TrendPoint: {
+            /** Format: date */
+            statDate?: string;
+            /** @example 0 */
+            visitCount?: string;
+            /** @example 0 */
+            emergencyCount?: string;
+        };
+        WaitingRow: {
+            deptCode?: string;
+            /** @example 0 */
+            waitingCount?: string;
+            /** @example 0 */
+            longestWaitingMinutes?: string;
+        };
+        WorkbenchOverviewVO: {
+            metrics?: components["schemas"]["Metrics"];
+            trend?: components["schemas"]["TrendPoint"][];
+            waitingTable?: components["schemas"]["WaitingRow"][];
+            /** Format: date-time */
+            generatedAt?: string;
+        };
+        Topic: {
+            endpoint?: string;
+            topic?: string;
+            description?: string;
+        };
+        WorkEvent: {
+            id?: string;
+            type?: string;
+            source?: string;
+            title?: string;
+            /** @example 0 */
+            amountFen?: string;
+            /** Format: date-time */
+            occurredAt?: string;
+        };
+        WorkbenchEventsVO: {
+            topics?: components["schemas"]["Topic"][];
+            events?: components["schemas"]["WorkEvent"][];
+            criticalValues?: unknown[];
+            criticalValueDegraded?: boolean;
+            /** Format: date-time */
+            generatedAt?: string;
         };
         WardPatientVO: {
             visitId?: string;
@@ -14509,6 +14602,46 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ApptCreditVO"][];
+                };
+            };
+        };
+    };
+    getOpsWorkbenchOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WorkbenchOverviewVO"];
+                };
+            };
+        };
+    };
+    getOpsWorkbenchEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["WorkbenchEventsVO"];
                 };
             };
         };

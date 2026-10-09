@@ -1,9 +1,13 @@
-// workstation STOMP 单例封装单测（bigscreen useIotStomp 移植面）：vi.mock('@stomp/stompjs')
-// 捕获构造参数与回调挂接（禁真实建连），vi.mock('@/stores/auth') 桩化会话令牌源（纯单元
-// 隔离，不牵入 router/element-plus 模块链），覆盖单例复用、beforeConnect 实时读会话令牌、
-// 构造参数合规、遥测/告警双主题路径精确等于契约值、连接落地前登记 onConnect 转正、断线重连
-// 重订阅、毒帧防御、无令牌拒绝建连、非数字病区拒绝与显式断开先退订后 deactivate。
-// 每用例 vi.resetModules 后动态再导入，重置模块级单例（Client 缓存/订阅在册/状态 ref）保证隔离。
+// workstation STOMP 多端点登记封装单测（bigscreen useIotStomp 移植后多端点改造面）：
+// vi.mock('@stomp/stompjs') 捕获构造参数与回调挂接（禁真实建连），vi.mock('@/stores/auth')
+// 桩化会话令牌源（纯单元隔离，不牵入 router/element-plus 模块链），覆盖端点注册表复用、
+// beforeConnect 实时读会话令牌、构造参数合规、遥测/告警双主题路径精确等于契约值、连接落地前
+// 登记 onConnect 转正、断线重连重订阅、毒帧防御、无令牌拒绝建连、非数字病区拒绝、显式断开
+// 先退订后 deactivate，以及多端点改造新增面（册 2 审查修复波 2 补测）：fillTopicTemplate
+// 三态（合法填充/占位符未填满拒绝/非法字符拒绝）、connectionStateOf 任意端点读态、端点参数化
+// 订阅与带端点参数 disconnect 的单端点回收、无参 disconnect 全端点保守清理。
+// 每用例 vi.resetModules 后动态再导入，重置模块级注册表（端点条目/Client 缓存/订阅在册/状态
+// ref）保证隔离。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** mock 捕获状态（vi.hoisted：vi.mock 工厂提升后仍可引用；逐用例手动复位） */
@@ -92,7 +96,7 @@ function lastClient(): { connected: boolean; connectHeaders: Record<string, stri
   return instance as { connected: boolean; connectHeaders: Record<string, string> };
 }
 
-describe('workstation STOMP 单例封装', () => {
+describe('workstation STOMP 多端点登记封装', () => {
   it('两次 connect 复用同一 Client 单例（首次 connect 惰性创建，不重复建连）', () => {
     stomp.connect();
     stomp.connect();
@@ -240,5 +244,103 @@ describe('workstation STOMP 单例封装', () => {
     expect(() => stomp.telemetryTopicPath('W01')).toThrow();
     expect(() => stomp.alarmTopicPath('abc')).toThrow();
     expect(h.subscriptions).toHaveLength(0);
+  });
+
+  it('fillTopicTemplate 合法填充：占位符全量供给真实业务编码后还原可订阅主题路径', () => {
+    // 事件流指引主题模板（/v1/ops/workbench/events topics[].topic 契约形态）按候诊表 deptCode 填充
+    expect(stomp.fillTopicTemplate('/topic/outpatient/queue/{deptCode}', { deptCode: 'D01' })).toBe(
+      '/topic/outpatient/queue/D01',
+    );
+    expect(stomp.fillTopicTemplate('/topic/iot/device-status/{wardId}', { wardId: '1001' })).toBe(
+      '/topic/iot/device-status/1001',
+    );
+  });
+
+  it('fillTopicTemplate 占位符未填满拒绝：缺参残留 { } 抛错拒绝（不猜测语义填充）', () => {
+    // 参数表为空：占位符原样残留 → 拒绝
+    expect(() => stomp.fillTopicTemplate('/topic/outpatient/queue/{deptCode}', {})).toThrow(
+      /占位符未填满/,
+    );
+    // 多占位符模板只供一键：残留另一占位符 → 拒绝
+    expect(() =>
+      stomp.fillTopicTemplate('/topic/iot/device-status/{wardId}/{deviceId}', { wardId: 'W01' }),
+    ).toThrow(/占位符未填满/);
+  });
+
+  it('fillTopicTemplate 非法字符拒绝：参数值含空白或通配符抛错（防目的地注入与手拼漂移）', () => {
+    // 空白字符（STOMP 目的地禁空格）
+    expect(() =>
+      stomp.fillTopicTemplate('/topic/outpatient/queue/{deptCode}', { deptCode: 'D 01' }),
+    ).toThrow(/非法字符/);
+    // 通配符（只属订阅语义，禁入目的地字面值）
+    expect(() =>
+      stomp.fillTopicTemplate('/topic/outpatient/queue/{deptCode}', { deptCode: 'D01/*' }),
+    ).toThrow(/非法字符/);
+  });
+
+  it('connectionStateOf 读任意端点状态：惰性条目初值 disconnected，随该端点连接生命周期翻转，与缺省导出面同源', () => {
+    const outpatientState = stomp.connectionStateOf('/ws/outpatient');
+    // 读态即惰性建条目（零网络副作用）：初值断开态
+    expect(outpatientState.value).toBe('disconnected');
+    stomp.connect(undefined, '/ws/outpatient');
+    expect(outpatientState.value).toBe('connecting');
+    (lastConfig()['onConnect'] as () => void)();
+    expect(outpatientState.value).toBe('connected');
+    // 缺省端点导出面（connectionState）与 connectionStateOf(缺省端点) 同一条目同值
+    expect(stomp.connectionStateOf(stomp.DEFAULT_STOMP_ENDPOINT).value).toBe(
+      stomp.connectionState.value,
+    );
+  });
+
+  it('多端点注册表：两端点各持一套 Client（brokerURL 各自端点），订阅按端点参数分流落地', () => {
+    stomp.connect(undefined, stomp.DEFAULT_STOMP_ENDPOINT);
+    stomp.connect(undefined, '/ws/outpatient');
+    // 每端点惰性一套 Client：构造两次，brokerURL 分别指向两端点
+    expect(h.constructorCalls).toBe(2);
+    expect(h.configs[0]?.['brokerURL']).toBe('ws://localhost:3000/ws/iot');
+    expect(h.configs[1]?.['brokerURL']).toBe('ws://localhost:3000/ws/outpatient');
+    // 端点参数化订阅：主题登记进各自端点条目，onConnect 只落地本端点在册订阅
+    stomp.subscribeTopic('/topic/outpatient/queue/D01', () => {}, '/ws/outpatient');
+    stomp.subscribeTopic(stomp.telemetryTopicPath('1001'), () => {});
+    (h.configs[1]?.['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(1);
+    expect(h.subscriptions[0]?.destination).toBe('/topic/outpatient/queue/D01');
+    (h.configs[0]?.['onConnect'] as () => void)();
+    expect(h.subscriptions).toHaveLength(2);
+    expect(h.subscriptions[1]?.destination).toBe('/topic/iot/telemetry/1001');
+  });
+
+  it('带端点参数 disconnect 只回收该端点：退订其在册订阅并 deactivate 单 Client，另一端点连接不受牵连', async () => {
+    stomp.connect(undefined, stomp.DEFAULT_STOMP_ENDPOINT);
+    stomp.connect(undefined, '/ws/outpatient');
+    stomp.subscribeTopic(stomp.telemetryTopicPath('1001'), () => {}, stomp.DEFAULT_STOMP_ENDPOINT);
+    stomp.subscribeTopic('/topic/outpatient/queue/D01', () => {}, '/ws/outpatient');
+    (h.configs[0]?.['onConnect'] as () => void)();
+    (h.configs[1]?.['onConnect'] as () => void)();
+    expect(stomp.connectionStateOf('/ws/iot').value).toBe('connected');
+    expect(stomp.connectionStateOf('/ws/outpatient').value).toBe('connected');
+    await stomp.disconnect('/ws/outpatient');
+    // 仅 outpatient 端点被回收：1 条在册订阅退订 + 1 个 Client deactivate
+    expect(h.unsubscribeCalls).toBe(1);
+    expect(h.deactivateCalls).toBe(1);
+    expect(stomp.connectionStateOf('/ws/outpatient').value).toBe('disconnected');
+    // /ws/iot 面零波及：连接态保持 connected，在册订阅未被退订
+    expect(stomp.connectionStateOf('/ws/iot').value).toBe('connected');
+    expect(h.subscriptions[0]?.destination).toBe('/topic/iot/telemetry/1001');
+  });
+
+  it('无端点参数 disconnect 保守清理全部端点：逐端点退订在册订阅并全部 deactivate（防跨视图连接泄漏）', async () => {
+    stomp.connect(undefined, stomp.DEFAULT_STOMP_ENDPOINT);
+    stomp.connect(undefined, '/ws/outpatient');
+    stomp.subscribeTopic(stomp.telemetryTopicPath('1001'), () => {}, stomp.DEFAULT_STOMP_ENDPOINT);
+    stomp.subscribeTopic('/topic/outpatient/queue/D01', () => {}, '/ws/outpatient');
+    (h.configs[0]?.['onConnect'] as () => void)();
+    (h.configs[1]?.['onConnect'] as () => void)();
+    await stomp.disconnect();
+    // 全端点回收：2 条在册订阅全部退订 + 2 个 Client 全部 deactivate，状态齐落断开态
+    expect(h.unsubscribeCalls).toBe(2);
+    expect(h.deactivateCalls).toBe(2);
+    expect(stomp.connectionStateOf('/ws/iot').value).toBe('disconnected');
+    expect(stomp.connectionStateOf('/ws/outpatient').value).toBe('disconnected');
   });
 });

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  门诊逐日人次趋势聚合映射（VisitStatsMapper.sumDailyVisits，宪法 A.4.3-15 复杂聚合走 mapper+XML；
+  FeeRecordMapper.dailyListSummary 同款先例）。
+  口径：按北京钟面自然日分组（registered_at AT TIME ZONE 'Asia/Shanghai'，与 common TimeConstants
+  .HEALTHCARE_TZ 同源——SQL 侧无法引用 Java 常量，字面量同值留痕，时区漂移属契约变更）；
+  @TableLogic 不作用于原生 SQL，deleted=0 显式补齐。约束：GROUP BY stat_date + ORDER BY
+  stat_date 升序唯一顺序（A.4.3-15/17）。
+  窗口谓词与分组键同口径但形态分承：谓词侧为 registered_at 半开区间（sargable，册 2 审查修复
+  波 2——原「逐行先转时区再取日再比较」不可走索引，改写为「参数日 → 北京零点 timestamptz 端点」
+  的范围比较，语义与北京钟面日 ∈ [fromDate, toDate] 严格等价，分组键北京钟面日表达式不动）。
+  加载路径：MP starter 默认 mapper-locations=classpath*:/mapper/**/*.xml，零配置生效。
+-->
+<mapper namespace="com.fuyun.outpatient.mapper.VisitStatsMapper">
+
+    <!-- 聚合投影按构造器映射到 record（DailyVisitTrendRow 规范构造器，列名与组件名一一同源） -->
+    <resultMap id="dailyVisitTrendRowMap" type="com.fuyun.outpatient.api.OutpatientWorkloadStats$DailyVisitTrendRow">
+        <constructor>
+            <arg column="stat_date" javaType="java.time.LocalDate"/>
+            <arg column="visit_count" javaType="long"/>
+            <arg column="emergency_count" javaType="long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 逐日人次聚合：全类型 COUNT 与急诊 FILTER 单次扫描双序列，stat_date 升序。
+         窗口谓词半开区间 [fromDate 北京零点, toDate+1 北京零点)，内层括号先行
+         「参数日::timestamp AT TIME ZONE」还原为北京钟面 timestamptz 端点再 +1 天——
+         与 countTodayVisits 的 Java 侧半开区间先例同构（左闭右开，索引友好）。 -->
+    <select id="sumDailyVisits" resultMap="dailyVisitTrendRowMap">
+        SELECT (registered_at AT TIME ZONE 'Asia/Shanghai')::date AS stat_date,
+               COUNT(*)                                           AS visit_count,
+               COUNT(*) FILTER (WHERE visit_type = 'EMERGENCY')   AS emergency_count
+        FROM outpatient.visit
+        WHERE deleted = 0
+          AND registered_at &gt;= (#{fromDate}::timestamp AT TIME ZONE 'Asia/Shanghai')
+          AND registered_at &lt; ((#{toDate}::timestamp AT TIME ZONE 'Asia/Shanghai') + interval '1 day')
+        GROUP BY stat_date
+        ORDER BY stat_date
+    </select>
+</mapper>

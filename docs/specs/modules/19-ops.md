@@ -4,7 +4,7 @@
 | --- | --- |
 | 模块编号 | M19 |
 | Maven 模块 | `fuyun-ops`（schema：`ops`） |
-| 版本 / 状态 | v1.1 / 统一审查修订（修订记录见 §12） |
+| 版本 / 状态 | v1.2 / 批次 2 册 2 实现同步（修订记录见 §12） |
 | 上游依赖 | M01（认证/RBAC+数据范围/字典/参数/审计/通知中心/打印模板）、M03（门诊工作量统计 API，接口位）、M04（住院工作量统计 API，接口位）、M05（护理工作量/破码率/不良事件统计 API）、M07（危急值指标/TAT/工作量统计 API）、M08（影像报告/检查工作量统计 API）、M09（病历质控指标/首页与编码统计 API、`emr.homepage.submitted` 事件）、M10（手术工作量统计 API）、M13（收入统计只读 API，接口位口径）、M15（装备管理指标与效益分析汇总 API）、M20（上报传输骨架 push_task、事件总线治理、幂等构件） |
 | 下游被依赖 | 无模块级下游（web-bigscreen 运营大屏与 web-workstation 管理端经 REST/WebSocket 消费；外部绩效系统经导出数据集对接）；对全模块零写接口（分析型不回写业务，红线 1） |
 | 对应总 Spec | FU-M19-01 ~ FU-M19-05 |
@@ -114,7 +114,8 @@
 
 ## 7. 对外接口
 
-**REST（`/api/v1/ops/` 前缀，响应统一 `{code, message, data, traceId}`）**：
+**REST（`/api/v1/ops/` 前缀；成功响应为 DTO 直返、无统一信封包装，失败响应统一 RFC 9457 ProblemDetail（`properties.errorCode` 业务错误码 + `properties.traceId` 链路追踪，GlobalExceptionHandler 统一渲染）；traceId 全链路贯穿（MDC → 日志与 ProblemDetail））**：
+- 工作台聚合（批次 2 册 2 首切片，两读端点供 web-workstation 首页真数据消费）：`GET /workbench/overview`（无参数；返回 WorkbenchOverviewVO——metrics 指标六格[todayVisits/waitingCount/todayIncomeFen/inHospitalCount/pendingDispenseCount/pendingSettleCount，计数经全局 Long→String 出网] + trend 恒 14 点趋势[statDate/visitCount/emergencyCount，北京钟面日升序含零填充日] + waitingTable 按科室候诊表[deptCode/waitingCount/longestWaitingMinutes，候诊人数降序] + generatedAt 快照生成时点；Redis read-through TTL 5s 快照缓存，缓存缺席/损坏/读写异常均降级直算不阻断；无业务数据出零值/空清单不造数；权限点 `GET /api/v1/ops/workbench/overview`）、`GET /workbench/events`（无参数；返回 WorkbenchEventsVO——topics 三条 STOMP 端点主题订阅指引[endpoint/topic 模板/description，复用 /ws/iot、/ws/nursing、/ws/outpatient 既有端点不自建 /ws/ops] + events 双轮询源待办合并清单[occurredAt 降序 ≤50 条：billing 待支付 FEE_PENDING 携金额分值、pharmacy 待配药 DISPENSE_PENDING 零金额] + criticalValues 危急值段与 criticalValueDegraded 降级判别标志[当前恒空数组+true：M07 检验域未建缺位降级，落地后回填] + generatedAt；无缓存直算；无待办返回空清单；权限点 `GET /api/v1/ops/workbench/events`）。两权限点为 API 型（D1/D2 裁定 perm_code=动词+空格+路径模板），经 V1122 增量种子登记；未登录 401（认证拦截面），ADMIN 运行期一票放行，业务角色绑定随 M19 驾驶舱权限域后续批次按角色矩阵展开（本切片不猜业务语义）
 - 指标字典：`GET/POST/PUT /indicators`、`POST /indicators/{code}/publish|discontinue`、`GET /indicators/{code}/caliber`（口径卡）、`GET/POST/PUT /alert-rules`、`GET /alerts`
 - 指标快照：`GET /snapshots?indicatorCode=&periodFrom=&periodTo=&dim=`、`GET /snapshots/{id}/trace`（溯源：分子分母+取数批次）、`POST /snapshots/recompute`（仅 READY 快照，必填原因）
 - 报表：`GET/POST/PUT /report-templates`、`POST /report-instances/generate`、`GET /report-instances`、`GET /report-instances/{no}/file`
@@ -204,3 +205,10 @@
 | R6-13 | §7 发布事件清单补 broadcast 标注说明：本模块 4 个发布事件当前均为零订阅的广播/留痕类事件，在 event_registry 登记时统一标注 broadcast 语义 | 90 号文档 R6-13、第 5 节全局核查结论：19 个零订阅发布事件判定为合理广播/模块内闭环，要求统一标注 |
 | M-25 | 核对结论：本模块 §7 订阅清单无任何 `patient.*` 事件订阅，不涉及成对登记，无需修订 | 90 号文档 M-25：成对登记范围仅覆盖订阅 patient.merged/frozen 的模块 |
 | 终审 #15 | 偏差 3 补闭环标注（Round 2 补登）：target_type 枚举无需扩展，"监管平台"枚举覆盖，以 report_type/dataset_code 区分上报业务 | 90 号文档第 4 节终审 #15 |
+
+### v1.2 批次 2 册 2 实现同步修订记录（2026-10-09，册 2 独立代码审查修复波 2）
+
+| ID | 修订点 | 依据 |
+| --- | --- | --- |
+| IMPL-1 | §7 增补工作台聚合两读端点契约（`GET /workbench/overview`、`GET /workbench/events`：路径/参数/响应结构/权限点/降级语义——首切片已实现并经 OpsWorkbenchIT 真栈端到端验收） | 根定位层 §7 文档同步策略：新增对外接口必同步对应模块 Spec |
+| IMPL-2 | §7 响应信封描述历史遗留修正：原「响应统一 `{code, message, data, traceId}`」与全仓实现历来不符（成功响应为 DTO 直返、无信封包装；失败为 RFC 9457 ProblemDetail 携 errorCode/traceId），如实修正——文档描述纠偏，非行为变更 | 册 2 代码审查发现（Spec 与实现的响应信封描述偏差，历史遗留修正留痕） |

@@ -177,6 +177,14 @@
       <artifactId>fuyun-ward</artifactId>
       <version>${project.version}</version>
     </dependency>
+    <!-- M19 运营与决策支持（批次 2 册 2 首切片）：模块装配经本模块 OpsConfig @Import
+         （WardConfig 同模式，装配归 app，B.1）；本模块零迁移资源（分析只读域零表），
+         取数经四业务模块统计 Port api 面 -->
+    <dependency>
+      <groupId>com.fuyun</groupId>
+      <artifactId>fuyun-ops</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <!-- 测试：单测 + Testcontainers 集成测试 + 架构边界守护（规则类自 PR-2 起编写） -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

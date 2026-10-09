@@ -22,6 +22,7 @@ import com.fuyun.billing.service.IInsuranceMappingService;
 import com.fuyun.billing.service.IPricingEngineService;
 import com.fuyun.billing.service.impl.ArrearsApprovalServiceImpl;
 import com.fuyun.billing.service.impl.BillingAccountQueryPortImpl;
+import com.fuyun.billing.service.impl.BillingStatsPortImpl;
 import com.fuyun.billing.service.impl.ChargeItemServiceImpl;
 import com.fuyun.billing.service.impl.ChargePriceServiceImpl;
 import com.fuyun.billing.service.impl.DailyListServiceImpl;
@@ -70,6 +71,7 @@ import org.springframework.context.annotation.Import;
     OutpatientBillingPortImpl.class,
     SettlementQueryPortImpl.class,
     BillingAccountQueryPortImpl.class,
+    BillingStatsPortImpl.class,
     InpatientChargeServiceImpl.class,
     ArrearsApprovalServiceImpl.class,
     ChargeItemController.class,

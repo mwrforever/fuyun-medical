@@ -185,7 +185,7 @@ app 内：views ──▶ components ──▶ composables ──▶ api / store
 
 1. **Pinia**：store 统一 Setup Store 写法且必须返回全部 state；仅"多视图共享状态/跨视图修改同一状态"才建 store（认证会话、全局字典、看板布局为典型）；store 内禁存路由对象等外部注入物；组件外使用（守卫/拦截器）必须延迟调用或显式传 pinia 实例。
 2. **路由**：路由组件全部懒加载（`() => import(...)`），禁静态导入与 defineAsyncComponent 作路由组件；路由文件按业务域模块化；导航守卫分层——beforeEach 只做认证/权限（return 重定向、防死循环）、beforeResolve 做数据预取、afterEach 做埋点/标题；每条路由 meta 承载权限语义（医疗系统"路由 = 权限点清单"审计形态，不启用文件路由）。
-3. **STOMP 实时推送**：每 app 一个 Client 实例（封装为 service/`useStomp` composable），禁止组件各自建连；重连与心跳完全交给库内建机制（reconnectDelay 指数退避 + 心跳 10s 与后端协商），禁止自研重连循环；订阅返回句柄必须在组件卸载时 unsubscribe（统一封装）；token 经 beforeConnect 动态填 connectHeaders；onStompError 与 onWebSocketClose 必须挂统一处理（日志含主题与 traceId，禁打 token）。
+3. **STOMP 实时推送**：每 app 每端点至多一个 Client 实例（建连出口唯一收敛，封装为 service/`useStomp` composable，禁止组件各自建连；多端点场景按端点各持一套 Client、统一注册表管理）；重连与心跳完全交给库内建机制（reconnectDelay 指数退避 + 心跳 10s 与后端协商），禁止自研重连循环；订阅返回句柄必须在组件卸载时 unsubscribe（统一封装）；token 经 beforeConnect 动态填 connectHeaders；onStompError 与 onWebSocketClose 必须挂统一处理（日志含主题与 traceId，禁打 token）。
 4. **实时数据界限**：凡 `/ws/iot` 既有主题（主题清单见 `../docs/specs/modules/14-iot.md`）一律走 STOMP 推送；无推送主题的低频快照才用 HTTP 轮询（visibilityState 隐藏时暂停）；新增实时需求先问"能否并入既有主题"。
 5. **ECharts（bigscreen）**：按需引入强制（echarts/core + 按类型注册 + 手动二选一渲染器），集中单一模块注册；option 用 ComposeOption 组合严格类型；图表实例生命周期（init/setOption/resize/dispose）封装进统一组件或 useEChart，页面隐藏/卸载必须 dispose，防实例泄漏。
 6. **Element Plus 按需引入**（unplugin-vue-components + unplugin-auto-import + ElementPlusResolver）；pnpm 严格依赖下显式声明 dayjs 依赖（官方明示的坑）；主题定制先 CSS 变量（类作用域），不满足再上 SCSS 编译期方案。

@@ -11,6 +11,7 @@ import com.fuyun.pharmacy.service.impl.DispensePlanServiceImpl;
 import com.fuyun.pharmacy.service.impl.DispenseServiceImpl;
 import com.fuyun.pharmacy.service.impl.DrugServiceImpl;
 import com.fuyun.pharmacy.service.impl.MedicationReviewServiceImpl;
+import com.fuyun.pharmacy.service.impl.PharmacyStatsPortImpl;
 import com.fuyun.pharmacy.service.impl.PrescriptionCancelPortImpl;
 import com.fuyun.pharmacy.service.impl.PrescriptionOpenPortImpl;
 import com.fuyun.pharmacy.service.impl.PrescriptionServiceImpl;
@@ -41,6 +42,7 @@ import org.springframework.context.annotation.Import;
     DrugController.class,
     PrescriptionController.class,
     DispenseController.class,
-    ReviewTaskController.class
+    ReviewTaskController.class,
+    PharmacyStatsPortImpl.class
 })
 public class PharmacyWebConfig {}

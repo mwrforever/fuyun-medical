@@ -129,4 +129,33 @@ public interface FeeRecordMapper extends BaseMapper<FeeRecord> {
             + "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>"
             + " ORDER BY id FOR UPDATE</script>")
     List<FeeRecord> lockByIds(@Param("ids") List<Long> ids);
+
+    /**
+     * 当日有效收入合计（M13 → M19 统计接口位聚合，批次 2 册 2 新增）：计费日当行 PENDING/
+     * CONFIRMED/SETTLED 三态金额求和——作废 CANCELLED 与退费终态（PART/FULL_REFUND）行不计入
+     * 收入口径（GUARANTEED/BAD_DEBT 为坏账语义行同样不计），单标量聚合注解 SQL 形态照
+     * {@link #sumUnsettledAmount} 先例；deleted=0 显式补齐（注解 SQL 不继承 @TableLogic）。
+     *
+     * @param date 统计计费日（billing_date 口径，北京钟面自然日），非空；来源：M19 工作台聚合
+     * @return 当日收入合计（分）；无有效行返回 0
+     */
+    @Select("SELECT COALESCE(SUM(amount), 0) FROM billing.fee_record "
+            + "WHERE billing_date = #{date} "
+            + "AND status IN ('PENDING', 'CONFIRMED', 'SETTLED') AND deleted = 0")
+    long sumDailyValidAmount(@Param("date") LocalDate date);
+
+    /**
+     * 待结算积压笔数（M13 → M19 统计接口位聚合，批次 2 册 2 新增）：PENDING/CONFIRMED 且未结算
+     * （settlement_id IS NULL）行<b>全量计数、无日期界</b>——积压待办语义（历史未结算费用同样是
+     * 待办），与 backend-report §五 契约行、{@link #sumUnsettledAmount} 无日期先例及同屏待发药
+     * 积压口径（PharmacyStatsPortImpl.pendingStats）三面对齐；已结算/作废/退费终态行不构成待办；
+     * 单标量聚合注解 SQL 形态照 {@link #sumUnsettledAmount} 先例；deleted=0 显式补齐（注解 SQL
+     * 不继承 @TableLogic）。
+     *
+     * @return 待结算积压笔数（跨日累积）；无行返回 0
+     */
+    @Select("SELECT COUNT(*) FROM billing.fee_record "
+            + "WHERE status IN ('PENDING', 'CONFIRMED') "
+            + "AND settlement_id IS NULL AND deleted = 0")
+    long countPendingUnsettled();
 }
