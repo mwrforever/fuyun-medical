@@ -34,10 +34,12 @@ public record OutpatientWorkloadStats(
     /**
      * 逐日趋势行（14 日趋势单点）：当日人次 + 急诊人次双序列。
      *
-     * <p>计数组件装箱 {@code Long}：本行经 VisitStatsMapper.xml GROUP BY 聚合语句以 MyBatis
-     * 列数位置构造器自动映射实例化（项目未开 arg-name-based-constructor-auto-mapping），该路径
-     * 以实参实型（装箱态）查找构造器，原始 {@code long} 组件因装箱不匹配实例化失败；COUNT(*)
-     * 聚合行恒非空，装箱不引入空值路径，窗口空集日的归零由 Port 实现零填充承担。
+     * <p>计数组件装箱 {@code Long}：本行经 VisitStatsMapper.xml 的显式 {@code <constructor>}
+     * resultMap（dailyVisitTrendRowMap）构造器映射实例化——{@code <arg>} 的
+     * {@code javaType="long"} 按 MyBatis 内建别名表解析为装箱 {@code java.lang.Long}（原始
+     * {@code long} 的别名是 {@code _long}），构造器实参按该解析结果做类型匹配，原始
+     * {@code long} 组件因装箱不匹配实例化失败，故两计数组件声明为装箱 {@code Long}；
+     * COUNT(*) 聚合行恒非空，装箱不引入空值路径，窗口空集日的归零由 Port 实现零填充承担。
      *
      * @param statDate       统计日（registered_at 北京钟面自然日），非空
      * @param visitCount     当日门诊人次（全部类型），非空（零填充日为 0）

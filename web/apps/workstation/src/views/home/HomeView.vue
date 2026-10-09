@@ -14,9 +14,10 @@ import { computed } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 import { EVENT_SOURCE_LABELS, EVENT_TYPE_LABELS } from '@/api/dashboard';
 import { useAuthStore } from '@/stores/auth';
-import { useWorkbenchFeed, formatCount, weekOverWeekPercent } from '@/composables/useWorkbenchFeed';
+import { useWorkbenchFeed } from '@/composables/useWorkbenchFeed';
 import { fenToYuanDisplay } from '@/utils/money';
 import { formatTime } from '@/utils/timeFormat';
+import { formatCount, weekOverWeekPercent } from '@/utils/workbenchDisplay';
 import { MENU_ITEMS, type SidebarMenuItem } from '../layout/menu';
 
 const authStore = useAuthStore();
@@ -286,7 +287,7 @@ const waitingRows = computed(() =>
   })),
 );
 
-/** 时点当日钟面（HH:mm）：事件流时间列（mock 流水时间语法） */
+/** 时点当日钟面（HH:mm）：事件流时间列（样稿流水时间语法） */
 function timeOfDay(iso: string): string {
   if (iso === '') {
     return '—';

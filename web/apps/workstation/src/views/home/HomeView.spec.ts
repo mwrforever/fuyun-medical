@@ -159,6 +159,14 @@ describe('workstation 工作站首页（报表式真数据）', () => {
     stomp.handles = [];
     stomp.connectCalls.mockClear();
     stomp.disconnectCalls.mockClear();
+    // 断开语义镜像真实模块契约（useIotStomp.disconnect：先遍历在册句柄逐一退订再断开），
+    // 供卸载清理用例对「每只句柄真实退订」做逐项调用断言
+    stomp.disconnectCalls.mockImplementation(() => {
+      for (const handle of stomp.handles) {
+        handle.unsubscribe();
+      }
+      return Promise.resolve();
+    });
     stomp.state = 'connected';
     api.overview.mockReset();
     api.events.mockReset();
@@ -254,6 +262,28 @@ describe('workstation 工作站首页（报表式真数据）', () => {
     wrapper.unmount();
   });
 
+  it('模板填充被拒：非法 deptCode 诊区 warn 留痕跳过订阅，合法诊区照常登记（fillTopicTemplate 拒绝分支）', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    injectSession([]);
+    // 「D 01」含空白字符 → fillTopicTemplate 非法字符拒绝；D02 合法照常订阅（跳过不中断其余）
+    const rejected = buildOverview();
+    rejected.waitingTable = [
+      { deptCode: 'D 01', waitingCount: '11', longestWaitingMinutes: '18' },
+      { deptCode: 'D02', waitingCount: '9', longestWaitingMinutes: '14' },
+    ];
+    api.overview.mockResolvedValue(rejected);
+    const wrapper = await mountReady();
+    expect(stomp.handles.map((handle) => handle.destination)).toEqual([
+      '/topic/outpatient/queue/D02',
+    ]);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('叫号主题模板填充被拒，跳过该诊区订阅'),
+      expect.anything(),
+    );
+    warnSpy.mockRestore();
+    wrapper.unmount();
+  });
+
   it('events 迟于 overview 到达仍完成叫号订阅（首拉时序竞态回归）', async () => {
     injectSession([]);
     // events 悬置：overview 先落、topics 后到——订阅 watch 必须随 topics 到达重触发
@@ -291,7 +321,9 @@ describe('workstation 工作站首页（报表式真数据）', () => {
     const wrapper = await mountReady();
     expect(stomp.handles.length).toBeGreaterThan(0);
     wrapper.unmount();
-    expect(stomp.handles.every((handle) => handle.unsubscribe).valueOf()).toBe(true);
+    // 退订经 disconnect 单出口完成（组件不逐句柄自退）：桩按真实模块契约遍历退订后，
+    // 逐只句柄断言退订 spy 真实被调用（禁 every(函数对象) 恒真空断言）
+    stomp.handles.forEach((handle) => expect(handle.unsubscribe).toHaveBeenCalled());
     expect(stomp.disconnectCalls).toHaveBeenCalled();
   });
 

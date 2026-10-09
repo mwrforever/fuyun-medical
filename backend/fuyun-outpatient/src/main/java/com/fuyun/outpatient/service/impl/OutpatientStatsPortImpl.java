@@ -46,6 +46,10 @@ public class OutpatientStatsPortImpl implements OutpatientStatsPort {
     /** 逐日趋势 GROUP BY 聚合 mapper（XML 承载） */
     private final VisitStatsMapper visitStatsMapper;
 
+    /** 候诊行集读取上界（有界查询纪律，NurseBoardServiceImpl ASSIGNMENTS_LIMIT=500 同款档位；
+     * 当日全院候诊量预期远低于此值，上界仅作防御性封顶） */
+    private static final int WAITING_SCAN_LIMIT = 500;
+
     /**
      * 全参构造器（装配归 OutpatientWebConfig @Import，backend 宪法 B.1）。
      *
@@ -106,17 +110,21 @@ public class OutpatientStatsPortImpl implements OutpatientStatsPort {
     }
 
     /**
-     * 按科室候诊表聚合：WAITING 行集一次取回（精确投影 queue_id/queue_time，A.4.3-14）后 JVM
-     * 分组——按科室计数 + 最长等待分钟（当前时刻 − 最早 queue_time 向下取整），候诊人数降序。
-     * 数据库读操作（当日候诊量有界，JVM 聚合免 GROUP BY 第二语句）。
+     * 按科室候诊表聚合：WAITING 行集一次取回（精确投影 queue_id/queue_time，A.4.3-14；降序有界
+     * 下推 LIMIT——BillingStatsPortImpl.loadPendingFeeEvents 同款纪律）后 JVM 分组——按科室计数
+     * + 最长等待分钟（当前时刻 − 最早 queue_time 向下取整），候诊人数降序。数据库读操作
+     * （当日候诊量有界，JVM 聚合免 GROUP BY 第二语句）。
      *
      * @return 候诊表行清单（候诊人数降序）；无候诊返回空清单
      */
     private List<DeptWaitingRow> aggregateWaitingByDept() {
-        // 数据库读操作：WAITING 行集（仅取分组两列，禁 SELECT *）
+        // 数据库读操作：WAITING 行集（仅取分组两列，禁 SELECT *；按 queue_time 最早优先有界——
+        // 超上界截断保留最长等待行，与「最长等待分钟」口径同向）
         List<QueueTicket> waiting = queueTicketMapper.selectList(Wrappers.<QueueTicket>lambdaQuery()
                 .select(QueueTicket::getQueueId, QueueTicket::getQueueTime)
-                .eq(QueueTicket::getStatus, TicketStatus.WAITING));
+                .eq(QueueTicket::getStatus, TicketStatus.WAITING)
+                .orderByAsc(QueueTicket::getQueueTime)
+                .last("LIMIT " + WAITING_SCAN_LIMIT));
         if (waiting.isEmpty()) {
             return List.of();
         }

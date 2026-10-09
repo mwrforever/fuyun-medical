@@ -75,7 +75,7 @@ class OpsWorkbenchIT extends FuyunStackITBase {
         registry.add("fuyun.security.token-hmac-secret", () -> TEST_SECRET);
     }
 
-    /** overview 快照缓存键（与 OpsConstants 同值断言——常量经模块依赖不在 test classpath 直接可见性内，字面量留痕） */
+    /** overview 快照缓存键（与 OpsConstants 同值断言——常量可经模块依赖导入，刻意字面留痕钉契约：字面重复为防契约漂移） */
     private static final String SNAPSHOT_KEY = "fy:ops:snapshot:workbench:overview";
 
     /** 种子主键基座（19 位固定值，跨表互不冲突且不撞既有 IT 种子段） */

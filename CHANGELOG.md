@@ -2,6 +2,11 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-09 · web 宪法 B.3-3 STOMP 条款技术性修订（多端点 Client 形态措辞对齐）
+
+- **修订理由（批次 2 册 2 实现驱动，独立代码审查指出条款与实现冲突须修宪留痕）**：册 2 事件流需求要求同时订阅三既有 STOMP 端点（/ws/iot、/ws/nursing、/ws/outpatient）主题；一条 STOMP 连接绑定单一 brokerURL，物理上一 Client 无法跨端点。useIotStomp 多端点改造为「每端点一套 Client、建连出口唯一收敛（composable 单例管理，连接生命周期受控）」，B.3 其余条款（库内建重连/卸载退订/beforeConnect 注入 token/统一错误处理）全保留并有测试实证。
+- **正文修订**：web/AGENTS.md B.3-3「每 app 一个 Client 实例」→「每 app 每端点至多一个 Client 实例（建连出口唯一收敛，封装为 composable/service，禁止组件各自建连）」——意图不变（防组件散建连接），形态措辞对齐多端点工程现实；bigscreen 侧维持单端点单 Client 不受影响。
+
 ## 2026-10-09 · 批次 2 册 2 后端聚合（fuyun-ops 首切片 · 四模块统计接口位）
 
 - **范围依据**：立项计划册 2「后端范围」7 项（`docs/superpowers/plans/2026-10-08-批次2-纸质病案全站换血-立项计划.md` §2，2026-10-09 追认为范围唯一来源）——fuyun-ops 模块骨架装配、两聚合端点（`GET /api/v1/ops/workbench/overview|events`）、四业务模块统计接口位（outpatient/billing/pharmacy/nursing 各补只读统计 Port，fuyun-ops 经 api 包聚合调用，禁跨模块直查）、outpatient 新增 `VisitStatsMapper.xml` GROUP BY 聚合（14 日趋势数据源）、overview Redis 快照缓存 TTL 5s（NurseBoardServiceImpl GC13 同款先例）、事件流五源（复用 /ws/iot、/ws/nursing、/ws/outpatient 三既有 STOMP 端点主题 + billing 待支付/pharmacy 待配药两 HTTP 轮询派生源 + 危急值 M07 缺位降级空数组带判别标志）、聚合 service 单测 100% + Testcontainers 集成测试同 commit。

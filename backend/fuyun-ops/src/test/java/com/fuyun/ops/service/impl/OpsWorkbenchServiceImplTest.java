@@ -34,8 +34,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 import org.springframework.data.redis.RedisConnectionFailureException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -46,9 +44,11 @@ import org.springframework.data.redis.core.ValueOperations;
  * JSON 损坏与 Redis 读异常降级直算/写异常不阻断；③events 五源装配（三主题指引+双源合并
  * 降序有界+危急值恒空段与降级标志）；④全空数据零值视图。JaCoCo ops bundle 红线：本类承载
  * OpsWorkbenchServiceImpl 全部分支面（册 2 验收线：聚合 service 单测 100%）。
+ *
+ * <p>桩纪律：默认严格桩（MockitoExtension STRICT_STUBS），按用例精确打桩——events 域用例
+ * 无缓存面，不预置缓存通道桩；原全局 LENIENT 放宽已收紧（册 2 审查修复波 2）。
  */
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class OpsWorkbenchServiceImplTest {
 
     /** 快照缓存键（与实现常量同源断言） */
@@ -86,12 +86,20 @@ class OpsWorkbenchServiceImplTest {
                 nursingStatsPort,
                 redisTemplate,
                 objectMapper);
+    }
+
+    /**
+     * 缓存通道打桩（仅 overview 域用例调用）：events 域无缓存面，不预置通道桩——严格桩模式下
+     * 未消费桩即失败，缓存通道按用例精确打桩。
+     */
+    private void stubCacheValueOps() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     }
 
     @Test
     @DisplayName("①overview 四 Port 聚合：六格逐字段+趋势映射+候诊表映射+穿透回写 TTL 5s")
     void overviewComputesFromFourPortsAndWritesCacheWithTtl5s() {
+        stubCacheValueOps();
         when(valueOperations.get(SNAPSHOT_KEY)).thenReturn(null);
         stubPorts(fullOutpatient(), fullBilling(), fullPharmacy(), new NursingWorkloadStats(86L));
 
@@ -129,6 +137,7 @@ class OpsWorkbenchServiceImplTest {
     void overviewReturnsCachedSnapshotWithoutRecomputing() throws Exception {
         WorkbenchOverviewVO cached =
                 new WorkbenchOverviewVO(new Metrics(1, 2, 3, 4, 5, 6), List.of(), List.of(), OffsetDateTime.now());
+        stubCacheValueOps();
         when(valueOperations.get(SNAPSHOT_KEY)).thenReturn(objectMapper.writeValueAsString(cached));
 
         WorkbenchOverviewVO overview = service.overview();
@@ -142,6 +151,7 @@ class OpsWorkbenchServiceImplTest {
     @Test
     @DisplayName("③缓存 JSON 损坏降级直算：warn 降级后回写覆盖损坏值")
     void overviewFallsBackToComputeOnCorruptedCache() {
+        stubCacheValueOps();
         when(valueOperations.get(SNAPSHOT_KEY)).thenReturn("{not-json");
         stubPorts(fullOutpatient(), fullBilling(), fullPharmacy(), new NursingWorkloadStats(86L));
 
@@ -153,6 +163,7 @@ class OpsWorkbenchServiceImplTest {
     @Test
     @DisplayName("④Redis 读异常降级直算：连接失败不阻断聚合主链")
     void overviewFallsBackToComputeOnRedisReadFailure() {
+        stubCacheValueOps();
         when(valueOperations.get(SNAPSHOT_KEY)).thenThrow(new RedisConnectionFailureException("down"));
         stubPorts(fullOutpatient(), fullBilling(), fullPharmacy(), new NursingWorkloadStats(86L));
 
@@ -164,6 +175,7 @@ class OpsWorkbenchServiceImplTest {
     @Test
     @DisplayName("⑤缓存写异常不阻断：聚合结果照常返回（缓存可重建语义）")
     void overviewReturnsResultWhenCacheWriteFails() {
+        stubCacheValueOps();
         when(valueOperations.get(SNAPSHOT_KEY)).thenReturn(null);
         org.mockito.Mockito.doThrow(new RedisConnectionFailureException("down"))
                 .when(valueOperations)
@@ -236,6 +248,7 @@ class OpsWorkbenchServiceImplTest {
     @Test
     @DisplayName("⑧全空数据零值视图：四 Port 零返回出零值/空清单，不造数")
     void overviewReturnsZeroViewOnAllEmptyPorts() {
+        stubCacheValueOps();
         when(valueOperations.get(SNAPSHOT_KEY)).thenReturn(null);
         stubPorts(
                 new OutpatientWorkloadStats(
