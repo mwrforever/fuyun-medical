@@ -2,12 +2,16 @@
 // 建档成功跳详情路由、EX-46/FE-A2-07 录入中离开路由守卫（脏表单确认拦截/未录入零确认/
 // 建档成功跳转放行）；api 层与 useRouter mock 承载（不打真实网络、不做懒加载真导航），
 // 弹错口径归 http.spec 覆盖不重复断言。
+// 暖纸化换脸新增锚点（契约 ⑫.3 spec 先行，蓝图 P01-7）：门牌页首（衬线标题/「建档渠道 ·
+// 当日时刻」批注行）、双栏结构（表单卡 .fuy-card + 预检卡 .fuy-card--stitch 并存）、
+// .fuy-form 挂类与 .fuy-sign-divider 分节、预检卡三态（引导空态脸/AUTO_MATCH 归一/SUSPECT
+// 转人工/NO_MATCH 建新档）、显式 popper 挂 fuy-snap-popper；既有业务断言全量保留只增不降。
 // 桩面：vue-router 替身补 onBeforeRouteLeave（守卫回调经替身捕获后直调单测）；离开守卫
 // 确认走 ElMessageBox.confirm 替身（默认确认放行，用例按需 mockRejectedValueOnce 覆写）。
 import { mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElFormItem, ElMessageBox, ElSelect } from 'element-plus';
+import { ElDatePicker, ElFormItem, ElMessageBox, ElSelect } from 'element-plus';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import { onBeforeRouteLeave } from 'vue-router';
@@ -113,7 +117,7 @@ describe('患者建档页', () => {
     wrapper.unmount();
   });
 
-  it('预检返回 SUSPECT 后页内提示疑似重复转人工核对', async () => {
+  it('预检返回 SUSPECT 后结论落预检卡并呈现转人工警示脸（胶囊+文案双通道）', async () => {
     vi.mocked(matchCheck).mockResolvedValue({ outcome: 'SUSPECT' });
     const wrapper = mount(PatientCreateView);
     await fillRequired(wrapper, true);
@@ -131,6 +135,60 @@ describe('患者建档页', () => {
       idCardNo: '',
       mobile: '',
     });
+    // 蓝图 P01：结论从表单上方一行升格右栏常驻预检卡——SUSPECT 文案与警示胶囊都落在 stitch 卡内
+    const checkCard = wrapper.find('.fuy-card--stitch');
+    expect(checkCard.text()).toContain('疑似重复');
+    expect(checkCard.text()).toContain('转人工核对');
+    expect(checkCard.find('.fuy-status-pill--amber').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('预检返回 AUTO_MATCH 呈现归一警示脸（既有档案 ID + 提交后归一）', async () => {
+    vi.mocked(matchCheck).mockResolvedValue({
+      outcome: 'AUTO_MATCH',
+      candidatePatientId: '1932000000000000007',
+    });
+    const wrapper = mount(PatientCreateView);
+    await fillRequired(wrapper, true);
+
+    await clickButton(wrapper, '匹配预检');
+
+    const checkCard = wrapper.find('.fuy-card--stitch');
+    await vi.waitFor(() => {
+      expect(checkCard.text()).toContain('匹配到既有档案');
+    });
+    expect(checkCard.text()).toContain('归一至该档案');
+    expect(checkCard.text()).toContain('1932000000000000007');
+    // 归一为警示语义（沿用既有 warning 档）：琥珀胶囊 + 文字双通道
+    expect(checkCard.find('.fuy-status-pill--amber').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('预检未命中（NO_MATCH）呈现确认绿脸（将建立新档案）', async () => {
+    vi.mocked(matchCheck).mockResolvedValue({ outcome: 'NO_MATCH' });
+    const wrapper = mount(PatientCreateView);
+    await fillRequired(wrapper, true);
+
+    await clickButton(wrapper, '匹配预检');
+
+    const checkCard = wrapper.find('.fuy-card--stitch');
+    await vi.waitFor(() => {
+      expect(checkCard.text()).toContain('未匹配到既有档案');
+    });
+    expect(checkCard.text()).toContain('建立新档案');
+    expect(checkCard.find('.fuy-status-pill--success').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('未预检时预检卡给引导空态脸（暂无预检结论+下一步指引），不伪装报错', () => {
+    const wrapper = mount(PatientCreateView);
+
+    const checkCard = wrapper.find('.fuy-card--stitch');
+    expect(checkCard.find('.fuy-empty').exists()).toBe(true);
+    expect(checkCard.text()).toContain('暂无预检结论');
+    // 指引给下一步（可预检），且不以错误态文案伪装空态
+    expect(checkCard.text()).toContain('身份要素');
+    expect(checkCard.find('[role="alert"]').exists()).toBe(false);
     wrapper.unmount();
   });
 
@@ -220,6 +278,54 @@ describe('患者建档页', () => {
       (() => Promise<boolean>) | undefined;
     await expect(guard?.()).resolves.toBe(true);
     expect(ElMessageBox.confirm).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('门牌页首：衬线标题「患者建档」+「建档渠道 · 当日时刻」批注行（空值零伪数据）', () => {
+    const wrapper = mount(PatientCreateView);
+
+    // 门牌页首为每页第一节（契约 ⑧.1）：衬线主标题 + 批注行（渠道=表单业务真值、时刻=本地时钟）
+    expect(wrapper.find('h1.fuy-page-title').text()).toBe('患者建档');
+    const note = wrapper.find('.fuy-page-note');
+    expect(note.exists()).toBe(true);
+    // 批注行=建档渠道（缺省窗口）· 当日时刻（YYYY-MM-DD 周X），禁伪数据
+    expect(note.text()).toMatch(/^建档渠道 窗口 · \d{4}-\d{2}-\d{2} 周[日一二三四五六]$/);
+    // 时刻批注走 <time> 语义元素（与检索页/首页门牌同律，患者域三页横向一致）
+    expect(note.find('time').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('双栏结构锚：表单卡（.fuy-card+.fuy-form）与预检卡（.fuy-card--stitch）并存，签分隔三分节', () => {
+    const wrapper = mount(PatientCreateView);
+
+    // 蓝图 P01 布局骨架：左表单卡、右预检卡（stitch 叙事卡）双栏并存
+    const cards = wrapper.findAll('.fuy-card');
+    expect(cards).toHaveLength(2);
+    const formCard = cards.find((card) => card.find('form.fuy-form').exists());
+    expect(formCard).toBeTruthy();
+    // 表单整脸挂 .fuy-form（契约 ⑤#1-#4 全局脸自动），建档主钮留在表单卡
+    expect(formCard?.text()).toContain('建档');
+    // 预检钮迁入右栏预检卡（预检防重因果可见：先预检再建档）
+    const checkCard = wrapper.find('.fuy-card--stitch');
+    expect(checkCard.text()).toContain('匹配预检');
+    // 三分节沿用既有「身份基础/证件介质/建档属性」，节间以「签」字分隔（两道）
+    expect(wrapper.findAll('.fuy-sign-divider')).toHaveLength(2);
+    expect(wrapper.text()).toContain('身份基础');
+    expect(wrapper.text()).toContain('证件介质');
+    expect(wrapper.text()).toContain('建档属性');
+    wrapper.unmount();
+  });
+
+  it('显式 popper 统一挂 fuy-snap-popper（下拉与日期弹层硬 snap 硬门禁）', () => {
+    const wrapper = mount(PatientCreateView);
+
+    // 契约总则 4：一切显式 popper 挂 fuy-snap-popper——性别下拉与出生日期选择器都在列
+    const selects = wrapper.findAllComponents(ElSelect);
+    expect(selects.length).toBeGreaterThanOrEqual(1);
+    for (const select of selects) {
+      expect(select.props('popperClass')).toBe('fuy-snap-popper');
+    }
+    expect(wrapper.findComponent(ElDatePicker).props('popperClass')).toBe('fuy-snap-popper');
     wrapper.unmount();
   });
 

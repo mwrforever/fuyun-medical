@@ -141,6 +141,8 @@
 
 > 审批前施工纪律：A-1~A-5 未批期间，相关槽位一律**维持旧值**或暂用 §③.2「保留原值」列，禁止施工 agent 自行取申请值。
 
+> **扩批注记（2026-10-10 主控裁决，验段+代码审查驱动）**：A-5 已扩批为 danger/warning/success/info **四族各七档**（base/light-3/5/7/8/9/dark-2；light-3/5/7=基色 alpha 同构口径、dark-2=color-mix 黑混公式+@supports 基色兜底）**+error 语义别名族七档**（danger 同构直引，封死 EP 冷粉回落）。全部取值为已批状态色 alpha/color-mix 派生，零新色相；裁决留痕见 CHANGELOG 同日条目与进度台账 §6。
+
 ---
 
 ## ④ 字体使用矩阵 + @font-face 全局上收方案
@@ -434,6 +436,8 @@ export async function listDictItems(typeCode: string): Promise<DictItemVO[]>;
 | 4 | `views/login/LoginView.spec.ts`（冻结门禁） | 零改动全绿——任何基础册提交的前置门禁；登录零回归的机器证据 |
 | 5 | 样式层回归（轻量） | 若既有惯例存在样式文件读取断言则同步；否则以 `pnpm lint/format:check/type-check/test/build` 全绿 + grep 门禁（禁裸 `.el-*` 新增、motion.css 外零 `@keyframes`、tokens.css 外零新 hex 字面量——归 scripts 编码校验扩展项呈批）兜底 |
 | 6 | 各页批次 spec | 见 ⑫（每页 spec 先行重写后施工） |
+
+> **降级注记（2026-10-10 主控裁决）**：锚点 2 的挂类同步帧断言若真实时钟下 flaky（jsdom 真实定时器时序），允许降级为 Transition `name`/`mode` 结构 props 断言，须在 spec 注释留痕降级理由——MainLayout.spec 已按此口径交付，严格度不低于契约主句（两个业务声明点仍被锚定）。
 
 ---
 

@@ -90,9 +90,10 @@
      ③ light-3/5/7=EP 官方「N×10% 白混入」公式的纸面同构——以 rgba(N×10% 基色 alpha)
         写出（0.7/0.5/0.3），合成底为所在纸面（卡面近白作混底），视觉等价 EP 白混阶梯
         且零新色相；
-     ④ dark-2=按压档：danger 走印泥朱深一档（十值 cinnabar-dk，契约 A-5 钉定的语义值），
-        warning/success/info 以 color-mix 承 EP「20% 黑混入」公式（基色换血自动承继，
-        零新 hex 字面量）；
+     ④ dark-2=按压档：danger 走印泥朱深一档（十值 cinnabar-dk，契约 A-5 钉定的语义值）；
+        warning/success/info 块内先落基色兜底（老引擎 <111 无 color-mix 时按压态退化为
+        基色而非透明——PDA Android 8+ WebView 基线），增强档由块后 @supports 承 EP
+        「20% 黑混入」公式（基色换血自动承继，零新 hex 字面量）；
      ⑤ error=EP 内建 error 语义别名族，与 danger 族同构直引钉死（EP 2.14.5 别名默认
         仍为冷粉阶，漏映射即回落冷底冷字）。按钮焦点环浓墨不经本变量映射块承载——
         EP 在 .el-button 元素自身逐型声明 --el-button-outline-color，元素级声明恒胜
@@ -112,7 +113,8 @@
   --el-color-warning-light-7: rgba(154, 71, 8, 0.3);
   --el-color-warning-light-8: rgba(154, 71, 8, 0.16);
   --el-color-warning-light-9: rgba(154, 71, 8, 0.1);
-  --el-color-warning-dark-2: color-mix(in srgb, var(--fuy-color-warning-text) 80%, black);
+  /* dark-2 按压档：基色兜底（老引擎 color-mix 不支持时退化为基色，非透明；增强档见块后 @supports） */
+  --el-color-warning-dark-2: var(--fuy-color-warning-text);
   /* success 族：确认/在档＝确认绿（#1f7a33 保留） */
   --el-color-success: var(--fuy-color-success-text);
   --el-color-success-light-3: rgba(31, 122, 51, 0.7);
@@ -120,7 +122,8 @@
   --el-color-success-light-7: rgba(31, 122, 51, 0.3);
   --el-color-success-light-8: rgba(31, 122, 51, 0.16);
   --el-color-success-light-9: rgba(31, 122, 51, 0.1);
-  --el-color-success-dark-2: color-mix(in srgb, var(--fuy-color-success-text) 80%, black);
+  /* dark-2 按压档：基色兜底（老引擎 color-mix 不支持时退化为基色，非透明；增强档见块后 @supports） */
+  --el-color-success-dark-2: var(--fuy-color-success-text);
   /* info 族：中性/弱化＝灰墨（随换血自动承继 #5a4c38） */
   --el-color-info: var(--fuy-color-info-text);
   --el-color-info-light-3: rgba(90, 76, 56, 0.7);
@@ -128,7 +131,8 @@
   --el-color-info-light-7: rgba(90, 76, 56, 0.3);
   --el-color-info-light-8: rgba(90, 76, 56, 0.14);
   --el-color-info-light-9: rgba(90, 76, 56, 0.08);
-  --el-color-info-dark-2: color-mix(in srgb, var(--fuy-color-info-text) 80%, black);
+  /* dark-2 按压档：基色兜底（老引擎 color-mix 不支持时退化为基色，非透明；增强档见块后 @supports） */
+  --el-color-info-dark-2: var(--fuy-color-info-text);
   /* error 族：EP 内建 error 语义别名族（dist 消费面：el-message--error/el-notification/
      el-alert--error/el-result/el-message-box/el-text/el-check-tag 等），与 danger 族
      同构直引钉死——EP 2.14.5 的 error 别名默认仍为冷粉阶，漏映射时 error 型 message
@@ -141,6 +145,18 @@
   --el-color-error-light-8: rgba(180, 35, 24, 0.14);
   --el-color-error-light-9: rgba(180, 35, 24, 0.08);
   --el-color-error-dark-2: var(--fuy-palette-red-800);
+}
+
+/* dark-2 按压档增强档（消费面=EP .el-button--{type} 按压态 --el-button-active-* 四变量，
+   dist 已核实；error dark-2 无 dist 消费，为别名族同构占位）：@supports 内带 :root:root
+   前缀选择器，变量落点与块内兜底档一致（同特异性，源序后者覆盖）；支持 color-mix 的
+   引擎走 EP「20% 黑混入」公式，不支持则整块跳过、块内基色兜底生效 */
+@supports (color: color-mix(in srgb, red, black)) {
+  :root:root {
+    --el-color-warning-dark-2: color-mix(in srgb, var(--fuy-color-warning-text) 80%, black);
+    --el-color-success-dark-2: color-mix(in srgb, var(--fuy-color-success-text) 80%, black);
+    --el-color-info-dark-2: color-mix(in srgb, var(--fuy-color-info-text) 80%, black);
+  }
 }
 
 /* 按钮键盘焦点环钉浓墨：EP 在 .el-button 元素自身逐型声明 --el-button-outline-color
