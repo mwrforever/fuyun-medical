@@ -1,9 +1,15 @@
 <script setup lang="ts">
-// 划价结算页（FU-M13-02/03/04 收费员工作台）：检索条 → 划价行编辑+预计价 → 待收费用回显 →
-// 预结算锁价 → 确认弹框 → 正式结算出网；金额全程 string 承载、仅经 fenToYuanDisplay 展示，
-// 页面零金额运算（总 Spec D5）；幂等由后端 settleNo 终态承载，前端不生成任何流水键。
-// 弹错归响应拦截器（web A.3-2）；失败驻留旧结果。
-import { reactive, ref, watch } from 'vue';
+// 划价结算页（FU-M13-02/03/04 收费员工作台 · 暖纸卷宗 P07 蓝图重排）：检索条 → 划价行编辑+
+// 预计价 → 待收费用回显 → 预结算锁价 → 确认弹框 → 正式结算出网；金额全程 string 承载、
+// 仅经 fenToYuanDisplay 展示，页面零金额运算（总 Spec D5）；幂等由后端 settleNo 终态承载，
+// 前端不生成任何流水键。弹错归响应拦截器（web A.3-2）；失败驻留旧结果。
+// 构图（蓝图 P07.2/7.3「换脸不换业务」）：门牌页首（衬线标题 + 签认人·时刻批注行）→
+// 检索域 .fuy-filter（患者号/就诊号/查询墨实底钮｜支付方式下拉｜手工计费钮右挂）→ 主从
+// 工作区 grid 3fr 2fr——双卡纵叠改「划价主列 + 待收/结算 sticky 辅列」，资金动作链
+// （预结算 → 确认结算 → 成功横幅）右列纵向收口；手工计费弹窗挂 .fuy-dialog + .fuy-form。
+// 金额计算/试算/结算出网逻辑零改动；ElMessageBox 函数式确认族维持 EP 默认皮不挂类（总则 4）；
+// 页根不挂 .fuy-stagger（契约 ⑦.4 路由过渡归 MainLayout），页内 stagger 两档（主列 0/辅列 1）。
+import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage 在模板外使用，按需样式需手动引入（与 api/http.ts 同款口径）
 import 'element-plus/es/components/message/style/css';
@@ -20,7 +26,26 @@ import type {
   SettlementVO,
 } from '@/api/billing';
 import { useAsyncTask } from '@/composables/useAsyncTask';
+import { useAuthStore } from '@/stores/auth';
 import { fenToYuanDisplay } from '@/utils/money';
+
+// 会话入口（门牌批注行「谁」签认人；元素权限仍由 v-perm 判定，互不影响）
+const auth = useAuthStore();
+
+/** 门牌批注行「谁」：会话显示名真值；空会话以 — 占位（防御场景，路由守卫默认拒绝未登录） */
+const signerName = computed(() => auth.user?.displayName ?? '—');
+
+/**
+ * 门牌批注行「何时」（YYYY-MM-DD 周X）：与首页门牌同语法的病历页眉日期批注，
+ * 纯本地时钟零出网。
+ */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
 
 /** 患者号（建档 id，string 承载雪花 ID；划价/预结算/手工计费入参） */
 const patientId = ref('');
@@ -291,7 +316,8 @@ async function handleSettle(): Promise<void> {
     PAYER_TYPE_OPTIONS.find((opt) => opt.value === payerType.value)?.label ?? '自费';
   try {
     // R-3：ElMessageBox 函数式挂载不继承 ConfigProvider locale（默认渲染英文 OK/Cancel），
-    // 按钮文案显式中文（PatientDetailView 先例同款）
+    // 按钮文案显式中文（PatientDetailView 先例同款）；函数式弹窗族不可挂类维持 EP 默认皮
+    // （暖纸总则 4，蓝图不要求改其视觉）
     await ElMessageBox.confirm(
       `应缴总额 ${fenToYuanDisplay(draft.totalAmount ?? '0')} 元（${payerLabel}），确认结算？`,
       '结算确认',
@@ -323,23 +349,55 @@ async function handleSettle(): Promise<void> {
 </script>
 
 <template>
-  <!-- 双卡进场 stagger（§6.1）：结算流两卡线性级联（第二卡 delay 40ms） -->
-  <div class="fuy-page fuy-stagger">
-    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为
-         后代选择器 .fuy-dense .el-table，挂表格自身不构成后代关系（批次 2 质量门 R1 教训）；
-         表格 size="small" 移除——fuy-dense 唯一密度通道，无双轨混用（§9.9-2） -->
-    <el-card class="fuy-dense">
-      <template #header>划价结算</template>
-      <div class="fuy-toolbar">
-        <el-input v-model="patientId" placeholder="患者号" class="pricing-settle-input" clearable />
-        <el-input v-model="visitId" placeholder="就诊号" class="pricing-settle-input" clearable />
-        <el-button :loading="feesLoading" @click="handleQueryFees">查询费用</el-button>
-        <!-- 手工计费入口（PR-4F #3）：v-perm 直挂——弹窗提交按钮随本入口同码不可达（入口
-             隐藏则弹窗打不开），免重复挂接 -->
-        <el-button v-perm="'billing:charge:btn:manual'" @click="openManual">手工计费</el-button>
+  <!-- 暖纸卷宗 P07 重排：页面纵向序=门牌页首 → 筛选卡 → 主从工作区（契约 ⑧/总则 6）。
+       页根禁挂 .fuy-stagger（契约 ⑦.4：路由进场过渡归 MainLayout，防双重进场节奏）——
+       琢段移交的页根 stagger 迁页内主从两列（蓝图 P07.4 stagger 两档：划价卡 0 / 待收卡 1） -->
+  <div class="fuy-page">
+    <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 签认人·时刻批注行 + 2px 墨规收底（脸样式归全局
+         .fuy-page-head 族，本页零私有标题样式）；原 el-card #header「划价结算」升格于此 -->
+    <header class="fuy-page-head">
+      <div class="fuy-page-head-main">
+        <h1 class="fuy-page-title">划价结算</h1>
+      </div>
+      <p class="fuy-page-note">
+        签认人 {{ signerName }} · <time>{{ todayLabel }}</time>
+      </p>
+    </header>
+
+    <!-- 检索域（蓝图 P07.2 + 收费域级「检索先行」）：筛选卡 .fuy-filter——患者号/就诊号/
+         查询墨实底钮｜支付方式下拉（W-41 切档作废既有）｜手工计费钮右挂 v-perm 既有（PR-4F #3：
+         弹窗提交按钮随本入口同码不可达，免重复挂接） -->
+    <section class="fuy-card">
+      <div class="fuy-card-body fuy-filter">
+        <label for="pricing-settle-patient">患者号</label>
+        <el-input
+          id="pricing-settle-patient"
+          v-model="patientId"
+          placeholder="患者号"
+          class="pricing-settle-input"
+          clearable
+        />
+        <label for="pricing-settle-visit">就诊号</label>
+        <el-input
+          id="pricing-settle-visit"
+          v-model="visitId"
+          placeholder="就诊号"
+          class="pricing-settle-input"
+          clearable
+        />
+        <el-button type="primary" :loading="feesLoading" @click="handleQueryFees"
+          >查询费用</el-button
+        >
         <!-- 支付方式选择（W-41）：预结算出网携值、确认文案联动；医保档仅可预览拆分，
              结算入口前置守卫拦截（通道待 W-80 接入） -->
-        <el-select v-model="payerType" class="pricing-settle-payer">
+        <label for="pricing-settle-payer">支付方式</label>
+        <!-- 显式 popper 统一挂 fuy-snap-popper（契约 ⑤#5/⑦.5 硬 snap，P01 建档性别下拉同款） -->
+        <el-select
+          id="pricing-settle-payer"
+          v-model="payerType"
+          class="pricing-settle-payer"
+          popper-class="fuy-snap-popper"
+        >
           <el-option
             v-for="opt in PAYER_TYPE_OPTIONS"
             :key="opt.value"
@@ -347,120 +405,191 @@ async function handleSettle(): Promise<void> {
             :value="opt.value"
           />
         </el-select>
-      </div>
-
-      <!-- 划价行编辑区：itemCode/quantity 两列可增删行（金额由后端按快照算，前端不填）；
-           软上限 20 行由增行入口守卫（§9.7-3） -->
-      <h4 class="fuy-section-title">预计价（划价）</h4>
-      <el-table :data="quoteLines" class="pricing-settle-quote-edit">
-        <el-table-column label="项目编码" min-width="200">
-          <template #default="{ row }">
-            <el-input v-model="row.itemCode" placeholder="项目编码" />
-          </template>
-        </el-table-column>
-        <el-table-column label="数量" width="160">
-          <template #default="{ row }">
-            <el-input-number v-model="row.quantity" :min="1" />
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90">
-          <template #default="{ $index }">
-            <el-button link type="danger" @click="handleRemoveLine($index)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <div class="pricing-settle-actions">
-        <el-button @click="handleAddLine">增行</el-button>
-        <el-button type="primary" :loading="quoting" @click="handleQuote">划价</el-button>
-      </div>
-
-      <!-- 划价结果：金额经 fenToYuanDisplay 分→元展示；无对照行标「仅自费」；
-           结果显隐 200ms 淡入（§6.7，appear 供首次挂载即播——批次 2 R1 同款） -->
-      <Transition name="fuy-content-fade" appear>
-        <div v-if="quoteResult">
-          <h4 class="fuy-section-title">
-            划价结果（合计 {{ fenToYuanDisplay(quoteResult.totalAmount ?? '0') }} 元）
-          </h4>
-          <el-table :data="quoteResult.lines ?? []">
-            <el-table-column prop="itemName" label="项目" min-width="160" />
-            <el-table-column prop="itemCode" label="编码" min-width="120" />
-            <el-table-column label="单价（元）" width="120" align="right" class-name="fuy-num">
-              <template #default="{ row }">{{ fenToYuanDisplay(row.unitPrice ?? '0') }}</template>
-            </el-table-column>
-            <el-table-column
-              prop="quantity"
-              label="数量"
-              width="90"
-              align="right"
-              class-name="fuy-num"
-            />
-            <el-table-column label="金额（元）" width="120" align="right" class-name="fuy-num">
-              <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-            </el-table-column>
-            <el-table-column label="自费标记" width="110">
-              <template #default="{ row }">
-                <el-tag v-if="row.selfExpenseOnly" type="warning" class="fuy-tag-aa">仅自费</el-tag>
-                <span v-else>—</span>
-              </template>
-            </el-table-column>
-          </el-table>
+        <div class="fuy-filter-actions">
+          <el-button v-perm="'billing:charge:btn:manual'" @click="openManual">手工计费</el-button>
         </div>
-      </Transition>
-    </el-card>
-
-    <el-card class="fuy-dense" :style="{ '--fuy-stagger-index': 1 }">
-      <template #header>待收费用</template>
-      <el-table v-loading="feesLoading" :data="pendingFees">
-        <el-table-column prop="feeNo" label="费用号" min-width="180" />
-        <el-table-column prop="itemNameSnapshot" label="项目" min-width="140" />
-        <el-table-column label="单价（元）" width="110" align="right" class-name="fuy-num">
-          <template #default="{ row }">{{
-            fenToYuanDisplay(row.unitPriceSnapshot ?? '0')
-          }}</template>
-        </el-table-column>
-        <el-table-column
-          prop="quantity"
-          label="数量"
-          width="80"
-          align="right"
-          class-name="fuy-num"
-        />
-        <el-table-column label="金额（元）" width="110" align="right" class-name="fuy-num">
-          <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-        </el-table-column>
-      </el-table>
-      <!-- 收费员结算动作（PR-4F #4）：预结算与确认结算同码 v-perm 直挂——权限决定在不在
-           DOM，preview 草稿/在途等数据态决定可不可点，两者正交叠加互不覆盖 -->
-      <div class="pricing-settle-actions">
-        <el-button v-perm="'billing:charge:btn:settle'" :loading="previewing" @click="handlePreview"
-          >预结算</el-button
-        >
-        <el-button
-          v-perm="'billing:charge:btn:settle'"
-          type="primary"
-          :disabled="preview === null"
-          :loading="settling"
-          @click="handleSettle"
-        >
-          确认结算
-        </el-button>
       </div>
-      <!-- 结算成功横幅（常驻业务锚点，驻留至下次结算覆盖）；显隐淡入 §6.7 -->
-      <Transition name="fuy-content-fade" appear>
-        <el-alert
-          v-if="settled"
-          :title="`结算完成：${settled.settleNo ?? ''}，总额 ${fenToYuanDisplay(settled.totalAmount ?? '0')} 元`"
-          type="success"
-          show-icon
-          :closable="false"
-          class="pricing-settle-done"
-        />
-      </Transition>
-    </el-card>
+    </section>
 
-    <!-- 手工计费弹窗（FU-M13-02 补录通道，理由必填留痕）；label-width 96px 系 §4.4 统一口径 -->
-    <el-dialog v-model="manualVisible" title="手工计费" width="420px">
-      <el-form label-width="96px">
+    <!-- 主从工作区（蓝图 P07.3）：grid 3fr 2fr——双卡纵叠同权重改主从分区；align-items:start
+         使右列不被拉伸（拉伸后的列恒贴顶，sticky 失效） -->
+    <div class="pricing-settle-workarea">
+      <!-- 左：划价主列（stagger index 0）——行编辑表与划价结果同卡上下（撤销第二卡头层级），
+           两节以「签」分隔线分界（契约 ⑧.2 卡内分区语法） -->
+      <div class="fuy-stagger pricing-settle-main-col">
+        <!-- fuy-dense 挂卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为后代
+             选择器 .fuy-dense .el-table，挂表格自身不构成后代关系（批次 2 质量门 R1 教训）；
+             表格 size="small" 移除——fuy-dense 唯一密度通道，无双轨混用（§9.9-2） -->
+        <section class="fuy-card fuy-dense" :style="{ '--fuy-stagger-index': 0 }">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">划价（预计价）</h2>
+          </header>
+          <div class="fuy-card-body">
+            <!-- 划价行编辑区：itemCode/quantity 两列可增删行（金额由后端按快照算，前端不填）；
+                 软上限 20 行由增行入口守卫（§9.7-3）；行编辑表零动画（蓝图 P07.4） -->
+            <el-table :data="quoteLines" class="pricing-settle-quote-edit">
+              <el-table-column label="项目编码" min-width="200">
+                <template #default="{ row }">
+                  <el-input v-model="row.itemCode" placeholder="项目编码" />
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" width="160">
+                <template #default="{ row }">
+                  <el-input-number v-model="row.quantity" :min="1" />
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="90">
+                <template #default="{ $index }">
+                  <el-button link type="danger" @click="handleRemoveLine($index)">删除</el-button>
+                </template>
+              </el-table-column>
+              <template #empty>
+                <!-- 诚实空态脸（契约 ⑥/总则 8）：主句「暂无」语法 + 说明给下一步 -->
+                <div class="fuy-empty" role="status">
+                  <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                  <p class="fuy-empty-title">暂无划价行</p>
+                  <p class="fuy-empty-hint">
+                    点击「增行」录入划价项目，项目编码留空的行不参与预计价。
+                  </p>
+                </div>
+              </template>
+            </el-table>
+            <div class="pricing-settle-actions">
+              <el-button @click="handleAddLine">增行</el-button>
+              <el-button type="primary" :loading="quoting" @click="handleQuote">划价</el-button>
+            </div>
+
+            <!-- 「签」分隔（蓝图 P07.2）：行编辑节与划价结果节的卡内文书分界 -->
+            <div class="fuy-sign-divider pricing-settle-sign" aria-hidden="true"></div>
+
+            <!-- 划价结果：金额经 fenToYuanDisplay 分→元展示；无对照行标「仅自费」；
+                 结果显隐 200ms 淡入（§6.7，appear 供首次挂载即播——批次 2 R1 同款） -->
+            <Transition name="fuy-content-fade" appear>
+              <div v-if="quoteResult">
+                <h4 class="fuy-section-title">
+                  划价结果（合计 {{ fenToYuanDisplay(quoteResult.totalAmount ?? '0') }} 元）
+                </h4>
+                <el-table :data="quoteResult.lines ?? []">
+                  <el-table-column prop="itemName" label="项目" min-width="160" />
+                  <el-table-column prop="itemCode" label="编码" min-width="120" />
+                  <el-table-column
+                    label="单价（元）"
+                    width="120"
+                    align="right"
+                    class-name="fuy-num"
+                  >
+                    <template #default="{ row }">{{
+                      fenToYuanDisplay(row.unitPrice ?? '0')
+                    }}</template>
+                  </el-table-column>
+                  <el-table-column
+                    prop="quantity"
+                    label="数量"
+                    width="90"
+                    align="right"
+                    class-name="fuy-num"
+                  />
+                  <el-table-column
+                    label="金额（元）"
+                    width="120"
+                    align="right"
+                    class-name="fuy-num"
+                  >
+                    <template #default="{ row }">{{
+                      fenToYuanDisplay(row.amount ?? '0')
+                    }}</template>
+                  </el-table-column>
+                  <el-table-column label="自费标记" width="110">
+                    <template #default="{ row }">
+                      <el-tag v-if="row.selfExpenseOnly" type="warning" class="fuy-tag-aa"
+                        >仅自费</el-tag
+                      >
+                      <span v-else>—</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </Transition>
+          </div>
+        </section>
+      </div>
+
+      <!-- 右：待收/结算 sticky 辅列（stagger index 1，蓝图 P07.2 sticky top 16）——资金动作链
+           （预结算 → 确认结算 → 成功横幅）纵向收口的从列，随页面滚动常驻视口（CSS 契约，
+           sticky 一次合成零 JS 代价） -->
+      <div class="fuy-stagger pricing-settle-side-col">
+        <section class="fuy-card fuy-dense" :style="{ '--fuy-stagger-index': 1 }">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">待收费用</h2>
+          </header>
+          <div class="fuy-card-body">
+            <el-table v-loading="feesLoading" :data="pendingFees">
+              <el-table-column prop="feeNo" label="费用号" min-width="180" />
+              <el-table-column prop="itemNameSnapshot" label="项目" min-width="140" />
+              <el-table-column label="单价（元）" width="110" align="right" class-name="fuy-num">
+                <template #default="{ row }">{{
+                  fenToYuanDisplay(row.unitPriceSnapshot ?? '0')
+                }}</template>
+              </el-table-column>
+              <el-table-column
+                prop="quantity"
+                label="数量"
+                width="80"
+                align="right"
+                class-name="fuy-num"
+              />
+              <el-table-column label="金额（元）" width="110" align="right" class-name="fuy-num">
+                <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
+              </el-table-column>
+              <template #empty>
+                <!-- 诚实空态脸（契约 ⑥/总则 8）：查前引导与查无项目同脸，主句「暂无」语法 -->
+                <div class="fuy-empty" role="status">
+                  <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                  <p class="fuy-empty-title">暂无待收费用</p>
+                  <p class="fuy-empty-hint">输入就诊号查询待收项目；费用补录入账后此处自动刷新。</p>
+                </div>
+              </template>
+            </el-table>
+            <!-- 收费员结算动作（PR-4F #4）：预结算与确认结算同码 v-perm 直挂——权限决定在不在
+                 DOM，preview 草稿/在途等数据态决定可不可点，两者正交叠加互不覆盖 -->
+            <div class="pricing-settle-actions">
+              <el-button
+                v-perm="'billing:charge:btn:settle'"
+                :loading="previewing"
+                @click="handlePreview"
+                >预结算</el-button
+              >
+              <el-button
+                v-perm="'billing:charge:btn:settle'"
+                type="primary"
+                :disabled="preview === null"
+                :loading="settling"
+                @click="handleSettle"
+              >
+                确认结算
+              </el-button>
+            </div>
+            <!-- 结算成功横幅（常驻业务锚点，驻留至下次结算覆盖）；显隐淡入 §6.7 -->
+            <Transition name="fuy-content-fade" appear>
+              <el-alert
+                v-if="settled"
+                :title="`结算完成：${settled.settleNo ?? ''}，总额 ${fenToYuanDisplay(settled.totalAmount ?? '0')} 元`"
+                type="success"
+                show-icon
+                :closable="false"
+                class="pricing-settle-done"
+              />
+            </Transition>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- 手工计费弹窗（FU-M13-02 补录通道，理由必填留痕）：挂 .fuy-dialog 弹层脸（卡面底+
+         radius 14+shadow-lg+衬线标题，契约 ⑤#9）+ .fuy-form 表单脸（label 疏排/聚焦墨环/
+         错误显影，契约 ⑤#1）；label-width 96px 系 §4.4 统一口径 -->
+    <el-dialog v-model="manualVisible" title="手工计费" width="420px" class="fuy-dialog">
+      <el-form class="fuy-form" label-width="96px">
         <el-form-item label="项目编码">
           <el-input v-model="manualForm.itemCode" placeholder="收费项目编码" />
         </el-form-item>
@@ -486,8 +615,48 @@ async function handleSettle(): Promise<void> {
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2）：工具条/小节题已收编 .fuy-toolbar/.fuy-section-title（§9.2.2），
-   卡宽随 .fuy-page 全宽（列表 1080 上限撤销），本块只留按钮组/横幅间距与 input 宽度 */
+/* 视图级样式隔离（web A.1-2）：门牌页首/卷宗卡/筛选卡/空态脸/弹层与表单脸全局样式由
+   element-plus.css 承载，本块只留页内布局（主从 grid + sticky 右列 + 签分隔节奏）与
+   既有按钮组/横幅间距、input 宽度（暖纸 P07 重排） */
+
+/* 主从工作区（蓝图 P07.3）：grid 3fr 2fr；align-items:start 使右列不被拉伸——sticky
+   吸附的前提（拉伸后的列恒贴顶，sticky 失效） */
+.pricing-settle-workarea {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: var(--fuy-space-4);
+  align-items: start;
+}
+
+/* 右列 sticky（蓝图 P07.2 待收费用卡 sticky top 16）：随页面滚动常驻视口，资金动作链
+   纵向收口不随划价区滚动走散；sticky 一次合成零 JS 代价 */
+.pricing-settle-side-col {
+  position: sticky;
+  top: var(--fuy-space-4);
+  align-self: start;
+}
+
+/* 列 min-width:0（P09 双列同律）：防表格 min-content（待收表五列合计 620px）撑破 fr 轨道——
+   真机 1440 实测无此守卫时主从两列合计 1232px 溢出容器 1112px，成功横幅被截出视口；
+   收口后轨道恒等 fr 份额，超额列宽由 el-table 卡内横向滚动承载（业务列与金额口径零变动） */
+.pricing-settle-main-col,
+.pricing-settle-side-col {
+  min-width: 0;
+}
+
+/* 表格 min-height 240（蓝图 P07.3 建）：锁行编辑表增删行与待收表加载/空态的 CLS（表体
+   不塌陷跳高）；划价结果表随行数自然伸缩不入锁（仅随结果出现，无三态切换） */
+.pricing-settle-main-col :deep(.pricing-settle-quote-edit),
+.pricing-settle-side-col :deep(.el-table) {
+  min-height: 240px;
+}
+
+/* 「签」分隔与划价结果节的卡内节奏（蓝图 P07.2 两节以签分隔分界，上 16/下 8 循工作面
+   纵向节奏阶） */
+.pricing-settle-sign {
+  margin: var(--fuy-space-4) 0 var(--fuy-space-2);
+}
+
 .pricing-settle-input {
   max-width: 240px;
 }

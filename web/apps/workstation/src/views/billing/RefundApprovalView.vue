@@ -1,9 +1,14 @@
 <script setup lang="ts">
-// 退费审批页（FU-M13-04 收费员/审批员工作台）：上区=退费申请（按结算号查摘要 → 选已结算
-// 费用行 + 数量 + 理由 → applyRefund），下区=审批队列（status 筛选 + 批准/驳回/执行按态启停）。
-// 红线：退费金额由后端按明细聚合，前端只传费用行与数量；双人守卫自审拒绝由后端 403 承载，
-// 经响应拦截器统一弹错（web A.3-2）。金额 string 承载仅展示换算（web A.3-6）。
-import { onMounted, ref } from 'vue';
+// 退费审批页（FU-M13-04 收费员/审批员工作台 · 暖纸卷宗换脸重排，逐页蓝图 P08）：上卡=退费
+// 申请（按结算号查摘要 → 选已结算费用行 + 数量 + 理由 → applyRefund），下卡=审批队列（status
+// 筛选 + 批准/驳回/执行按态启停）。红线：退费金额由后端按明细聚合，前端只传费用行与数量；
+// 双人守卫自审拒绝由后端 403 承载，经响应拦截器统一弹错（web A.3-2）。金额 string 承载仅展示
+// 换算（web A.3-6）。
+// 构图（蓝图 P08.2「换脸不换业务」单列双卡因果序）：门牌页首（衬线标题 + amber 待办胶囊「待审批
+// N / 待二级 M」队列行本地 reduce 计数零出网 + 签认人·时刻批注行）→ 上卡退费申请（检索 .fuy-filter
+// → 摘要 descriptions → 可退明细勾选表 → 理由 + 申请钮）→ 下卡审批队列主工作区（筛选 .fuy-filter
+// → 队列表批准/驳回/执行）；两卡卡头右挂节内计数（申请勾选数/队列待办数，禁照抄点：待办前置感知）。
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage 在模板外使用，按需样式需手动引入（与 api/http.ts 同款口径）
 import 'element-plus/es/components/message/style/css';
@@ -20,6 +25,7 @@ import {
 } from '@/api/billing';
 import type { FeeRecordVO, RefundVO, SettlementVO } from '@/api/billing';
 import { useAsyncTask } from '@/composables/useAsyncTask';
+import { useAuthStore } from '@/stores/auth';
 import { fenToYuanDisplay } from '@/utils/money';
 
 /** 退费申请行模型：费用行 + 本行申请退数量（可编辑，上限=原数量） */
@@ -27,6 +33,24 @@ interface RefundRow {
   fee: FeeRecordVO;
   qty: number;
 }
+
+// 会话入口（门牌批注行「谁」签认人；元素权限仍由 v-perm 直挂消费同一会话）
+const auth = useAuthStore();
+
+/** 门牌批注行「谁」：会话显示名真值；空会话以 — 占位（防御场景，路由守卫默认拒绝未登录） */
+const signerName = computed(() => auth.user?.displayName ?? '—');
+
+/**
+ * 门牌批注行「何时」（YYYY-MM-DD 周X）：与首页门牌同语法的病历页眉日期批注，
+ * 纯本地时钟零出网。
+ */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
 
 /** 结算号输入（string 承载业务单号，非雪花 id 但同为字符串契约） */
 const settleNo = ref('');
@@ -175,6 +199,20 @@ const { loading: queueLoading, run: loadQueue } = useAsyncTask(async () => {
   queue.value = page.content;
 });
 
+/** 门牌胶囊左值=待审批笔数：队列行本地 reduce 聚合（蓝图 P08.2 待办前置感知），零额外出网 */
+const pendingApprovalCount = computed(() =>
+  queue.value.reduce((count, row) => (row.status === 'PENDING_APPROVAL' ? count + 1 : count), 0),
+);
+/** 门牌胶囊右值=待二级笔数（一级已批待财务/医保办终批）：同上本地聚合 */
+const pendingSecondCount = computed(() =>
+  queue.value.reduce(
+    (count, row) => (row.status === 'PENDING_SECOND_APPROVAL' ? count + 1 : count),
+    0,
+  ),
+);
+/** 队列卡头节内待办合计（待审批+待二级；终态单不计入），与门牌胶囊同源联动 */
+const pendingTotal = computed(() => pendingApprovalCount.value + pendingSecondCount.value);
+
 /** 批准退费（自审场景后端 403 拒绝，拦截器弹错后驻留队列） */
 async function handleApprove(row: RefundVO): Promise<void> {
   try {
@@ -243,153 +281,247 @@ onMounted(() => {
 </script>
 
 <template>
-  <!-- 双卡进场 stagger（§6.1）：申请/审批两卡线性级联（第二卡 delay 40ms） -->
-  <div class="fuy-page fuy-stagger">
-    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点）：表格 size="small" 移除，fuy-dense 唯一
-         密度通道（§9.9-2）；操作列按钮 size=small 为 §8.2 点名按钮尺寸，与表格密度无关保留 -->
-    <el-card class="fuy-dense">
-      <template #header>退费申请</template>
-      <div class="fuy-toolbar">
-        <el-input
-          v-model="settleNo"
-          placeholder="结算号"
-          class="refund-approval-input"
-          clearable
-          @keyup.enter="handleQuerySettlement"
-        />
-        <el-button type="primary" :loading="summaryLoading" @click="handleQuerySettlement">
-          查询结算
-        </el-button>
+  <!-- 暖纸卷宗 P08 重排：页面纵向序=门牌页首 → 双卡纵叠（申请在上=资金回流上游、审批队列在
+       下=下游主工作区，蓝图 P08.3 因果序）。stagger 两档（申请卡 0 / 队列卡 1）既有口径——
+       门牌页首不入级联；域级违律修正：原页根 .fuy-stagger 迁入页内区块（契约 ⑦.4：路由进场
+       过渡归 MainLayout，防双重进场节奏） -->
+  <div class="fuy-page refund-approval">
+    <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 右挂 amber 待办胶囊（队列行本地 reduce 计数，零额外
+         出网）+ 签认人·时刻批注行；2px 墨规收底走全局 .fuy-page-head 脸，本页零私有标题样式 -->
+    <header class="fuy-page-head">
+      <div class="fuy-page-head-main">
+        <h1 class="fuy-page-title">退费审批</h1>
       </div>
-      <!-- 摘要区（descriptions + 可退明细 + 申请行）随查询显隐，200ms 淡入（§6.7，
-           appear 供首次挂载即播——批次 2 R1 同款） -->
-      <Transition name="fuy-content-fade" appear>
-        <div v-if="settlement">
-          <el-descriptions :column="4" border class="refund-approval-summary">
-            <el-descriptions-item label="结算号">{{ settlement.settleNo }}</el-descriptions-item>
-            <el-descriptions-item label="就诊号">{{ settlement.visitId }}</el-descriptions-item>
-            <el-descriptions-item label="结算金额（元）">
-              <span class="fuy-num">{{ fenToYuanDisplay(settlement.totalAmount ?? '0') }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="状态">{{ settlement.status }}</el-descriptions-item>
-          </el-descriptions>
-          <el-table :data="refundRows" @selection-change="handleSelectionChange">
-            <el-table-column type="selection" width="44" />
-            <el-table-column prop="fee.feeNo" label="费用号" min-width="170" />
-            <el-table-column prop="fee.itemNameSnapshot" label="项目" min-width="130" />
-            <el-table-column label="单价（元）" width="100" align="right" class-name="fuy-num">
-              <template #default="{ row }">
-                {{ fenToYuanDisplay(row.fee.unitPriceSnapshot ?? '0') }}
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="原数量"
-              width="80"
-              prop="fee.quantity"
-              align="right"
-              class-name="fuy-num"
-            />
-            <el-table-column label="金额（元）" width="100" align="right" class-name="fuy-num">
-              <template #default="{ row }">{{ fenToYuanDisplay(row.fee.amount ?? '0') }}</template>
-            </el-table-column>
-            <el-table-column label="退数量" width="140">
-              <template #default="{ row }">
-                <el-input-number v-model="row.qty" :min="1" :max="row.fee.quantity ?? 1" />
-              </template>
-            </el-table-column>
-          </el-table>
-          <!-- 退费申请入口（PR-4F #5）：v-perm 直挂——权限决定在不在 DOM，:loading/:disabled
-               在途数据态决定可不可点，两者正交叠加 -->
-          <div class="refund-approval-apply">
-            <el-input
-              v-model="reason"
-              placeholder="退费理由（必填留痕）"
-              class="refund-approval-reason"
-            />
-            <el-button
-              v-perm="'billing:refund:btn:apply'"
-              type="primary"
-              :loading="applying"
-              @click="handleApply"
-              >申请退费</el-button
-            >
-          </div>
-        </div>
-      </Transition>
-    </el-card>
+      <div class="fuy-page-status">
+        <!-- 状态位=待办胶囊（蓝图 P08.2）：amber 洗底=资金回流待办语义；计数与 loadQueue 同源
+             联动（批准/驳回/执行回刷自动更新），静态计数不挂呼吸点（实时/进行语义才挂，总则 2） -->
+        <span class="fuy-status-pill fuy-status-pill--amber">
+          待审批 <span class="fuy-num">{{ pendingApprovalCount }}</span> / 待二级
+          <span class="fuy-num">{{ pendingSecondCount }}</span>
+        </span>
+      </div>
+      <p class="fuy-page-note">
+        签认人 {{ signerName }} · <time>{{ todayLabel }}</time>
+      </p>
+    </header>
 
-    <el-card class="fuy-dense" :style="{ '--fuy-stagger-index': 1 }">
-      <template #header>审批队列</template>
-      <div class="fuy-toolbar">
-        <el-select v-model="statusFilter" class="refund-approval-filter" @change="loadQueue">
-          <el-option value="" label="全部" />
-          <el-option value="PENDING_APPROVAL" label="待审批" />
-          <!-- 待二级（一级已批）：L2 大额/医保已结算单升审后由财务/医保办终批 -->
-          <el-option value="PENDING_SECOND_APPROVAL" label="待二级" />
-          <el-option value="APPROVED" label="已批准" />
-          <el-option value="EXECUTED" label="已执行" />
-        </el-select>
-        <el-button @click="loadQueue">刷新</el-button>
-      </div>
-      <el-table v-loading="queueLoading" :data="queue">
-        <el-table-column prop="refundNo" label="退费单号" min-width="170" />
-        <el-table-column label="金额（元）" width="110" align="right" class-name="fuy-num">
-          <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
-        </el-table-column>
-        <el-table-column prop="reason" label="理由" min-width="140" />
-        <el-table-column prop="applicant" label="申请人" width="110" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <!-- fuy-tag-aa 对 warning/success/danger 生效文字色 AA 修正，primary/info 无副作用 -->
-            <el-tag :type="refundStatusTagType[row.status ?? ''] ?? 'info'" class="fuy-tag-aa">
-              {{ refundStatusText[row.status ?? ''] ?? row.status }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <!-- 间距 8px（§8.2 同款）经全局工具类 .fuy-ops-8（element-plus.css）承载：
-             td 由 el-table 内部渲染不含本组件 scoped 哈希，scoped 规则零匹配 -->
-        <!-- 审批双动作与执行（PR-4F #7/#6）：批准/驳回同码（ADMIN 专属码）、执行独立码，
-             均 v-perm 直挂——与 canApprove/canReject/canExecute 业务态 :disabled 正交叠加
-             （权限决定在不在 DOM，单据状态决定可不可点） -->
-        <el-table-column label="操作" width="210" class-name="fuy-ops-8">
-          <template #default="{ row }">
-            <el-button
-              v-perm="'billing:refund:btn:approve'"
-              size="small"
-              :disabled="!canApprove(row)"
-              @click="handleApprove(row)"
+    <!-- 双卡纵叠级联容器（蓝图 P08.3）：两卡一次进场 40ms 级联，零常驻动画开销 -->
+    <div class="fuy-stagger refund-approval-flow">
+      <!-- 上卡=退费申请（蓝图 P08.2）：检索 .fuy-filter → 摘要 descriptions → 可退明细勾选表
+           （退数量行编辑）→ 理由 + 申请钮；卡头右挂节内计数=申请勾选数（禁照抄点：待办前置
+           感知）。fuy-dense 挂卡容器（§9.4 通用落点）：表格 size="small" 移除，fuy-dense 唯一
+           密度通道（§9.9-2）；操作列按钮 size=small 为 §8.2 点名按钮尺寸，与表格密度无关保留 -->
+      <section class="fuy-card fuy-dense" :style="{ '--fuy-stagger-index': 0 }">
+        <header class="fuy-card-head">
+          <h2 class="fuy-card-title">退费申请</h2>
+          <div class="fuy-card-extra">
+            已勾选 <span class="fuy-num">{{ selectedRows.length }}</span> 行
+          </div>
+        </header>
+        <div class="fuy-card-body">
+          <!-- 检索区升 .fuy-filter 独立语义位（契约 ⑧.3）：label 疏排 + 结算号输入 +
+               查询墨实底钮右挂（.fuy-filter-actions margin-left:auto） -->
+          <div class="fuy-filter">
+            <label for="refund-settle-no">结算号</label>
+            <el-input
+              id="refund-settle-no"
+              v-model="settleNo"
+              placeholder="结算号"
+              class="refund-approval-input"
+              clearable
+              @keyup.enter="handleQuerySettlement"
+            />
+            <div class="fuy-filter-actions">
+              <el-button type="primary" :loading="summaryLoading" @click="handleQuerySettlement">
+                查询结算
+              </el-button>
+            </div>
+          </div>
+          <!-- 摘要区（descriptions + 可退明细 + 申请行）随查询显隐，200ms 淡入（§6.7，
+               appear 供首次挂载即播——批次 2 R1 同款） -->
+          <Transition name="fuy-content-fade" appear>
+            <div v-if="settlement" class="refund-approval-detail">
+              <el-descriptions :column="4" border class="refund-approval-summary">
+                <el-descriptions-item label="结算号">{{
+                  settlement.settleNo
+                }}</el-descriptions-item>
+                <el-descriptions-item label="就诊号">{{ settlement.visitId }}</el-descriptions-item>
+                <el-descriptions-item label="结算金额（元）">
+                  <span class="fuy-num">{{ fenToYuanDisplay(settlement.totalAmount ?? '0') }}</span>
+                </el-descriptions-item>
+                <el-descriptions-item label="状态">{{ settlement.status }}</el-descriptions-item>
+              </el-descriptions>
+              <el-table :data="refundRows" @selection-change="handleSelectionChange">
+                <el-table-column type="selection" width="44" />
+                <el-table-column prop="fee.feeNo" label="费用号" min-width="170" />
+                <el-table-column prop="fee.itemNameSnapshot" label="项目" min-width="130" />
+                <el-table-column label="单价（元）" width="100" align="right" class-name="fuy-num">
+                  <template #default="{ row }">
+                    {{ fenToYuanDisplay(row.fee.unitPriceSnapshot ?? '0') }}
+                  </template>
+                </el-table-column>
+                <el-table-column
+                  label="原数量"
+                  width="80"
+                  prop="fee.quantity"
+                  align="right"
+                  class-name="fuy-num"
+                />
+                <el-table-column label="金额（元）" width="100" align="right" class-name="fuy-num">
+                  <template #default="{ row }">{{
+                    fenToYuanDisplay(row.fee.amount ?? '0')
+                  }}</template>
+                </el-table-column>
+                <el-table-column label="退数量" width="140">
+                  <template #default="{ row }">
+                    <el-input-number v-model="row.qty" :min="1" :max="row.fee.quantity ?? 1" />
+                  </template>
+                </el-table-column>
+                <!-- 诚实空态脸（契约 ⑥ 禁纸箱插画）：查询成功但无已结算/部分退行时说清业务
+                     原因，替代默认「暂无数据」裸词 -->
+                <template #empty>
+                  <div class="fuy-empty" role="status">
+                    <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                    <p class="fuy-empty-title">暂无可退费用行</p>
+                    <p class="fuy-empty-hint">该结算单下无已结算/部分退费用行，不可发起退费。</p>
+                  </div>
+                </template>
+              </el-table>
+              <!-- 退费申请入口（PR-4F #5）：v-perm 直挂——权限决定在不在 DOM，:loading/:disabled
+                   在途数据态决定可不可点，两者正交叠加 -->
+              <div class="refund-approval-apply">
+                <el-input
+                  v-model="reason"
+                  placeholder="退费理由（必填留痕）"
+                  class="refund-approval-reason"
+                />
+                <el-button
+                  v-perm="'billing:refund:btn:apply'"
+                  type="primary"
+                  :loading="applying"
+                  @click="handleApply"
+                  >申请退费</el-button
+                >
+              </div>
+            </div>
+          </Transition>
+        </div>
+      </section>
+
+      <!-- 下卡=审批队列主工作区（蓝图 P08.2）：筛选 .fuy-filter（状态下拉 + 刷新）→ 队列表
+           操作列批准/驳回/执行 .fuy-ops-8；卡头右挂节内计数=队列待办数（与门牌胶囊同源联动，
+           前置感知工作量） -->
+      <section class="fuy-card fuy-dense" :style="{ '--fuy-stagger-index': 1 }">
+        <header class="fuy-card-head">
+          <h2 class="fuy-card-title">审批队列</h2>
+          <div class="fuy-card-extra">
+            待办 <span class="fuy-num">{{ pendingTotal }}</span> 笔
+          </div>
+        </header>
+        <div class="fuy-card-body">
+          <div class="fuy-filter">
+            <label for="refund-status-filter">状态</label>
+            <el-select
+              id="refund-status-filter"
+              v-model="statusFilter"
+              class="refund-approval-filter"
+              popper-class="fuy-snap-popper"
+              @change="loadQueue"
             >
-              批准
-            </el-button>
-            <el-button
-              v-perm="'billing:refund:btn:approve'"
-              size="small"
-              :disabled="!canReject(row) || rejecting"
-              :loading="rejecting"
-              @click="handleReject(row)"
-            >
-              驳回
-            </el-button>
-            <el-button
-              v-perm="'billing:refund:btn:execute'"
-              size="small"
-              :disabled="!canExecute(row) || executing"
-              :loading="executing"
-              @click="handleExecute(row)"
-            >
-              执行
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
+              <el-option value="" label="全部" />
+              <el-option value="PENDING_APPROVAL" label="待审批" />
+              <!-- 待二级（一级已批）：L2 大额/医保已结算单升审后由财务/医保办终批 -->
+              <el-option value="PENDING_SECOND_APPROVAL" label="待二级" />
+              <el-option value="APPROVED" label="已批准" />
+              <el-option value="EXECUTED" label="已执行" />
+            </el-select>
+            <div class="fuy-filter-actions">
+              <el-button @click="loadQueue">刷新</el-button>
+            </div>
+          </div>
+          <el-table v-loading="queueLoading" :data="queue" class="refund-approval-queue-table">
+            <el-table-column prop="refundNo" label="退费单号" min-width="170" />
+            <el-table-column label="金额（元）" width="110" align="right" class-name="fuy-num">
+              <template #default="{ row }">{{ fenToYuanDisplay(row.amount ?? '0') }}</template>
+            </el-table-column>
+            <el-table-column prop="reason" label="理由" min-width="140" />
+            <el-table-column prop="applicant" label="申请人" width="110" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <!-- fuy-tag-aa 对 warning/success/danger 生效文字色 AA 修正，primary/info 无副作用 -->
+                <el-tag :type="refundStatusTagType[row.status ?? ''] ?? 'info'" class="fuy-tag-aa">
+                  {{ refundStatusText[row.status ?? ''] ?? row.status }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <!-- 间距 8px（§8.2 同款）经全局工具类 .fuy-ops-8（element-plus.css）承载：
+                 td 由 el-table 内部渲染不含本组件 scoped 哈希，scoped 规则零匹配 -->
+            <!-- 审批双动作与执行（PR-4F #7/#6）：批准/驳回同码（ADMIN 专属码）、执行独立码，
+                 均 v-perm 直挂——与 canApprove/canReject/canExecute 业务态 :disabled 正交叠加
+                 （权限决定在不在 DOM，单据状态决定可不可点）；驳回/执行为不可逆资金动作，
+                 ElMessageBox danger 确认口径仅在驳回 prompt（蓝图 P08.2 弹层清单） -->
+            <el-table-column label="操作" width="210" class-name="fuy-ops-8">
+              <template #default="{ row }">
+                <el-button
+                  v-perm="'billing:refund:btn:approve'"
+                  size="small"
+                  :disabled="!canApprove(row)"
+                  @click="handleApprove(row)"
+                >
+                  批准
+                </el-button>
+                <el-button
+                  v-perm="'billing:refund:btn:approve'"
+                  size="small"
+                  :disabled="!canReject(row) || rejecting"
+                  :loading="rejecting"
+                  @click="handleReject(row)"
+                >
+                  驳回
+                </el-button>
+                <el-button
+                  v-perm="'billing:refund:btn:execute'"
+                  size="small"
+                  :disabled="!canExecute(row) || executing"
+                  :loading="executing"
+                  @click="handleExecute(row)"
+                >
+                  执行
+                </el-button>
+              </template>
+            </el-table-column>
+            <!-- 诚实空态脸（契约 ⑥ 禁纸箱插画）：主句「暂无」语法 + 说明给下一步（切筛选/刷新） -->
+            <template #empty>
+              <div class="fuy-empty" role="status">
+                <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                <p class="fuy-empty-title">暂无退费申请</p>
+                <p class="fuy-empty-hint">当前筛选条件下暂无退费单，可切换状态或点击刷新。</p>
+              </div>
+            </template>
+          </el-table>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2）：工具条已收编 .fuy-toolbar（§9.2.2），卡宽随 .fuy-page
-   全宽（列表 1080 上限撤销），本块只留 input 宽度与摘要/申请区间距（操作列 8px 间距
-   收编全局工具类 .fuy-ops-8——td 无 scoped 哈希，scoped 规则在此零匹配） */
+/* 视图级样式隔离（web A.1-2）：门牌页首/卷宗卡/筛选脸/空态脸/状态胶囊样式全部由
+   element-plus.css 全局挂类承载，本块只留布局私项（输入宽度、卡内间距、队列表 CLS 锁）；
+   .fuy-page 根承载纵向 gap 与全宽，stagger 级联容器与 .fuy-page 同构纵列（契约 ⑦.4
+   stagger 挂页内区块不挂根） */
+.refund-approval-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fuy-space-3);
+}
+
+/* 筛选区（.fuy-filter 无自带下边距）与卡内内容的纵向节奏 */
+.refund-approval-detail {
+  margin-top: var(--fuy-space-3);
+}
+
+/* 结算号输入宽（检索域既有口径） */
 .refund-approval-input {
   max-width: 280px;
 }
@@ -399,16 +531,22 @@ onMounted(() => {
 }
 
 .refund-approval-summary {
-  margin-bottom: 12px;
+  margin-bottom: var(--fuy-space-3);
 }
 
 .refund-approval-apply {
   display: flex;
-  gap: 12px;
-  margin-top: 12px;
+  gap: var(--fuy-space-3);
+  margin-top: var(--fuy-space-3);
 }
 
 .refund-approval-reason {
   max-width: 420px;
+}
+
+/* 队列表 min-height 240 锁加载/空态切换零塌陷（蓝图 P08.3/⑥ 性能要点 CLS 锁口径） */
+.refund-approval-queue-table {
+  margin-top: var(--fuy-space-3);
+  min-height: 240px;
 }
 </style>

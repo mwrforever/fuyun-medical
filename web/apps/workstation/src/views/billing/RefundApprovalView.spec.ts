@@ -1,8 +1,11 @@
-// 退费审批页单测（FU-M13-04 前端面）：空结算号查询被前置拦截不出网、审批队列按态驱动——
-// PENDING_APPROVAL 行批准调用 approveRefund(id)、PENDING_SECOND_APPROVAL 行（待二级=一级已批）
-// 可批可驳不可执行、EXECUTED 行三按钮全禁用（终态不可逆的 UI 抑制；双人守卫拒绝由后端 403
-// 承载不在前端断言）；执行/驳回在途防抖（慢响应窗口内按钮禁用且二次点击零出网，根除双击
-// 双 POST 的并发双退触发面）；状态筛选含待二级新态。api mock 承载，不打真实网络。
+// 退费审批页单测（FU-M13-04 前端面 · 暖纸卷宗 P08 蓝图重排）：空结算号查询被前置拦截不出网、
+// 审批队列按态驱动——PENDING_APPROVAL 行批准调用 approveRefund(id)、PENDING_SECOND_APPROVAL 行
+// （待二级=一级已批）可批可驳不可执行、EXECUTED 行三按钮全禁用（终态不可逆的 UI 抑制；双人
+// 守卫拒绝由后端 403 承载不在前端断言）；执行/驳回在途防抖（慢响应窗口内按钮禁用且二次点击零
+// 出网，根除双击双 POST 的并发双退触发面）；状态筛选含待二级新态。api mock 承载，不打真实网络。
+// 暖纸换脸新增锚点（蓝图 P08.2/P08.3/P08.7）：门牌页首（衬线标题/签认人·时刻批注行）、amber
+// 待办胶囊（队列行本地 reduce 计数，零额外出网）、双卡 fuy-card/fuy-dense/fuy-filter 挂类、
+// 节内计数徽标（申请勾选数/队列待办数）、队列表空态脸（「暂无」语法，禁默认纸箱插画）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -69,11 +72,16 @@ function findButton(wrapper: VueWrapper, text: string): DOMWrapper<Element> {
   return button;
 }
 
-/** 构造审批队列一行（status 由各用例指定以驱动按钮启停断言） */
-function queueRow(status: string): RefundVO {
+/**
+ * 构造审批队列一行（status 由各用例指定以驱动按钮启停断言）。
+ *
+ * @param status 退费单状态（驱动启停/计数断言）
+ * @param refundNo 退费单号（计数用例多行并陈时区分行，缺省沿用既有单号）
+ */
+function queueRow(status: string, refundNo = 'RF-20260918-001'): RefundVO {
   return {
     id: '1932000000000000009',
-    refundNo: 'RF-20260918-001',
+    refundNo,
     visitId: 'V001',
     amount: '3500',
     reason: '多收',
@@ -355,6 +363,113 @@ describe('退费审批页', () => {
     await clickButton(wrapper, '查询结算');
     await flushPromises();
     expect(wrapper.findAll('button').some((b) => b.text() === '申请退费')).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('门牌页首锚点：衬线标题「退费审批」/ 签认人·时刻批注行 / amber 待办胶囊（蓝图 P08.2）', () => {
+    // 批注行「谁」取会话显示名真值：播种带 displayName 的会话防 — 占位干扰断言
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, displayName: '审批员乙', permissions: [] },
+      }),
+    );
+    const wrapper = mount(RefundApprovalView);
+
+    // 门牌页首锚（蓝图 P08.2/契约 ⑧.1）：衬线标题承接页面名 + 「谁·何时」批注行 + 时刻元素
+    expect(wrapper.find('header.fuy-page-head').exists()).toBe(true);
+    expect(wrapper.find('.fuy-page-title').text()).toBe('退费审批');
+    expect(wrapper.find('.fuy-page-note').text()).toContain('签认人 审批员乙');
+    expect(wrapper.find('.fuy-page-note time').exists()).toBe(true);
+    // 状态位=待办胶囊 amber 变体（蓝图 P08.2 资金回流待办量前置感知）
+    const pill = wrapper.find('.fuy-page-status .fuy-status-pill');
+    expect(pill.exists()).toBe(true);
+    expect(pill.classes()).toContain('fuy-status-pill--amber');
+    wrapper.unmount();
+  });
+
+  it('待办胶囊计数：队列行本地 reduce（待审批 2 / 待二级 1），零额外出网（蓝图 P08.7）', async () => {
+    vi.mocked(listRefunds).mockResolvedValue({
+      content: [
+        queueRow('PENDING_APPROVAL', 'RF-20260918-001'),
+        queueRow('PENDING_APPROVAL', 'RF-20260918-002'),
+        queueRow('PENDING_SECOND_APPROVAL', 'RF-20260918-003'),
+        queueRow('EXECUTED', 'RF-20260918-004'),
+      ],
+      page: 0,
+      size: 20,
+      total: '4',
+    });
+    const wrapper = mount(RefundApprovalView);
+
+    // 胶囊双通道铁律（契约 ⑧.6）：文字 + 数字并陈，计数由队列行本地聚合（终态 EXECUTED 不计入）；
+    // 等待队列异步回填后计数兑现（waitFor 条件落在业务数值上，非静态文字）
+    await vi.waitFor(() => {
+      const countsNow = wrapper
+        .find('.fuy-page-status .fuy-status-pill')
+        .findAll('.fuy-num')
+        .map((node) => node.text());
+      expect(countsNow).toEqual(['2', '1']);
+    });
+    const pill = wrapper.find('.fuy-page-status .fuy-status-pill');
+    expect(pill.text()).toContain('待审批');
+    expect(pill.text()).toContain('待二级');
+    const counts = pill.findAll('.fuy-num').map((node) => node.text());
+    expect(counts).toEqual(['2', '1']);
+
+    // 零额外出网：挂载加载恰一次，胶囊计数不触发第二次队列请求（本地 reduce 语义）
+    expect(vi.mocked(listRefunds)).toHaveBeenCalledTimes(1);
+    wrapper.unmount();
+  });
+
+  it('构图挂类：.fuy-page 根（页根不挂 .fuy-stagger）+ 双卡 fuy-dense + 双 .fuy-filter + 节内计数徽标（蓝图 P08.2/P08.3）', async () => {
+    // 操作列 class-name 落在 td 上，空队列不渲染行内单元格——播种一行使操作列结构成立
+    vi.mocked(listRefunds).mockResolvedValue({
+      content: [queueRow('PENDING_APPROVAL')],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(RefundApprovalView);
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('RF-20260918-001');
+    });
+
+    // 域级违律修正锚（契约 ⑦.4）：stagger 迁页内区块，页根只挂 .fuy-page
+    const root = wrapper.find('.fuy-page');
+    expect(root.exists()).toBe(true);
+    expect(root.classes()).not.toContain('fuy-stagger');
+    expect(wrapper.find('.fuy-stagger.refund-approval-flow').exists()).toBe(true);
+
+    // 双卡纵叠（申请在上/审批在下的资金因果序）：均为卷宗卡脸，队列表卡承 fuy-dense 密度通道
+    const cards = wrapper.findAll('.fuy-card');
+    expect(cards.length).toBe(2);
+    expect(cards[1].classes()).toContain('fuy-dense');
+
+    // 检索/筛选升 .fuy-filter 独立语义位：申请卡结算号检索 + 队列卡状态筛选
+    expect(wrapper.findAll('.fuy-filter').length).toBe(2);
+
+    // 节内计数徽标（禁照抄点）：申请卡头右挂勾选数 / 队列卡头右挂待办数
+    const extras = wrapper.findAll('.fuy-card-extra');
+    expect(extras.length).toBe(2);
+    expect(extras[0].text()).toContain('已勾选');
+    expect(extras[1].text()).toContain('待办');
+
+    // 操作列间距收窄走全局工具类（td 由 el-table 内部渲染，scoped 零匹配）
+    expect(wrapper.find('.fuy-ops-8').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('空态脸：队列表空数据走 .fuy-empty（「暂无」语法 + 下一步指引，禁默认纸箱插画）', async () => {
+    const wrapper = mount(RefundApprovalView);
+    await flushPromises();
+
+    const empty = wrapper.find('.fuy-empty');
+    expect(empty.exists()).toBe(true);
+    expect(empty.find('.fuy-empty-title').text()).toBe('暂无退费申请');
+    expect(empty.find('.fuy-empty-hint').text()).not.toBe('');
     wrapper.unmount();
   });
 });
