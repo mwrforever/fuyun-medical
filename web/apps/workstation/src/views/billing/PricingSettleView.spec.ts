@@ -8,6 +8,10 @@
 // PRESETTLED 草稿切回自费档不得跨档存活——按钮回禁用态拦截结算，强点亦零出网；
 // preview 在途切档竞态（评审 D-1/E-1）：医保档在途回包切自费档后落地不得复活草稿；
 // 拦截文案参数化（评审 D-2）：商业保险档不再统称医保，文案随所选档中文标签联动。
+// 暖纸卷宗 P07 重排构图锚（蓝图 P07.7，换脸不换业务）：门牌页首（衬线标题 + 签认人·时刻
+// 批注行会话真值）、主从双列（左划价卡含「签」分隔 / 右待收 sticky 辅列——资金动作链纵向
+// 收口）、筛选卡 .fuy-filter、页根不挂 .fuy-stagger（契约 ⑦.4 迁页内区块）、手工计费弹窗
+// .fuy-dialog + .fuy-form 挂类、待收表空态 .fuy-empty 脸。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -46,9 +50,14 @@ if (!('ResizeObserver' in globalThis)) {
   };
 }
 
-/** 按按钮文案点击 el-button（避免 DOM 结构序号耦合，patient 三页 spec 同款） */
+/** 按按钮文案查找 el-button（避免 DOM 结构序号耦合，patient 三页 spec 同款） */
+function findButton(wrapper: VueWrapper, text: string) {
+  return wrapper.findAll('button').find((b) => b.text() === text);
+}
+
+/** 按按钮文案点击 el-button */
 async function clickButton(wrapper: VueWrapper, text: string): Promise<void> {
-  const button = wrapper.findAll('button').find((b) => b.text() === text);
+  const button = findButton(wrapper, text);
   if (!button) {
     throw new Error(`未找到按钮：${text}`);
   }
@@ -494,6 +503,93 @@ describe('划价结算页', () => {
     const wrapper = mountView();
     await flushPromises();
     expect(wrapper.text()).toContain('手工计费');
+    wrapper.unmount();
+  });
+
+  it('门牌页首：衬线标题「划价结算」+ 签认人·时刻批注行（会话真值非伪数据）', () => {
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, displayName: '收费员甲', permissions: [] },
+      }),
+    );
+    const wrapper = mount(PricingSettleView);
+
+    // 门牌页首锚（蓝图 P07.7）：衬线标题承接原卡头页面名 + 「谁·何时」批注行取会话真值，
+    // 空值 — 占位禁伪数据；2px 墨规收底走全局 .fuy-page-head 脸（样式层不在此断言）
+    expect(wrapper.find('header.fuy-page-head').exists()).toBe(true);
+    expect(wrapper.find('h1.fuy-page-title').text()).toBe('划价结算');
+    const note = wrapper.find('.fuy-page-note');
+    expect(note.exists()).toBe(true);
+    expect(note.text()).toContain('签认人');
+    expect(note.text()).toContain('收费员甲');
+    expect(note.find('time').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('主从双列重排：左划价卡（签分隔）+ 右待收 sticky 辅列 + 筛选卡 .fuy-filter；页根不挂 .fuy-stagger（契约 ⑦.4）', () => {
+    const wrapper = mount(PricingSettleView);
+
+    // 主从分区锚（蓝图 P07.2/7.3）：双卡纵叠改「划价主列 + 待收/结算 sticky 辅列」，
+    // 资金动作链（预结算 → 确认结算 → 成功横幅）右列纵向收口；右列 sticky top 16 为 CSS
+    // 契约（jsdom 不断言计算样式，以列容器挂类为结构锚——P04 主从 spec 同款口径）
+    expect(wrapper.find('.pricing-settle-workarea').exists()).toBe(true);
+    const main = wrapper.find('.pricing-settle-main-col');
+    expect(main.classes()).toContain('fuy-stagger');
+    expect(main.findAll('.fuy-card').length).toBe(1);
+    // 行编辑节与划价结果节以「签」分隔线分界（蓝图 P07.2，契约 ⑧.2 卡内分区语法）
+    expect(main.find('.fuy-sign-divider').exists()).toBe(true);
+    const side = wrapper.find('.pricing-settle-side-col');
+    expect(side.exists()).toBe(true);
+    expect(side.classes()).toContain('fuy-stagger');
+    expect(side.find('.fuy-card').exists()).toBe(true);
+    // 页根禁挂 .fuy-stagger（琢段移交违律修正，契约 ⑦.4：路由进场过渡归 MainLayout，
+    // 页根再挂会叠出双重进场节奏——stagger 迁页内主从两列各成一档）
+    expect(wrapper.find('.fuy-page').classes()).not.toContain('fuy-stagger');
+    // 检索先行（域级一致性）：筛选卡挂 .fuy-filter——患者号/就诊号/支付方式 label 分组，
+    // 手工计费钮右挂 .fuy-filter-actions（v-perm 既有）
+    const filter = wrapper.find('.fuy-filter');
+    expect(filter.exists()).toBe(true);
+    expect(filter.text()).toContain('患者号');
+    expect(filter.text()).toContain('就诊号');
+    expect(filter.text()).toContain('支付方式');
+    expect(filter.find('.fuy-filter-actions').exists()).toBe(true);
+    expect(findButton(wrapper, '手工计费')?.exists()).toBe(true);
+    // 划价表 .fuy-dense 密排（蓝图 P07.3：密度规则为后代选择器，挂卡容器——批次 2 质量门 R1 教训）
+    expect(wrapper.find('.fuy-dense .el-table').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('手工计费弹窗挂 .fuy-dialog 弹层脸且表单挂 .fuy-form 表单脸（契约 ⑧.5/⑤#1）', async () => {
+    const wrapper = mount(PricingSettleView);
+    await wrapper.find('input[placeholder="患者号"]').setValue('1932000000000000002');
+    await wrapper.find('input[placeholder="就诊号"]').setValue('V001');
+
+    await clickButton(wrapper, '手工计费');
+    await flushPromises();
+
+    // 弹层脸锚（契约 ⑤#9/⑧.5）：el-dialog 挂 .fuy-dialog（卡面底+radius 14+shadow-lg+衬线
+    // 标题）、表单挂 .fuy-form（label 疏排/聚焦墨环/错误显影全局脸）。ElMessageBox 结算确认
+    // 为函数式弹窗族不可挂类，维持 EP 默认皮（总则 4）——spec 不断言其内部结构
+    const dialog = wrapper.find('.fuy-dialog');
+    expect(dialog.exists()).toBe(true);
+    expect(dialog.classes()).toContain('el-dialog');
+    expect(dialog.find('.fuy-form').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('待收费用空态走 .fuy-empty 脸：「暂无待收费用」+ 下一步指引（禁纸箱插画）', () => {
+    const wrapper = mount(PricingSettleView);
+
+    // 空态脸锚（总则 8/⑫.4-④）：el-table 内建 el-empty 纸箱插画不渲染，主句合「暂无」
+    // 语法 + 说明给下一步（输入就诊号查询 / 手工计费补录后刷新）
+    expect(wrapper.find('.el-empty').exists()).toBe(false);
+    const empty = wrapper.find('.pricing-settle-side-col .fuy-empty');
+    expect(empty.exists()).toBe(true);
+    expect(empty.find('.fuy-empty-title').text()).toBe('暂无待收费用');
+    expect(empty.find('.fuy-empty-hint').exists()).toBe(true);
     wrapper.unmount();
   });
 });
