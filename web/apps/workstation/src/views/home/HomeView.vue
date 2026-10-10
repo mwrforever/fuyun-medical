@@ -632,6 +632,9 @@ const updatedAt = computed(() =>
 
 .home-doc-title {
   margin: 0;
+  font-family: var(
+    --fuy-font-family-serif
+  ); /* 门牌标题衬线档（暖纸卷宗基础册 · 契约 ⑪.6，仅字体一行） */
   font-size: var(--fuy-font-size-2xl); /* 20px，与样稿门牌标题同档 */
   font-weight: 600;
   line-height: 1.3;

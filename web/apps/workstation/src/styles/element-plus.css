@@ -1,68 +1,97 @@
 /**
  * Element Plus 定制层（仅 workstation）：主色梯度覆盖 + 中性面映射 + 字体映射 +
- * 高密度工具类 + 状态标签辅助类 + 墨脊书脊导轨菜单收编（「纸质病案 Paper Chart」世界）。
+ * 高密度工具类 + 状态标签辅助类 + 墨脊书脊导轨菜单收编 + 卷宗文书挂类族
+ * （「暖纸卷宗 Warm Paper Archive」世界，2026-10-10 换血）。
  * 红线：不修改 EP 主题 SCSS 编译（先 CSS 变量条款）；一切 --el-* 覆盖经 :root:root
  * 双写或 .fuy-* 挂类承载，禁止全局裸改 .el-* 组件选择器。
  */
 
 /* 主色映射（:root:root 双写提高特异性 0,2,0）：按需引入的 EP base 样式在运行期注入
    :root 变量，同特异性下依赖注入顺序不可靠——双写后无论加载顺序恒定生效。
-   功能色（success/warning/danger/info）保留 EP 默认值不动，与存量页面硬编码语义一致。
-   注意：本块使全站主色由 EP 默认 #409eff 统一切换为浓墨 #1e2a44——「墨即操作」，
-   主按钮=墨色实底，属「纸质病案」世界换血预期内的全局视觉变化（2026-10-08 用户锁定）。 */
+   本块使全站主色由 EP 默认 #409eff 统一切换为浓墨 #2a2318——「墨即操作」，主按钮=墨色
+   实底；primary 阶五档取暖纸十值结算（浓墨/灰墨/弱墨/纸缘/暖洗两档/墨加深档）；
+   状态朱通道（--el-color-danger）落印泥朱（双红分工：状态朱承校验错误，装饰朱永不入通道）；
+   A-5 功能色洗底族（2026-10-10 主控批准）＝既有状态色 alpha 派生，零新色相。 */
 :root:root {
-  --el-color-primary: #1e2a44;
-  /* light-N = N×10% 白混入主色（EP 官方混色公式同源核算取整） */
-  --el-color-primary-light-3: #626a7c; /* hover（灰墨一档） */
-  --el-color-primary-light-5: #8f95a2;
-  --el-color-primary-light-7: #bcbfc7;
-  --el-color-primary-light-8: #d2d4da; /* 边框 */
-  --el-color-primary-light-9: #e9eaec; /* 浅底 */
-  --el-color-primary-dark-2: #182236; /* active（书脊深墨一档） */
+  --el-color-primary: #2a2318;
+  /* light-N = N×10% 白混入主色（EP 官方混色公式同源核算取整；暖纸卷宗换血为十值结算档） */
+  --el-color-primary-light-3: #5a4c38; /* hover（灰墨一档） */
+  --el-color-primary-light-5: #8a7a5e;
+  --el-color-primary-light-7: #d8c9a8;
+  --el-color-primary-light-8: rgba(216, 201, 168, 0.6); /* 边框（石规浓淡档） */
+  --el-color-primary-light-9: rgba(234, 223, 200, 0.5); /* 浅底（paper-deep 半洗） */
+  --el-color-primary-dark-2: #1d1811; /* active（墨加深档，A-1 同值） */
   /* 字体栈映射：EP 组件字体统一走中文黑体系统栈（唯一来源 tokens.css --fuy-font-family-base） */
   --el-font-family: var(--fuy-font-family-base);
 
-  /* ===== EP 中性面映射（「纸质病案」= EP 组件基底全部落纸墨世界）=====
-     EP 默认中性面是冷灰系（#909399 族），与纸白/墨字并用会出现「灰塑料」杂色；
+  /* ===== EP 中性面映射（「暖纸卷宗」= EP 组件基底全部落暖纸棕墨世界）=====
+     EP 默认中性面是冷灰系（#909399 族），与暖纸/墨字并用会出现「灰塑料」杂色；
      此处把 bg/text/border/fill 四族逐一映射到纸面三级与墨字三级，EP 组件即自然
      长在纸上。变量名均经 EP 2.14.5 base.css 验证在位，禁造不存在的变量名。 */
-  /* 纸面三级（纸质病案=卡面亮纸白/工作面沉纸白/表单域最亮纸面） */
-  --el-bg-color: #fdfcf8; /* 组件基底＝卡面亮纸白 */
-  --el-bg-color-overlay: #fdfcf8; /* 弹层基底＝卡面亮纸白（弹层是浮起的一页纸） */
-  --el-bg-color-page: #f5f3ec; /* 页面基底＝工作面纸白 */
-  /* 墨字三级（纸质病案=浓墨承文/灰墨批注/弱墨脚注） */
-  --el-text-color-primary: #1e2a44; /* 主文本＝浓墨 */
-  --el-text-color-regular: #1e2a44; /* 常规文本＝文书正文同墨 */
-  --el-text-color-secondary: #565d6e; /* 次要文本＝灰墨 */
-  --el-text-color-placeholder: #676d7b; /* 占位符＝弱墨 */
-  --el-text-color-disabled: #a6abb8; /* 禁用文本＝褪墨 */
-  /* 描边（纸质病案=面板石规一族，由深到浅为规线浓淡档） */
+  /* 纸面三级（暖纸卷宗=卡面亮纸/工作面陈年纸底/表单域最亮纸面） */
+  --el-bg-color: #f8f4e9; /* 组件基底＝卡面亮纸 */
+  --el-bg-color-overlay: #f8f4e9; /* 弹层基底＝卡面亮纸（弹层是浮起的一页纸） */
+  --el-bg-color-page: #f4ecdb; /* 页面基底＝工作面陈年纸底 */
+  /* 墨字三级（暖纸卷宗=浓墨承文/灰墨批注/弱墨脚注；褪墨=弱墨 alpha 派生） */
+  --el-text-color-primary: #2a2318; /* 主文本＝浓墨 */
+  --el-text-color-regular: #2a2318; /* 常规文本＝文书正文同墨 */
+  --el-text-color-secondary: #5a4c38; /* 次要文本＝灰墨 */
+  --el-text-color-placeholder: #8a7a5e; /* 占位符＝弱墨 */
+  --el-text-color-disabled: rgba(138, 122, 94, 0.6); /* 禁用文本＝褪墨（弱墨 0.6 派生） */
+  /* 描边（暖纸卷宗=石规浓淡档 rgba(216,201,168,x) 系 + 金深档 rgba(176,141,79,x)
+     （激活/选中描边——金线装订语义），由深到浅为规线浓淡档） */
   --el-border-color: var(
     --fuy-color-rule-stone
   ); /* 默认描边＝输入框石规（单向映射引用石规色本体） */
-  --el-border-color-light: #d5d0c1; /* 浅一档石规 */
-  --el-border-color-lighter: #ddd8ca; /* 更浅石规（近发丝） */
-  --el-border-color-extra-light: #e7e3d6; /* 极浅石规（纸面发丝） */
-  --el-border-color-dark: #a49e8b; /* 深一档石规（悬停加重） */
-  --el-border-color-darker: #8a8471; /* 最深石规（激活/选中描边） */
-  --el-border-color-hover: #565d6e; /* 悬停描边＝灰墨 */
-  /* 填充（纸质病案=纸面暖底一族，表头纸/行悬停纸与样稿同值） */
-  --el-fill-color: #efece1; /* 默认填充＝纸面悬停暖底 */
-  --el-fill-color-dark: #e5e1d4; /* 深一档暖底（悬停/按压） */
-  --el-fill-color-light: #f2efe5; /* 表头纸（与样稿 thead 同值） */
-  --el-fill-color-lighter: #f6f3ea; /* 行悬停纸面（与样稿 tbody tr:hover 同值） */
-  --el-fill-color-extra-light: #faf8f2; /* 极浅暖底 */
+  --el-border-color-light: rgba(216, 201, 168, 0.8); /* 浅一档石规 */
+  --el-border-color-lighter: rgba(216, 201, 168, 0.6); /* 更浅石规（近发丝） */
+  --el-border-color-extra-light: rgba(216, 201, 168, 0.4); /* 极浅石规（纸面发丝） */
+  --el-border-color-dark: rgba(176, 141, 79, 0.6); /* 金深档（悬停加重，装订语义） */
+  --el-border-color-darker: #b08d4f; /* 金线直取（激活/选中描边） */
+  --el-border-color-hover: #5a4c38; /* 悬停描边＝灰墨 */
+  /* 填充（暖纸卷宗=纸面暖底一族，表头纸/行悬停纸与斑马洗档同源） */
+  --el-fill-color: #f1e8d7; /* 默认填充＝悬停暖底（paper-deep 半洗结算值） */
+  --el-fill-color-dark: #eadfc8; /* 深一档暖底（悬停/按压，paper-deep 直取） */
+  --el-fill-color-light: #f2ecdc; /* 表头纸（契约 ⑤#6 fill-light 换血值） */
+  --el-fill-color-lighter: rgba(234, 223, 200, 0.5); /* 行悬停纸面（paper-deep 半洗） */
+  --el-fill-color-extra-light: rgba(244, 236, 219, 0.5); /* 极浅暖底 */
   --el-fill-color-blank: #ffffff; /* 空白填充＝表单域最亮纸面 */
   /* 禁用三态（EP disabled 变量族，褪墨+纸面弱形态） */
-  --el-disabled-bg-color: #f6f3ea;
-  --el-disabled-text-color: #a6abb8;
-  --el-disabled-border-color: #ddd8ca;
-  /* 遮罩（纸质病案=墨纱：弹层之下覆一层蓝黑墨纱，纸上页内页） */
-  --el-mask-color: rgba(30, 42, 68, 0.45);
-  /* 阴影（纸质病案=唯一阴影给弹层，蓝墨基色带偏移与模糊，与 tokens.css --fuy-shadow-md 同源） */
-  --el-box-shadow: 0 12px 28px rgba(19, 28, 51, 0.16);
-  --el-box-shadow-light: 0 12px 28px rgba(19, 28, 51, 0.16);
-  --el-box-shadow-lighter: 0 4px 12px rgba(19, 28, 51, 0.1);
+  --el-disabled-bg-color: rgba(234, 223, 200, 0.35);
+  --el-disabled-text-color: rgba(138, 122, 94, 0.6);
+  --el-disabled-border-color: rgba(216, 201, 168, 0.5);
+  /* 遮罩（暖纸卷宗=墨纱：弹层之下覆一层墨纱，纸上叠内页） */
+  --el-mask-color: rgba(42, 35, 24, 0.5);
+  /* 阴影三级给浮起层（弹层阴影单源，与 tokens.css 三级阴影同值引用：
+     lg=大浮面 dialog、md=标准弹层 popper/drawer、sm=小面悬浮） */
+  --el-box-shadow: var(--fuy-shadow-lg);
+  --el-box-shadow-light: var(--fuy-shadow-md);
+  --el-box-shadow-lighter: var(--fuy-shadow-sm);
+
+  /* ===== 输入围合三枚（契约 ⑤#2）：表单域最亮纸白 + 石规描边 + 聚焦墨环 =====
+     聚焦=操作域=墨（双红分工条款 ④：朱砂下划展开线是聚焦的装饰第二通道，
+     经 .fuy-form 挂类段承载） */
+  --el-input-bg-color: #ffffff;
+  --el-input-border-color: var(--fuy-color-rule-stone);
+  --el-input-focus-border-color: var(--fuy-color-brand);
+  /* dialog 圆角=卷宗卡档（契约 ⑤#9）；descriptions label 列=表头纸底（契约 ⑤#15） */
+  --el-dialog-border-radius: var(--fuy-radius-card);
+  --el-descriptions-item-bordered-label-background: var(--el-fill-color-light);
+
+  /* ===== A-5 功能色洗底族（2026-10-10 主控批准生效）=====
+     el-tag light 底/message/notification 底/按钮 hover 底的暖化：全部为既有状态色
+     alpha 派生，零新色相（dark-2=印泥朱按压档 #82251f）；light-3/5/7 与 warning/
+     success/info 基色维持 EP 默认（未批不落，零偏移） */
+  --el-color-danger: var(--fuy-color-danger-text); /* 危急/停用/作废/校验错误通道＝印泥朱 */
+  --el-color-danger-light-9: rgba(180, 35, 24, 0.08);
+  --el-color-danger-light-8: rgba(180, 35, 24, 0.14);
+  --el-color-danger-dark-2: #82251f;
+  --el-color-warning-light-9: rgba(154, 71, 8, 0.1);
+  --el-color-warning-light-8: rgba(154, 71, 8, 0.16);
+  --el-color-success-light-9: rgba(31, 122, 51, 0.1);
+  --el-color-success-light-8: rgba(31, 122, 51, 0.16);
+  --el-color-info-light-9: rgba(90, 76, 56, 0.08);
+  --el-color-info-light-8: rgba(90, 76, 56, 0.14);
 }
 
 /* el-table 高密度模式：挂载方式为 <el-table> 外层卡片或自身加 class="fuy-dense"，
@@ -381,4 +410,510 @@
   background: #fff;
   color: var(--fuy-color-danger-text);
   border: 1px solid var(--fuy-color-danger-text);
+}
+
+/* ===== 暖纸卷宗基础册 · 页级组件挂类族（契约 ⑤ 收编目录 + ⑧ 页级语法，2026-10-10）=====
+   通道约定：一切结构/伪元素级定制走 .fuy-* 挂类前缀组合选择器（.fuy-dense/.fuy-tree-popper
+   先例，非裸改 .el-*）；既有段零改动，本段只增不改；色值全部取自 tokens.css 十值正名块
+   及其 alpha 派生，零新色值。 */
+
+/* ---------- 表单整脸（契约 ⑤#1-#4，消费方整表单挂 class="fuy-form" 免逐控件挂类）---------- */
+
+/* label：13px 灰墨 500 + 0.02em 疏排 + 8px 底距（样稿 field-label 同构；业务表单疏排
+   0.02em，登录门厅 0.14em 疏排不外扩——字体使用矩阵 §④.1） */
+.fuy-form .el-form-item__label {
+  font-size: var(--fuy-font-size-sm);
+  font-weight: 500;
+  color: var(--fuy-color-text-secondary);
+  letter-spacing: 0.02em;
+  margin-bottom: var(--fuy-space-2);
+}
+
+/* 输入围合：wrapper 相对定位供朱砂下划线锚定（登录 field-wrap 同构）；底/描边/聚焦环
+   三枚已经 :root:root 映射自动承继，此处只补结构位 */
+.fuy-form .el-input__wrapper {
+  position: relative;
+}
+
+/* 朱砂下划展开线：聚焦的装饰第二通道（双红分工条款——装饰朱承走线，不承状态语义），
+   自中心 scaleX 展开 0.45s ink 缓动（登录 field-underline 语法同构换语境） */
+.fuy-form .el-input__wrapper::after {
+  content: '';
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  bottom: -1px;
+  height: 2px;
+  background: linear-gradient(to right, var(--fuy-cinnabar), var(--fuy-cinnabar-lt));
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 0.45s var(--fuy-ease-ink);
+  border-radius: var(--fuy-radius-sm);
+  pointer-events: none;
+}
+.fuy-form .el-input__wrapper.is-focus::after {
+  transform: scaleX(1);
+}
+
+/* placeholder：弱墨 13px（弱墨色经 :root:root --el-text-color-placeholder 映射自动承继） */
+.fuy-form .el-input__inner::placeholder {
+  font-size: var(--fuy-font-size-sm);
+}
+
+/* 前后缀图标：弱墨默认、聚焦转墨（样稿 field-icon 聚焦变色语法；图标随操作域归墨，
+   不随朱砂装饰线变色——两类朱不混用于同一语义位） */
+.fuy-form .el-input__prefix,
+.fuy-form .el-input__suffix {
+  color: var(--fuy-ink-faint);
+  transition: color var(--fuy-motion-base);
+}
+.fuy-form .el-input__wrapper.is-focus .el-input__prefix,
+.fuy-form .el-input__wrapper.is-focus .el-input__suffix {
+  color: var(--fuy-color-brand);
+}
+
+/* 校验错误显影：文字色/围合 inset 描边经 :root:root --el-color-danger＝印泥朱映射自动
+   承继（双红分工：业务页校验通道一律印泥朱）；此处只补沉落显影节奏与圈叹图标第二通道
+   （错误双通道铁律：色+图标；data-uri 色值＝印泥朱 #b42318，状态朱族既有值非新色）；
+   登录页 shake 抖动不外扩（业务页只用显影，契约 ⑤#4） */
+.fuy-form .el-form-item__error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: fuy-note-in var(--fuy-motion-base) var(--fuy-ease-enter) backwards;
+}
+.fuy-form .el-form-item__error::before {
+  content: '';
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23b42318' stroke-width='2.5' stroke-linecap='round'><circle cx='12' cy='12' r='10'/><line x1='12' y1='8' x2='12' y2='12'/><line x1='12' y1='16' x2='12.01' y2='16'/></svg>")
+    no-repeat center/contain;
+}
+
+/* ---------- 弹层面（契约 ⑤#5/#9/#10/#11）---------- */
+
+/* select/date-picker 弹层：底色/圆角/阴影经 :root:root 中性面与阴影三档映射自动承继
+   （弹层=浮起的一页纸），选中项金洗底＝primary-light-9 换血自动生效；显式 popper 统一
+   挂 popper-class="fuy-snap-popper"（motion.css 硬 snap 唯一定义处），此处零额外规则 */
+
+/* dialog：卷宗卡档圆角 + 大浮面阴影（--el-dialog-border-radius/--el-box-shadow 已映射，
+   此处兜底声明保显式覆盖语义）+ 衬线标题 + 头底发丝（契约 ⑤#9） */
+.fuy-dialog.el-dialog {
+  border-radius: var(--fuy-radius-card);
+  box-shadow: var(--fuy-shadow-lg);
+}
+.fuy-dialog .el-dialog__title {
+  font-family: var(--fuy-font-family-serif);
+  font-size: var(--fuy-font-size-lg);
+  font-weight: 700;
+}
+.fuy-dialog .el-dialog__header {
+  padding-bottom: var(--fuy-space-4);
+  border-bottom: var(--fuy-border-hairline);
+}
+
+/* drawer：右推面板（520/640 两档宽由消费方 size prop 承载，CSS 不锁宽）+ 标准弹层阴影
+   （阴影纪律：md=popper/drawer）+ 衬线标题 + 头底发丝（头部可承载「谁·何时」批注槽） */
+.fuy-drawer.el-drawer {
+  box-shadow: var(--fuy-shadow-md);
+}
+.fuy-drawer .el-drawer__title {
+  font-family: var(--fuy-font-family-serif);
+  font-size: var(--fuy-font-size-lg);
+  font-weight: 700;
+}
+.fuy-drawer .el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: var(--fuy-space-4);
+  border-bottom: var(--fuy-border-hairline);
+}
+
+/* message/notification 批注条脸（契约 ⑤#11）：卡面底 + 发丝描边 + 浓墨字；状态色只上
+   图标与左缘 2px 色条（双通道铁律：色必配文字/图标）。消费方经 customClass="fuy-message"
+   承载（message 与 notification 同类名通道） */
+.fuy-message.el-message {
+  background-color: var(--fuy-surface-card);
+  border: var(--fuy-border-hairline);
+  border-left-width: 2px;
+  border-left-color: var(--fuy-color-info-text);
+  box-shadow: var(--fuy-shadow-sm);
+}
+.fuy-message.el-message .el-message__content {
+  color: var(--fuy-color-text-emphasis);
+}
+.fuy-message.el-message--success {
+  border-left-color: var(--fuy-color-success-text);
+}
+.fuy-message.el-message--warning {
+  border-left-color: var(--fuy-color-warning-text);
+}
+.fuy-message.el-message--error {
+  border-left-color: var(--fuy-color-danger-text);
+}
+.fuy-message.el-notification {
+  background-color: var(--fuy-surface-card);
+  border: var(--fuy-border-hairline);
+  border-left-width: 2px;
+  border-left-color: var(--fuy-color-info-text);
+  box-shadow: var(--fuy-shadow-md);
+}
+.fuy-message.el-notification .el-notification__title {
+  color: var(--fuy-color-text-emphasis);
+}
+.fuy-message.el-notification .el-notification__content {
+  color: var(--fuy-color-text-secondary);
+}
+
+/* ---------- tabs 卷宗签（契约 ⑤#8）：激活签=顶部 2px 朱砂签线 + 浓墨 600，非激活灰墨；
+   朱砂签线为装饰走线（双红分工），禁朱以外色作签线 ---------- */
+.fuy-tabs .el-tabs__item {
+  color: var(--fuy-color-text-secondary);
+}
+.fuy-tabs .el-tabs__item.is-active {
+  color: var(--fuy-color-text-emphasis);
+  font-weight: 600;
+}
+.fuy-tabs .el-tabs__item:not(.is-active):hover {
+  color: var(--fuy-color-text-emphasis);
+}
+.fuy-tabs .el-tabs__active-bar {
+  background-color: var(--fuy-cinnabar);
+  top: 0;
+  bottom: auto;
+}
+
+/* ---------- 诚实空态脸（契约 ⑥/⑧）：石规虚缝弱形态 + 书法「空」装饰字（aria-hidden
+   由消费方承载）+ 衬线主句 + 灰墨说明给下一步；el-empty 默认纸箱插画在 .fuy-page/
+   .fuy-dialog/.fuy-drawer 子树一律压制（挂类前缀组合，非裸改 .el-*） ---------- */
+.fuy-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--fuy-space-2);
+  padding: 40px 16px;
+  border: 1px dashed var(--fuy-color-rule-stone);
+  border-radius: var(--fuy-radius-lg);
+  text-align: center;
+}
+.fuy-empty-mark {
+  font-family: var(--fuy-font-family-brush);
+  font-size: 48px;
+  line-height: 1;
+  color: var(--fuy-ink-faint);
+  opacity: 0.5;
+}
+.fuy-empty-title {
+  margin: 0;
+  font-family: var(--fuy-font-family-serif);
+  font-size: var(--fuy-font-size-md);
+  font-weight: 600;
+  color: var(--fuy-color-text-emphasis);
+}
+.fuy-empty-hint {
+  margin: 0;
+  font-size: var(--fuy-font-size-sm);
+  color: var(--fuy-color-text-secondary);
+}
+.fuy-page .el-empty__image,
+.fuy-dialog .el-empty__image,
+.fuy-drawer .el-empty__image {
+  display: none;
+}
+
+/* ---------- 状态胶囊与呼吸点（契约 ⑧.6）：12px 600 + 3px/10px 内距 + 胶囊圆角 +
+   状态色 8%~12% 洗底 + 同色描边 + 同色文字（色值只取 §③.2 语义通道四色变体；
+   双通道铁律：胶囊必带文字）。呼吸点本体恒亮 + 伪元素光环 fuy-halo-breathe（仅
+   实时/进行语义消费；reduce 下光环压停仍承文字通道） ---------- */
+.fuy-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--fuy-radius-full);
+  font-size: var(--fuy-font-size-xs);
+  font-weight: 600;
+  line-height: 1.6;
+}
+.fuy-status-pill--amber {
+  background: rgba(154, 71, 8, 0.1);
+  border: 1px solid rgba(154, 71, 8, 0.25);
+  color: var(--fuy-color-warning-text);
+}
+.fuy-status-pill--success {
+  background: rgba(31, 122, 51, 0.1);
+  border: 1px solid rgba(31, 122, 51, 0.25);
+  color: var(--fuy-color-success-text);
+}
+.fuy-status-pill--danger {
+  background: rgba(180, 35, 24, 0.08);
+  border: 1px solid rgba(180, 35, 24, 0.25);
+  color: var(--fuy-color-danger-text);
+}
+.fuy-status-pill--info {
+  background: rgba(90, 76, 56, 0.08);
+  border: 1px solid rgba(90, 76, 56, 0.25);
+  color: var(--fuy-color-info-text);
+}
+.fuy-live-dot {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor; /* 本体恒亮随文字色 */
+}
+.fuy-live-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px currentColor; /* 静态环，动画只动伪元素 transform/opacity */
+  opacity: 0.45;
+  animation: fuy-halo-breathe 2s ease-in-out infinite;
+}
+
+/* ---------- 钤印确认浮层（契约 ⑧.5）：书法 24px 纸白字 + 朱砂实底 + 印鉴档圆角 +
+   大浮面阴影 + fuy-stamp-in 落章；只承成功确认，危险/失败走 message 批注条 ---------- */
+.fuy-stamp-toast {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 99;
+  transform: translate(-50%, -50%) scale(0.4) rotate(-16deg);
+  padding: 20px 28px;
+  background: var(--fuy-cinnabar);
+  color: var(--fuy-paper);
+  font-family: var(--fuy-font-family-brush);
+  font-size: var(--fuy-font-size-3xl);
+  letter-spacing: 0.2em;
+  border-radius: var(--fuy-radius-seal);
+  box-shadow: var(--fuy-shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+}
+.fuy-stamp-toast.is-show {
+  animation: fuy-stamp-in 0.5s var(--fuy-ease-ink) both;
+}
+
+/* ---------- 虚缝装订线（契约 ②.8）：弱墨/金线 2px 竖向虚缝＝卷宗装订语义（装订语义
+   Rule：虚缝只表达装订/空缺，禁作通用装饰线）；高度由消费面拉伸承载 ---------- */
+.fuy-stitch-ink {
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--fuy-ink-faint) 0 8px,
+    transparent 8px 16px
+  );
+}
+.fuy-stitch-gold {
+  width: 2px;
+  background: repeating-linear-gradient(to bottom, var(--fuy-gold) 0 10px, transparent 10px 20px);
+}
+
+/* ---------- 「签」字分隔（契约 ②.8/⑧.2）：1px 渐变线 + ::after 书法「签」盖线，
+   卡内文书分界（登录 divider 同构换语境；双云贴片按契约省略） ---------- */
+.fuy-sign-divider {
+  position: relative;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(90, 76, 56, 0.18) 15%,
+    rgba(90, 76, 56, 0.18) 85%,
+    transparent
+  );
+}
+.fuy-sign-divider::after {
+  content: '签';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 14px;
+  background: var(--fuy-surface-card); /* 盖线字底随所在纸面（卡内分界场景） */
+  font-family: var(--fuy-font-family-brush);
+  font-size: 15px;
+  color: var(--fuy-cinnabar);
+  letter-spacing: 0.2em;
+}
+
+/* ---------- 门牌页首族（契约 ⑧.1）：衬线标题 22px/700/0.06em + 英文小注（装饰层） +
+   状态胶囊右挂 + 「谁·何时」批注行 + 2px 墨规收底 ---------- */
+.fuy-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--fuy-space-4);
+  padding-bottom: var(--fuy-space-3);
+  border-bottom: 2px solid var(--fuy-color-text-emphasis);
+}
+.fuy-page-head-main {
+  display: flex;
+  align-items: baseline;
+  gap: var(--fuy-space-3);
+  min-width: 0;
+}
+.fuy-page-title {
+  margin: 0;
+  font-family: var(--fuy-font-family-serif);
+  font-size: var(--fuy-font-size-title);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.06em;
+  color: var(--fuy-color-text-emphasis);
+}
+.fuy-page-en {
+  font-family: Georgia, serif;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: var(--fuy-ink-faint);
+}
+.fuy-page-status {
+  margin-left: auto;
+}
+.fuy-page-note {
+  width: 100%;
+  margin: 0;
+  font-size: var(--fuy-font-size-xs);
+  color: var(--fuy-color-info-text);
+}
+
+/* ---------- 卷宗卡族（契约 ⑧.2）：卡面亮纸 + 发丝描边 + radius-card；版面内零投影
+   （阴影三级禁入版面静态堆叠）；卡头衬线 16px/700 + 底部发丝；--stitch 变体左缘金虚缝
+   （叙事卡/摘要卡专用，表格卡禁用——装订语义 Rule） ---------- */
+.fuy-card {
+  background: var(--fuy-surface-card);
+  border: var(--fuy-border-hairline);
+  border-radius: var(--fuy-radius-card);
+}
+.fuy-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--fuy-space-3);
+  padding: var(--fuy-space-3) var(--fuy-space-4);
+  border-bottom: var(--fuy-border-hairline);
+}
+.fuy-card-title {
+  margin: 0;
+  font-family: var(--fuy-font-family-serif);
+  font-size: var(--fuy-font-size-lg);
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--fuy-color-text-emphasis);
+}
+.fuy-card-body {
+  padding: var(--fuy-space-4);
+}
+.fuy-card--stitch {
+  position: relative;
+}
+.fuy-card--stitch::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  top: 28px;
+  bottom: 28px;
+  width: 2px;
+  background: repeating-linear-gradient(to bottom, var(--fuy-gold) 0 10px, transparent 10px 20px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ---------- 页脚批注（契约 ⑧.8）：12px 灰墨 + 上缘发丝，只放数据时点/刷新语义，
+   禁放操作钮 ---------- */
+.fuy-page-foot {
+  padding-top: var(--fuy-space-3);
+  border-top: var(--fuy-border-hairline);
+  font-size: var(--fuy-font-size-xs);
+  color: var(--fuy-color-info-text);
+}
+
+/* ---------- 加载骨架族（契约 ⑧.7，HomeView .sk 族收编全局）：静态金洗纸块零 shimmer
+   常驻动画；占位高度档由消费方 min-height 锁 CLS；骨架→内容走 .fuy-content-fade ---------- */
+.fuy-sk {
+  display: block;
+  background: var(--fuy-palette-brand-100); /* 金洗纸（选中态浅底同源，占位弱形态） */
+  border-radius: var(--fuy-radius-sm);
+}
+.fuy-sk-label {
+  width: 56px;
+  height: 10px;
+}
+.fuy-sk-value {
+  width: 76px;
+  height: 24px;
+  margin-top: var(--fuy-space-2);
+}
+.fuy-sk-delta {
+  width: 64px;
+  height: 10px;
+  margin-top: var(--fuy-space-2);
+}
+.fuy-sk-trend {
+  height: 200px;
+  margin-top: var(--fuy-space-2);
+}
+.fuy-sk-table-row {
+  height: 22px;
+  margin-top: var(--fuy-space-2);
+}
+.fuy-sk-time {
+  width: 38px;
+  height: 12px;
+}
+.fuy-sk-meta {
+  width: 96px;
+  height: 10px;
+}
+.fuy-sk-text {
+  width: 180px;
+  height: 14px;
+  margin-top: var(--fuy-space-1);
+}
+
+/* ---------- 筛选区（契约 ⑧.3）：label 12px 灰墨 0.02em 疏排 + 控件 40px 高（消费方
+   控件显式高度或 EP 默认尺寸）+ flex wrap gap 12px；操作钮右挂（检索=墨实底
+   type="primary"、重置=透明底暖底悬停 EP 默认面，均经映射自动承继） ---------- */
+.fuy-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--fuy-space-3);
+}
+.fuy-filter > label {
+  font-size: var(--fuy-font-size-xs);
+  letter-spacing: 0.02em;
+  color: var(--fuy-color-text-secondary);
+}
+.fuy-filter-actions {
+  margin-left: auto;
+  display: flex;
+  gap: var(--fuy-space-2);
+}
+
+/* ---------- 密排表格扩展（契约 ⑤#6/⑧.4）：斑马行洗档 + 表头疏排（既有 .fuy-dense
+   核心段零改动，此处只增不改；斑马 0.35 档与行悬停 0.5 档分层可辨） ---------- */
+.fuy-dense .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: rgba(234, 223, 200, 0.35);
+}
+.fuy-dense .el-table th.el-table__cell {
+  letter-spacing: 0.04em;
+}
+
+/* ---------- 分页右挂（契约 ⑤#7）：页码 tabular 经 :root 全局等宽自动承继，激活页=
+   墨底纸字（primary 实底自动），悬停暖底经 fill 族映射自动承继 ---------- */
+.fuy-page .el-pagination {
+  justify-content: flex-end;
+  padding-top: var(--fuy-space-2);
+}
+
+/* ---------- 壳层微调（契约 ⑪.6）：品牌字标衬线化经挂类承载（AppSidebar 组件文件
+   零改动）——展开「富云」衬线字标、折叠「富」单字书法钤印（字体三分：品牌印块归
+   钤印家族字）；既有 .fuy-menu-brand 段零改动，此处只增 font-family 一族 ---------- */
+.fuy-menu-brand {
+  font-family: var(--fuy-font-family-serif);
+}
+.fuy-menu-brand.is-fold {
+  font-family: var(--fuy-font-family-brush);
 }

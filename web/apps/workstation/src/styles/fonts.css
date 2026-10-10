@@ -1,0 +1,38 @@
+/**
+ * 门面字体全局声明（「暖纸卷宗」基础册 · 契约 ④.2 @font-face 全局上收）：
+ * 衬线 Noto Serif SC（400/600/700）承门牌标题/卷宗卡题/弹层题，书法 Ma Shan Zheng（400）
+ * 承钤印与装饰字——凡承载业务信息的文本一律禁书法（字体三分矩阵，DESIGN.md Named Rule）。
+ * 红线：字符子集 woff2 本地化（src/assets/fonts/，全部 <1MB 入库），零外链；
+ * font-display swap 保首绘（FOUT 由子集体积小 + 系统宋/楷族兜底链收敛）。
+ * 与 LoginView scoped 既有声明的关系：同名同描述符的 @font-face 浏览器按「族+字重」
+ * 合并，LoginView.vue 内声明一律不删不改（登录零回归），全局上收后命中同一批 woff2，
+ * 渲染结果逐像素等价。
+ */
+@font-face {
+  font-family: 'Noto Serif SC';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/noto-serif-sc-400.subset.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Noto Serif SC';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../assets/fonts/noto-serif-sc-600.subset.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Noto Serif SC';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../assets/fonts/noto-serif-sc-700.subset.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Ma Shan Zheng';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/ma-shan-zheng-400.subset.woff2') format('woff2');
+}

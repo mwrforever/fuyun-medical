@@ -24,7 +24,14 @@ const collapsed = ref(false);
         <AppHeader :collapsed="collapsed" @toggle="collapsed = !collapsed" />
       </el-header>
       <el-main class="main-content">
-        <RouterView />
+        <!-- 路由切换过渡（暖纸卷宗基础册 · 契约 ⑦.4）：旧页 120ms 直退、新页 240ms
+             上浮显影（out-in：旧页先退新页后进），过渡类唯一来源 motion.css .fuy-page-*；
+             页内 stagger 自带节奏不叠加（页面根节点不挂 .fuy-stagger） -->
+        <RouterView v-slot="{ Component }">
+          <Transition name="fuy-page" mode="out-in">
+            <component :is="Component" />
+          </Transition>
+        </RouterView>
       </el-main>
     </el-container>
   </el-container>
