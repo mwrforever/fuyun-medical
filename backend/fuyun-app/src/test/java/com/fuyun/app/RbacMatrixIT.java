@@ -61,8 +61,8 @@ import org.testcontainers.utility.MountableFile;
  * board 与 alarms 区内 200、越面 GET /billing/settlements 非 200（403 SYS-1032 或 401，
  * 勿过锁状态码——拦截层演进不破测试）。
  *
- * <p>⑤<b>绑定矩阵快照</b>（W-97①，PR-4F Task 7）：解析 V1117+V1121 绑定段 VALUES 二元组
- * 全集（404 对）对照真库 sys_role_permission 双向一致——管理台 DB 写通道上线后误删/误改
+ * <p>⑤<b>绑定矩阵快照</b>（W-97①，PR-4F Task 7）：解析 V1117+V1121+V1124 绑定段 VALUES
+ * 二元组全集（410 对）对照真库 sys_role_permission 双向一致——管理台 DB 写通道上线后误删/误改
  * 绑定行在抽验面外静默生效的缺口由全量快照锚定（任一漂移即红）。
  *
  * <p>夹具说明：nursedemo 未种 nurse_assignment 绑定行（V1117:512-513 口径），而护理域
@@ -347,16 +347,19 @@ class RbacMatrixIT extends FuyunStackITBase {
     }
 
     /**
-     * 第⑤组（W-97①）：V1117+V1121 绑定段 VALUES 二元组全集对照真库——管理台 DB 写通道上线后
+     * 第⑤组（W-97①）：V1117+V1121+V1124 绑定段 VALUES 二元组全集对照真库——管理台 DB 写通道上线后
      * 误删/误改绑定行在抽验面外静默生效的缺口由全量快照锚定（双向差集断言，任一漂移即红）。
      */
     @Test
-    @DisplayName("绑定矩阵快照：V1117+V1121 VALUES 全集与真库 sys_role_permission 双向一致")
+    @DisplayName("绑定矩阵快照：V1117+V1121+V1124 VALUES 全集与真库 sys_role_permission 双向一致")
     void rolePermissionBindingsMatchSeedSnapshot() throws Exception {
         Set<String> expected = new HashSet<>();
         expected.addAll(parseBindingPairs("/db/migration/system/V1117__seed_business_roles_bindings.sql"));
         expected.addAll(parseBindingPairs("/db/migration/system/V1121__seed_element_bindings_and_menu_fix.sql"));
-        assertThat(expected.size()).isGreaterThan(350); // 提取面自证：V1117 357+V1121 47=404，正则失效即红
+        // V1124 共享读绑定（GET /api/v1/system/orgs × 六业务角色）：新绑定迁移入快照期望面，
+        // 缺本行则真库多出 6 对即「库多种子」假漂移（V1121 加入时的扩面先例）
+        expected.addAll(parseBindingPairs("/db/migration/system/V1124__seed_org_permission.sql"));
+        assertThat(expected.size()).isGreaterThan(350); // 提取面自证：V1117 357+V1121 47+V1124 6=410，正则失效即红
 
         // V303 遗留 ADMIN 基线并入期望面（实测库侧恰多出该 6 对，出处 V303:45-67+V1116 头注）：禁改
         // 已应用迁移（A.4.1-3），以显式常量锚定已知合法存量——基线外的库侧新增（管理台/人工越权写入）

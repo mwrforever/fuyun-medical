@@ -6,6 +6,7 @@ import com.fuyun.system.controller.AuthController;
 import com.fuyun.system.controller.DictController;
 import com.fuyun.system.controller.DictTypeController;
 import com.fuyun.system.controller.DictVersionController;
+import com.fuyun.system.controller.OrgController;
 import com.fuyun.system.controller.PermissionAdminController;
 import com.fuyun.system.controller.PracticeController;
 import com.fuyun.system.controller.PracticeGrantController;
@@ -27,6 +28,7 @@ import com.fuyun.system.service.impl.DictItemServiceImpl;
 import com.fuyun.system.service.impl.DictQueryServiceImpl;
 import com.fuyun.system.service.impl.DictTypeServiceImpl;
 import com.fuyun.system.service.impl.DictVersionServiceImpl;
+import com.fuyun.system.service.impl.OrgQueryServiceImpl;
 import com.fuyun.system.service.impl.PermissionAdminServiceImpl;
 import com.fuyun.system.service.impl.PracticeCheckPortImpl;
 import com.fuyun.system.service.impl.PracticeServiceImpl;
@@ -76,6 +78,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
     DictTypeController.class,
     DictVersionController.class,
     DictController.class,
+    OrgQueryServiceImpl.class,
+    OrgController.class,
     AuditLogServiceImpl.class,
     AuditLogAspect.class,
     PracticeServiceImpl.class,
