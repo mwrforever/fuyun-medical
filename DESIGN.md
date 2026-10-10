@@ -320,7 +320,7 @@ dialog：卡面底 + radius 14 + shadow-lg + 衬线标题 + 头部发丝；drawe
 ## 工程红线（全程序执行者必读）
 
 1. **token 命名空间**：`--fuy-*` 每 app 各持一份，禁上收 packages/shared；portal/bigscreen 批次 5 各建各的。
-2. **EP 映射单向通道**：`--fuy-* → --el-*` 仅 element-plus.css；`:root:root` 双写或 `.fuy-*` 挂类；fuy 层永不引用 el 值。
+2. **EP 映射单向通道**：`--fuy-* → --el-*` 仅 element-plus.css；`:root:root` 双写或 `.fuy-*` 挂类；fuy 层永不引用 el 值。通道扩充注记（2026-10-10 主控裁决留痕）：焦点环语汇类属性级定向收口：限 `:focus-visible` 单属性、限 element-plus.css、须留痕裁决（根因=EP 元素自身声明短路 ：root 继承，变量映射通道无效）。
 3. **token 三层纪律**：primitive（十值正名/palette/字号/间距）→ semantic（语义别名）→ 原生面收编（选区/插入符/滚动条/焦点环/tabular）；模块增量零新色值。
 4. **动效红线**：motion.css 唯一 keyframes 来源；只动 transform/opacity（stroke-dashoffset 例外不扩围）；侧栏折叠瞬切；reduced-motion 时长+延迟双归零兜底（唯一豁免 `.fuy-loading-essential`）；氛围动效限登录门厅。
 5. **样式技术栈与加载顺序**：纯 CSS 自定义属性 + scoped CSS；`index.css` 固定 fonts → tokens → element-plus → motion；字体零外链（子集 woff2 本地化）。

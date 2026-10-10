@@ -11,7 +11,8 @@
    本块使全站主色由 EP 默认 #409eff 统一切换为浓墨 #2a2318——「墨即操作」，主按钮=墨色
    实底；primary 阶五档取暖纸十值结算（浓墨/灰墨/弱墨/纸缘/暖洗两档/墨加深档）；
    状态朱通道（--el-color-danger）落印泥朱（双红分工：状态朱承校验错误，装饰朱永不入通道）；
-   A-5 功能色洗底族（2026-10-10 主控批准）＝既有状态色 alpha 派生，零新色相。 */
+   A-5 功能色全族映射（2026-10-10 主控批准：四族 + EP error 别名族 + 按钮焦点环钉墨）
+   ＝既有状态色 alpha 派生，零新色相。 */
 :root:root {
   --el-color-primary: #2a2318;
   /* light-N = N×10% 白混入主色（EP 官方混色公式同源核算取整；暖纸卷宗换血为十值结算档） */
@@ -78,20 +79,79 @@
   --el-dialog-border-radius: var(--fuy-radius-card);
   --el-descriptions-item-bordered-label-background: var(--el-fill-color-light);
 
-  /* ===== A-5 功能色洗底族（2026-10-10 主控批准生效）=====
-     el-tag light 底/message/notification 底/按钮 hover 底的暖化：全部为既有状态色
-     alpha 派生，零新色相（dark-2=印泥朱按压档 #82251f）；light-3/5/7 与 warning/
-     success/info 基色维持 EP 默认（未批不落，零偏移） */
-  --el-color-danger: var(--fuy-color-danger-text); /* 危急/停用/作废/校验错误通道＝印泥朱 */
-  --el-color-danger-light-9: rgba(180, 35, 24, 0.08);
+  /* ===== A-5 功能色全族映射（2026-10-10 主控批准生效，琢段扩批+验段回炉：洗底族 →
+     四族及 EP error 别名族全 7 档）=====
+     消除 message/notification/tag/按钮在暖纸面上的 EP 冷调残留（EP 默认 danger light-3=
+     #f89898 冷粉 hover、warning 基 #e6a23c 冷黄、info 基冷灰）。四族同构落位口径
+     （与 danger 既有通道一致，逐族七档 base/light-3/5/7/8/9/dark-2）：
+     ① base=语义状态通道直引（印泥朱/警示琥珀/确认绿/灰墨，tokens.css 单一来源）；
+     ② light-8/9=契约 A-5 批准的逐族定档 alpha（低浓度洗底在暖纸面上需按族略增方可辨，
+        非公式直取：danger/info 0.08/0.14、warning/success 0.1/0.16）；
+     ③ light-3/5/7=EP 官方「N×10% 白混入」公式的纸面同构——以 rgba(N×10% 基色 alpha)
+        写出（0.7/0.5/0.3），合成底为所在纸面（卡面近白作混底），视觉等价 EP 白混阶梯
+        且零新色相；
+     ④ dark-2=按压档：danger 走印泥朱深一档（十值 cinnabar-dk，契约 A-5 钉定的语义值），
+        warning/success/info 以 color-mix 承 EP「20% 黑混入」公式（基色换血自动承继，
+        零新 hex 字面量）；
+     ⑤ error=EP 内建 error 语义别名族，与 danger 族同构直引钉死（EP 2.14.5 别名默认
+        仍为冷粉阶，漏映射即回落冷底冷字）。按钮焦点环浓墨不经本变量映射块承载——
+        EP 在 .el-button 元素自身逐型声明 --el-button-outline-color，元素级声明恒胜
+        :root 继承（2026-10-10 验段证伪在案），改由紧随本块的属性级定向收口承载 */
+  /* danger 族：危急/停用/作废/校验错误＝印泥朱（双红分工：状态朱承状态通道，装饰朱不入） */
+  --el-color-danger: var(--fuy-color-danger-text);
+  --el-color-danger-light-3: rgba(180, 35, 24, 0.7); /* 实底钮 hover 面 */
+  --el-color-danger-light-5: rgba(180, 35, 24, 0.5); /* 禁用实底面 */
+  --el-color-danger-light-7: rgba(180, 35, 24, 0.3); /* 描边浓档 */
   --el-color-danger-light-8: rgba(180, 35, 24, 0.14);
-  --el-color-danger-dark-2: #82251f;
-  --el-color-warning-light-9: rgba(154, 71, 8, 0.1);
+  --el-color-danger-light-9: rgba(180, 35, 24, 0.08);
+  --el-color-danger-dark-2: var(--fuy-palette-red-800); /* 印泥朱按压档（#82251f） */
+  /* warning 族：警示/冻结/待办＝警示琥珀（A-2 已批基色 #9a4708） */
+  --el-color-warning: var(--fuy-color-warning-text);
+  --el-color-warning-light-3: rgba(154, 71, 8, 0.7);
+  --el-color-warning-light-5: rgba(154, 71, 8, 0.5);
+  --el-color-warning-light-7: rgba(154, 71, 8, 0.3);
   --el-color-warning-light-8: rgba(154, 71, 8, 0.16);
-  --el-color-success-light-9: rgba(31, 122, 51, 0.1);
+  --el-color-warning-light-9: rgba(154, 71, 8, 0.1);
+  --el-color-warning-dark-2: color-mix(in srgb, var(--fuy-color-warning-text) 80%, black);
+  /* success 族：确认/在档＝确认绿（#1f7a33 保留） */
+  --el-color-success: var(--fuy-color-success-text);
+  --el-color-success-light-3: rgba(31, 122, 51, 0.7);
+  --el-color-success-light-5: rgba(31, 122, 51, 0.5);
+  --el-color-success-light-7: rgba(31, 122, 51, 0.3);
   --el-color-success-light-8: rgba(31, 122, 51, 0.16);
-  --el-color-info-light-9: rgba(90, 76, 56, 0.08);
+  --el-color-success-light-9: rgba(31, 122, 51, 0.1);
+  --el-color-success-dark-2: color-mix(in srgb, var(--fuy-color-success-text) 80%, black);
+  /* info 族：中性/弱化＝灰墨（随换血自动承继 #5a4c38） */
+  --el-color-info: var(--fuy-color-info-text);
+  --el-color-info-light-3: rgba(90, 76, 56, 0.7);
+  --el-color-info-light-5: rgba(90, 76, 56, 0.5);
+  --el-color-info-light-7: rgba(90, 76, 56, 0.3);
   --el-color-info-light-8: rgba(90, 76, 56, 0.14);
+  --el-color-info-light-9: rgba(90, 76, 56, 0.08);
+  --el-color-info-dark-2: color-mix(in srgb, var(--fuy-color-info-text) 80%, black);
+  /* error 族：EP 内建 error 语义别名族（dist 消费面：el-message--error/el-notification/
+     el-alert--error/el-result/el-message-box/el-text/el-check-tag 等），与 danger 族
+     同构直引钉死——EP 2.14.5 的 error 别名默认仍为冷粉阶，漏映射时 error 型 message
+     回落 #fef0f0 冷底冷字（验段实测）；别名与 danger 同值＝印泥朱单一事实源，零新色相
+     （-rgb 三元组 dist 内零 var() 消费，经核不映射） */
+  --el-color-error: var(--fuy-color-danger-text);
+  --el-color-error-light-3: rgba(180, 35, 24, 0.7);
+  --el-color-error-light-5: rgba(180, 35, 24, 0.5);
+  --el-color-error-light-7: rgba(180, 35, 24, 0.3);
+  --el-color-error-light-8: rgba(180, 35, 24, 0.14);
+  --el-color-error-light-9: rgba(180, 35, 24, 0.08);
+  --el-color-error-dark-2: var(--fuy-palette-red-800);
+}
+
+/* 按钮键盘焦点环钉浓墨：EP 在 .el-button 元素自身逐型声明 --el-button-outline-color
+   （元素级声明恒胜 :root 继承），变量映射通道无效；此处按全站焦点环语汇做属性级定向
+   收口（先例：.fuy-menu .el-menu-item:focus-visible 白环）。通道裁决：主控 2026-10-10，
+   验段复验根因「元素自身声明短路继承」在案。特异性 (0,2,1) 恒胜 EP
+   .el-button:focus-visible (0,2,0)——同特异性 (0,2,0) 会依赖按需注入顺序（本文件头注
+   同款不可靠问题），故以 button 类型选择器加一档；EP 已自声明 outline 简写，覆盖
+   outline-color 单属性即可 */
+button:is(.el-button):focus-visible {
+  outline-color: var(--fuy-color-brand);
 }
 
 /* el-table 高密度模式：挂载方式为 <el-table> 外层卡片或自身加 class="fuy-dense"，
@@ -910,10 +970,13 @@
 
 /* ---------- 壳层微调（契约 ⑪.6）：品牌字标衬线化经挂类承载（AppSidebar 组件文件
    零改动）——展开「富云」衬线字标、折叠「富」单字书法钤印（字体三分：品牌印块归
-   钤印家族字）；既有 .fuy-menu-brand 段零改动，此处只增 font-family 一族 ---------- */
+   钤印家族字）；既有 .fuy-menu-brand 段零改动，此处只增 font-family/font-weight 一族 ---------- */
 .fuy-menu-brand {
   font-family: var(--fuy-font-family-serif);
 }
 .fuy-menu-brand.is-fold {
   font-family: var(--fuy-font-family-brush);
+  /* 书法家族字仅 400 一档（fonts.css 只声明 ma-shan-zheng-400）：继承基础段的 700 会
+     触发合成粗体糊化楷书笔画，归 400 与门厅 .login-brand-mark「富」印块同口径 */
+  font-weight: 400;
 }

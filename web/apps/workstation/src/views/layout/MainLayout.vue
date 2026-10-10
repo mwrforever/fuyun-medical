@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 主布局（「纸质病案 Paper Chart」世界壳层 · 树形菜单形态）：蓝黑墨书脊导轨 + 亮纸白
-// 顶条 + 纸白工作面三段。侧栏宽度态（展开 240px / 收起 64px）在本组件持有（父子直连
+// 主布局（「暖纸卷宗 Warm Paper Archive」世界壳层 · 树形菜单形态）：棕墨卷宗封皮导轨 +
+// 卡面亮纸顶条 + 暖纸工作面三段。侧栏宽度态（展开 240px / 收起 64px）在本组件持有（父子直连
 // props 下行/事件上行，不引 store；内存态不持久化，刷新复位）；岗位维度已随批次 2
 // 裁决废除，本组件不再 provide 任何岗位状态。aside 宽度瞬切零动画（铁律禁 width 动画）。
 import { ref } from 'vue';
@@ -44,26 +44,28 @@ const collapsed = ref(false);
   overflow: hidden; /* 滚动收敛到内容区（.main-content），三段骨架自身不滚 */
 }
 
-/* 蓝黑墨书脊导轨：外缘缝用书脊深墨（缝在封皮上），不用灰线（灰缝属于桌面世界）；
-   滚动轴用纸色细轴（石规灰轴在深墨底上不可见，穿纸细轴与样稿 .rail 同源） */
+/* 棕墨卷宗封皮导轨（书脊=封皮，缝在封皮上）：外缘缝用书脊深墨，不用灰线（灰缝属于
+   桌面世界）；滚动轴用纸纱细轴（paper 十值 alpha，与 tokens.css --fuy-shell-hover 同源
+   口径——石规轴在深墨底上不可见，穿纸细轴与样稿 .rail 同源；旧世界冷白派生轴色于
+   2026-10-10 琢段回炉勘误随换血更正） */
 .main-aside {
   background: var(--fuy-shell-bg);
   border-right: 1px solid var(--fuy-shell-hairline);
-  scrollbar-color: rgba(253, 252, 248, 0.25) transparent;
+  scrollbar-color: rgba(244, 236, 219, 0.25) transparent;
 }
 
 .main-aside::-webkit-scrollbar-thumb {
-  background: rgba(253, 252, 248, 0.25);
+  background: rgba(244, 236, 219, 0.25);
   background-clip: content-box;
 }
 
-/* 亮纸白顶条：与工作面之间一道面板石规（顶栏是搁在工作面上的一页纸压条，样稿 topbar 同款） */
+/* 卡面亮纸顶条：与工作面之间一道面板石规（顶栏是搁在工作面上的一页纸压条，样稿 topbar 同款） */
 .main-header {
   background: var(--fuy-surface-card);
   border-bottom: var(--fuy-border-panel);
 }
 
-/* 纸白工作面：卡面亮纸白（--fuy-surface-card）浮于其上，靠规线三级区隔 */
+/* 暖纸工作面：卡面亮纸（--fuy-surface-card）浮于其上，靠规线三级区隔 */
 .main-content {
   background: var(--fuy-surface-page);
 }

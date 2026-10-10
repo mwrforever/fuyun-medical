@@ -61,10 +61,11 @@
   --fuy-color-info-text: var(--fuy-palette-gray-600); /* 7.1:1，中性态（灰墨） */
   --fuy-color-focus-ring: rgba(42, 35, 24, 0.35); /* 键盘焦点环（墨焦点环，ink alpha 换血） */
 
-  /* 诊区分级语义色（预检分诊四级，实底白字徽标场景，均 ≥4.5:1） */
-  --fuy-color-triage-l1: var(--fuy-palette-red-600); /* Ⅰ级-危 4.8:1 */
-  --fuy-color-triage-l2: var(--fuy-palette-orange-700); /* Ⅱ级-急 5.2:1（A-3 已批） */
-  --fuy-color-triage-l3: var(--fuy-palette-amber-700); /* Ⅲ级-重 5.4:1（A-2 已批） */
+  /* 诊区分级语义色（预检分诊四级，实底白字徽标场景，均 ≥4.5:1；注释对比度统一为
+     白字实底口径，2026-10-10 琢段按契约 ③.2 核验勘误） */
+  --fuy-color-triage-l1: var(--fuy-palette-red-600); /* Ⅰ级-危 6.6:1 */
+  --fuy-color-triage-l2: var(--fuy-palette-orange-700); /* Ⅱ级-急 6.1:1（A-3 已批） */
+  --fuy-color-triage-l3: var(--fuy-palette-amber-700); /* Ⅲ级-重 6.4:1（A-2 已批） */
   --fuy-color-triage-l4: var(--fuy-palette-blue-700); /* Ⅳ级-普 6.7:1 */
 
   /* 票据状态语义（已流转态文本/描边用色；复用上列 AA 达标值） */
@@ -153,11 +154,12 @@
    三层纪律：全部为 semantic 层语义别名或组件/场景几何值，零新色值（色值一律指向既有 palette）。 */
 
 :root {
-  /* 护理级别徽标色（实底白字场景；色值与分诊四级同源 palette，语义独立命名防混用） */
-  --fuy-color-nursing-special: var(--fuy-palette-red-600); /* 特级护理 4.8:1 */
-  --fuy-color-nursing-l1: var(--fuy-palette-orange-700); /* 病重护理 5.2:1 */
-  --fuy-color-nursing-l2: var(--fuy-palette-amber-700); /* 一级护理 5.0:1 */
-  --fuy-color-nursing-l3: var(--fuy-palette-green-800); /* 普通护理 6.3:1 */
+  /* 护理级别徽标色（实底白字场景；色值与分诊四级同源 palette，语义独立命名防混用；
+     注释对比度为白字实底口径，2026-10-10 琢段勘误） */
+  --fuy-color-nursing-special: var(--fuy-palette-red-600); /* 特级护理 6.6:1 */
+  --fuy-color-nursing-l1: var(--fuy-palette-orange-700); /* 病重护理 6.1:1 */
+  --fuy-color-nursing-l2: var(--fuy-palette-amber-700); /* 一级护理 6.4:1 */
+  --fuy-color-nursing-l3: var(--fuy-palette-green-800); /* 普通护理 5.4:1 */
 
   /* 病情标记角标（卡墙 mini 徽标底色） */
   --fuy-color-nursing-critical: var(--fuy-palette-red-600); /* 病危「危」/ 过敏「敏」 */
@@ -170,7 +172,7 @@
   --fuy-chart-temp-color: var(--fuy-palette-blue-700); /* 体温符号与连线（蓝笔惯例）6.7:1 */
   --fuy-chart-pulse-color: var(
     --fuy-palette-red-600
-  ); /* 脉搏/心率/物理降温/短绌/事件竖线（红笔惯例）4.8:1 */
+  ); /* 脉搏/心率/物理降温/短绌/事件竖线（红笔惯例）6.6:1 */
   --fuy-chart-grid-color: rgba(
     90,
     76,

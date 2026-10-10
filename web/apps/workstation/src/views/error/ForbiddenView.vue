@@ -47,11 +47,12 @@ function goHome(): void {
 }
 
 /* 书法「禁」水印：装饰层静态巨字（朱砂 @0.06，opacity 承弱化不引新色值；
-   业务页禁氛围动效——静态呈现零动画） */
+   业务页禁氛围动效——静态呈现零动画）。出血位对照门厅「启」水印校准
+   （LoginView .login-cover-deco::before 同款 right -30/top -40，280px 级同构图语法） */
 .forbidden-mark {
   position: absolute;
-  right: -20px;
-  top: -60px;
+  right: -30px;
+  top: -40px;
   z-index: -1;
   font-family: var(--fuy-font-family-brush);
   font-size: 280px;
