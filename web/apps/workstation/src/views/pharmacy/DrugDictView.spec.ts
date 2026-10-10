@@ -1,7 +1,10 @@
-// 药品字典页单测（FU-M06-01/02 前端面）：未对照药品渲染「不可医保结算」标记（对照态可视面）、
-// 对照表单三字段提交以行 id 调 mapInsurance（雪花 ID string 原样入网，禁 number 处理）；
-// 对照提交在途防抖（W-22⑥）：慢响应窗口内按钮禁用且二次点击零出网，结束后复位可再点；
-// EX-46/FE-A2-09 变更提交整单覆盖二次确认（取消零出网/确认出网，建档路径不确认）。
+// 药品字典页单测（FU-M06-01/02 前端面 · 暖纸卷宗重排批次 P10）：业务行为断言全量保留
+// （未对照药品渲染「不可医保结算」标记、对照表单三字段提交以行 id 调 mapInsurance（雪花 ID
+// string 原样入网禁 number 处理）、对照提交在途防抖 W-22⑥、EX-46/FE-A2-09 变更整单覆盖
+// 二次确认、PR-4F 双码权限态），并按逐页蓝图 P10 spec 锚点新增构图断言：门牌页首（衬线标题
+// +签认人·时刻批注行）、筛选与建档主钮分主次（主钮右挂 .fuy-filter-actions 墨实底）、列序
+// 重排（通用名首列/药码次之）、usePagedList 分页化收口（50/页+翻页 0 基转换+检索回第一页）、
+// 两弹窗挂 .fuy-dialog+.fuy-form、显式 popper 挂 fuy-snap-popper、空态 .fuy-empty 脸化。
 // api mock 承载，不打真实网络。
 // 桩面：覆盖确认走 ElMessageBox.confirm 替身（默认确认放行，用例按需 mockRejectedValueOnce 覆写）。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -328,6 +331,214 @@ describe('药品字典页', () => {
     expect(buttonTexts).toContain('医保对照');
     expect(buttonTexts).toContain('药品建档');
     expect(buttonTexts).toContain('变更');
+    wrapper.unmount();
+  });
+
+  /* ==================== 逐页蓝图 P10 新增锚点（门牌/主次钮/列序/分页/挂类/空态） ==================== */
+
+  it('门牌页首承载衬线标题与签认人·时刻批注行（会话真值非伪数据）', () => {
+    const wrapper = mount(DrugDictView);
+
+    // 门牌页首锚（蓝图 P10.7/契约 ⑧.1）：原 el-card #header「药品字典」升格衬线主标题 +
+    // 「谁·何时」批注行取会话真值（空值 — 占位），2px 墨规收底归全局 .fuy-page-head 族
+    expect(wrapper.find('.fuy-page').exists()).toBe(true);
+    expect(wrapper.find('header.fuy-page-head').exists()).toBe(true);
+    expect(wrapper.find('h1.fuy-page-title').text()).toBe('药品字典');
+    const note = wrapper.find('.fuy-page-note');
+    expect(note.exists()).toBe(true);
+    expect(note.text()).toContain('签认人');
+    expect(note.text()).toContain('王药师');
+    expect(note.find('time').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('筛选与建档主钮分主次：筛选区 .fuy-filter + 建档墨实底主钮右挂 .fuy-filter-actions', () => {
+    const wrapper = mount(DrugDictView);
+
+    // 构图锚（蓝图 P10.2）：筛选卡独立语义位（.fuy-filter）+ 主表卡 .fuy-card.fuy-dense；
+    // 检索钮留在筛选控件序列内（次钮），药品建档主钮（EP primary=墨实底自动承继）右挂
+    // .fuy-filter-actions（margin-left:auto 主次分区），且 v-perm 码面不变（既有口径）
+    expect(wrapper.find('.fuy-filter').exists()).toBe(true);
+    expect(wrapper.find('.fuy-filter').text()).toContain('关键词');
+    const actions = wrapper.find('.fuy-filter .fuy-filter-actions');
+    expect(actions.exists()).toBe(true);
+    const createBtn = actions.findAll('button').find((b) => b.text() === '药品建档');
+    expect(createBtn).toBeDefined();
+    expect(createBtn?.classes()).toContain('el-button--primary');
+    // 检索次钮不在主钮挂载区（分主次的版式表达）
+    const searchInActions = actions.findAll('button').find((b) => b.text() === '检索');
+    expect(searchInActions).toBeUndefined();
+    expect(wrapper.findAll('button').map((b) => b.text())).toContain('检索');
+    // 主表卡：fuy-dense 必须挂卡容器（密度规则为后代选择器 .fuy-dense .el-table）
+    expect(wrapper.find('section.fuy-card.fuy-dense .el-table').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('列序按扫读频率重排：通用名首列、药码次之（蓝图 P10.2）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+
+    // 列序锚：表头前两列=通用名 → 药码（重排前为药码 → 通用名），空表头格（固定列垫）不计
+    const headerCells = wrapper
+      .findAll('.el-table__header-wrapper th .cell')
+      .map((c) => c.text().trim())
+      .filter((t) => t !== '');
+    expect(headerCells[0]).toBe('通用名');
+    expect(headerCells[1]).toBe('药码');
+    expect(headerCells.indexOf('通用名')).toBeLessThan(headerCells.indexOf('药码'));
+    // 数据行同序：首格=通用名值、次格=药码值（药码主号列挂 .fuy-num 等宽，契约 ⑧.4/域级一致性）
+    const firstRowCells = wrapper.findAll('.el-table__body-wrapper .el-table__row td');
+    expect(firstRowCells[0].text()).toBe('阿莫西林胶囊');
+    expect(firstRowCells[1].text()).toBe('D001');
+    expect(firstRowCells[1].classes()).toContain('fuy-num');
+    wrapper.unmount();
+  });
+
+  it('usePagedList 分页化收口：50/页出网、翻页 0 基转换、检索回第一页（蓝图 P10.6）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+
+    // 挂载即检索（既有口径）：usePagedList 收口后出网带 0 基 page 与 size 50（契约可选参既有，
+    // 替换重排前「不传 page/size 后端兜底」的全量渲染隐患）
+    expect(vi.mocked(searchDrugs)).toHaveBeenCalledWith({
+      keyword: undefined,
+      essential: undefined,
+      insuranceMapped: undefined,
+      page: 0,
+      size: 50,
+    });
+    // 有结果才出分页（total>0 门控），翻页回传 1 基页码 → 契约 0 基 page=1 出网
+    // （按组件名取包装器：翻页经 current-change 事件驱动，断言视图侧接线而非 EP 内部点击换算）
+    const pagination = wrapper.getComponent({ name: 'ElPagination' });
+    pagination.vm.$emit('current-change', 2);
+    await flushPromises();
+    expect(vi.mocked(searchDrugs)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, size: 50 }),
+    );
+    // 换条件点检索：回第一页（usePagedList search 出口）再出网
+    await clickButton(wrapper, '检索');
+    await flushPromises();
+    expect(vi.mocked(searchDrugs)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 0, size: 50 }),
+    );
+    wrapper.unmount();
+  });
+
+  it('筛选三参出网：关键词经检索/回车同出口原样合并分页参数（三参契约保留）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+
+    await wrapper.find('input[placeholder="名称/拼音/医保码"]').setValue('阿莫');
+    await clickButton(wrapper, '检索');
+    await flushPromises();
+    // 三参（keyword/essential/insuranceMapped）原样出网 + 分页参数合并（trim 归一既有口径）
+    expect(vi.mocked(searchDrugs)).toHaveBeenLastCalledWith({
+      keyword: '阿莫',
+      essential: undefined,
+      insuranceMapped: undefined,
+      page: 0,
+      size: 50,
+    });
+    // 回车与检索钮同走 handleSearch 出口（既有联动口径保留）
+    await wrapper.find('input[placeholder="名称/拼音/医保码"]').setValue('025g');
+    await wrapper.find('input[placeholder="名称/拼音/医保码"]').trigger('keyup.enter');
+    await flushPromises();
+    expect(vi.mocked(searchDrugs)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ keyword: '025g', page: 0, size: 50 }),
+    );
+    wrapper.unmount();
+  });
+
+  it('建档/变更与医保对照两弹窗挂 .fuy-dialog+.fuy-form 弹层脸（契约 ⑤#9/⑫.4-③）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({})],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+
+    // 先开建档弹窗再开对照弹窗（两弹层各自独立挂类，同时在场便于一次断言）
+    await clickButton(wrapper, '药品建档');
+    await flushPromises();
+    await clickButton(wrapper, '医保对照');
+    await flushPromises();
+    const dialogs = wrapper.findAll('.fuy-dialog');
+    expect(dialogs.length).toBe(2);
+    // 表单整脸挂 .fuy-form（label 疏排/聚焦墨环/错误显影经全局挂类承载）
+    expect(wrapper.findAll('.fuy-dialog .fuy-form').length).toBe(2);
+    // 两弹窗标题位（建档/变更随 editId 切换的既有语义保留）
+    expect(wrapper.text()).toContain('药品建档');
+    expect(wrapper.text()).toContain('医保编码对照');
+    wrapper.unmount();
+  });
+
+  it('显式 popper 统一挂 fuy-snap-popper（基药/医保对照两下拉硬 snap 门禁）', () => {
+    const wrapper = mount(DrugDictView);
+
+    // 契约总则 4/⑦.5：一切显式 popper 挂 fuy-snap-popper——本页仅筛选区两下拉
+    const selectPopperClasses = wrapper
+      .findAllComponents({ name: 'ElSelect' })
+      .map((node) => node.props('popperClass'));
+    expect(selectPopperClasses).toHaveLength(2);
+    for (const popperClass of selectPopperClasses) {
+      expect(popperClass).toBe('fuy-snap-popper');
+    }
+    wrapper.unmount();
+  });
+
+  it('药码族号码列等宽全覆盖：医保编码列与药码列同挂 fuy-num（域级「药品主号一律等宽」）', async () => {
+    vi.mocked(searchDrugs).mockResolvedValue({
+      content: [drugRow({ nhsaCode: 'XN01AX0900014305116', insuredSettleable: true })],
+      page: 0,
+      size: 20,
+      total: '1',
+    });
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+
+    // 域级一致性（蓝图药房域附加节「药品/单据主号一律 .fuy-num」）：医保编码同为药品编码族
+    // 号码列，与药码列同挂等宽通道（tabular-nums），防编码列宽度跳动
+    const cells = wrapper.findAll('.el-table__body-wrapper .el-table__row td');
+    const nhsaCell = cells.find((c) => c.text() === 'XN01AX0900014305116');
+    expect(nhsaCell).toBeDefined();
+    expect(nhsaCell?.classes()).toContain('fuy-num');
+    wrapper.unmount();
+  });
+
+  it('查无结果空态走 .fuy-empty 脸（禁纸箱插画）且零结果不出分页', async () => {
+    const wrapper = mount(DrugDictView);
+    await flushPromises();
+
+    // 空态脸锚（契约 ⑥/蓝图 P10.2）：el-empty 默认纸箱插画不渲染；主句合「暂无〈业务客体〉」
+    // 语法 + 说明给下一步（挂载即检索，初始与查无结果同语义，无需 searched 门控——既有口径）
+    expect(wrapper.find('.el-empty').exists()).toBe(false);
+    const empty = wrapper.find('.fuy-empty');
+    expect(empty.exists()).toBe(true);
+    expect(empty.attributes('role')).toBe('status');
+    expect(empty.find('.fuy-empty-title').text()).toBe('暂无匹配药品');
+    expect(empty.find('.fuy-empty-hint').text()).toContain('重新检索');
+    // total=0 不出分页条（usePagedList total 门控既有）
+    expect(wrapper.find('.el-pagination').exists()).toBe(false);
     wrapper.unmount();
   });
 });

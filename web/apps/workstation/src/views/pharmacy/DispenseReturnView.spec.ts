@@ -1,7 +1,13 @@
-// 退药受理页单测（FU-M06-05 前端面）：实物退缺追溯码被前端前置拦截不出网（「无码不结」
-// 受理面）、提交以回传单号+受理模式+逐行集调 createDispenseReturn（单号与明细锚点均由
-// 后端回传承载，页面不自造）；提交在途防抖（W-22⑥）：慢响应窗口内按钮禁用且二次点击零出网。
-// api mock 承载，不打真实网络。
+// 退药受理页单测（FU-M06-05 前端面 · 暖纸卷宗 P12 蓝图重排）：既有业务断言全量保留——
+// 实物退缺追溯码被前端前置拦截不出网（「无码不结」受理面）、提交以回传单号+受理模式+逐行集
+// 调 createDispenseReturn（单号与明细锚点均由后端回传承载，页面不自造）、提交在途防抖
+// （W-22⑥：慢响应窗口内按钮禁用且二次点击零出网）、PR-4F 元素码无码 DOM 移除；并按逐页蓝图
+// P12 spec 锚点新增构图断言——门牌页首锚点、受理模式 radio 前置升格检索区（.fuy-filter 内且
+// 居检索钮之后末位，先定模式再录入）、检索卡/结果卡 .fuy-card 挂类与结果区 .fuy-form 表单脸、
+// 两态空态 .fuy-empty 脸化（未检索引导 / 检索无单文案保留）。其中门牌/模式前置/挂类/空态脸
+// 为构图性断言（先红后绿）；模式联动 placeholder 与发药中退场免码出网为保留性锚（对重排前
+// 实现即绿，防换脸过程丢失既有分支）。api mock 承载，不打真实网络；门牌批注行取 auth 会话
+// 真值（pinia 播种，billing 三页 spec 同款基建）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -101,7 +107,8 @@ describe('退药受理页', () => {
     sessionStorage.clear();
     pinia = createPinia();
     setActivePinia(pinia);
-    // 会话种子（PR-4F #21）：真实 PHARMACIST 会话经登录契约导出含码，既有用例语义不变
+    // 会话种子（PR-4F #21）：真实 PHARMACIST 会话经登录契约导出含码，既有用例语义不变；
+    // displayName 同时供门牌批注行「签认人」断言（王药师）
     sessionStorage.setItem(
       'fy:workstation:auth',
       JSON.stringify({
@@ -230,6 +237,150 @@ describe('退药受理页', () => {
     vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
     const wrapper = await mountViewWithSheet();
     expect(wrapper.findAll('button').map((b) => b.text())).toContain('提交退药');
+    wrapper.unmount();
+  });
+
+  it('门牌页首锚点：衬线标题「退药受理」/ 签认人·时刻批注行（蓝图 P12.2）', () => {
+    const wrapper = mount(DispenseReturnView);
+
+    // 门牌页首锚（蓝图 P12.2）：衬线标题承接原卡头页面名 + 「谁·何时」批注行取会话真值，
+    // 空值 — 占位禁伪数据；2px 墨规收底走全局 .fuy-page-head 脸（样式层不在此断言）
+    expect(wrapper.find('header.fuy-page-head').exists()).toBe(true);
+    expect(wrapper.find('h1.fuy-page-title').text()).toBe('退药受理');
+    const note = wrapper.find('.fuy-page-note');
+    expect(note.exists()).toBe(true);
+    expect(note.text()).toContain('签认人');
+    expect(note.text()).toContain('王药师');
+    expect(note.find('time').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('受理模式前置：radio 升格检索区（.fuy-filter 内、居检索钮之后末位），先定模式再录入（蓝图 P12.2 禁照抄点）', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    const wrapper = await mountWithSheet();
+
+    // 检索卡 .fuy-filter：处方号输入、检索钮与受理模式 radio 同排（模式是录入前置条件）
+    const filter = wrapper.find('.fuy-filter');
+    expect(filter.exists()).toBe(true);
+    expect(filter.find('input[placeholder="处方号"]').exists()).toBe(true);
+    expect(filter.findAll('button').map((b) => b.text())).toContain('检索发药单');
+
+    // 模式组锚：radio 组在筛选区内，两档文案保留（实物退 / 发药中退场）
+    const radioGroup = filter.find('.el-radio-group');
+    expect(radioGroup.exists()).toBe(true);
+    expect(radioGroup.text()).toContain('发药后实物退');
+    expect(radioGroup.text()).toContain('发药中明细退场');
+
+    // 末位锚（禁照抄点）：radio 组居检索钮之后——禁回落「明细表之后」旧版式
+    const children = Array.from(filter.element.children);
+    const searchButtonIndex = children.findIndex(
+      (el) => el.tagName === 'BUTTON' && el.textContent === '检索发药单',
+    );
+    const radioGroupIndex = children.findIndex((el) => el.classList.contains('el-radio-group'));
+    expect(searchButtonIndex).toBeGreaterThan(-1);
+    expect(radioGroupIndex).toBeGreaterThan(searchButtonIndex);
+
+    // 结果区不再承载模式单选（旧版式残留即违蓝图）：明细表所在结果区内零 radio
+    const resultArea = wrapper.find('.fuy-form');
+    expect(resultArea.exists()).toBe(true);
+    expect(resultArea.find('.el-radio-group').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('两态空态脸化（契约 ⑥/蓝图 P12.2）：未检索给引导脸，检索无单保留「该处方无发药单」文案且 warning 弹错保留', async () => {
+    // 未检索态（searched=false）：引导空态脸 + 合「尚无」语法 + 说明给下一步；纸箱插画不渲染
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    const initial = mount(DispenseReturnView);
+    expect(initial.find('.el-empty').exists()).toBe(false);
+    const guidance = initial.find('.fuy-empty');
+    expect(guidance.exists()).toBe(true);
+    expect(guidance.attributes('role')).toBe('status');
+    expect(guidance.find('.fuy-empty-title').text()).toContain('尚无');
+    expect(guidance.find('.fuy-empty-hint').text()).toContain('处方号');
+    initial.unmount();
+
+    // 检索无单态（searched 门控语义保留）：warning 弹错既有 + 空态脸文案锚「该处方无发药单」
+    vi.mocked(listDispenses).mockResolvedValue([]);
+    const wrapper = mount(DispenseReturnView);
+    await wrapper.find('input[placeholder="处方号"]').setValue('RX-NONE');
+    await clickButton(wrapper, '检索发药单');
+    await flushPromises();
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('该处方无发药单');
+    expect(wrapper.find('.el-empty').exists()).toBe(false);
+    const empty = wrapper.find('.fuy-empty');
+    expect(empty.exists()).toBe(true);
+    expect(empty.find('.fuy-empty-title').text()).toBe('该处方无发药单');
+    // 错误态说问题给恢复：说明句给核对/重试指引，不伪装成「暂无数据」裸词
+    expect(empty.find('.fuy-empty-hint').text()).not.toBe('');
+    wrapper.unmount();
+  });
+
+  it('构图挂类：检索卡/结果卡 .fuy-card + 结果卡 .fuy-dense + 结果区 .fuy-form 表单脸；页根不挂 .fuy-stagger（契约 ⑦.4）', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    const wrapper = await mountWithSheet();
+
+    // 页根挂 .fuy-page（总则 6）且不挂 .fuy-stagger（路由进场过渡归 MainLayout）
+    expect(wrapper.find('.fuy-page').exists()).toBe(true);
+    expect(wrapper.find('.fuy-page').classes()).not.toContain('fuy-stagger');
+
+    // 纵向序=检索卡 + 结果卡两张卷宗卡；行编辑表所在结果卡挂 .fuy-dense（密排后代选择器落点）
+    const cards = wrapper.findAll('.fuy-card');
+    expect(cards.length).toBe(2);
+    expect(cards[1].classes()).toContain('fuy-dense');
+
+    // 结果区表单脸 .fuy-form：行编辑录入（退药数/追溯码）经全局后代选择器承聚焦墨环+朱砂下划
+    const formArea = wrapper.find('.fuy-form');
+    expect(formArea.exists()).toBe(true);
+    expect(formArea.find('table').exists()).toBe(true);
+    expect(formArea.find('.el-descriptions').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('模式切换联动追溯码 placeholder；发药中明细退场免码可出网（模式联动校验另一侧保留锚）', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    const wrapper = await mountWithSheet();
+
+    // 缺省实物退：placeholder 逐码引导（既有文案）
+    expect(wrapper.find('input[placeholder="逐盒扫码，逗号分隔"]').exists()).toBe(true);
+
+    // 切「发药中明细退场」：placeholder 联动为可空提示（模式仅改 placeholder，既有口径）
+    const cancelRadio = wrapper.findAll('.el-radio').find((r) => r.text() === '发药中明细退场');
+    expect(cancelRadio).toBeDefined();
+    await cancelRadio!.find('input').setValue(true);
+    expect(wrapper.find('input[placeholder="实物退才必填"]').exists()).toBe(true);
+
+    // 追溯码留空提交：发药中退场免码放行，出网携 DISPENSING_CANCEL 模式与空码集
+    await clickButton(wrapper, '提交退药');
+    await flushPromises();
+    expect(vi.mocked(createDispenseReturn)).toHaveBeenCalledWith({
+      dispenseNo: 'D1',
+      mode: 'DISPENSING_CANCEL',
+      items: [
+        {
+          prescriptionItemId: '5',
+          returnQuantity: '1',
+          traceCodes: [],
+        },
+      ],
+    });
+    wrapper.unmount();
+  });
+
+  it('模式前置视觉因果：追溯码列表头随模式联动「必填/可空」标识（模式→必填性可见，先见标识后录入）', async () => {
+    vi.mocked(listDispenses).mockResolvedValue([dispenseMock()]);
+    const wrapper = await mountWithSheet();
+
+    // 缺省实物退（追溯码逐码必填）：列表头挂必填标识——与提交拦截同语义前置于录入位
+    const header = () => wrapper.find('.el-table__header-wrapper').text();
+    expect(header()).toContain('追溯码录入（必填）');
+
+    // 切「发药中明细退场」（免码）：列表头联动可空标识，必填字样消隐（双通道：文字标识
+    // 随模式切换即时翻转，操作者录码前即可见当前模式的必填性）
+    const cancelRadio = wrapper.findAll('.el-radio').find((r) => r.text() === '发药中明细退场');
+    expect(cancelRadio).toBeDefined();
+    await cancelRadio!.find('input').setValue(true);
+    expect(header()).toContain('追溯码录入（可空）');
+    expect(header()).not.toContain('必填');
     wrapper.unmount();
   });
 });
