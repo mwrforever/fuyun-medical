@@ -3,6 +3,9 @@
  * prefers-reduced-motion 全局兜底。
  * 铁律：动画属性仅 transform 与 opacity（叠加层用伪元素 opacity 承载底色脉冲）；
  * 零 width/height/top/left 动画；本文件为全站唯一 keyframes 来源，页面零新增。
+ * 边界注记（暖纸卷宗契约 ①/⑦）：氛围级动效（六层底纹/鼠标视差/行军线/书法底字呼吸/
+ * 墨晕/祥云/流水/光带）限登录门厅专属（fuy-login-* 段，消费方仅 LoginView）——业务页
+ * 一律禁止；业务页场景级动效只此路由过渡一处（.fuy-page-*），页内仅反馈级微动效。
  * 级联先例：.fuy-stagger 以子元素内联 --fuy-stagger-index 指定级联序（本文件下文）。
  * 键盘焦点环已收编至 tokens.css 浏览器原生面段（:focus-visible 唯一定义处）。
  */
@@ -22,6 +25,8 @@
     0.22,
     1
   ); /* 强调减速曲线：无过冲，快出极缓停（成功确认时刻） */
+  --fuy-ease-out: cubic-bezier(0.22, 1, 0.36, 1); /* 门面浮入缓动（登录 v3 同源换名） */
+  --fuy-ease-ink: cubic-bezier(0.65, 0.05, 0.36, 1); /* 钤印/下划线缓动（登录 v3 同源换名） */
 
   --fuy-motion-stagger: 40ms; /* 进场/翻牌级联步长，最多 5 档，第 6 项起并发播放 */
 }
@@ -151,6 +156,77 @@
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* ===== 业务共享动效（暖纸卷宗基础册 · 契约 ⑦.3，2026-10-10 新增段，只增不改）=====
+   登录 v3 同构换名（fuy-login-* 段冻结不动，业务语境换名消费）；属性纪律=仅
+   transform/opacity；氛围边界：本段零氛围级动效（登录门厅专属边界见文件头注记） */
+
+/* 钤印落章三拍：1.6 倍旋入 → 0.96 回弹 → 归位斜盖（-8°）（登录 seal-in 语义同构换名，
+   坐标含 translate(-50%,-50%) 定位分量——唯一消费方 .fuy-stamp-toast 居中承载体）；
+   只承成功确认反馈 */
+@keyframes fuy-stamp-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(1.6) rotate(-14deg);
+  }
+  60% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.96) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1) rotate(-8deg);
+  }
+}
+
+/* 表单错误/批注显影：上 4px 沉落 + 显影（登录 note-in 语义同构换名，业务页错误呈现
+   有入场节奏不生硬跳变；消费方 .fuy-form .el-form-item__error） */
+@keyframes fuy-note-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 实时指示呼吸点光环：伪元素光环 scale 1→1.9 + 明灭（登录 pulse-halo 语义同构换名；
+   仅实时/进行语义消费，消费方 .fuy-live-dot::after；reduce 下被全局兜底压停——
+   呼吸点本体恒亮，光环消失不承载状态语义，契约 ⑦.6 判定可接受） */
+@keyframes fuy-halo-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1.9);
+    opacity: 0.12;
+  }
+}
+
+/* 路由切换过渡（契约 ⑦.4，消费方仅 MainLayout <Transition name="fuy-page" mode="out-in">）：
+   旧页 120ms ease-exit opacity 单属性直退 → 新页 240ms ease-enter 自下方 10px 上浮显影，
+   out-in 语义=旧页先退新页后进；与页内 .fuy-stagger 衔接（stagger 自带 delay 不叠加
+   路由延迟，页面根节点不挂 .fuy-stagger 防双重进场节奏）；氛围边界：路由过渡只此一处
+   场景级动效，禁再加全屏底纹/视差 */
+.fuy-page-enter-active {
+  transition:
+    opacity 240ms var(--fuy-ease-enter),
+    transform 240ms var(--fuy-ease-enter);
+}
+.fuy-page-leave-active {
+  transition: opacity var(--fuy-motion-fast) var(--fuy-ease-exit);
+}
+.fuy-page-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+.fuy-page-leave-to {
+  opacity: 0;
 }
 
 /* prefers-reduced-motion 全局兜底：reduce 下全部动画/过渡直达终态 */

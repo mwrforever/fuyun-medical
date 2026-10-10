@@ -5159,6 +5159,22 @@ export interface components {
             roles?: string[];
             permissions?: string[];
         };
+        OrgVO: {
+            /** @example 0 */
+            id?: string;
+            orgCode?: string;
+            orgName?: string;
+            /** @enum {string} */
+            orgType?: "CAMPUS" | "DEPT" | "WARD" | "TEAM";
+            /** @enum {string} */
+            orgAttr?: "CLINICAL" | "MEDTECH" | "ADMIN";
+            /** @example 0 */
+            parentId?: string;
+            /** Format: int32 */
+            sort?: number;
+            /** @enum {string} */
+            status?: "ACTIVE" | "DISABLED";
+        };
         LoginRequest: {
             loginName: string;
             password: string;

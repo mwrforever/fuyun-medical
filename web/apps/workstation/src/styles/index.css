@@ -1,7 +1,9 @@
 /**
  * 全局样式入口：main.ts 仅引此一行（置于 createApp 之前）。
- * 内部顺序固定 tokens → element-plus → motion（设计文档 §7.4）。
+ * 内部顺序固定 fonts → tokens → element-plus → motion（设计文档 §7.4；字体声明居首，
+ * 保衬线/书法族在任何 token/映射消费前完成 @font-face 登记）。
  */
+@import './fonts.css';
 @import './tokens.css';
 @import './element-plus.css';
 @import './motion.css';

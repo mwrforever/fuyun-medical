@@ -1,79 +1,99 @@
 /**
- * 医护工作站设计 token（「纸质病案 Paper Chart」世界，2026-10-08 用户锁定视觉方向，
- * 同日整体推翻「刷手服青绿 Scrub」旧世界）。
+ * 医护工作站设计 token（「暖纸卷宗 Warm Paper Archive」世界，2026-10-10 用户裁定以
+ * 登录页 v3 门面为全站标准执行换血，槽位名不变仅值换血、否定双轨制）。
  * 三层架构：primitive（原始色阶）→ semantic（语义用途）→ 浏览器原生面收编（选区/插入符/
  * 滚动条/焦点环/等宽数字）；命名空间 --fuy-* 与 Element Plus --el-* 完全隔离，单向赋值
  * 仅允许出现在 element-plus.css 映射文件中。
- * 世界语法：纸白工作面（工作面沉纸白/卡面亮纸白/表单域最亮纸面三级）+ 蓝黑墨承文
- * （浓墨/灰墨/弱墨三级）+ 印泥朱只承状态（危急/停用/作废，永不装饰）；
- * 规线三级——2px 墨规=页级、1px 石规=面板级、1px 发丝=卡内；壳层=蓝黑墨书脊（病历夹封皮）；
+ * 世界语法：暖纸三级工作面（工作面陈年纸底/卡面亮纸/表单域最亮纸白）+ 棕墨承文
+ * （浓墨/灰墨/弱墨三级）+ 双红分工（装饰朱=朱砂印鉴/状态朱=印泥朱，永不混用）；
+ * 规线三级——2px 墨规=页级、1px 石规=面板级、1px 发丝=卡内；壳层=棕墨卷宗封皮；
  * 状态色唯一映射（琥珀=警示/冻结、绿=确认/在档，色带永不单独承义）；
- * 中文黑体系统栈 + tabular 等宽数字；8px 基线高密度网格。
- * token 名对存量 38 视图保持兼容（仅值换血），零消费的旧 token 已随本次换血清理。
+ * 字体三分（衬线承门牌/黑体承数据/书法承钤印装饰）+ tabular 等宽数字；8px 基线高密度网格。
+ * token 名对存量视图保持兼容（仅值换血，36 视图凭同名槽位自动承继新值）。
  */
 
-/* 品牌色阶（primitive）：蓝黑墨系——浓墨承载主操作（「墨即操作」），与 EP 默认 #409EFF 区分 */
+/* 品牌色阶（primitive）：棕墨系——浓墨承载主操作（「墨即操作」），与 EP 默认 #409EFF 区分 */
 :root {
-  --fuy-palette-brand-50: #efece1; /* 纸面悬停暖底 */
-  --fuy-palette-brand-100: #e9e7de; /* 墨洗纸一档，选中态底（存量消费全是选中场景，墨洗防「朱=危急」语义误读） */
-  --fuy-palette-brand-200: #2b3a5e; /* 墨描边强调一档 */
-  --fuy-palette-brand-700: #1e2a44; /* 品牌主色＝浓墨（「墨即操作」，白底对比 ~14:1） */
-  --fuy-palette-brand-900: #131c33; /* 书脊深墨/按压 */
+  --fuy-palette-brand-50: #f1e8d7; /* 悬停暖底（paper-deep 半洗结算值） */
+  --fuy-palette-brand-100: #ebe2cd; /* 金洗纸一档，选中态底（gold 0.18 洗——金线装订同源，防「朱=危急」语义误读） */
+  --fuy-palette-brand-200: #5a4c38; /* 墨描边强调一档（灰墨：实底钮悬停亮一档） */
+  --fuy-palette-brand-700: #2a2318; /* 品牌主色＝浓墨（「墨即操作」，卡面对比 14.1:1） */
+  --fuy-palette-brand-900: #1d1811; /* 书脊深墨/按压（墨加深档，A-1 已批 2026-10-10） */
 
-  /* 中性阶（primitive）：纸墨系蓝黑调，正文全部满足白底 ≥4.5:1 */
-  --fuy-palette-gray-50: #efece1; /* 悬停底 */
-  --fuy-palette-gray-600: #565d6e; /* 次要文本 6.3:1（灰墨） */
-  --fuy-palette-gray-800: #1e2a44; /* 强调文本/浓墨 */
+  /* 中性阶（primitive）：暖纸棕墨调，正文全部满足新纸面 ≥4.5:1 */
+  --fuy-palette-gray-50: #f1e8d7; /* 悬停底 */
+  --fuy-palette-gray-600: #5a4c38; /* 次要文本 7.1:1（灰墨） */
+  --fuy-palette-gray-800: #2a2318; /* 强调文本/浓墨 */
 
   /* 状态色阶（primitive）：琥珀=警示/冻结、朱=危急/停用/作废、绿=确认/在档（唯一映射）；
-     印泥朱为状态专用色，禁作装饰 */
-  --fuy-palette-red-700: #b42318; /* 印泥朱（白底 ~6.5:1），危急/停用/作废文字 */
-  --fuy-palette-amber-700: #b45309; /* 警示/冻结（分诊临床惯例色，属状态语义非装饰） */
-  --fuy-palette-green-800: #1f7a33; /* 确认/在档 */
-  --fuy-palette-red-600: #b42318; /* 实底徽标底同印泥朱 */
-  --fuy-palette-red-800: #8f1a12; /* 朱深一档，供按压/hover */
-  --fuy-palette-orange-700: #c2410c; /* 分诊四级/体温单临床惯例色，属状态语义非装饰 */
-  --fuy-palette-blue-700: #1d4ed8; /* 分诊四级/体温单临床惯例色，属状态语义非装饰 */
+     印泥朱为状态专用色，禁作装饰（双红分工条款，DESIGN.md Named Rule）。
+     状态族暖化申请 A-2/A-3/A-5 已于 2026-10-10 主控裁定批准生效，A-4 维持不动 */
+  --fuy-palette-red-700: #b42318; /* 印泥朱（工作面 5.6:1），危急/停用/作废文字（状态朱，保留） */
+  --fuy-palette-amber-700: #9a4708; /* 警示/冻结（琥珀色相不变仅降亮度，A-2 批准：工作面 5.4:1） */
+  --fuy-palette-green-800: #1f7a33; /* 确认/在档（A-4 维持：工作面 4.6:1 达标） */
+  --fuy-palette-red-600: #b42318; /* 实底徽标底同印泥朱（保留） */
+  --fuy-palette-red-800: #82251f; /* 印泥朱深一档（十值 cinnabar-dk），供按压/EP danger dark-2 */
+  --fuy-palette-orange-700: #b03a0c; /* 分诊三级/体温单临床惯例色（A-3 批准：工作面 5.2:1） */
+  --fuy-palette-blue-700: #1d4ed8; /* 分诊四级/体温单临床惯例色（蓝只表示普通/常规，保留） */
+
+  /* 登录十值正名块（primitive 层直引别名，2026-10-10 全站换血落位）：与登录页
+     --login-* 局部色域同名异域互不干扰；换血映射的唯一值源（零新色值纪律的取值表） */
+  --fuy-paper: #f4ecdb; /* 陈年纸底＝工作面 */
+  --fuy-paper-deep: #eadfc8; /* 深纸＝渐变/斑马洗档 */
+  --fuy-paper-edge: #d8c9a8; /* 纸缘＝石规 */
+  --fuy-ink: #2a2318; /* 浓墨承文承操作 */
+  --fuy-ink-soft: #5a4c38; /* 灰墨批注 */
+  --fuy-ink-faint: #8a7a5e; /* 弱墨装饰/占位 */
+  --fuy-cinnabar: #a5352c; /* 装饰朱＝朱砂印鉴（永不承状态） */
+  --fuy-cinnabar-dk: #82251f; /* 朱砂深档（兼印泥朱按压档） */
+  --fuy-cinnabar-lt: #c7544a; /* 朱砂浅档（走线渐变端） */
+  --fuy-gold: #b08d4f; /* 金线装订（选中金洗/虚缝/深描边同源） */
 }
 
-/* 语义色（亮色）：文本全部满足白底 ≥4.5:1 */
+/* 语义色（亮色）：文本全部满足新暖纸工作面 ≥4.5:1 */
 :root {
   --fuy-color-brand: var(--fuy-palette-brand-700); /* 主操作/选中＝浓墨（墨即操作） */
   --fuy-color-text-emphasis: var(--fuy-palette-gray-800); /* 关键数字/姓名＝浓墨 */
   --fuy-color-text-secondary: var(--fuy-palette-gray-600); /* 次要说明＝灰墨 */
-  --fuy-color-success-text: #1f7a33; /* 5.4:1，已发药/已结算（确认/在档） */
-  --fuy-color-warning-text: var(--fuy-palette-amber-700); /* 5.0:1，待支付/待配药 */
-  --fuy-color-danger-text: var(--fuy-palette-red-700); /* 6.5:1，已退号/异常（印泥朱） */
-  --fuy-color-info-text: var(--fuy-palette-gray-600); /* 6.3:1，中性态（灰墨） */
-  --fuy-color-focus-ring: rgba(30, 42, 68, 0.35); /* 键盘焦点环（墨焦点环） */
+  --fuy-color-success-text: #1f7a33; /* 4.6:1（工作面），已发药/已结算（确认/在档；A-4 维持） */
+  --fuy-color-warning-text: var(--fuy-palette-amber-700); /* 5.4:1，待支付/待配药（A-2 已批） */
+  --fuy-color-danger-text: var(--fuy-palette-red-700); /* 5.6:1，已退号/异常（印泥朱，状态朱） */
+  --fuy-color-info-text: var(--fuy-palette-gray-600); /* 7.1:1，中性态（灰墨） */
+  --fuy-color-focus-ring: rgba(42, 35, 24, 0.35); /* 键盘焦点环（墨焦点环，ink alpha 换血） */
 
-  /* 诊区分级语义色（预检分诊四级，实底白字徽标场景，均 ≥4.5:1） */
-  --fuy-color-triage-l1: var(--fuy-palette-red-600); /* Ⅰ级-危 4.8:1 */
-  --fuy-color-triage-l2: var(--fuy-palette-orange-700); /* Ⅱ级-急 5.2:1 */
-  --fuy-color-triage-l3: var(--fuy-palette-amber-700); /* Ⅲ级-重 5.0:1 */
+  /* 诊区分级语义色（预检分诊四级，实底白字徽标场景，均 ≥4.5:1；注释对比度统一为
+     白字实底口径，2026-10-10 琢段按契约 ③.2 核验勘误） */
+  --fuy-color-triage-l1: var(--fuy-palette-red-600); /* Ⅰ级-危 6.6:1 */
+  --fuy-color-triage-l2: var(--fuy-palette-orange-700); /* Ⅱ级-急 6.1:1（A-3 已批） */
+  --fuy-color-triage-l3: var(--fuy-palette-amber-700); /* Ⅲ级-重 6.4:1（A-2 已批） */
   --fuy-color-triage-l4: var(--fuy-palette-blue-700); /* Ⅳ级-普 6.7:1 */
 
   /* 票据状态语义（已流转态文本/描边用色；复用上列 AA 达标值） */
   --fuy-color-state-passed: var(--fuy-palette-orange-700);
 }
 
-/* 面与壳（semantic）：纸白三级承载工作面，蓝黑墨书脊承载导轨壳层 */
+/* 面与壳（semantic）：暖纸三级承载工作面，棕墨卷宗封皮承载导轨壳层 */
 :root {
-  --fuy-surface-page: #f5f3ec; /* 工作面纸白（沉一档） */
-  --fuy-surface-card: #fdfcf8; /* 卡面亮纸白 */
+  --fuy-surface-page: #f4ecdb; /* 工作面陈年纸底（沉一档） */
+  --fuy-surface-card: #f8f4e9; /* 卡面亮纸（卷宗内页纸面，paper 0.6 于白结算值） */
   --fuy-surface-input: #ffffff; /* 表单域最亮纸面 */
-  --fuy-shell-bg: #1a2540; /* 蓝黑墨书脊＝病历夹封皮 */
-  --fuy-shell-hover: rgba(253, 252, 248, 0.08); /* 书脊悬停纸纱 */
-  --fuy-shell-hairline: #131c33; /* 书脊深墨缝（缝在封皮上） */
-  --fuy-shell-text: rgba(253, 252, 248, 0.88); /* 书脊正文 */
+  --fuy-shell-bg: #2a2318; /* 浓墨封皮＝卷宗封皮导轨（棕墨书脊） */
+  --fuy-shell-hover: rgba(244, 236, 219, 0.1); /* 封皮悬停纸纱（paper alpha） */
+  --fuy-shell-hairline: #1d1811; /* 封皮外缘缝（墨加深档，缝在封皮上；A-1 已批） */
+  --fuy-shell-text: rgba(244, 236, 219, 0.92); /* 封皮正文（对封皮底 ≈11:1） */
 }
 
-/* 字体栈（primitive）：中文黑体系统栈，零网络字体依赖 */
+/* 字体栈（primitive）：字体三分——衬线承门牌（门牌标题/卷宗卡题/弹层题/空态主句），
+   黑体承一切操作与数据面（默认继承），书法只承钤印与装饰字（凡业务信息文本禁书法）；
+   衬线/书法子集 woff2 本地化声明见 fonts.css（加载顺序 fonts 居首），零外链 */
 :root {
   --fuy-font-family-base: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  --fuy-font-family-serif: 'Noto Serif SC', 'Songti SC', 'STSong', 'SimSun', Georgia, serif;
+  --fuy-font-family-brush: 'Ma Shan Zheng', 'KaiTi', 'STKaiti', serif;
 }
 
-/* 字号阶梯（高密度，px 精确值）：13px/22px 行高为一屏可见行数优先的病历密排表格基线 */
+/* 字号阶梯（高密度，px 精确值）：13px/22px 行高为一屏可见行数优先的病历密排表格基线；
+   title 22px 为门牌页首衬线标题专用档（登录 sheet-title 同档） */
 :root {
   --fuy-font-size-xs: 12px; /* 表格脚注/时间戳 */
   --fuy-font-size-sm: 13px; /* 高密度表格正文/表头（病历密排） */
@@ -82,6 +102,7 @@
   --fuy-font-size-xl: 18px; /* 页面标题 */
   --fuy-font-size-2xl: 20px; /* 区域强调数字 */
   --fuy-font-size-3xl: 24px; /* 关键计数（候诊数/今日挂号数） */
+  --fuy-font-size-title: 22px; /* 门牌页首衬线标题专用档（.fuy-page-title） */
 }
 
 /* 行高/字重口径：正文 1.5、标题 1.3；正文 400、标题/表头 600、关键数字 700。
@@ -102,23 +123,30 @@
 }
 
 /* 圆角/描边：workstation 面板以规线三级分割（2px 墨规=页级 / 1px 石规=面板 / 1px 发丝=卡内，
-   无投影堆叠），仅弹层浮起用阴影（唯一阴影给弹层） */
+   版面内零投影堆叠），阴影三级只给浮起层 */
 :root {
   --fuy-radius-sm: 2px; /* tag、分诊级别徽标、药丸选中态、印章 */
   --fuy-radius-md: 4px; /* input/button（与 EP 默认一致，勿改） */
+  --fuy-radius-seal: 6px; /* 印鉴块/钤印浮层（登录 brand-mark/stamp-toast 档） */
   --fuy-radius-lg: 8px; /* el-card 覆盖 */
-  --fuy-radius-xl: 12px; /* el-dialog */
+  --fuy-radius-frame: 10px; /* 卷框/页框级（登录 page-frame rx 10） */
+  --fuy-radius-xl: 12px; /* el-card 大面（存量过渡档） */
+  --fuy-radius-card: 14px; /* 卷宗卡/dialog（登录圆角档 14） */
   --fuy-radius-full: 999px;
 
-  /* 弹层唯一阴影（蓝墨基色带偏移与模糊）：新增消费仅限弹层——存量 LoginView 登录卡
-     box-shadow 为换血前反例，已登记 DESIGN.md「未收编残留」随批次 2 收编 */
-  --fuy-shadow-md: 0 12px 28px rgba(19, 28, 51, 0.16);
+  /* 阴影三级给浮起层（墨基 #2a2318 alpha；lg=大浮面 dialog/stage 级、md=标准弹层
+     popper/drawer、sm=小面悬浮签牌/入口卡 hover）；版面内（卡/卡中卡）仍禁投影，
+     层级靠纸面亮度与规线，三级阴影禁止消费于版面内静态堆叠 */
+  --fuy-shadow-sm: 0 4px 10px rgba(42, 35, 24, 0.1); /* 小面悬浮（签牌/入口卡 hover） */
+  --fuy-shadow-md: 0 10px 24px -6px rgba(42, 35, 24, 0.18); /* 标准弹层（popper/drawer） */
+  --fuy-shadow-lg:
+    0 24px 60px -12px rgba(42, 35, 24, 0.28), 0 4px 12px rgba(42, 35, 24, 0.1); /* 大浮面（dialog/stage 级） */
 
-  /* 石规色（颜色本体，供滚动条/虚缝等非 shorthand 场景取用；面板规线引用它组合，
-     防 #c6c0ae 字面量多点散布——校准终稿时单点改） */
-  --fuy-color-rule-stone: #c6c0ae;
+  /* 石规色（颜色本体＝纸缘色，供滚动条/虚缝等非 shorthand 场景取用；面板规线引用它组合，
+     防 #d8c9a8 字面量多点散布——校准终稿时单点改） */
+  --fuy-color-rule-stone: #d8c9a8;
 
-  --fuy-border-hairline: 1px solid #dcd7c9; /* 发丝缝（卡内，纸面细缝） */
+  --fuy-border-hairline: 1px solid rgba(90, 76, 56, 0.18); /* 发丝缝（卡内墨笔细线，ink-soft alpha） */
   --fuy-border-panel: 1px solid var(--fuy-color-rule-stone); /* 面板石规（面板级分界） */
 }
 
@@ -126,11 +154,12 @@
    三层纪律：全部为 semantic 层语义别名或组件/场景几何值，零新色值（色值一律指向既有 palette）。 */
 
 :root {
-  /* 护理级别徽标色（实底白字场景；色值与分诊四级同源 palette，语义独立命名防混用） */
-  --fuy-color-nursing-special: var(--fuy-palette-red-600); /* 特级护理 4.8:1 */
-  --fuy-color-nursing-l1: var(--fuy-palette-orange-700); /* 病重护理 5.2:1 */
-  --fuy-color-nursing-l2: var(--fuy-palette-amber-700); /* 一级护理 5.0:1 */
-  --fuy-color-nursing-l3: var(--fuy-palette-green-800); /* 普通护理 6.3:1 */
+  /* 护理级别徽标色（实底白字场景；色值与分诊四级同源 palette，语义独立命名防混用；
+     注释对比度为白字实底口径，2026-10-10 琢段勘误） */
+  --fuy-color-nursing-special: var(--fuy-palette-red-600); /* 特级护理 6.6:1 */
+  --fuy-color-nursing-l1: var(--fuy-palette-orange-700); /* 病重护理 6.1:1 */
+  --fuy-color-nursing-l2: var(--fuy-palette-amber-700); /* 一级护理 6.4:1 */
+  --fuy-color-nursing-l3: var(--fuy-palette-green-800); /* 普通护理 5.4:1 */
 
   /* 病情标记角标（卡墙 mini 徽标底色） */
   --fuy-color-nursing-critical: var(--fuy-palette-red-600); /* 病危「危」/ 过敏「敏」 */
@@ -143,8 +172,13 @@
   --fuy-chart-temp-color: var(--fuy-palette-blue-700); /* 体温符号与连线（蓝笔惯例）6.7:1 */
   --fuy-chart-pulse-color: var(
     --fuy-palette-red-600
-  ); /* 脉搏/心率/物理降温/短绌/事件竖线（红笔惯例）4.8:1 */
-  --fuy-chart-grid-color: #dcd7c9; /* 网格细线（与 --fuy-border-hairline 同值，SVG stroke 场景别名） */
+  ); /* 脉搏/心率/物理降温/短绌/事件竖线（红笔惯例）6.6:1 */
+  --fuy-chart-grid-color: rgba(
+    90,
+    76,
+    56,
+    0.18
+  ); /* 网格细线（与 --fuy-border-hairline 同值，SVG stroke 场景别名；2026-10-10 换血随发丝同源） */
   --fuy-chart-text-color: var(--fuy-palette-gray-600); /* 刻度与底栏文字 */
 
   /* 体温单几何（§5.2 坐标系冻结值；SVG viewBox 计算唯一来源） */
@@ -211,9 +245,10 @@
   scrollbar-color: var(--fuy-color-rule-stone) transparent; /* 穿纸细轴（石规同源，纸上滚动不破纸面） */
 }
 
-/* 文字选区：朱洗浅底 + 墨字（文字选区即朱批标记，选区色不承载危急语义） */
+/* 文字选区：朱洗暖化浅底 + 墨字（文字选区即朱批标记，选区色不承载危急语义；
+   cinnabar alpha 派生，与装饰朱同源不承状态） */
 ::selection {
-  background: #f0d9d3;
+  background: rgba(165, 53, 44, 0.14);
   color: var(--fuy-color-text-emphasis);
 }
 

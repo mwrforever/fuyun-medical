@@ -5,6 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- 站点图标：相对路径随 base=/workstation/ 解析，消除浏览器默认请求根路径 /favicon.ico 的 404 噪声 -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <!-- 门面字体预载（暖纸卷宗基础册 · 契约 ④.2）：四件子集 woff2 本地化零外链，
+         crossorigin 为字体预载必备属性（字体请求恒走 CORS 匿名模式，缺之 preload 不生效），
+         FOUT 由 font-display swap + 系统宋/楷族兜底链收敛 -->
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/src/assets/fonts/noto-serif-sc-400.subset.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/src/assets/fonts/noto-serif-sc-600.subset.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/src/assets/fonts/noto-serif-sc-700.subset.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="/src/assets/fonts/ma-shan-zheng-400.subset.woff2"
+      crossorigin
+    />
     <title>富云医护工作站</title>
   </head>
   <body>

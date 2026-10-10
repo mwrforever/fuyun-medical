@@ -162,8 +162,10 @@ function handleCommand(command: string | number | object): void {
   background: var(--el-text-color-primary);
 }
 
-/* 站点名「富云医护工作站」：App.spec 冒烟测试文本锚点，禁改名；纸面浓墨 600 字重 */
+/* 站点名「富云医护工作站」：App.spec 冒烟测试文本锚点，禁改名；纸面浓墨 600 字重；
+   字体三分（暖纸卷宗基础册 · 契约 ⑪.6）——站点名承门面故归衬线（仅字体一行，文本锚点不变） */
 .app-header-title {
+  font-family: var(--fuy-font-family-serif);
   font-size: var(--fuy-font-size-lg);
   font-weight: 600;
   color: var(--fuy-color-text-emphasis);
