@@ -1,13 +1,15 @@
 <script setup lang="ts">
-// 分诊台页（FU-M03-04 前端面，设计文档 §3.2/§8.2）：操作条常驻（报到 visitId 输入 Enter 提交
-// + 诊区切换 + 轮询状态点）→ 队列快照表（5s REST 轮询 merge 刷新，稳定 key 禁整表重挂）→
-// 右列票务详情与分诊处置（调级/转队列/二次分诊，风险分档确认 §5.2）。动作在途守卫先于一切
-// await（W-22⑥ 形态自带）；失败弹错归响应拦截器。状态 tag 流转 §6.5（120ms out-in）。
+// 分诊台页（FU-M03-04 前端面 · 暖纸卷宗换脸重排，逐页蓝图 P05「换脸不换业务」）：
+// 门牌页首（衬线标题 + 轮询胶囊呼吸点右挂 + 签认人·当前诊区·时刻批注行）→ 操作条 .fuy-toolbar
+// 按「报到 / 诊区 / 快捷键」三业务域分组（组间竖发丝）→ 队列快照表（5s REST 轮询 merge 刷新，
+// 稳定 key 禁整表重挂）→ 右列票务详情与分诊处置（调级/转队列/二次分诊，风险分档确认 §5.2）。
+// 诊区换真数据下拉（listOrgs({type:'DEPT'})，假常量 DEPT-INT 清零；清单在途/空清单不出网）。
+// 动作在途守卫先于一切 await（W-22⑥ 形态自带）；失败弹错归响应拦截器。状态 tag 流转 §6.5
+//（120ms out-in）。轮询消费逻辑零改动（蓝图 P05.6 既有合规）。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（billing 三页同款口径）
 import 'element-plus/es/components/message/style/css';
-import 'element-plus/es/components/message-box/style/css';
 import {
   adjustTriage,
   callNext,
@@ -17,11 +19,15 @@ import {
   recallTicket,
 } from '@/api/outpatient';
 import type { QueueTicketVO } from '@/api/outpatient';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
+import { useAsyncTask } from '@/composables/useAsyncTask';
+import { useAuthStore } from '@/stores/auth';
 
 /** 分诊台终端标识（报到发起端配置；与后端 DEFAULT_STATION_ID 同语义的分诊台常量） */
 const STATION_ID = 'TRIAGE_DESK';
 
-/** 老幼残优先级因子词表（后端词表校验词表外 OP-1019，前端仅透传勾选值） */
+/** 老幼残优先级因子词表（后端词表校验词表外 OP-1019，前端仅透传勾选值；契约镜像非假常量） */
 const PRIORITY_FACTOR_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
   { code: 'ELDERLY', label: '老年' },
   { code: 'CHILD', label: '幼童' },
@@ -58,11 +64,47 @@ function triageBadgeClass(level: number | undefined): string | null {
   return `fuy-triage-badge--l${level}`;
 }
 
+/* ---------- 门牌页首：签认人 · 当前诊区 · 时刻（批注行取会话与业务真值，空值 — 占位） ---------- */
+const auth = useAuthStore();
+
+/** 签认人批注：会话显示名真值（与顶栏用户区同源，空会话 — 占位零伪数据） */
+const signerName = computed(() => auth.user?.displayName ?? '—');
+
+/** 当日批注行时刻标签（YYYY-MM-DD 周X）：纯本地时钟零出网（P02 检索页同语法） */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
+
 /* ---------- 操作条：报到与诊区切换 ---------- */
 const visitIdInput = ref('');
 const checkingIn = ref(false);
-/** 当前诊区编码（=队列标识 queue_id，快照接口路径参数；切换即重拉首屏） */
-const deptCode = ref('DEPT-INT');
+/** 当前诊区编码（=队列标识 queue_id，快照接口路径参数；空值=清单未就绪，切换即重拉首屏） */
+const deptCode = ref('');
+
+/** 诊区真数据清单（listOrgs DEPT 档，暖纸切片假常量清零面）：useAsyncTask 三态收拢 loading */
+const deptOptions = ref<OrgVO[]>([]);
+const deptLoad = useAsyncTask(async () => {
+  const orgs = await listOrgs({ type: 'DEPT' });
+  deptOptions.value = orgs;
+  // 清单到达默认选中首项（无记忆语义，后端 sort 升序首位=演示主链路内科）并触发快照首拉；
+  // 空清单/失败不选：快照必须锚定真实 queue_id，未就绪零出网
+  if (deptCode.value === '' && orgs.length > 0) {
+    deptCode.value = orgs[0]?.orgCode ?? '';
+    await refreshSnapshot();
+  }
+});
+
+/** 诊区下拉禁用态：清单在途或空清单（失败同形）皆不可选（P06 字典失败禁用同口径） */
+const deptDisabled = computed(() => deptLoad.loading.value || deptOptions.value.length === 0);
+
+/** 当前诊区显示名（批注行/卡头回显用；未就绪以 — 占位零伪数据） */
+const deptName = computed(
+  () => deptOptions.value.find((org) => org.orgCode === deptCode.value)?.orgName ?? '—',
+);
 
 /** 就诊号显式格式预检（§8.2：O+yyyyMMdd+5 位流水，空值拦截 + 形态拦截，双 4xx 口径提示） */
 function isVisitIdFormatValid(raw: string): boolean {
@@ -112,7 +154,7 @@ const tickets = ref<QueueTicketVO[]>([]);
 /** 首拉遮罩开关：v-loading 仅承载首拉（§4.4「刷新一律 v-loading」不适用于轮询——
  * 5s 周期遮罩闪现破坏 §7.1「轮询刷新无整表闪烁」预算，后续轮询静默 merge） */
 const snapshotBooting = ref(true);
-/** 轮询状态点三态（§8.2）：ok=正常刷新 / paused=页面隐藏暂停 / error=上次刷新失败 */
+/** 轮询健康三态（§8.2）：ok=正常刷新 / paused=页面隐藏暂停 / error=上次刷新失败 */
 const pollHealth = ref<'ok' | 'paused' | 'error'>('ok');
 /** 轮询定时器句柄（visibilitychange 暂停/恢复共用；onBeforeUnmount 必清理） */
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -124,9 +166,13 @@ const POLL_INTERVAL_MS = 5000;
  * 不重挂 §6.2，状态 tag 流转由模板 :key=状态承载）。同状态但内容变化（如二次分诊 RE_TRIAGE
  * 改派 doctorId）必须同步，否则叫号携旧 doctorId 出网必 4xx——Task 15 Step6 真机 D-3：
  * 旧实现「同 id 同状态保留旧行」漏同步该场景。增删行自然触发列表 diff。
- * 失败置 error 态（轮询状态点转红）并驻留旧数据。
+ * 诊区未就绪（清单未到达/空清单）早退零出网；失败置 error 态（胶囊转 danger）并驻留旧数据。
  */
 async function refreshSnapshot(): Promise<void> {
+  if (deptCode.value === '') {
+    snapshotBooting.value = false;
+    return;
+  }
   try {
     const latest = await getQueueSnapshot({ queueId: deptCode.value });
     const current = new Map(tickets.value.map((item) => [item.id, item]));
@@ -141,7 +187,7 @@ async function refreshSnapshot(): Promise<void> {
     });
     pollHealth.value = 'ok';
   } catch {
-    // 上次刷新失败：状态点转红，旧快照驻留（弹错归响应拦截器）
+    // 上次刷新失败：胶囊转 danger，旧快照驻留（弹错归响应拦截器）
     pollHealth.value = 'error';
   } finally {
     snapshotBooting.value = false;
@@ -159,6 +205,7 @@ function onVisibilityChange(): void {
 }
 
 onMounted(() => {
+  void deptLoad.run();
   void refreshSnapshot();
   pollTimer = setInterval(() => {
     if (!document.hidden) {
@@ -182,6 +229,28 @@ function onDeptChange(): void {
   snapshotBooting.value = true;
   void refreshSnapshot();
 }
+
+/** 轮询胶囊语义变体（蓝图 P05.2：ok=success 呼吸 / paused=info / error=danger） */
+const pollPillClass = computed(() => {
+  if (pollHealth.value === 'paused') {
+    return 'fuy-status-pill--info';
+  }
+  if (pollHealth.value === 'error') {
+    return 'fuy-status-pill--danger';
+  }
+  return 'fuy-status-pill--success';
+});
+
+/** 轮询胶囊提示文字（§8.2 三态文案既有：实时语义/暂停语义/失败恢复指引） */
+const pollText = computed(() => {
+  if (pollHealth.value === 'paused') {
+    return '页面隐藏已暂停';
+  }
+  if (pollHealth.value === 'error') {
+    return '上次刷新失败，自动重试中';
+  }
+  return '每 5 秒自动刷新';
+});
 
 /* ---------- 队列表格展示辅助 ---------- */
 
@@ -311,7 +380,7 @@ const adjusting = ref(false);
 const LEVEL_OPTIONS = [1, 2, 3, 4];
 
 /**
- * 分诊处置提交：调级=中风险（confirm 带回显摘要）；转队列=高风险（danger 确认，目标队列必填
+ * 分诊处置提交：调级=中风险（confirm 带回显摘要）；转队列=高风险（danger 确认，目标诊区必选
  * 前置拦截）；二次分诊=中风险（目标医生必填前置拦截）。调级理由为 LEVEL_ADJUST 必填（前端先
  * 校验空值禁提交零出网，与后端服务层同语义双保险），其余动作选填透传留痕。成功后重拉快照。
  */
@@ -321,7 +390,7 @@ async function onAdjust(): Promise<void> {
   }
   const row = selectedTicket.value;
   if (adjustAction.value === 'QUEUE_TRANSFER' && targetQueue.value.trim() === '') {
-    void ElMessage.warning('请填写目标诊区编码');
+    void ElMessage.warning('请选择目标诊区');
     return;
   }
   if (adjustAction.value === 'RE_TRIAGE' && targetDoctorId.value.trim() === '') {
@@ -374,17 +443,6 @@ async function onAdjust(): Promise<void> {
   }
 }
 
-/** 轮询状态点提示文字（§8.2：点旁 12px「每 5 秒自动刷新」+ 三态补充语义） */
-const pollText = computed(() => {
-  if (pollHealth.value === 'paused') {
-    return '页面隐藏已暂停';
-  }
-  if (pollHealth.value === 'error') {
-    return '上次刷新失败，自动重试中';
-  }
-  return '每 5 秒自动刷新';
-});
-
 /* ---------- 快捷键（§5.3 分诊台档：Alt+R 叫出队首） ---------- */
 /** 快捷键句柄（onMounted 注册 / onBeforeUnmount 移除，§5.3 实现口径） */
 function onHotkeyKeydown(event: KeyboardEvent): void {
@@ -419,251 +477,331 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="fuy-page triage-board">
-    <!-- 操作条 56px 常驻（§3.2）：报到输入 240px + 优先因子（报到参数，与报到钮同域）+
-         报到钮 + 诊区切换 160px + Alt+R kbd 提示（§5.3）+ 轮询状态点 -->
-    <div class="triage-board-toolbar">
-      <el-input
-        v-model="visitIdInput"
-        class="triage-board-visit-input"
-        placeholder="就诊号（O+yyyyMMdd+5 位流水）"
-        autofocus
-        @keyup.enter="onCheckIn"
-      />
-      <!-- 老幼残优先因子：报到请求参数（checkIn.priorityFactors），与报到动作同域呈现；
-           原置于右列处置表单受 selectedTicket 禁用态误困（Task 16 归位修正） -->
-      <el-checkbox-group
-        v-model="priorityFactors"
-        class="triage-board-factors"
-        aria-label="报到优先因子"
-      >
-        <el-checkbox
-          v-for="factor in PRIORITY_FACTOR_OPTIONS"
-          :key="factor.code"
-          :value="factor.code"
-          >{{ factor.label }}</el-checkbox
+    <!-- 门牌页首（蓝图 P05.2/契约 ⑧.1）：衬线标题 + 轮询胶囊右挂（ok=success 呼吸点为本域
+         唯一常驻动画位，⑨.5 合规——伪元素 transform/opacity 2s 循环，reduce 下自动压停）+
+         签认人·当前诊区·时刻批注行 + 2px 墨规收底（脸样式归全局 .fuy-page-head 族） -->
+    <header class="fuy-page-head">
+      <div class="fuy-page-head-main">
+        <h1 class="fuy-page-title">分诊台</h1>
+      </div>
+      <div class="fuy-page-status">
+        <span class="fuy-status-pill" :class="pollPillClass" role="status">
+          <i v-if="pollHealth === 'ok'" class="fuy-live-dot" aria-hidden="true"></i>{{ pollText }}
+        </span>
+      </div>
+      <p class="fuy-page-note">
+        签认人 {{ signerName }} · 当前诊区 {{ deptName }} · <time>{{ todayLabel }}</time>
+      </p>
+    </header>
+
+    <!-- 操作条 .fuy-toolbar 三业务域分组（蓝图 P05.2）：报到域（输入+因子+报到钮）｜诊区域
+         （真数据下拉）｜快捷键域（Alt+R kbd），组间竖发丝分隔；48px CLS 锁归全局工具条 -->
+    <div class="fuy-toolbar">
+      <div class="triage-toolbar-group" role="group" aria-label="分诊报到">
+        <el-input
+          v-model="visitIdInput"
+          class="triage-board-visit-input"
+          placeholder="就诊号（O+yyyyMMdd+5 位流水）"
+          autofocus
+          @keyup.enter="onCheckIn"
+        />
+        <!-- 老幼残优先因子：报到请求参数（checkIn.priorityFactors），与报到动作同域呈现；
+             原置于右列处置表单受 selectedTicket 禁用态误困（Task 16 归位修正） -->
+        <el-checkbox-group
+          v-model="priorityFactors"
+          class="triage-board-factors"
+          aria-label="报到优先因子"
         >
-      </el-checkbox-group>
-      <!-- 分诊报到（PR-4F #8）：v-perm 直挂（护士管理码）——与 checkingIn 在途数据态正交叠加；
-           F6③ 扩绑后 REGISTRAR 可入页但无本码，报到入口对其隐藏 -->
-      <el-button
-        v-perm="'outpatient:triage:btn:manage'"
-        type="primary"
-        :loading="checkingIn"
-        :disabled="checkingIn"
-        @click="onCheckIn"
-        >分诊报到</el-button
-      >
-      <el-select v-model="deptCode" class="triage-board-dept" @change="onDeptChange">
-        <el-option label="内科（DEPT-INT）" value="DEPT-INT" />
-        <el-option label="外科（DEPT-SUR）" value="DEPT-SUR" />
-        <el-option label="儿科（DEPT-PED）" value="DEPT-PED" />
-      </el-select>
-      <span class="triage-board-kbd" aria-hidden="true">
-        <kbd>Alt</kbd>+<kbd>R</kbd> 叫出队首
-      </span>
-      <span class="triage-board-poll">
-        <span class="triage-board-poll-dot" :class="`is-${pollHealth}`" aria-hidden="true"></span>
-        <span class="triage-board-poll-text">{{ pollText }}</span>
-      </span>
+          <el-checkbox
+            v-for="factor in PRIORITY_FACTOR_OPTIONS"
+            :key="factor.code"
+            :value="factor.code"
+            >{{ factor.label }}</el-checkbox
+          >
+        </el-checkbox-group>
+        <!-- 分诊报到（PR-4F #8）：v-perm 直挂（护士管理码）——与 checkingIn 在途数据态正交叠加；
+             F6③ 扩绑后 REGISTRAR 可入页但无本码，报到入口对其隐藏 -->
+        <el-button
+          v-perm="'outpatient:triage:btn:manage'"
+          type="primary"
+          :loading="checkingIn"
+          :disabled="checkingIn"
+          @click="onCheckIn"
+          >分诊报到</el-button
+        >
+      </div>
+      <div class="triage-toolbar-group" role="group" aria-label="诊区切换">
+        <!-- 诊区真数据下拉（域级共享组件：listOrgs DEPT 档单源，160px 档，popper 硬 snap）；
+             清单在途/空清单禁用——快照必须锚定真实 queue_id，未就绪零出网 -->
+        <el-select
+          v-model="deptCode"
+          class="triage-board-dept"
+          :disabled="deptDisabled"
+          popper-class="fuy-snap-popper"
+          @change="onDeptChange"
+        >
+          <el-option
+            v-for="org in deptOptions"
+            :key="org.orgCode"
+            :label="`${org.orgName}（${org.orgCode}）`"
+            :value="org.orgCode ?? ''"
+          />
+        </el-select>
+      </div>
+      <div class="triage-toolbar-group" role="group" aria-label="快捷键">
+        <span class="triage-board-kbd" aria-hidden="true">
+          <kbd>Alt</kbd>+<kbd>R</kbd> 叫出队首
+        </span>
+      </div>
     </div>
 
     <el-row :gutter="16" class="fuy-stagger">
-      <!-- 左：队列快照表（17/7 分栏，列宽照 §3.2） -->
+      <!-- 左：队列快照表（17/7 分栏既有，列宽照 §3.2）；卷宗卡脸（契约 ⑧.2） -->
       <el-col :md="24" :lg="17" :style="{ '--fuy-stagger-index': 0 }">
-        <el-card>
-          <template #header>候诊队列（{{ deptCode }}）</template>
-          <!-- 遮罩仅首拉（§7.1 轮询无闪烁）：后续 5s 轮询静默 merge，不再整表遮罩 -->
-          <div v-loading="snapshotBooting" class="triage-board-table-wrap">
-            <el-table
-              :data="tickets"
-              class="fuy-dense"
-              row-key="id"
-              highlight-current-row
-              @row-click="onSelectRow"
-            >
-              <el-table-column prop="ticketNo" label="票号" width="80">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.ticketNo }}</span>
-                </template>
-              </el-table-column>
-              <!-- 列宽照 §3.2 结构树（姓名 100 / 级别徽标 64 / 优先级 80）：Task 13 自定 140/90
-                   回归设计值；级别徽标为 W-29 D-2 契约回补列（原「禁虚构契约」注记随出网字段在位删除） -->
-              <el-table-column prop="patientName" label="姓名" width="100" />
-              <el-table-column label="级别" width="64">
-                <template #default="{ row }">
-                  <span
-                    v-if="triageBadgeClass(row.triageLevel) !== null"
-                    class="fuy-triage-badge"
-                    :class="triageBadgeClass(row.triageLevel)"
-                    >{{ TRIAGE_LEVEL_LABELS[row.triageLevel ?? 0] ?? '—' }}</span
-                  >
-                  <span v-else>—</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="priorityScore" label="优先级" width="80" align="right">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.priorityScore }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="状态" width="96">
-                <template #default="{ row }">
-                  <!-- 状态 tag 流转（§6.5）：120ms out-in，:key=状态值 -->
-                  <Transition name="fuy-tag-flip" mode="out-in">
-                    <el-tag
-                      :key="row.status"
-                      size="small"
-                      :type="statusMeta(row).type"
-                      :class="{
-                        'fuy-tag-aa': statusMeta(row).aa === true,
-                        'fuy-tag-strike': statusMeta(row).strike === true,
-                      }"
-                      >{{ statusMeta(row).text }}</el-tag
+        <section class="fuy-card triage-board-main-card">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">候诊队列</h2>
+            <span class="triage-board-queue-dept">当前诊区 {{ deptName }}</span>
+          </header>
+          <div class="fuy-card-body">
+            <!-- 遮罩仅首拉（§7.1 轮询无闪烁）：后续 5s 轮询静默 merge，不再整表遮罩 -->
+            <div v-loading="snapshotBooting" class="triage-board-table-wrap">
+              <el-table
+                :data="tickets"
+                class="fuy-dense"
+                row-key="id"
+                highlight-current-row
+                @row-click="onSelectRow"
+              >
+                <el-table-column prop="ticketNo" label="票号" width="80">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ row.ticketNo }}</span>
+                  </template>
+                </el-table-column>
+                <!-- 列宽照 §3.2 结构树（姓名 100 / 级别徽标 64 / 优先级 80）：Task 13 自定 140/90
+                     回归设计值；级别徽标为 W-29 D-2 契约回补列（原「禁虚构契约」注记随出网字段在位删除） -->
+                <el-table-column prop="patientName" label="姓名" width="100" />
+                <el-table-column label="级别" width="64">
+                  <template #default="{ row }">
+                    <span
+                      v-if="triageBadgeClass(row.triageLevel) !== null"
+                      class="fuy-triage-badge"
+                      :class="triageBadgeClass(row.triageLevel)"
+                      >{{ TRIAGE_LEVEL_LABELS[row.triageLevel ?? 0] ?? '—' }}</span
                     >
-                  </Transition>
-                </template>
-              </el-table-column>
-              <el-table-column label="等待" width="96" align="right">
-                <template #default="{ row }">
-                  <span class="fuy-num" :class="{ 'is-long-wait': isWaitLong(row) }"
-                    >{{ waitingMinutes(row) }} 分钟</span
-                  >
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="200">
-                <template #default="{ row }">
-                  <!-- 操作按钮 size=small 间距 8px（§8.2）；三动作按票据状态互斥启停；
-                       叫号/过号/重呼同挂叫号码（PR-4F #9，与报到管理码角色分叉分码）——
-                       v-perm 直挂与状态 :disabled 正交叠加 -->
-                  <div class="triage-board-actions">
-                    <el-button
-                      v-perm="'outpatient:queue:btn:call'"
-                      size="small"
-                      type="primary"
-                      link
-                      :disabled="acting || row.status !== 'WAITING'"
-                      @click.stop="onCall(row)"
-                      >叫号</el-button
+                    <span v-else>—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="priorityScore" label="优先级" width="80" align="right">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ row.priorityScore }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="96">
+                  <template #default="{ row }">
+                    <!-- 状态 tag 流转（§6.5）：120ms out-in，:key=状态值 -->
+                    <Transition name="fuy-tag-flip" mode="out-in">
+                      <el-tag
+                        :key="row.status"
+                        size="small"
+                        :type="statusMeta(row).type"
+                        :class="{
+                          'fuy-tag-aa': statusMeta(row).aa === true,
+                          'fuy-tag-strike': statusMeta(row).strike === true,
+                        }"
+                        >{{ statusMeta(row).text }}</el-tag
+                      >
+                    </Transition>
+                  </template>
+                </el-table-column>
+                <el-table-column label="等待" width="96" align="right">
+                  <template #default="{ row }">
+                    <span class="fuy-num" :class="{ 'is-long-wait': isWaitLong(row) }"
+                      >{{ waitingMinutes(row) }} 分钟</span
                     >
-                    <el-button
-                      v-perm="'outpatient:queue:btn:call'"
-                      size="small"
-                      type="warning"
-                      link
-                      :disabled="acting || row.status !== 'CALLED'"
-                      @click.stop="onPass(row)"
-                      >过号</el-button
-                    >
-                    <el-button
-                      v-perm="'outpatient:queue:btn:call'"
-                      size="small"
-                      type="info"
-                      link
-                      :disabled="acting || row.status !== 'PASSED'"
-                      @click.stop="onRecall(row)"
-                      >重呼</el-button
-                    >
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="200">
+                  <template #default="{ row }">
+                    <!-- 操作按钮 size=small 间距 8px（§8.2）；三动作按票据状态互斥启停；
+                         叫号/过号/重呼同挂叫号码（PR-4F #9，与报到管理码角色分叉分码）——
+                         v-perm 直挂与状态 :disabled 正交叠加 -->
+                    <div class="triage-board-actions">
+                      <el-button
+                        v-perm="'outpatient:queue:btn:call'"
+                        size="small"
+                        type="primary"
+                        link
+                        :disabled="acting || row.status !== 'WAITING'"
+                        @click.stop="onCall(row)"
+                        >叫号</el-button
+                      >
+                      <el-button
+                        v-perm="'outpatient:queue:btn:call'"
+                        size="small"
+                        type="warning"
+                        link
+                        :disabled="acting || row.status !== 'CALLED'"
+                        @click.stop="onPass(row)"
+                        >过号</el-button
+                      >
+                      <el-button
+                        v-perm="'outpatient:queue:btn:call'"
+                        size="small"
+                        type="info"
+                        link
+                        :disabled="acting || row.status !== 'PASSED'"
+                        @click.stop="onRecall(row)"
+                        >重呼</el-button
+                      >
+                    </div>
+                  </template>
+                </el-table-column>
+                <!-- 空态两态脸（契约 ⑥/总则 8）：诊区未就绪给恢复指引，已选诊区给暂无语义 -->
+                <template #empty>
+                  <div class="fuy-empty" role="status">
+                    <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                    <p v-if="deptCode === ''" class="fuy-empty-title">暂无可用诊区</p>
+                    <p v-else class="fuy-empty-title">暂无候诊票据</p>
+                    <p v-if="deptCode === ''" class="fuy-empty-hint">
+                      诊区清单未就绪，可刷新页面或联系管理员维护科室档案。
+                    </p>
+                    <p v-else class="fuy-empty-hint">
+                      当前诊区暂无候诊票据，稍候自动刷新或切换诊区。
+                    </p>
                   </div>
                 </template>
-              </el-table-column>
-              <template #empty>
-                <el-empty :image-size="72" description="当前诊区候诊队列为空" />
-              </template>
-            </el-table>
+              </el-table>
+            </div>
           </div>
-        </el-card>
+        </section>
       </el-col>
 
-      <!-- 右：票务详情 + 分诊处置（stagger index 1） -->
+      <!-- 右：票务详情 + 分诊处置（stagger index 1），两卡纵叠卷宗脸 -->
       <el-col :md="24" :lg="7" :style="{ '--fuy-stagger-index': 1 }">
-        <el-card class="triage-board-side-card">
-          <template #header>票务详情</template>
-          <el-descriptions v-if="selectedTicket !== null" :column="1" border size="small">
-            <el-descriptions-item label="票号">
-              <span class="fuy-num">{{ selectedTicket.ticketNo }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="姓名">{{
-              selectedTicket.patientName
-            }}</el-descriptions-item>
-            <el-descriptions-item label="就诊号">
-              <span class="fuy-num">{{ selectedTicket.visitId }}</span>
-            </el-descriptions-item>
-            <el-descriptions-item label="状态">{{
-              statusMeta(selectedTicket).text
-            }}</el-descriptions-item>
-            <el-descriptions-item label="已叫次数">
-              <span class="fuy-num">{{ selectedTicket.calledCount ?? 0 }}</span>
-            </el-descriptions-item>
-          </el-descriptions>
-          <el-empty v-else :image-size="72" description="点击队列行查看票据详情" />
-        </el-card>
+        <section class="fuy-card triage-board-side-card">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">票务详情</h2>
+          </header>
+          <div class="fuy-card-body">
+            <el-descriptions v-if="selectedTicket !== null" :column="1" border size="small">
+              <el-descriptions-item label="票号">
+                <span class="fuy-num">{{ selectedTicket.ticketNo }}</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="姓名">{{
+                selectedTicket.patientName
+              }}</el-descriptions-item>
+              <el-descriptions-item label="就诊号">
+                <span class="fuy-num">{{ selectedTicket.visitId }}</span>
+              </el-descriptions-item>
+              <el-descriptions-item label="状态">{{
+                statusMeta(selectedTicket).text
+              }}</el-descriptions-item>
+              <el-descriptions-item label="已叫次数">
+                <span class="fuy-num">{{ selectedTicket.calledCount ?? 0 }}</span>
+              </el-descriptions-item>
+            </el-descriptions>
+            <div v-else class="fuy-empty" role="status">
+              <span class="fuy-empty-mark" aria-hidden="true">空</span>
+              <p class="fuy-empty-title">暂无选中票据</p>
+              <p class="fuy-empty-hint">点击左侧队列行查看票务详情。</p>
+            </div>
+          </div>
+        </section>
 
-        <el-card class="triage-board-side-card">
-          <template #header>分诊处置</template>
-          <el-form label-position="right" label-width="96px" :disabled="selectedTicket === null">
-            <el-form-item label="处置动作">
-              <el-select v-model="adjustAction">
-                <el-option
-                  v-for="item in ADJUST_ACTIONS"
-                  :key="item.code"
-                  :label="item.label"
-                  :value="item.code"
+        <section class="fuy-card triage-board-side-card">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">分诊处置</h2>
+          </header>
+          <div class="fuy-card-body">
+            <el-form
+              class="fuy-form"
+              label-position="right"
+              label-width="96px"
+              :disabled="selectedTicket === null"
+            >
+              <el-form-item label="处置动作">
+                <el-select v-model="adjustAction" popper-class="fuy-snap-popper">
+                  <el-option
+                    v-for="item in ADJUST_ACTIONS"
+                    :key="item.code"
+                    :label="item.label"
+                    :value="item.code"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="adjustAction === 'LEVEL_ADJUST'" label="目标级别">
+                <el-select v-model="adjustLevel" popper-class="fuy-snap-popper">
+                  <el-option
+                    v-for="level in LEVEL_OPTIONS"
+                    :key="level"
+                    :label="`${TRIAGE_LEVEL_LABELS[level]}（${level}）`"
+                    :value="level"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="adjustAction === 'QUEUE_TRANSFER'" label="目标诊区">
+                <!-- 目标诊区换真数据下拉（蓝图 P05.5：假常量文本输入清零，出网值仍 string code） -->
+                <el-select
+                  v-model="targetQueue"
+                  placeholder="选择目标诊区"
+                  popper-class="fuy-snap-popper"
+                >
+                  <el-option
+                    v-for="org in deptOptions"
+                    :key="org.orgCode"
+                    :label="`${org.orgName}（${org.orgCode}）`"
+                    :value="org.orgCode ?? ''"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item v-if="adjustAction === 'RE_TRIAGE'" label="目标医生">
+                <!-- 「目标医生」无端点保持文本录入（蓝图附清单 2 差异化登记：不扩） -->
+                <el-input v-model="targetDoctorId" placeholder="目标医生 ID" />
+              </el-form-item>
+              <!-- 动作理由（W-29 D-9 契约消费）：落 triage_record.reason 质控回溯列；调级必填
+                   前端先校验，转队列/二次分诊选填；maxLength=255 与列宽 VARCHAR(255) 对齐 -->
+              <el-form-item label="理由">
+                <el-input
+                  v-model="adjustReason"
+                  type="textarea"
+                  :rows="2"
+                  maxlength="255"
+                  placeholder="动作理由（调级必填，≤255 字）"
                 />
-              </el-select>
-            </el-form-item>
-            <el-form-item v-if="adjustAction === 'LEVEL_ADJUST'" label="目标级别">
-              <el-select v-model="adjustLevel">
-                <el-option
-                  v-for="level in LEVEL_OPTIONS"
-                  :key="level"
-                  :label="`${TRIAGE_LEVEL_LABELS[level]}（${level}）`"
-                  :value="level"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item v-if="adjustAction === 'QUEUE_TRANSFER'" label="目标诊区">
-              <el-input v-model="targetQueue" placeholder="目标诊区编码" />
-            </el-form-item>
-            <el-form-item v-if="adjustAction === 'RE_TRIAGE'" label="目标医生">
-              <el-input v-model="targetDoctorId" placeholder="目标医生 ID" />
-            </el-form-item>
-            <!-- 动作理由（W-29 D-9 契约消费）：落 triage_record.reason 质控回溯列；调级必填
-                 前端先校验，转队列/二次分诊选填；maxLength=255 与列宽 VARCHAR(255) 对齐 -->
-            <el-form-item label="理由">
-              <el-input
-                v-model="adjustReason"
-                type="textarea"
-                :rows="2"
-                maxlength="255"
-                placeholder="动作理由（调级必填，≤255 字）"
-              />
-            </el-form-item>
-            <el-form-item>
-              <!-- 分诊处置提交（PR-4F #8）：与报到入口同码 v-perm 直挂——表单其余字段
-                   保留只读可见，仅提交动作随权限收敛 -->
-              <el-button
-                v-perm="'outpatient:triage:btn:manage'"
-                type="primary"
-                :loading="adjusting"
-                :disabled="adjusting || selectedTicket === null"
-                @click="onAdjust"
-                >提交处置</el-button
-              >
-            </el-form-item>
-          </el-form>
-        </el-card>
+              </el-form-item>
+              <el-form-item>
+                <!-- 分诊处置提交（PR-4F #8）：与报到入口同码 v-perm 直挂——表单其余字段
+                     保留只读可见，仅提交动作随权限收敛 -->
+                <el-button
+                  v-perm="'outpatient:triage:btn:manage'"
+                  type="primary"
+                  :loading="adjusting"
+                  :disabled="adjusting || selectedTicket === null"
+                  @click="onAdjust"
+                  >提交处置</el-button
+                >
+              </el-form-item>
+            </el-form>
+          </div>
+        </section>
       </el-col>
     </el-row>
   </div>
 </template>
 
 <style scoped>
-/* 操作条 56px 常驻（§3.2/§8.2） */
-.triage-board-toolbar {
-  display: flex;
+/* 操作条三业务域分组（蓝图 P05.2）：组内 12px 间距、组间竖发丝分隔（卡内发丝级规线） */
+.triage-toolbar-group {
+  display: inline-flex;
   align-items: center;
   gap: var(--fuy-space-3);
-  min-height: 56px;
 }
+.triage-toolbar-group + .triage-toolbar-group {
+  padding-left: var(--fuy-space-3);
+  border-left: var(--fuy-border-hairline);
+}
+
 .triage-board-visit-input {
   width: 240px;
 }
@@ -677,7 +815,7 @@ onBeforeUnmount(() => {
   align-items: center;
 }
 
-/* 快捷键 kbd 提示（§5.3：kbd 底 var(--el-fill-color) 圆角 2px、12px 字号） */
+/* 快捷键 kbd 提示（§5.3：kbd 底填充色圆角 2px、12px 字号） */
 .triage-board-kbd {
   display: inline-flex;
   align-items: center;
@@ -695,26 +833,8 @@ onBeforeUnmount(() => {
   color: var(--el-text-color-regular);
 }
 
-/* 轮询状态点三色：绿=正常、灰=暂停、红=刷新失败（点旁 12px 文字） */
-.triage-board-poll {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--fuy-space-2);
-  margin-left: auto;
-}
-.triage-board-poll-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--fuy-radius-full);
-  background: var(--el-color-success);
-}
-.triage-board-poll-dot.is-paused {
-  background: var(--el-text-color-disabled);
-}
-.triage-board-poll-dot.is-error {
-  background: var(--el-color-danger);
-}
-.triage-board-poll-text {
+/* 队列卡头当前诊区回显：12px 灰墨批注（门牌批注行同语法的卡头语境位） */
+.triage-board-queue-dept {
   font-size: var(--fuy-font-size-xs);
   color: var(--fuy-color-text-secondary);
 }
@@ -722,6 +842,7 @@ onBeforeUnmount(() => {
 .triage-board-table-wrap {
   min-height: 240px;
 }
+.triage-board-main-card,
 .triage-board-side-card {
   margin-bottom: var(--fuy-space-3);
 }

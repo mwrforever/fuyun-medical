@@ -32,18 +32,6 @@ export type OrderCreateRequest = components['schemas']['OrderCreateRequest'];
 export type PrescriptionOpenRequest = components['schemas']['PrescriptionOpenRequest'];
 export type FinishVisitRequest = components['schemas']['FinishVisitRequest'];
 
-/** 诊毕离院去向八项（V705 门诊字典种子 disposition 词表的前端常量清单，页面下拉唯一来源） */
-export const DISPOSITION_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'DISCHARGE_HOME', label: '医嘱离院' },
-  { code: 'TRANSFER_HOSPITAL', label: '医嘱转院' },
-  { code: 'TRANSFER_COMMUNITY', label: '医嘱转社区' },
-  { code: 'NON_MEDICAL_LEAVE', label: '非医嘱离院' },
-  { code: 'DEATH', label: '死亡' },
-  { code: 'OBSERVATION', label: '急诊留观' },
-  { code: 'TRANSFER_INPATIENT', label: '急诊转住院' },
-  { code: 'OTHER', label: '其他' },
-] as const;
-
 /** 排班模板分页清单。 */
 export async function listTemplates(params: {
   page?: number;

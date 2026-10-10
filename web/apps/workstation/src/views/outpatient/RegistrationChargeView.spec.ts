@@ -1,11 +1,14 @@
-// 挂号收费联动页单测（FU-M03-07 前端面）：渲染断言（三步卡与收费面板空态）、空词检索前置
-// 拦截零出网、挂号→收费联动主链（WINDOW 渠道 + TAKEN 直出 visitId 拉起费用 + 全现金结算金额
-// 原样透传零运算）、动作在途守卫（W-22⑥：慢响应窗口按钮禁用且二次点击零出网）。
-// api mock 承载，不打真实网络；失败弹错归响应拦截器不在前端断言。
+// 挂号收费联动页单测（FU-M03-07 前端面 · 暖纸卷宗 P04 蓝图重排）：渲染断言（门牌页首锚点 /
+// 主从分区挂类 / 三步卡与收费面板空态）、诊区真数据三态（vi.mock '@/api/system'：加载禁用 /
+// 有诊区出选项 / 空清单引导 / 失败批注条+重试恢复）、空词检索前置拦截零出网、挂号→收费联动
+// 主链（WINDOW 渠道 + TAKEN 直出 visitId 拉起费用 + 全现金结算金额原样透传零运算 + 挂号成功
+// 即见右列待缴）、动作在途守卫（W-22⑥：慢响应窗口按钮禁用且二次点击零出网）。
+// api mock 承载，不打真实网络；失败弹错一律归响应拦截器（诊区清单失败态断言页内失败面板+
+// 重试钮在位，且页内零 ElMessage 弹错——琢段裁决①双弹去重回归锚）。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { DOMWrapper, VueWrapper } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ElDatePicker, ElMessage } from 'element-plus';
+import { ElDatePicker, ElMessage, ElOption, ElSelect } from 'element-plus';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import { listFees, previewSettlement, settle } from '@/api/billing';
@@ -14,6 +17,8 @@ import { createAppointment, listAvailablePools } from '@/api/outpatient';
 import type { AppointmentVO, NumberPoolVO } from '@/api/outpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
 import { permDirective } from '@/directives/perm';
 import RegistrationChargeView from './RegistrationChargeView.vue';
 
@@ -28,6 +33,9 @@ vi.mock('@/api/billing', () => ({
   listFees: vi.fn(),
   previewSettlement: vi.fn(),
   settle: vi.fn(),
+}));
+vi.mock('@/api/system', () => ({
+  listOrgs: vi.fn(),
 }));
 
 // 仅替身 ElMessage（提示断言用），其余导出原样保留供组件解析
@@ -107,6 +115,15 @@ function appointmentTakenMock(): AppointmentVO {
   };
 }
 
+/** 诊区清单 mock（V1123 种子 DEPT 码集同源：DEPT-INT/SUR/PED，出网值仍为 string code） */
+function deptMocks(): OrgVO[] {
+  return [
+    { id: '1123000000000000003', orgCode: 'DEPT-INT', orgName: '内科', orgType: 'DEPT' },
+    { id: '1123000000000000004', orgCode: 'DEPT-SUR', orgName: '外科', orgType: 'DEPT' },
+    { id: '1123000000000000005', orgCode: 'DEPT-PED', orgName: '儿科', orgType: 'DEPT' },
+  ];
+}
+
 describe('挂号收费联动页', () => {
   /** 文件级 Pinia：结算面板 hasPerm 与 v-perm 读取 auth 会话 store，每用例新实例防串扰 */
   let pinia: Pinia;
@@ -118,8 +135,12 @@ describe('挂号收费联动页', () => {
     vi.mocked(listFees).mockReset();
     vi.mocked(previewSettlement).mockReset();
     vi.mocked(settle).mockReset();
+    vi.mocked(listOrgs).mockReset();
     vi.mocked(ElMessage.warning).mockClear();
+    vi.mocked(ElMessage.error).mockClear();
     vi.mocked(ElMessage.success).mockClear();
+    // 诊区清单默认回三分种子码集（演示链路同源）；三态用例按需覆写
+    vi.mocked(listOrgs).mockResolvedValue(deptMocks());
     // PR-4F #4/#12 后结算面板与挂号按钮挂元素权限：激活 pinia 并播种含码会话，
     // 既有用例语义不变（按钮按权限正常渲染，断言零改动）
     pinia = createPinia();
@@ -147,6 +168,93 @@ describe('挂号收费联动页', () => {
     expect(wrapper.text()).toContain('今日尚无挂号记录');
     expect(findButton(wrapper, '检索患者').exists()).toBe(true);
     expect(findButton(wrapper, '查询号源').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('门牌页首锚点：衬线标题「挂号收费」/ 签认人·时刻批注行 / 今日挂号计数胶囊（蓝图 P04.2）', () => {
+    // 批注行「谁」取会话显示名真值：播种带 displayName 的会话防 — 占位干扰断言
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({
+        token: 't',
+        refreshToken: 'r',
+        user: { userId: 1, displayName: '收费员甲', permissions: [] },
+      }),
+    );
+    const wrapper = mount(RegistrationChargeView);
+    const head = wrapper.find('.fuy-page-head');
+    expect(head.exists()).toBe(true);
+    expect(wrapper.find('.fuy-page-title').text()).toBe('挂号收费');
+    expect(wrapper.find('.fuy-page-note').text()).toContain('签认人 收费员甲');
+    // 状态位=今日挂号计数胶囊（.fuy-num 补间值载体），刷新钮挂状态位旁（既有语义零变动）
+    const pill = wrapper.find('.fuy-status-pill');
+    expect(pill.exists()).toBe(true);
+    expect(pill.text()).toContain('今日挂号');
+    expect(pill.find('.fuy-num').exists()).toBe(true);
+    expect(findButton(wrapper, '刷新').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('主从分区挂类：grid 工作区 + 左列级联三卡 + 右列 sticky 收费列；页根不挂 .fuy-stagger（契约 ⑦.4）', () => {
+    const wrapper = mount(RegistrationChargeView);
+    const workarea = wrapper.find('.registration-charge-workarea');
+    expect(workarea.exists()).toBe(true);
+    const left = wrapper.find('.registration-charge-flow');
+    expect(left.classes()).toContain('fuy-stagger');
+    expect(left.findAll('.fuy-card').length).toBe(3);
+    const side = wrapper.find('.registration-charge-side-col');
+    expect(side.exists()).toBe(true);
+    expect(side.find('.fuy-card').exists()).toBe(true);
+    // 页根禁挂 .fuy-stagger（路由进场过渡归 MainLayout，页根再挂会叠出双重进场节奏）
+    expect(wrapper.find('.fuy-page').classes()).not.toContain('fuy-stagger');
+    wrapper.unmount();
+  });
+
+  it('诊区真数据·加载态：清单在途期间下拉禁用（useAsyncTask 三态之一）', async () => {
+    // 永挂起的清单请求：稳定复现在途窗口
+    vi.mocked(listOrgs).mockImplementation(() => new Promise<OrgVO[]>(() => {}));
+    const wrapper = mount(RegistrationChargeView);
+    // onMounted 发起首拉同步置 loading，等一次渲染 flush 后再断言禁用态
+    await flushPromises();
+    expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('诊区真数据·就绪态：清单到达后下拉启用且选项为真数据码集（内科/外科/儿科）', async () => {
+    const wrapper = mount(RegistrationChargeView);
+    await flushPromises();
+    expect(vi.mocked(listOrgs)).toHaveBeenCalledWith({ type: 'DEPT' });
+    expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(false);
+    const optionTexts = wrapper.findAllComponents(ElOption).map((option) => option.text());
+    expect(optionTexts).toEqual(expect.arrayContaining(['内科', '外科', '儿科']));
+    wrapper.unmount();
+  });
+
+  it('诊区真数据·空清单态：清单为空时下拉禁用并给维护引导（不伪装成可选项）', async () => {
+    vi.mocked(listOrgs).mockResolvedValue([]);
+    const wrapper = mount(RegistrationChargeView);
+    await flushPromises();
+    expect(wrapper.findComponent(ElSelect).props('disabled')).toBe(true);
+    expect(wrapper.text()).toContain('暂无可用诊区');
+    wrapper.unmount();
+  });
+
+  it('诊区真数据·失败态：页内失败面板在位 + 重试可点，重试成功后选项恢复（页内零弹错归拦截器）', async () => {
+    vi.mocked(listOrgs).mockRejectedValue(new Error('orgs network down'));
+    const wrapper = mount(RegistrationChargeView);
+    await flushPromises();
+    // 失败面板在位（页内恢复指引语义：说问题+给重试）；页内 ElMessage 弹错已去重——
+    // 错误详情弹错归响应拦截器（琢段裁决①双弹去重回归锚：禁止页内重弹回潮）
+    expect(wrapper.text()).toContain('诊区清单加载失败');
+    expect(vi.mocked(ElMessage.error)).not.toHaveBeenCalled();
+    const retry = wrapper.findAll('button').find((b) => b.text() === '重试');
+    expect(retry).toBeDefined();
+    expect(retry?.attributes('disabled')).toBeUndefined();
+    // 重试成功：清单到达，选项恢复可用
+    vi.mocked(listOrgs).mockResolvedValue(deptMocks());
+    await retry?.trigger('click');
+    await flushPromises();
+    expect(wrapper.findAllComponents(ElOption).length).toBe(3);
     wrapper.unmount();
   });
 
@@ -214,8 +322,9 @@ describe('挂号收费联动页', () => {
     });
     await wrapper.find('.fuy-patient-row').trigger('click');
 
-    // 步骤 2：填诊区/日期（选择器以 emit 回填 v-model，口径同存量 spec）→ 查询并点选号源
-    await wrapper.find('input[placeholder="诊区编码，如 DEPT-INT"]').setValue('DEPT-INT');
+    // 步骤 2：诊区经真数据下拉、日期经选择器（均以 emit 回填 v-model，口径同存量 spec）
+    // → 查询并点选号源（出网值仍为 string code，双必填校验不变）
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'DEPT-INT');
     wrapper.findComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-09-21');
     await flushPromises();
     await clickButton(wrapper, '查询号源');
@@ -241,9 +350,11 @@ describe('挂号收费联动页', () => {
         size: 20,
       });
     });
-    // 渲染断言：待缴行与分→元展示串（金额零运算，展示层换算）
+    // 渲染断言：待缴行与分→元展示串（金额零运算，展示层换算）；且待缴行落右列 sticky
+    // 收费卡——蓝图「挂号成功即见待缴」主从分区（视线无需滚动寻位）
     expect(wrapper.text()).toContain('普通挂号费');
     expect(wrapper.text()).toContain('10.50');
+    expect(wrapper.find('.registration-charge-side-col').text()).toContain('普通挂号费');
 
     // 收费联动：预结算 → 确认收费（amount 取预结算回传值原样字符串透传）
     await clickButton(wrapper, '预结算');
@@ -309,7 +420,7 @@ describe('挂号收费联动页', () => {
     await clickButton(wrapper, '检索患者');
     await flushPromises();
     await wrapper.find('.fuy-patient-row').trigger('click');
-    await wrapper.find('input[placeholder="诊区编码，如 DEPT-INT"]').setValue('DEPT-INT');
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'DEPT-INT');
     wrapper.findComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-09-21');
     await flushPromises();
     await clickButton(wrapper, '查询号源');
@@ -348,7 +459,7 @@ describe('挂号收费联动页', () => {
     await clickButton(wrapper, '检索患者');
     await flushPromises();
     await wrapper.find('.fuy-patient-row').trigger('click');
-    await wrapper.find('input[placeholder="诊区编码，如 DEPT-INT"]').setValue('DEPT-INT');
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'DEPT-INT');
     wrapper.findComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-09-21');
     await flushPromises();
     await clickButton(wrapper, '查询号源');
@@ -382,7 +493,7 @@ describe('挂号收费联动页', () => {
     await clickButton(wrapper, '检索患者');
     await flushPromises();
     await wrapper.find('.fuy-patient-row').trigger('click');
-    await wrapper.find('input[placeholder="诊区编码，如 DEPT-INT"]').setValue('DEPT-INT');
+    wrapper.findComponent(ElSelect).vm.$emit('update:modelValue', 'DEPT-INT');
     wrapper.findComponent(ElDatePicker).vm.$emit('update:modelValue', '2026-09-21');
     await flushPromises();
     await clickButton(wrapper, '查询号源');
