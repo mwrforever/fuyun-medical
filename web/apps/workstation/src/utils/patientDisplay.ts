@@ -4,13 +4,17 @@
  * 检索页表格与详情页共用（F-8 枚举直出修复：操作员可读性，后端枚举原文不直出）。
  */
 
-/** 状态词表 → 文案与 tag 颜色（与后端 PatientStatus 枚举一致：NORMAL/FROZEN/MERGED） */
+/**
+ * 状态词表 → 文案与 tag 颜色（与后端 PatientStatus 枚举一致：NORMAL/FROZEN/MERGED）。
+ * 色语义唯一映射（契约 §③.2，2026-10-11 主控裁决）：冻结=警示族 warning（琥珀），
+ * danger 印泥朱只承危急/停用/作废——原 FROZEN danger 档系域内历史偏离，随裁决归位。
+ */
 const STATUS_META: Record<
   string,
   { label: string; tag: 'success' | 'warning' | 'danger' | 'info' }
 > = {
   NORMAL: { label: '正常', tag: 'success' },
-  FROZEN: { label: '已冻结', tag: 'danger' },
+  FROZEN: { label: '已冻结', tag: 'warning' },
   MERGED: { label: '已合并', tag: 'warning' },
 };
 
@@ -40,7 +44,9 @@ export function patientStatusText(status?: string): string {
  * 档案状态 → el-tag 颜色语义。
  *
  * @param status PatientStatus 枚举值
- * @return tag type（正常 success / 冻结 danger / 合并 warning）；未知状态回 info 灰
+ * @return tag type（正常 success / 冻结 warning 琥珀警示族 / 合并 warning）；未知状态回
+ *   info 灰。色语义唯一映射见契约 §③.2（2026-10-11 主控裁决：冻结=警示族，danger
+ *   印泥朱只承危急/停用/作废/校验错误）
  */
 export function patientStatusTagType(status?: string): 'success' | 'warning' | 'danger' | 'info' {
   return STATUS_META[status ?? '']?.tag ?? 'info';

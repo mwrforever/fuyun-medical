@@ -15,9 +15,11 @@ const MENU_ROW_PATTERN = /SELECT \d+, '([^']+)', '[^']*', 'MENU'/g;
 
 /** 从 V1116+V1120 种子 SQL 提取 MENU 权限码集合（V1120 新增管理台 MENU 码，PR-4F 扩源） */
 function loadMenuSeedCodes(): Set<string> {
+  // 路径锚定 import.meta：对 cwd 不敏感（历史 process.cwd 锚定在 --filter 口径下 ENOENT——
+  // 应用目录跑测时拼 ../backend 必失手，根跑者才绿）；本文件位于 src/router，上溯 5 级即仓库根
   const systemMigrations = resolve(
-    process.cwd(),
-    '../backend/fuyun-system/src/main/resources/db/migration/system/',
+    import.meta.dirname,
+    '../../../../../backend/fuyun-system/src/main/resources/db/migration/system/',
   );
   const sql1116 = readFileSync(
     resolve(systemMigrations, 'V1116__seed_full_permissions.sql'),
