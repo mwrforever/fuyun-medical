@@ -1,9 +1,15 @@
 <script setup lang="ts">
-// 挂号收费联动页（FU-M03-07 前端面，设计文档 §3.2/§8.1）：选患者 → 选排班/号别 → 挂号
-// （WINDOW 渠道，当日号 TAKEN 直出 visitId）→ 右列挂号费收费联动（资金面全走既有 billing
-// api，前端零金额运算——A.3-6）；动作按钮 loading + 在途守卫双保险（W-22⑥ 合规形态自带），
-// 失败弹错归响应拦截器。动效编排照设计文档 §8.1 表：进场 stagger / 号源骨架→内容 /
-// 号源卡选中色值过渡（paint 级单元素反馈）/ 挂号成功待缴行入场 / 缴费完成对勾（emphasis）。
+// 挂号收费联动页（FU-M03-07 前端面 · 暖纸卷宗 P04 蓝图重排）：选患者 → 选诊区/排班号别 →
+// 挂号（WINDOW 渠道，当日号 TAKEN 直出 visitId）→ 右列挂号费收费联动（资金面全走既有
+// billing api，前端零金额运算——A.3-6）；动作按钮 loading + 在途守卫双保险（W-22⑥ 合规形态
+// 自带），失败弹错归响应拦截器。构图（蓝图 P04.2/P04.3「换脸不换业务」）：门牌页首（衬线
+// 标题 + 今日挂号计数胶囊 + 签认人·时刻批注行，刷新钮挂状态位旁）→ 主从工作区 grid 2fr 1fr
+//（左挂号流三步卡级联 0-2 / 右收费联动卡 sticky top 16——「挂号成功即见待缴」视线零滚动）→
+// 页底当日记录卡。诊区假常量清零：DEPT-INT 文本输入升 listOrgs({type:'DEPT'}) 真下拉
+//（useAsyncTask 三态：加载禁用 / 失败批注条+重试 / 空清单引导；出网值仍为 string code，
+// onQueryPools 双必填校验不变）。动效编排照蓝图 P04.4：进场 stagger / 号源骨架→内容 /
+// 号源卡选中色值过渡（paint 级单元素反馈）/ 挂号成功待缴行入场 / 缴费完成对勾（emphasis），
+// 零新增 keyframes。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（billing 三页同款口径）
@@ -14,15 +20,35 @@ import { createAppointment, listAvailablePools } from '@/api/outpatient';
 import type { AppointmentVO, NumberPoolVO } from '@/api/outpatient';
 import { searchPatients } from '@/api/patient';
 import type { PatientVO } from '@/api/patient';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
 import { useAsyncTask } from '@/composables/useAsyncTask';
 import { usePagedList } from '@/composables/usePagedList';
 import { useAuthStore } from '@/stores/auth';
 import { fenToYuanDisplay } from '@/utils/money';
 
-// 元素权限判定入口（PR-4F F8）：挂号按钮 v-perm 直挂（#12）、结算收费面板 hasPerm 包裹（#4）
+// 会话入口（PR-4F F8 元素权限判定 + 门牌批注行「谁」签认人）
 const auth = useAuthStore();
 
-/** 号别中文词表（生成物 apptType 五值枚举的展示映射；V705 appt-type 字典同源） */
+/** 门牌批注行「谁」：会话显示名真值；空会话以 — 占位（防御场景，路由守卫默认拒绝未登录） */
+const signerName = computed(() => auth.user?.displayName ?? '—');
+
+/**
+ * 门牌批注行「何时」（YYYY-MM-DD 周X）：与首页门牌同语法的病历页眉日期批注，
+ * 纯本地时钟零出网。
+ */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
+
+/** 页头当日挂号计数（会话内挂号成功数；非持久化统计，禁伪数据） */
+const todayCount = ref(0);
+
+/** 号别中文词表（生成物 apptType 五值枚举的展示映射；V705 appt-type 字典同源）——契约枚举镜像非假常量 */
 const APPT_TYPE_LABELS: Record<string, string> = {
   GENERAL: '普通',
   EXPERT: '专家',
@@ -30,9 +56,6 @@ const APPT_TYPE_LABELS: Record<string, string> = {
   EMERGENCY: '急诊',
   REVISIT: '复诊',
 };
-
-/** 页头当日挂号计数（会话内挂号成功数；非持久化统计，禁伪数据） */
-const todayCount = ref(0);
 
 /* ---------- 第 1 步：选择患者（行高 40px 紧凑检索，行点击回填） ---------- */
 const keyword = ref('');
@@ -69,12 +92,54 @@ function onSelectPatient(row: PatientVO): void {
   selectedPatient.value = row;
 }
 
-/* ---------- 第 2 步：选择排班/号别（日期 + 诊区 → 号源卡阵列 3 列 grid） ---------- */
+/* ---------- 第 2 步：选择排班/号别（诊区真数据下拉 + 日期 → 号源卡阵列 3 列 grid） ---------- */
+/** 诊区清单（listOrgs 真数据源，V1123 DEPT 种子码集 DEPT-INT/SUR/PED 同链路）：
+ * 替代「如 DEPT-INT」文本输入假常量；仅保留带 code 的机构行，出网值仍为 string code */
+const depts = ref<OrgVO[]>([]);
+/** 诊区清单是否已落定（成败均计）：区分「未加载」与「加载为空」，空态引导不抢跑 */
+const deptsSettled = ref(false);
+
+/** 诊区清单加载（useAsyncTask 三态）：加载中下拉禁用 / 失败批注条+重试 / 空清单禁用+引导；
+ * 失败态只落 error ref 驱动页内失败面板与重试钮，错误详情弹错归响应拦截器——页内不重弹
+ * （琢段裁决①：页内 ElMessage 与全局拦截器双弹并存重复，已去重） */
+const {
+  loading: deptsLoading,
+  error: deptsError,
+  run: loadDepts,
+} = useAsyncTask(
+  async () => {
+    depts.value = (await listOrgs({ type: 'DEPT' })).filter((org) => org.orgCode);
+  },
+  {
+    onFinally: () => {
+      deptsSettled.value = true;
+    },
+  },
+);
+
+/** 空清单态：清单已落定且为空（下拉禁用 + 维护引导，不伪装成可选项） */
+const deptsEmpty = computed(
+  () => deptsSettled.value && deptsError.value === null && depts.value.length === 0,
+);
+
+/** 诊区下拉禁用：加载中 / 失败待重试 / 空清单三态均无可选项，禁用防误操作 */
+const deptsDisabled = computed(
+  () => deptsLoading.value || deptsError.value !== null || deptsEmpty.value,
+);
+
 const deptCode = ref('');
 const poolDate = ref('');
 const pools = ref<NumberPoolVO[]>([]);
 /** 已选号源池（null=未选；挂号入参 poolId 来源） */
 const selectedPool = ref<NumberPoolVO | null>(null);
+
+/** 选中诊区展示名（确认挂号摘要用）：清单内按 code 反查名称，缺失回退原码，空选 — 占位 */
+const deptLabel = computed(() => {
+  if (deptCode.value === '') {
+    return '';
+  }
+  return depts.value.find((org) => org.orgCode === deptCode.value)?.orgName ?? deptCode.value;
+});
 
 /** 余号状态三态：0= danger 条 + 卡体弱化禁点；≤5 = warning 条 +「紧张」角标；其余品牌色条 */
 function poolTone(pool: NumberPoolVO): 'danger' | 'warning' | 'brand' {
@@ -102,7 +167,7 @@ async function onQueryPools(): Promise<void> {
     return;
   }
   if (deptCode.value.trim() === '' || poolDate.value === '') {
-    void ElMessage.warning('请先填写诊区编码与排班日期');
+    void ElMessage.warning('请先选择诊区与排班日期');
     return;
   }
   await loadPools();
@@ -256,7 +321,7 @@ async function onSettle(): Promise<void> {
   }
 }
 
-/** 页头刷新（§3.2 布局树「页面题 + 当日计数 + 刷新按钮」缺项补齐）：重拉当前就诊费用行；
+/** 页首刷新（蓝图 P04.2 刷新钮挂状态位旁）：重拉当前就诊费用行；
  * 无联动就诊（未挂号或预约号）时按钮禁用（无可刷新面），点击零出网 */
 async function onRefreshFees(): Promise<void> {
   if (chargeVisitId.value === '' || feesLoading.value) {
@@ -321,6 +386,8 @@ function tweenTodayCount(target: number): void {
 
 onMounted(() => {
   todayCountDisplay.value = 0;
+  // 诊区清单首拉（真数据下拉数据面；失败批注条+重试由三态承接）
+  void loadDepts();
 });
 
 onBeforeUnmount(() => {
@@ -330,328 +397,409 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="fuy-page registration-charge">
-    <!-- 页头 48px（§3.2 布局树）：页面题 + 当日挂号计数（.fuy-num 防宽度跳动）+ 刷新按钮 -->
-    <header class="registration-charge-header">
-      <h2 class="registration-charge-title">挂号收费</h2>
-      <span class="fuy-num registration-charge-count">今日挂号 {{ todayCountDisplay }}</span>
-      <el-button
-        class="registration-charge-refresh"
-        :loading="feesLoading"
-        :disabled="chargeVisitId === ''"
-        title="重新拉取当前就诊的收费联动费用行"
-        @click="onRefreshFees"
-        >刷新</el-button
-      >
+    <!-- 暖纸卷宗 P04 重排：页面纵向序=门牌页首 → 主从工作区 → 当日记录卡（契约 ⑧）。
+         stagger 四档（左三卡 0-2 / 右 3）既有口径——门牌页首不入级联，页根禁挂 .fuy-stagger
+        （契约 ⑦.4：路由进场过渡归 MainLayout，防双重进场节奏） -->
+    <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 右挂状态位（刷新钮 + 今日挂号计数胶囊）+
+         签认人·时刻批注行；2px 墨规收底走全局 .fuy-page-head 脸，本页零私有标题样式 -->
+    <header class="fuy-page-head">
+      <div class="fuy-page-head-main">
+        <h1 class="fuy-page-title">挂号收费</h1>
+      </div>
+      <div class="fuy-page-status registration-charge-side">
+        <el-button
+          :loading="feesLoading"
+          :disabled="chargeVisitId === ''"
+          title="重新拉取当前就诊的收费联动费用行"
+          @click="onRefreshFees"
+          >刷新</el-button
+        >
+        <!-- 状态位=今日挂号计数胶囊（.fuy-num 补间值载体；静态计数不挂呼吸点——实时/进行
+             语义才挂，总则 2 双轨制） -->
+        <span class="fuy-status-pill fuy-status-pill--info">
+          今日挂号 <span class="fuy-num">{{ todayCountDisplay }}</span>
+        </span>
+      </div>
+      <p class="fuy-page-note">
+        签认人 {{ signerName }} · <time>{{ todayLabel }}</time>
+      </p>
     </header>
 
-    <el-row :gutter="16" class="registration-charge-main">
-      <!-- 左：挂号流三步卡（§8.1 stagger index 0-2） -->
-      <el-col :md="24" :lg="16" class="fuy-stagger">
-        <el-card class="registration-charge-card" :style="{ '--fuy-stagger-index': 0 }">
-          <template #header>
-            <span class="fuy-step-badge" :class="{ 'is-done': selectedPatient !== null }">1</span>
-            选择患者
-          </template>
-          <div class="registration-charge-toolbar">
-            <el-input
-              v-model="keyword"
-              class="registration-charge-keyword"
-              placeholder="姓名/证件号/手机号"
-              @keyup.enter="onSearchPatients"
-            />
-            <el-button
-              type="primary"
-              :loading="patientLoading"
-              :disabled="patientLoading"
-              @click="onSearchPatients"
-              >检索患者</el-button
-            >
-          </div>
-          <!-- 检索结果行高 40px 紧凑列表，行点击回填（§8.1 患者检索组件口径） -->
-          <TransitionGroup
-            v-if="patients.length > 0"
-            name="fuy-flip"
-            tag="ul"
-            class="fuy-patient-list"
-          >
-            <li
-              v-for="row in patients"
-              :key="row.patientId"
-              class="fuy-patient-row"
-              :class="{ 'is-active': selectedPatient?.patientId === row.patientId }"
-              @click="onSelectPatient(row)"
-            >
-              <span>{{ row.name }}</span>
-              <span class="fuy-patient-row-meta">{{ row.idCardNo ?? row.patientId }}</span>
-            </li>
-          </TransitionGroup>
-          <el-empty
-            v-else
-            :image-size="72"
-            description="输入检索词后检索患者，点击结果行完成选择"
-          />
-        </el-card>
-
-        <el-card class="registration-charge-card" :style="{ '--fuy-stagger-index': 1 }">
-          <template #header>
-            <span class="fuy-step-badge" :class="{ 'is-done': selectedPool !== null }">2</span>
-            选择排班/号别
-          </template>
-          <div class="registration-charge-toolbar">
-            <el-input
-              v-model="deptCode"
-              class="registration-charge-dept"
-              placeholder="诊区编码，如 DEPT-INT"
-            />
-            <el-date-picker
-              v-model="poolDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="排班日期"
-            />
-            <el-button
-              type="primary"
-              :loading="poolsLoading"
-              :disabled="poolsLoading"
-              @click="onQueryPools"
-              >查询号源</el-button
-            >
-          </div>
-          <!-- 骨架 → 内容（§6.7：min-height 锁定防 CLS） -->
-          <div class="registration-charge-pools">
-            <el-skeleton v-if="poolsLoading" :rows="3" animated />
-            <Transition v-else-if="pools.length > 0" name="fuy-content-fade" appear>
-              <div class="registration-charge-pool-grid">
-                <button
-                  v-for="pool in pools"
-                  :key="pool.id"
-                  type="button"
-                  class="registration-charge-pool"
-                  :class="[
-                    `is-${poolTone(pool)}`,
-                    {
-                      'is-selected': selectedPool?.id === pool.id,
-                      'is-disabled': (pool.remaining ?? 0) <= 0,
-                    },
-                  ]"
-                  :disabled="(pool.remaining ?? 0) <= 0"
-                  @click="onSelectPool(pool)"
-                >
-                  <span v-if="poolTone(pool) === 'warning'" class="registration-charge-tight"
-                    >紧张</span
-                  >
-                  <strong class="registration-charge-pool-type">{{
-                    APPT_TYPE_LABELS[pool.apptType ?? ''] ?? pool.apptType
-                  }}</strong>
-                  <span class="registration-charge-pool-slot"
-                    >{{ pool.slotStart ?? '' }}~{{ pool.slotEnd ?? '' }}</span
-                  >
-                  <span class="fuy-num registration-charge-pool-remaining"
-                    >余 {{ pool.remaining ?? 0 }}</span
-                  >
-                </button>
-              </div>
-            </Transition>
-            <el-empty v-else :image-size="72" description="填写诊区与日期后查询可约号源" />
-          </div>
-        </el-card>
-
-        <el-card class="registration-charge-card" :style="{ '--fuy-stagger-index': 2 }">
-          <template #header>
-            <span class="fuy-step-badge" :class="{ 'is-done': lastAppointment !== null }">3</span>
-            确认挂号
-          </template>
-          <el-descriptions :column="3" border>
-            <el-descriptions-item label="患者">{{
-              selectedPatient?.name ?? '—'
-            }}</el-descriptions-item>
-            <el-descriptions-item label="诊区">{{ deptCode || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="日期">{{ poolDate || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="号别">{{
-              selectedPool
-                ? (APPT_TYPE_LABELS[selectedPool.apptType ?? ''] ?? selectedPool.apptType)
-                : '—'
-            }}</el-descriptions-item>
-            <el-descriptions-item label="时段">{{
-              selectedPool ? `${selectedPool.slotStart ?? ''}~${selectedPool.slotEnd ?? ''}` : '—'
-            }}</el-descriptions-item>
-            <el-descriptions-item label="渠道">窗口（WINDOW）</el-descriptions-item>
-          </el-descriptions>
-          <div class="registration-charge-submit">
-            <!-- 挂号入口（PR-4F #12）：v-perm 直挂——与 canRegister/registering 数据态
-                 :disabled 正交叠加（权限决定在不在 DOM，选号完整度决定可不可点） -->
-            <el-button
-              v-perm="'outpatient:registration:btn:register'"
-              type="primary"
-              class="registration-charge-submit-btn"
-              :disabled="!canRegister || registering"
-              :loading="registering"
-              @click="onRegister"
-              >确认挂号</el-button
-            >
-          </div>
-        </el-card>
-      </el-col>
-
-      <!-- 右：收费联动（stagger index 3） -->
-      <el-col :md="24" :lg="8" class="fuy-stagger">
-        <el-card class="registration-charge-card" :style="{ '--fuy-stagger-index': 3 }">
-          <template #header>挂号费收费</template>
-          <!-- 待缴行入场（§8.1：fuy-flip-enter，visit 维度键控） -->
-          <Transition name="fuy-flip">
-            <div v-if="chargeVisitId === ''" key="idle" class="registration-charge-idle">
-              <el-empty :image-size="72" description="完成当日挂号后自动带出挂号费待缴行" />
+    <!-- 主从工作区（蓝图 P04.3）：grid 2fr 1fr，左挂号流三步卡纵叠 gap 12，右收费联动卡
+         sticky top 16——挂号成功后视线不滚动即见待缴（「挂号成功即见待缴」主从分区） -->
+    <div class="registration-charge-workarea">
+      <!-- 左：挂号流三步卡（stagger index 0-2 既有） -->
+      <div class="fuy-stagger registration-charge-flow">
+        <section class="fuy-card registration-charge-card" :style="{ '--fuy-stagger-index': 0 }">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">
+              <span class="fuy-step-badge" :class="{ 'is-done': selectedPatient !== null }">1</span
+              >选择患者
+            </h2>
+          </header>
+          <div class="fuy-card-body">
+            <div class="registration-charge-toolbar">
+              <el-input
+                v-model="keyword"
+                class="registration-charge-keyword"
+                placeholder="姓名/证件号/手机号"
+                @keyup.enter="onSearchPatients"
+              />
+              <el-button
+                type="primary"
+                :loading="patientLoading"
+                :disabled="patientLoading"
+                @click="onSearchPatients"
+                >检索患者</el-button
+              >
             </div>
-            <div v-else key="active">
-              <el-descriptions :column="2" border size="small">
-                <el-descriptions-item label="就诊号">
-                  <span class="fuy-num">{{ chargeVisitId }}</span>
-                </el-descriptions-item>
-                <el-descriptions-item label="单据号">
-                  <span class="fuy-num">{{ lastAppointment?.apptNo ?? '—' }}</span>
-                </el-descriptions-item>
-              </el-descriptions>
+            <!-- 检索结果行高 40px 紧凑列表，行点击回填（§8.1 患者检索组件口径） -->
+            <TransitionGroup
+              v-if="patients.length > 0"
+              name="fuy-flip"
+              tag="ul"
+              class="fuy-patient-list"
+            >
+              <li
+                v-for="row in patients"
+                :key="row.patientId"
+                class="fuy-patient-row"
+                :class="{ 'is-active': selectedPatient?.patientId === row.patientId }"
+                @click="onSelectPatient(row)"
+              >
+                <span>{{ row.name }}</span>
+                <span class="fuy-patient-row-meta">{{ row.idCardNo ?? row.patientId }}</span>
+              </li>
+            </TransitionGroup>
+            <!-- 诚实空态脸（契约 ⑥ 禁纸箱插画）：主句「暂无」语法 + 说明给下一步 -->
+            <div v-else class="fuy-empty" role="status">
+              <span class="fuy-empty-mark" aria-hidden="true">空</span>
+              <p class="fuy-empty-title">暂无检索结果</p>
+              <p class="fuy-empty-hint">输入检索词后检索患者，点击结果行完成选择。</p>
+            </div>
+          </div>
+        </section>
 
-              <!-- 缴费完成态（绿色对勾，scale 0.6→1 240ms emphasis——§8.1 允许两处之一） -->
-              <Transition name="registration-charge-check">
-                <div v-if="settled !== null" class="registration-charge-paid">
-                  <span class="registration-charge-check" aria-hidden="true">✓</span>
-                  <div>
-                    <p>收费完成</p>
-                    <p class="fuy-num registration-charge-paid-amount">
-                      ￥{{ fenToYuanDisplay(settled.totalAmount ?? '') }}
-                    </p>
-                  </div>
+        <section class="fuy-card registration-charge-card" :style="{ '--fuy-stagger-index': 1 }">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">
+              <span class="fuy-step-badge" :class="{ 'is-done': selectedPool !== null }">2</span
+              >选择排班/号别
+            </h2>
+          </header>
+          <div class="fuy-card-body">
+            <div class="registration-charge-toolbar">
+              <!-- 诊区真数据下拉（蓝图 P04.5 假常量清零）：listOrgs({type:'DEPT'}) 单源，
+                   160px 档，显式 popper 挂 fuy-snap-popper；value 仍为 string code，
+                   listAvailablePools.deptCode 契约不变 -->
+              <el-select
+                v-model="deptCode"
+                class="registration-charge-dept"
+                placeholder="请选择诊区"
+                :loading="deptsLoading"
+                :disabled="deptsDisabled"
+                popper-class="fuy-snap-popper"
+              >
+                <el-option
+                  v-for="org in depts"
+                  :key="org.id ?? org.orgCode"
+                  :label="org.orgName ?? org.orgCode"
+                  :value="org.orgCode ?? ''"
+                />
+              </el-select>
+              <el-date-picker
+                v-model="poolDate"
+                type="date"
+                value-format="YYYY-MM-DD"
+                placeholder="排班日期"
+                popper-class="fuy-snap-popper"
+              />
+              <el-button
+                type="primary"
+                :loading="poolsLoading"
+                :disabled="poolsLoading"
+                @click="onQueryPools"
+                >查询号源</el-button
+              >
+            </div>
+            <!-- 诊区清单三态批注行：失败给重试入口 / 空清单给维护引导（错误态不伪装空态） -->
+            <div v-if="deptsError !== null" class="registration-charge-dept-state" role="status">
+              <span class="registration-charge-dept-hint">诊区清单加载失败</span>
+              <el-button link type="primary" :loading="deptsLoading" @click="loadDepts"
+                >重试</el-button
+              >
+            </div>
+            <p v-else-if="deptsEmpty" class="registration-charge-dept-hint" role="status">
+              暂无可用诊区，请联系管理员维护科室档案
+            </p>
+            <!-- 骨架 → 内容（§6.7：min-height 锁定防 CLS） -->
+            <div class="registration-charge-pools">
+              <el-skeleton v-if="poolsLoading" :rows="3" animated />
+              <Transition v-else-if="pools.length > 0" name="fuy-content-fade" appear>
+                <div class="registration-charge-pool-grid">
+                  <button
+                    v-for="pool in pools"
+                    :key="pool.id"
+                    type="button"
+                    class="registration-charge-pool"
+                    :class="[
+                      `is-${poolTone(pool)}`,
+                      {
+                        'is-selected': selectedPool?.id === pool.id,
+                        'is-disabled': (pool.remaining ?? 0) <= 0,
+                      },
+                    ]"
+                    :disabled="(pool.remaining ?? 0) <= 0"
+                    @click="onSelectPool(pool)"
+                  >
+                    <span v-if="poolTone(pool) === 'warning'" class="registration-charge-tight"
+                      >紧张</span
+                    >
+                    <strong class="registration-charge-pool-type">{{
+                      APPT_TYPE_LABELS[pool.apptType ?? ''] ?? pool.apptType
+                    }}</strong>
+                    <span class="registration-charge-pool-slot"
+                      >{{ pool.slotStart ?? '' }}~{{ pool.slotEnd ?? '' }}</span
+                    >
+                    <span class="fuy-num registration-charge-pool-remaining"
+                      >余 {{ pool.remaining ?? 0 }}</span
+                    >
+                  </button>
                 </div>
               </Transition>
-
-              <template v-if="settled === null">
-                <p class="fuy-section-title">待缴费用</p>
-                <div v-loading="feesLoading" class="registration-charge-fees">
-                  <el-table :data="unpaidFees" class="fuy-dense">
-                    <el-table-column prop="itemNameSnapshot" label="项目" min-width="110" />
-                    <el-table-column prop="quantity" label="数量" width="64" align="right">
-                      <template #default="{ row }">
-                        <span class="fuy-num">{{ row.quantity }}</span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column prop="amount" label="金额（元）" width="100" align="right">
-                      <template #default="{ row }">
-                        <span class="fuy-num">{{ fenToYuanDisplay(row.amount ?? '') }}</span>
-                      </template>
-                    </el-table-column>
-                    <template #empty>
-                      <el-empty :image-size="56" description="无待缴费用行" />
-                    </template>
-                  </el-table>
-                </div>
-
-                <template v-if="preview !== null">
-                  <p class="fuy-section-title">应收合计</p>
-                  <p class="registration-charge-total">
-                    <span class="fuy-num registration-charge-total-amount">{{
-                      fenToYuanDisplay(preview.totalAmount ?? '')
-                    }}</span>
-                    <span class="registration-charge-total-unit">元（自费）</span>
-                  </p>
-                </template>
-                <!-- 收费员结算区（PR-4F #4）：面板码复用 billing:charge:btn:settle——与外层
-                     患者选中数据态 template 条件嵌套叠加（权限在外、数据在内，两层独立判定） -->
-                <div
-                  v-if="auth.hasPerm('billing:charge:btn:settle')"
-                  class="registration-charge-pay-actions"
-                >
-                  <el-button
-                    v-if="preview === null"
-                    type="primary"
-                    :loading="previewing"
-                    :disabled="previewing || unpaidFees.length === 0"
-                    @click="onPreview"
-                    >预结算</el-button
-                  >
-                  <el-button
-                    v-else
-                    type="primary"
-                    :loading="settling"
-                    :disabled="settling"
-                    @click="onSettle"
-                    >确认收费</el-button
-                  >
-                </div>
-              </template>
+              <div v-else class="fuy-empty" role="status">
+                <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                <p class="fuy-empty-title">暂无可约号源</p>
+                <p class="fuy-empty-hint">填写诊区与日期后查询可约号源。</p>
+              </div>
             </div>
-          </Transition>
-        </el-card>
-      </el-col>
-    </el-row>
+          </div>
+        </section>
+
+        <section class="fuy-card registration-charge-card" :style="{ '--fuy-stagger-index': 2 }">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">
+              <span class="fuy-step-badge" :class="{ 'is-done': lastAppointment !== null }">3</span
+              >确认挂号
+            </h2>
+          </header>
+          <div class="fuy-card-body">
+            <el-descriptions :column="3" border>
+              <el-descriptions-item label="患者">{{
+                selectedPatient?.name ?? '—'
+              }}</el-descriptions-item>
+              <el-descriptions-item label="诊区">{{ deptLabel || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="日期">{{ poolDate || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="号别">{{
+                selectedPool
+                  ? (APPT_TYPE_LABELS[selectedPool.apptType ?? ''] ?? selectedPool.apptType)
+                  : '—'
+              }}</el-descriptions-item>
+              <el-descriptions-item label="时段">{{
+                selectedPool ? `${selectedPool.slotStart ?? ''}~${selectedPool.slotEnd ?? ''}` : '—'
+              }}</el-descriptions-item>
+              <el-descriptions-item label="渠道">窗口（WINDOW）</el-descriptions-item>
+            </el-descriptions>
+            <div class="registration-charge-submit">
+              <!-- 挂号入口（PR-4F #12）：v-perm 直挂——与 canRegister/registering 数据态
+                   :disabled 正交叠加（权限决定在不在 DOM，选号完整度决定可不可点） -->
+              <el-button
+                v-perm="'outpatient:registration:btn:register'"
+                type="primary"
+                class="registration-charge-submit-btn"
+                :disabled="!canRegister || registering"
+                :loading="registering"
+                @click="onRegister"
+                >确认挂号</el-button
+              >
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- 右：收费联动 sticky 列（stagger index 3）——「挂号成功即见待缴」主从分区的从列 -->
+      <div class="fuy-stagger registration-charge-side-col">
+        <section class="fuy-card registration-charge-card" :style="{ '--fuy-stagger-index': 3 }">
+          <header class="fuy-card-head">
+            <h2 class="fuy-card-title">挂号费收费</h2>
+          </header>
+          <div class="fuy-card-body">
+            <!-- 待缴行入场（§8.1：fuy-flip-enter，visit 维度键控） -->
+            <Transition name="fuy-flip">
+              <div v-if="chargeVisitId === ''" key="idle" class="registration-charge-idle">
+                <div class="fuy-empty" role="status">
+                  <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                  <p class="fuy-empty-title">暂无待缴费用</p>
+                  <p class="fuy-empty-hint">完成当日挂号后自动带出挂号费待缴行。</p>
+                </div>
+              </div>
+              <div v-else key="active">
+                <el-descriptions :column="2" border size="small">
+                  <el-descriptions-item label="就诊号">
+                    <span class="fuy-num">{{ chargeVisitId }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="单据号">
+                    <span class="fuy-num">{{ lastAppointment?.apptNo ?? '—' }}</span>
+                  </el-descriptions-item>
+                </el-descriptions>
+
+                <!-- 缴费完成态（绿色对勾，scale 0.6→1 240ms emphasis——§8.1 允许两处之一） -->
+                <Transition name="registration-charge-check">
+                  <div v-if="settled !== null" class="registration-charge-paid">
+                    <span class="registration-charge-check" aria-hidden="true">✓</span>
+                    <div>
+                      <p>收费完成</p>
+                      <p class="fuy-num registration-charge-paid-amount">
+                        ￥{{ fenToYuanDisplay(settled.totalAmount ?? '') }}
+                      </p>
+                    </div>
+                  </div>
+                </Transition>
+
+                <template v-if="settled === null">
+                  <p class="fuy-section-title">待缴费用</p>
+                  <div v-loading="feesLoading" class="registration-charge-fees">
+                    <el-table :data="unpaidFees" class="fuy-dense">
+                      <el-table-column prop="itemNameSnapshot" label="项目" min-width="110" />
+                      <el-table-column prop="quantity" label="数量" width="64" align="right">
+                        <template #default="{ row }">
+                          <span class="fuy-num">{{ row.quantity }}</span>
+                        </template>
+                      </el-table-column>
+                      <el-table-column prop="amount" label="金额（元）" width="100" align="right">
+                        <template #default="{ row }">
+                          <span class="fuy-num">{{ fenToYuanDisplay(row.amount ?? '') }}</span>
+                        </template>
+                      </el-table-column>
+                      <template #empty>
+                        <div class="fuy-empty" role="status">
+                          <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                          <p class="fuy-empty-title">暂无待缴费用行</p>
+                        </div>
+                      </template>
+                    </el-table>
+                  </div>
+
+                  <template v-if="preview !== null">
+                    <p class="fuy-section-title">应收合计</p>
+                    <p class="registration-charge-total">
+                      <span class="fuy-num registration-charge-total-amount">{{
+                        fenToYuanDisplay(preview.totalAmount ?? '')
+                      }}</span>
+                      <span class="registration-charge-total-unit">元（自费）</span>
+                    </p>
+                  </template>
+                  <!-- 收费员结算区（PR-4F #4）：面板码复用 billing:charge:btn:settle——与外层
+                       患者选中数据态 template 条件嵌套叠加（权限在外、数据在内，两层独立判定） -->
+                  <div
+                    v-if="auth.hasPerm('billing:charge:btn:settle')"
+                    class="registration-charge-pay-actions"
+                  >
+                    <el-button
+                      v-if="preview === null"
+                      type="primary"
+                      :loading="previewing"
+                      :disabled="previewing || unpaidFees.length === 0"
+                      @click="onPreview"
+                      >预结算</el-button
+                    >
+                    <el-button
+                      v-else
+                      type="primary"
+                      :loading="settling"
+                      :disabled="settling"
+                      @click="onSettle"
+                      >确认收费</el-button
+                    >
+                  </div>
+                </template>
+              </div>
+            </Transition>
+          </div>
+        </section>
+      </div>
+    </div>
 
     <!-- 当日挂号记录（会话内追加；el-table 无法承载行级 TransitionGroup，空→有以容器 fuy-flip 入场） -->
-    <el-card>
-      <template #header>当日挂号记录</template>
-      <Transition name="fuy-flip">
-        <el-table v-if="records.length > 0" :data="records" class="fuy-dense">
-          <el-table-column prop="apptNo" label="预约号" min-width="160">
-            <template #default="{ row }">
-              <span class="fuy-num">{{ row.apptNo }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="patientName" label="患者" min-width="100" />
-          <el-table-column prop="deptCode" label="诊区" min-width="90" />
-          <el-table-column prop="schedDate" label="就诊日期" min-width="110" />
-          <el-table-column prop="status" label="状态" width="96">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 'TAKEN' ? 'success' : 'primary'">{{
-                row.status === 'TAKEN' ? '已取号' : '已预约'
-              }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="charged" label="挂号费" width="96">
-            <template #default="{ row }">
-              <el-tag size="small" :type="row.charged ? 'success' : 'warning'" class="fuy-tag-aa">{{
-                row.charged ? '已收费' : '待收费'
-              }}</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-else :image-size="72" description="今日尚无挂号记录，完成挂号后自动登记" />
-      </Transition>
-    </el-card>
+    <section class="fuy-card fuy-dense">
+      <header class="fuy-card-head">
+        <h2 class="fuy-card-title">当日挂号记录</h2>
+      </header>
+      <div class="fuy-card-body">
+        <Transition name="fuy-flip">
+          <el-table v-if="records.length > 0" :data="records" class="fuy-dense">
+            <el-table-column prop="apptNo" label="预约号" min-width="160">
+              <template #default="{ row }">
+                <span class="fuy-num">{{ row.apptNo }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="patientName" label="患者" min-width="100" />
+            <el-table-column prop="deptCode" label="诊区" min-width="90" />
+            <el-table-column prop="schedDate" label="就诊日期" min-width="110" />
+            <el-table-column prop="status" label="状态" width="96">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.status === 'TAKEN' ? 'success' : 'primary'">{{
+                  row.status === 'TAKEN' ? '已取号' : '已预约'
+                }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="charged" label="挂号费" width="96">
+              <template #default="{ row }">
+                <el-tag
+                  size="small"
+                  :type="row.charged ? 'success' : 'warning'"
+                  class="fuy-tag-aa"
+                  >{{ row.charged ? '已收费' : '待收费' }}</el-tag
+                >
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-else class="fuy-empty" role="status">
+            <span class="fuy-empty-mark" aria-hidden="true">空</span>
+            <p class="fuy-empty-title">今日尚无挂号记录</p>
+            <p class="fuy-empty-hint">完成挂号后自动登记。</p>
+          </div>
+        </Transition>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-/* 页头 48px（§3.2）：页面题 18px/600 + 计数 24px */
-.registration-charge-header {
-  display: flex;
-  align-items: center;
+/* 视图级样式隔离（web A.1-2）：门牌页首/卷宗卡/状态胶囊/空态脸全局样式由 element-plus.css
+   承载，本块只留页内布局（主从 grid + sticky 右列 + 步骤徽标 + 号源卡等既有私有件） */
+
+/* 主从工作区（蓝图 P04.3）：grid 2fr 1fr；align-items:start 使右列不被拉伸——sticky
+   吸附的前提（拉伸后的列恒贴顶，sticky 失效）；min-height 480 既有锁定 */
+.registration-charge-workarea {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
   gap: var(--fuy-space-4);
-  min-height: 48px;
-}
-.registration-charge-title {
-  margin: 0;
-  font-size: var(--fuy-font-size-xl);
-  font-weight: 600;
-  line-height: 1.3;
-}
-.registration-charge-count {
-  font-size: var(--fuy-font-size-3xl);
-  font-weight: 700;
-  color: var(--fuy-color-text-emphasis);
-}
-/* 刷新按钮靠页头右缘（§3.2 布局树页头三元素两端排布） */
-.registration-charge-refresh {
-  margin-left: auto;
-}
-
-/* 上区高度锁定（§3.2 min-height 480px）与步骤卡间距 */
-.registration-charge-main {
   min-height: 480px;
+  align-items: start;
 }
-.registration-charge-card {
-  margin-bottom: var(--fuy-space-3);
+/* 左列三步卡纵叠（蓝图 P04.3：左三卡纵叠 gap 12；卡间距归 gap，撤销旧 el-card margin） */
+.registration-charge-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fuy-space-3);
+}
+/* 右列 sticky（蓝图 P04.2 收费联动卡 sticky top 16）：随页面滚动常驻视口，「挂号成功即见
+   待缴」；sticky 一次合成零 JS 代价 */
+.registration-charge-side-col {
+  position: sticky;
+  top: var(--fuy-space-4);
+  align-self: start;
+}
+/* 门牌状态位行（蓝图 P04.2 刷新钮挂状态位旁）：动作钮 + 计数胶囊 baseline 对齐
+   （P03 页首动作位同款语法） */
+.registration-charge-side {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--fuy-space-3);
 }
 
-/* 步骤序标：22px 圆形品牌底白字，完成态转 success 底（§8.1） */
+/* 步骤序标：22px 圆形品牌底白字，完成态转 success 底（§8.1 既有私有件零改动） */
 .fuy-step-badge {
   display: inline-flex;
   align-items: center;
@@ -681,8 +829,20 @@ onBeforeUnmount(() => {
 .registration-charge-keyword {
   width: 240px;
 }
+/* 诊区下拉 160px 档（门诊域级节：三页同款诊区选择器档位） */
 .registration-charge-dept {
-  width: 180px;
+  width: 160px;
+}
+/* 诊区清单三态批注行（失败重试 / 空清单引导）：12px 灰墨说明 + 行内重试入口 */
+.registration-charge-dept-state {
+  display: flex;
+  align-items: center;
+  gap: var(--fuy-space-2);
+}
+.registration-charge-dept-hint {
+  margin: 0;
+  color: var(--fuy-color-text-secondary);
+  font-size: var(--fuy-font-size-xs);
 }
 .fuy-patient-list {
   margin: var(--fuy-space-2) 0 0;
