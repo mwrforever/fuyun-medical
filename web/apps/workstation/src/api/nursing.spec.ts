@@ -1,11 +1,12 @@
 // 护理域 API 层单测（PR-3 扩展面）：executions/infusions/adverse-events/tasks.claim/
 // generate-routine 资源组的路径与载荷透传断言（mock http 模块，不打真实网络）；P1 存量
 // 资源组（ward-patients/体征/任务完成取消等）的出网行为已由消费方 spec 覆盖，本文件
-// 不重复。拦截器链归 http.spec.ts。
+// 不重复。拦截器链归 http.spec.ts。getAdverseEventStats 为暖纸重设计切片新增的
+// 未消费统计端点取用（甲-3 今日概览统计带，只读零后端）。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
 import { http } from './http';
-import { adverseEvents, executions, infusions, tasks } from './nursing';
+import { adverseEvents, executions, getAdverseEventStats, infusions, tasks } from './nursing';
 
 // http 单例以纯函数替身承载（api 层职责=路径与载荷组装，无其他协作者）
 vi.mock('./http', () => ({
@@ -168,5 +169,26 @@ describe('护理域 API 层（PR-3 扩展资源组）', () => {
       date: '2026-10-01',
     });
     expect(generated.createdTasks).toBe(6);
+  });
+
+  it('不良事件当日统计 GET 契约路径：无参出网省略 date 查询参数（后端缺省=当日北京钟面窗口）', async () => {
+    httpMock.get.mockResolvedValue(
+      resp({ date: '2026-10-11', total: '12', deadlineTotal: '5', deadlineMetCount: '4' }),
+    );
+
+    const stats = await getAdverseEventStats();
+
+    // 无参调用=当日口径（甲-3 统计带单次出网），请求零查询参数（date 缺省由后端承载当日）
+    expect(httpMock.get).toHaveBeenCalledWith('/v1/nursing/stats/adverse-events');
+    // 生成物类型直通：三消费字段原样透出（string 承载，web A.3-6 Long 字符串化）
+    expect(stats.total).toBe('12');
+    expect(stats.deadlineTotal).toBe('5');
+    expect(stats.deadlineMetCount).toBe('4');
+  });
+
+  it('不良事件当日统计 GET 失败：promise reject 冒泡不吞（错误处置归调用方三态收拢）', async () => {
+    httpMock.get.mockRejectedValue(new Error('network down'));
+
+    await expect(getAdverseEventStats()).rejects.toThrow('network down');
   });
 });

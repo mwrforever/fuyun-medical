@@ -6,6 +6,11 @@
 // 覆盖面大得不偿失），触控目标 ≥48px、字号 16px 基线、Enter 即提交（扫码枪回车形态）。
 // 超敏字段零渲染：数据源为脱敏摘要（无证件/手机号字段，spec 冻结断言）；各动作各自独立
 // 在途守卫 + 按钮 disabled，双击零出网。失败弹错：AxiosError 归拦截器，其余形态兜底展示。
+// 暖纸卷宗换肤（逐页蓝图 甲-4，换肤不换骨架）：页底=工作面暖纸 surface-page，段卡=卡面
+// 亮纸 surface-card + 发丝描边 + radius-card，页头=卷宗封面条（浓墨封皮底 + 纸字衬线标题，
+// 右挂当班护士批注）；交互骨架（七段卡流/48px 触控/Enter 即提交/幂等键/在途守卫）零改动。
+// 成功/失败反馈全程=message 批注条脸（customClass fuy-message）——移动面不引入钤印浮层
+// （浮层遮挡扫码动线，钤印是桌面弹层语法）；段标题升全局 .fuy-card-title 衬线 16px 档。
 import { computed, nextTick, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（portal 原生基线同款口径）
@@ -30,6 +35,21 @@ import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 import { validateScanCode } from './composables/useExecutions';
 import { todayString } from './wardBoardShared';
+
+/** 提示形态（success/warning/error 三通道，与全局批注条左缘 2px 状态色条通道一致） */
+type NotifyType = 'success' | 'warning' | 'error';
+
+/**
+ * 批注条反馈（暖纸契约 ⑤#11 的 PDA 例外承载）：全程 message 批注条脸，不引入钤印浮层——
+ * 浮层遮挡扫码动线，钤印是桌面弹层语法；customClass 挂全局 `.fuy-message`（卡面底+发丝
+ * 描边+左缘 2px 状态色条，状态色只上图标与色条的双通道铁律由全局类承载）。
+ *
+ * @param type 提示通道：success 成功回执 / warning 业务拦截 / error 兜底错误
+ * @param message 提示文案（业务结果或拦截原因，扫码枪节奏下的唯一反馈面）
+ */
+function notify(type: NotifyType, message: string): void {
+  void ElMessage[type]({ message, customClass: 'fuy-message' });
+}
 
 /** 腕带/卡号格式：I 型 14 位住院号 或 8 位以上数字患者卡号（二选一，§4.2 冻结） */
 const WRISTBAND_PATTERN = /^I\d{13}$/;
@@ -93,9 +113,7 @@ async function onIdentify(): Promise<void> {
     resetExecuteFace();
     // 在途清单随识别异步加载（不阻塞识别反馈；病区+当日自摘要派生）
     void loadExecutions();
-    void ElMessage.success(
-      `已识别：${summary.value.patientName ?? ''}（${summary.value.bedNo ?? ''}）`,
-    );
+    notify('success', `已识别：${summary.value.patientName ?? ''}（${summary.value.bedNo ?? ''}）`);
     identifierInput.value = '';
     await nextTick();
     identifierField.value?.focus();
@@ -103,7 +121,8 @@ async function onIdentify(): Promise<void> {
     // AxiosError 归拦截器弹错；其余形态（api 层直抛对象）按 404 口径兜底
     if (!axios.isAxiosError(error)) {
       const detail = (error as { detail?: unknown } | null | undefined)?.detail;
-      void ElMessage.error(
+      notify(
+        'error',
         typeof detail === 'string' && detail.length > 0
           ? detail
           : '未识别到该患者，请核对腕带或改用患者卡号',
@@ -252,7 +271,7 @@ async function onCheck(codeType: CheckCodeType): Promise<void> {
   checking.value = true;
   try {
     await executions.check(no, { code, codeType });
-    void ElMessage.success(`核对通过：${no}`);
+    notify('success', `核对通过：${no}`);
     // 过期回包丢弃：核对在途换行后不清新行扫码输入、不收新行破码弹层
     if (!isStaleAction(no)) {
       checkForm.value[codeType] = '';
@@ -285,15 +304,15 @@ async function onSubmitOverride(): Promise<void> {
   const secondary = overrideForm.value.secondaryAuthorizerId.trim();
   const reason = overrideForm.value.reason.trim();
   if (secondary === '') {
-    void ElMessage.warning('副授权人工号不能为空');
+    notify('warning', '副授权人工号不能为空');
     return;
   }
   if (secondary === (auth.user?.userId ?? '')) {
-    void ElMessage.warning('破码放行双授权两人不得相同（主授权人=当前登录人）');
+    notify('warning', '破码放行双授权两人不得相同（主授权人=当前登录人）');
     return;
   }
   if (reason === '') {
-    void ElMessage.warning('放行原因不能为空');
+    notify('warning', '放行原因不能为空');
     return;
   }
   const no = selectedExecution.value.executionNo ?? '';
@@ -306,7 +325,7 @@ async function onSubmitOverride(): Promise<void> {
       secondaryAuthorizerId: secondary,
       reason,
     });
-    void ElMessage.success(`已破码放行：${no}`);
+    notify('success', `已破码放行：${no}`);
     // 过期回包丢弃：放行在途换行后不收新行破码弹层
     if (!isStaleAction(no)) {
       overrideVisible.value = false;
@@ -347,7 +366,7 @@ const isInfusionExecution = computed(() => selectedExecution.value?.executionTyp
 function requireExecutorId(): string | null {
   const executorId = auth.user?.userId ?? '';
   if (executorId === '') {
-    void ElMessage.warning('会话缺少操作人身份，无法执行该操作（请重新登录后再试）');
+    notify('warning', '会话缺少操作人身份，无法执行该操作（请重新登录后再试）');
     return null;
   }
   return executorId;
@@ -371,7 +390,7 @@ async function onStartExecution(): Promise<void> {
   executing.value = true;
   try {
     await executions.start(no, payload);
-    void ElMessage.success(`已开始执行：${no}`);
+    notify('success', `已开始执行：${no}`);
     // 过期回包丢弃：开始在途换行后不清新行设备码输入
     if (!isStaleAction(no)) {
       startDeviceCode.value = '';
@@ -397,7 +416,7 @@ async function onFinishExecution(): Promise<void> {
   executing.value = true;
   try {
     await executions.finish(no, { executorId });
-    void ElMessage.success(`已完成执行：${no}`);
+    notify('success', `已完成执行：${no}`);
     await loadExecutions();
   } catch (error) {
     surfaceBizError(error);
@@ -422,13 +441,13 @@ async function onNeedleOut(): Promise<void> {
   }
   const volume = needleVolume.value.trim();
   if (!isValidNeedleVolume(volume)) {
-    void ElMessage.warning('实际输注量应为 0–5000 的整数（ml），请重新输入');
+    notify('warning', '实际输注量应为 0–5000 的整数（ml），请重新输入');
     return;
   }
   const wristband = needleWristband.value.trim();
   const wristbandValidation = validateScanCode(wristband, 'WRISTBAND');
   if (wristbandValidation !== null) {
-    void ElMessage.warning(wristbandValidation);
+    notify('warning', wristbandValidation);
     return;
   }
   const executorId = requireExecutorId();
@@ -443,7 +462,7 @@ async function onNeedleOut(): Promise<void> {
       actualVolumeMl: Number(volume),
       wristbandCode: wristband,
     });
-    void ElMessage.success(`已完成拔针：${no}`);
+    notify('success', `已完成拔针：${no}`);
     // 过期回包丢弃：拔针在途换行后不清新行输注量与腕带复扫输入
     if (!isStaleAction(no)) {
       needleVolume.value = '';
@@ -518,32 +537,32 @@ async function onRecordVitals(): Promise<void> {
   // 空串出网必被后端 4xx 拒——前端判空拦截零出网并明确提示改用腕带（R1 finding ③）
   const visitId = WRISTBAND_PATTERN.test(lastIdentifier.value) ? lastIdentifier.value : '';
   if (visitId === '') {
-    void ElMessage.warning('卡号识别无法录入体征，请改用腕带扫描（I 开头 14 位）后重试');
+    notify('warning', '卡号识别无法录入体征，请改用腕带扫描（I 开头 14 位）后重试');
     return;
   }
   const form = vitalForm.value;
   if (form.temperature !== '' && !isValidDecimal(form.temperature, 35, 42)) {
-    void ElMessage.warning('体温应为 35.0–42.0 的数值（如 36.5），请重新测量输入');
+    notify('warning', '体温应为 35.0–42.0 的数值（如 36.5），请重新测量输入');
     return;
   }
   if (form.pulse !== '' && !isValidInt(form.pulse, 20, 250)) {
-    void ElMessage.warning('脉搏应为 20–250 的整数');
+    notify('warning', '脉搏应为 20–250 的整数');
     return;
   }
   if (form.respiration !== '' && !isValidInt(form.respiration, 5, 60)) {
-    void ElMessage.warning('呼吸应为 5–60 的整数');
+    notify('warning', '呼吸应为 5–60 的整数');
     return;
   }
   if (form.systolicBp !== '' && !isValidInt(form.systolicBp, 60, 250)) {
-    void ElMessage.warning('收缩压应为 60–250 的整数');
+    notify('warning', '收缩压应为 60–250 的整数');
     return;
   }
   if (form.diastolicBp !== '' && !isValidInt(form.diastolicBp, 30, 180)) {
-    void ElMessage.warning('舒张压应为 30–180 的整数');
+    notify('warning', '舒张压应为 30–180 的整数');
     return;
   }
   if (form.spo2 !== '' && !isValidInt(form.spo2, 50, 100)) {
-    void ElMessage.warning('血氧应为 50–100 的整数');
+    notify('warning', '血氧应为 50–100 的整数');
     return;
   }
   if (
@@ -554,7 +573,7 @@ async function onRecordVitals(): Promise<void> {
     form.diastolicBp === '' &&
     form.spo2 === ''
   ) {
-    void ElMessage.warning('请至少录入一项体征数据');
+    notify('warning', '请至少录入一项体征数据');
     return;
   }
   recording.value = true;
@@ -573,7 +592,7 @@ async function onRecordVitals(): Promise<void> {
       diastolicBp: form.diastolicBp === '' ? undefined : Number(form.diastolicBp),
       spo2: form.spo2 === '' ? undefined : Number(form.spo2),
     });
-    void ElMessage.success('体征已录入');
+    notify('success', '体征已录入');
     // 提交成功才清表单，并轮换幂等键（失败保留表单与原键，重试仍复用同键）
     vitalClientMsgId = newIdempotencyKey();
     vitalForm.value = {
@@ -589,7 +608,7 @@ async function onRecordVitals(): Promise<void> {
     if (!axios.isAxiosError(error)) {
       const detail = (error as { detail?: unknown } | null | undefined)?.detail;
       if (typeof detail === 'string' && detail.length > 0) {
-        void ElMessage.error(detail);
+        notify('error', detail);
       }
     }
   } finally {
@@ -612,18 +631,18 @@ async function onPatrol(): Promise<void> {
   // 卡号路径 visitId 为空串：required 必填出网必 4xx——判空拦截零出网（R1 finding ③）
   const visitId = WRISTBAND_PATTERN.test(identifier) ? identifier : '';
   if (visitId === '') {
-    void ElMessage.warning('卡号识别无法巡视打卡，请改用腕带扫描（I 开头 14 位）后重试');
+    notify('warning', '卡号识别无法巡视打卡，请改用腕带扫描（I 开头 14 位）后重试');
     return;
   }
   patrolling.value = true;
   try {
     patrolTask.value = await pda.patrol({ identifier, visitId });
-    void ElMessage.success('巡视打卡完成');
+    notify('success', '巡视打卡完成');
   } catch (error) {
     if (!axios.isAxiosError(error)) {
       const detail = (error as { detail?: unknown } | null | undefined)?.detail;
       if (typeof detail === 'string' && detail.length > 0) {
-        void ElMessage.error(detail);
+        notify('error', detail);
       }
     }
   } finally {
@@ -634,15 +653,15 @@ async function onPatrol(): Promise<void> {
 
 <template>
   <div class="pda-page">
-    <!-- 页头：品牌 + 当前护士 -->
+    <!-- 页头：卷宗封面条（浓墨封皮底 + 纸字衬线标题）+ 右挂当班护士（批注语义） -->
     <header class="pda-header">
       <span class="pda-header-title">富云移动护理</span>
-      <span class="pda-header-nurse">PDA 床旁操作面</span>
+      <span class="pda-header-nurse">当班 {{ auth.user?.displayName ?? '—' }}</span>
     </header>
 
     <!-- 第 1 段：患者识别（扫码枪即键盘：autofocus + Enter 直接触发） -->
     <section class="pda-card" aria-label="患者识别">
-      <h2 class="pda-card-title">患者识别</h2>
+      <h2 class="pda-card-title fuy-card-title">患者识别</h2>
       <input
         ref="identifierField"
         v-model="identifierInput"
@@ -669,7 +688,7 @@ async function onPatrol(): Promise<void> {
 
     <!-- 第 2 段：患者卡（脱敏；超敏字段零渲染——无证件/手机号字段） -->
     <section class="pda-card" :class="{ 'pda-card-locked': !identified }" aria-label="患者卡">
-      <h2 class="pda-card-title">患者卡</h2>
+      <h2 class="pda-card-title fuy-card-title">患者卡</h2>
       <Transition name="fuy-content-fade">
         <div v-if="identified" class="pda-patient">
           <div class="pda-patient-head">
@@ -705,7 +724,7 @@ async function onPatrol(): Promise<void> {
       :class="{ 'pda-card-locked': !identified }"
       aria-label="在途执行单清单"
     >
-      <h2 class="pda-card-title">在途执行单清单</h2>
+      <h2 class="pda-card-title fuy-card-title">在途执行单清单</h2>
       <Transition name="fuy-content-fade">
         <div v-if="identified">
           <p v-if="listLoading" class="pda-card-hint">清单加载中…</p>
@@ -742,7 +761,7 @@ async function onPatrol(): Promise<void> {
 
     <!-- 第 4 段：扫码核对（腕带/瓶签/设备码三输入回车提交；FAIL 后弹双授权破码表单） -->
     <section class="pda-card" :class="{ 'pda-card-locked': !identified }" aria-label="扫码核对">
-      <h2 class="pda-card-title">扫码核对</h2>
+      <h2 class="pda-card-title fuy-card-title">扫码核对</h2>
       <p v-if="identified && selectedExecution === null" class="pda-card-hint">
         先从清单选择执行单
       </p>
@@ -826,7 +845,7 @@ async function onPatrol(): Promise<void> {
 
     <!-- 第 5 段：执行（给药 start→finish / 输液 start[设备码可扫]→拔针[输注量+腕带复扫]） -->
     <section class="pda-card" :class="{ 'pda-card-locked': !identified }" aria-label="执行">
-      <h2 class="pda-card-title">执行</h2>
+      <h2 class="pda-card-title fuy-card-title">执行</h2>
       <p v-if="identified && selectedExecution === null" class="pda-card-hint">
         先从清单选择执行单
       </p>
@@ -928,7 +947,7 @@ async function onPatrol(): Promise<void> {
 
     <!-- 第 6 段：体征录入（五字段巡床高频子集） -->
     <section class="pda-card" :class="{ 'pda-card-locked': !identified }" aria-label="体征录入">
-      <h2 class="pda-card-title">体征录入</h2>
+      <h2 class="pda-card-title fuy-card-title">体征录入</h2>
       <div class="pda-vital-grid">
         <label class="pda-field">
           <span class="pda-field-label">体温（℃）</span>
@@ -1013,7 +1032,7 @@ async function onPatrol(): Promise<void> {
 
     <!-- 第 7 段：巡视打卡（成功后转已完成态 + taskNo 回显） -->
     <section class="pda-card" :class="{ 'pda-card-locked': !identified }" aria-label="巡视打卡">
-      <h2 class="pda-card-title">巡视打卡</h2>
+      <h2 class="pda-card-title fuy-card-title">巡视打卡</h2>
       <!-- 巡视打卡（PR-4F #30，NURSE 绑定）v-perm 直挂；已巡视态文案随按钮本体同移除 -->
       <button
         v-perm="'nursing:pda:btn:use'"
@@ -1033,48 +1052,57 @@ async function onPatrol(): Promise<void> {
 </template>
 
 <style scoped>
-/* 自持移动布局（§4.1 冻结：480px 居中 / 16px 基线 / overscroll 防误触下拉刷新） */
+/* 自持移动布局（§4.1 冻结：480px 居中 / 16px 基线 / overscroll 防误触下拉刷新）。
+   暖纸换肤（甲-4）：页底=工作面暖纸 surface-page（旧灰底 gray-50 退役），不挂 .fuy-page
+   （移动自持基线既有例外——页框/门牌/页脚语法均不适用），取色全走 --fuy-* 语义别名 */
 .pda-page {
   max-width: var(--fuy-pda-page-width);
   margin: 0 auto;
   min-height: 100dvh;
   padding: var(--fuy-space-4);
-  background: var(--fuy-palette-gray-50);
+  background: var(--fuy-surface-page);
   font-size: var(--fuy-pda-font-base);
   overscroll-behavior: contain;
 }
 
+/* 卷宗封面条（甲-4 页头：浓墨封皮底 + 纸字衬线标题，右挂当班护士批注） */
 .pda-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  min-height: 48px;
+  gap: var(--fuy-space-3);
+  min-height: var(--fuy-pda-touch);
+  padding: var(--fuy-space-3) var(--fuy-space-4);
+  border: var(--fuy-border-hairline);
+  border-radius: var(--fuy-radius-card);
+  background: var(--fuy-shell-bg);
 }
 .pda-header-title {
-  font-size: var(--fuy-font-size-lg);
-  font-weight: 600;
+  font-family: var(--fuy-font-family-serif);
+  font-size: var(--fuy-font-size-xl);
+  font-weight: 700;
+  color: var(--fuy-shell-text);
 }
 .pda-header-nurse {
-  color: var(--fuy-color-text-secondary);
+  color: var(--fuy-shell-text);
   font-size: var(--fuy-font-size-sm);
 }
 
-/* 段卡（1px 描边无阴影，PR-5 卡片口径；段间 8px 触控间距基线） */
+/* 段卡（甲-4 材质：卡面亮纸 + 发丝描边 + radius-card，无阴影；段间 8px 触控间距基线） */
 .pda-card {
   margin-top: var(--fuy-space-2);
   padding: var(--fuy-space-4);
   border: var(--fuy-border-hairline);
-  border-radius: var(--fuy-radius-xl);
-  background: #fff;
+  border-radius: var(--fuy-radius-card);
+  background: var(--fuy-surface-card);
 }
 /* 未解锁段：60% 透明度 + 引导（§4.2） */
 .pda-card-locked {
   opacity: 0.6;
 }
+/* 段标题衬线 16px/700 浓墨由全局 .fuy-card-title 承载（模板双挂类），scoped 只管段内间距 */
 .pda-card-title {
   margin: 0 0 var(--fuy-space-3);
-  font-size: var(--fuy-font-size-md);
-  font-weight: 600;
 }
 .pda-card-hint {
   margin: var(--fuy-space-2) 0 0;
@@ -1082,14 +1110,14 @@ async function onPatrol(): Promise<void> {
   font-size: var(--fuy-font-size-sm);
 }
 
-/* 输入框（§4.3 冻结：高 48px / 圆角 12px / 聚焦品牌描边 + 3px 焦点环） */
+/* 输入框（§4.3 冻结：高 48px / 圆角 12px / 聚焦品牌描边 + 3px 焦点环；底=表单域最亮纸面） */
 .pda-input {
   width: 100%;
   height: var(--fuy-pda-touch);
   padding: 0 var(--fuy-space-3);
   border: var(--fuy-border-hairline);
   border-radius: var(--fuy-radius-xl);
-  background: #fff;
+  background: var(--fuy-surface-input);
   font-size: var(--fuy-pda-font-base);
   color: var(--fuy-color-text-emphasis);
 }
@@ -1184,7 +1212,8 @@ async function onPatrol(): Promise<void> {
   color: var(--fuy-color-text-secondary);
 }
 
-/* 在途执行单清单（行卡=触控目标 ≥48px，段内 8px 间距基线；选中态品牌描边+焦点环） */
+/* 在途执行单清单（行卡=触控目标 ≥48px，段内 8px 间距基线；行卡底=最亮纸面与卡面拉开一档，
+   选中态品牌描边+焦点环） */
 .pda-exec-list {
   display: flex;
   flex-direction: column;
@@ -1198,7 +1227,7 @@ async function onPatrol(): Promise<void> {
   padding: var(--fuy-space-2) var(--fuy-space-3);
   border: var(--fuy-border-hairline);
   border-radius: var(--fuy-radius-xl);
-  background: #fff;
+  background: var(--fuy-surface-input);
   text-align: left;
   cursor: pointer;
 }
@@ -1231,7 +1260,8 @@ async function onPatrol(): Promise<void> {
   margin: 0;
 }
 
-/* 破码放行双授权表单（FAIL 后内嵌子区块；主按钮下白底描边次按钮收尾） */
+/* 破码放行双授权表单（FAIL 后内嵌子区块；底=工作面纸 inset 与卡面拉开，主按钮下白底描边
+   次按钮收尾） */
 .pda-override {
   display: flex;
   flex-direction: column;
@@ -1240,7 +1270,7 @@ async function onPatrol(): Promise<void> {
   padding: var(--fuy-space-3);
   border: var(--fuy-border-hairline);
   border-radius: var(--fuy-radius-xl);
-  background: var(--fuy-palette-gray-50);
+  background: var(--fuy-surface-page);
 }
 .pda-override-title {
   margin: 0;
@@ -1248,19 +1278,19 @@ async function onPatrol(): Promise<void> {
   font-size: var(--fuy-font-size-md);
   font-weight: 600;
 }
-/* 主授权人展示行（零手输：会话身份回显只读态，白底描边示不可编辑） */
+/* 主授权人展示行（零手输：会话身份回显只读态，最亮纸面+描边示不可编辑） */
 .pda-override-primary {
   margin: 0;
   padding: 8px var(--fuy-space-2);
   border: var(--fuy-border-hairline);
   border-radius: var(--fuy-radius-md);
-  background: #fff;
+  background: var(--fuy-surface-input);
   font-size: 16px;
   color: var(--fuy-color-text-emphasis);
 }
 .pda-button-plain {
   border: var(--fuy-border-hairline);
-  background: #fff;
+  background: var(--fuy-surface-input);
   color: var(--fuy-color-text-emphasis);
 }
 

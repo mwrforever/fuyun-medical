@@ -3,7 +3,8 @@
  * 体征表单文本承载显式校验（整数/小数一律经正则+范围双验后数值化，禁裸 parse，文案冻结
  * 于设计文档 §3.7 表）+ 录入在途守卫 + 提交成功刷新体温单/简报（经回调注入）；待复核
  * 列表加载与确认/驳回（中档确认带回显，成功该行移除——spec 冻结语义）。
- * 行为与拆分前逐字一致。
+ * 行为与拆分前一致（唯一偏差：录入成功反馈收编钤印单通道——暖纸世界契约 G2，成功
+ * message 退役，盖印由视图层 onRecorded 回调承载；失败与校验 message 口径不变）。
  */
 import { ref } from 'vue';
 import type { ComputedRef, Ref } from 'vue';
@@ -178,7 +179,8 @@ export function useVitalSigns(options: UseVitalSignsOptions) {
         height: toNumberOrNull(form.height),
         painScore: toNumberOrNull(form.painScore),
       });
-      void ElMessage.success('体征已录入');
+      // 成功反馈=钤印单通道（暖纸世界契约 G2：成功=钤印、失败=message）：视图层经
+      // onRecorded 回调盖「已录入」钤印，本面不再弹成功 message；失败与校验拦截 message 保留
       // 提交成功后复位表单（与换患者复位同口径）
       resetVitalForm();
       await options.onRecorded();

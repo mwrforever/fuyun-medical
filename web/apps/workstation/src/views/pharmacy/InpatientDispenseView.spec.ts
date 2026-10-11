@@ -62,7 +62,7 @@ vi.mock('@/api/pharmacy', () => ({
 }));
 
 // WARD 假常量清零（蓝图 P14.5）：病区清单消费 listOrgs({type:'WARD'}) 真端点，
-// nursing.WARD_OPTIONS 不再是本页依赖（常量留给 nursing 域既有消费方，本页只断自身消费）
+// nursing.WARD_OPTIONS 已随护理域 listOrgs 接线退役删除，本页只断自身消费
 vi.mock('@/api/system', () => ({
   listOrgs: vi.fn(),
 }));

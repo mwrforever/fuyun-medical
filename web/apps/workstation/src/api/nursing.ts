@@ -4,7 +4,7 @@
  * 护理记录单（创建/提交/修订）、护理评估（量表定义/提交/历史）、护理任务（列表/完成/取消/
  * 认领/常规模板生成）、交接班（生成/完成/清单）、PDA（患者摘要/巡视打卡/输液拔针/破码放行
  * 双授权）、执行单（工作台清单/闭环追溯/签收/核对/开始/完成/撤销）、在途输注（监测挂接
- * 聚合）、护理不良事件（分页/上报/处理/关闭/退回）。
+ * 聚合）、护理不良事件（分页/上报/处理/关闭/退回 + 当日统计读函数——暖纸切片未消费端点取用）。
  * 路径前缀 /v1/nursing/**（baseURL 已含 /api）；雪花 id 与数量金额一律 string 承载
  * （web A.3-6），本域无金额运算面（quantity 透传零运算）。
  * REST 面为后端 Task 1-11 冻结契约；函数按资源分组导出（spec mock 面）。
@@ -64,6 +64,9 @@ export type AdverseEventReportRequest = components['schemas']['AdverseEventRepor
 export type AdverseEventReturnRequest = components['schemas']['AdverseEventReturnRequest'];
 export type AdverseEventHandleRequest = components['schemas']['AdverseEventHandleRequest'];
 export type AdverseEventCloseRequest = components['schemas']['AdverseEventCloseRequest'];
+/** 不良事件分类统计出参（生成物唯一来源）：统计日窗口聚合计数 + I/II 级时限合规面
+ * （total 总报数 / deadlineTotal 时限分母 / deadlineMetCount 按时上报数；纯计数零身份面） */
+export type AdverseEventStatsVO = components['schemas']['AdverseEventStatsVO'];
 
 /**
  * 体温单部位 → 符号类名唯一映射（设计文档 §5.3 契约：AXILLARY 腋温×/ORAL 口温●/RECTAL 肛温〇，
@@ -104,12 +107,6 @@ export const SPECIAL_EVENT_OPTIONS: ReadonlyArray<{ code: string; label: string 
   { code: 'PULSE_DEFICIT_START', label: '脉搏短绌起' },
   { code: 'PULSE_DEFICIT_END', label: '脉搏短绌止' },
   { code: 'CARDIAC_ARREST', label: '呼吸心跳停止' },
-];
-
-/** 病区选项（冻结 REST 面无病区清单端点，P1 以演示病区种子 W01 前端常量承载；
- * P2 对齐 M01 组织机构病区后换接口源） */
-export const WARD_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'W01', label: 'W01 演示病区' },
 ];
 
 /** 班次选项（V801 演示病区 shift_definitions 种子词表：白班/小夜班/大夜班） */
@@ -527,3 +524,15 @@ export const adverseEvents = {
     return resp.data;
   },
 };
+
+/**
+ * 不良事件当日统计（暖纸重设计切片：甲-3 今日概览统计带取用，后端既有未消费端点，
+ * 零后端改动只读）。纯计数聚合零个人身份面（非惩罚红线），供管理层扫读面消费
+ * total / deadlineTotal / deadlineMetCount 三字段。
+ *
+ * @return 统计视图（date=统计日北京钟面；各计数 string 承载，可选字段缺省时由消费方以 — 占位）
+ */
+export async function getAdverseEventStats(): Promise<AdverseEventStatsVO> {
+  const resp = await http.get<AdverseEventStatsVO>('/v1/nursing/stats/adverse-events');
+  return resp.data;
+}

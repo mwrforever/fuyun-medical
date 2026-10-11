@@ -1,11 +1,13 @@
-// 护士工作站页单测（M05 前端面，设计文档 §3 八区块）：病区一览床位序渲染（spec 冻结语序
-// 断言）、体征录入非整数显式校验零出网、录入在途守卫双击零二次出网、NS-1005 超生理极限
-// detail 透出（4xx 口径）、待复核确认后该行移除、体温单符号类名契约（fuy-temp-x/
-// fuy-temp-dot/fuy-temp-deficit-line/短绌起止竖线/重叠红圈同格判定，机器判据）、评估总分
-// 与高危容器类（fuy-assess-result--high）、任务逾期行类（fuy-task-overdue）与完成出网、
-// 任务认领与常规模板生成（PR-3 Task 9 面）、交接班双签 DRAFT 可点 / COMPLETED 置灰与摘要
-// 特级/病重标签映射。api mock 承载，不打真实网络；会话经 sessionStorage 种子恢复
-// （当班护士=登录用户）。W-34 换源后：入区登记/出区移除端点已退役，对应用例与 mock 面删除。
+// 护士工作站页单测（M05 前端面 · 暖纸卷宗换脸重排，逐页蓝图 甲-1）：既有业务断言全量保留
+// （床位序渲染/体征显式校验/在途守卫/NS-1005 detail 透出/待复核确认移除/体温单符号类名契约/
+// 评估高危容器类/任务逾期行与认领/常规生成/交接班双签/切换复位/EX-45 竞态/PR-4F 权限态），
+// 另增暖纸锚点：门牌页首三锚（衬线标题/批注行/墨规收底挂类）、卷宗区序（卡墙→体温单→三列→
+// 页脚，体温单升格的布局序机器证据）、卡墙选中金洗形态与 off-token #e5e7eb 清零（源码级）、
+// 病区真数据三态（listOrgs type=WARD 在途骨架/失败恢复/空清单，假常量清零）、钤印「已录入」、
+// 待复核行 fuy-flip 移除、卡墙 >120 卡床号段分组折叠。
+// api mock 承载，不打真实网络；会话经 sessionStorage 种子恢复（当班护士=登录用户）。
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -24,6 +26,8 @@ import {
   wardPatients,
 } from '@/api/nursing';
 import type { VitalSignVO, WardPatientDetailVO, WardPatientVO } from '@/api/nursing';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
 import { permDirective } from '@/directives/perm';
 import WardBoardView from './WardBoardView.vue';
 
@@ -45,7 +49,7 @@ vi.mock('@/api/nursing', () => ({
     { code: 'ADMISSION', label: '入院' },
     { code: 'SURGERY', label: '手术' },
   ],
-  WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
+  // WARD_OPTIONS 已随暖纸切片清零（病区清单走 listOrgs({type:'WARD'})，替身见 @/api/system mock）
   SHIFT_OPTIONS: [
     { code: 'DAY', label: '白班' },
     { code: 'EVENING', label: '小夜班' },
@@ -76,6 +80,11 @@ vi.mock('@/api/nursing', () => ({
   pda: { patientSummary: vi.fn(), patrol: vi.fn() },
 }));
 
+// 病区清单读端点替身（暖纸切片真数据面，WARD_OPTIONS 假常量消费清零后的唯一来源）
+vi.mock('@/api/system', () => ({
+  listOrgs: vi.fn(),
+}));
+
 // 仅替身 ElMessage/ElMessageBox（提示与确认断言用），其余导出原样保留供组件解析
 vi.mock('element-plus', async (importOriginal) => {
   const mod = await importOriginal<typeof import('element-plus')>();
@@ -98,6 +107,12 @@ if (!('ResizeObserver' in globalThis)) {
     disconnect(): void {}
   };
 }
+
+/** 病区种子（V1123__seed_sys_org 镜像：WARD 两病区 ACTIVE，sort 升序——W01 为演示主链路首项） */
+const WARD_SEED: OrgVO[] = [
+  { id: '1123000000000000001', orgCode: 'W01', orgName: '演示病区', orgType: 'WARD', sort: 1 },
+  { id: '1123000000000000002', orgCode: '1001', orgName: '演示病区', orgType: 'WARD', sort: 2 },
+];
 
 /** 会话种子（auth store 从 sessionStorage 恢复：当班护士=登录用户 u1/李护士；
  * permissions 含本视图四码 #25/#26/#27/#28——真实 NURSE 会话经登录契约导出含码，
@@ -280,6 +295,9 @@ describe('护士工作站', () => {
     vi.mocked(assessments.list).mockResolvedValue([]);
     vi.mocked(tasks.list).mockResolvedValue([]);
     vi.mocked(handovers.list).mockResolvedValue([]);
+    // 病区清单默认回种子（三态用例各自覆写为在途/失败/空清单）
+    vi.mocked(listOrgs).mockReset();
+    vi.mocked(listOrgs).mockResolvedValue(WARD_SEED);
   });
 
   it('加载病区一览按床位序渲染患者卡（03/01/02 → 01,02,03）', async () => {
@@ -422,6 +440,17 @@ describe('护士工作站', () => {
     const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
     await flushPromises();
     expect(wrapper.text()).toContain('37.8');
+    // 行级移除由 fuy-flip TransitionGroup 承载（锚点⑤：flip 机器证据；断言须在确认前取证
+    // ——确认后清单清空连同表格整体卸载，时序错即取证不到）
+    const pendingGroup = wrapper
+      .findAllComponents({ name: 'TransitionGroup' })
+      .find((group) => group.classes().includes('ward-pending-tbody'));
+    expect(pendingGroup).toBeDefined();
+    expect(pendingGroup?.props('name')).toBe('fuy-flip');
+    // 待复核计数>0 时锚胶囊挂印泥朱形态与呼吸点（实时待办语义）
+    const reviewPill = wrapper.find('.ward-board-review-anchor');
+    expect(reviewPill.classes()).toContain('fuy-status-pill--danger');
+    expect(reviewPill.find('.fuy-live-dot').exists()).toBe(true);
     await clickButton(wrapper, '确认');
     await flushPromises();
     expect(vi.mocked(vitalSigns.confirm)).toHaveBeenCalledTimes(1);
@@ -905,6 +934,155 @@ describe('护士工作站', () => {
     expect(buttonTexts).toContain('认领');
     expect(buttonTexts).toContain('完成');
     expect(buttonTexts).toContain('新增分配');
+    wrapper.unmount();
+  });
+
+  /* ==================== 暖纸卷宗换脸锚点（逐页蓝图 甲-1 §7，锚点①~⑥） ==================== */
+
+  it('锚点①门牌页首三锚：衬线标题「护士站」+英文小注装饰层+当班护士批注行', async () => {
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.find('.fuy-page-head').exists()).toBe(true);
+    expect(wrapper.find('.fuy-page-title').text()).toBe('护士站');
+    const en = wrapper.find('.fuy-page-en');
+    expect(en.text()).toBe('NURSING STATION');
+    expect(en.attributes('aria-hidden')).toBe('true');
+    const note = wrapper.find('.fuy-page-note');
+    expect(note.text()).toContain('当班护士 李护士');
+    expect(note.text()).toContain('班次 白班');
+    // 墨规收底（2px border-bottom）由全局 .fuy-page-head 族承载——挂类即机器证据
+    wrapper.unmount();
+  });
+
+  it('锚点②卷宗区序：床位卡墙 → 体温单卡 → 患者三列 → 页脚批注（体温单升格布局序机器证据）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    const flow = wrapper.find('.ward-board-flow').element as HTMLElement;
+    const indexOf = (predicate: (el: Element) => boolean): number =>
+      Array.from(flow.children).findIndex(predicate);
+    const wallIdx = indexOf((el) => el.classList.contains('ward-board-wall-card'));
+    const chartIdx = indexOf((el) => el.classList.contains('ward-board-chart-card'));
+    const colsIdx = indexOf((el) => el.classList.contains('ward-board-cols'));
+    const footIdx = indexOf((el) => el.classList.contains('fuy-page-foot'));
+    expect(wallIdx).toBeGreaterThanOrEqual(0);
+    expect(chartIdx).toBeGreaterThan(wallIdx);
+    expect(colsIdx).toBeGreaterThan(chartIdx);
+    expect(footIdx).toBeGreaterThan(colsIdx);
+    // 页脚批注=数据时点语义（禁操作钮，契约 ⑧.8）
+    expect(wrapper.find('.fuy-page-foot').text()).toContain('数据时点');
+    wrapper.unmount();
+  });
+
+  it('锚点③⑥卡墙选中金洗形态类；off-token #e5e7eb 与旧红洗底字面量源码级清零', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.find('.ward-bed-card.is-selected').exists()).toBe(false);
+    await selectFirstBed(wrapper);
+    expect(wrapper.find('.ward-bed-card.is-selected').exists()).toBe(true);
+    wrapper.unmount();
+    // 源码级断言：卡墙边 #e5e7eb、高危条旧 rgba(185,28,28,0.08) 均不得残留；
+    // 高危洗底取印泥朱 alpha 派生 rgba(180,35,24,0.08)（蓝图口径，十值纪律内）
+    const source = readFileSync(join(import.meta.dirname, 'WardBoardView.vue'), 'utf-8');
+    expect(source).not.toContain('#e5e7eb');
+    expect(source).not.toContain('185, 28, 28');
+    expect(source).toContain('rgba(180, 35, 24, 0.08)');
+  });
+
+  it('锚点④病区真数据三态：listOrgs({type:"WARD"}) 在途骨架+选择器禁用，到达落首项并拉病区面', async () => {
+    let releaseWards: () => void = () => {};
+    vi.mocked(listOrgs).mockImplementation(
+      () =>
+        new Promise<OrgVO[]>((resolve) => {
+          releaseWards = () => resolve(WARD_SEED);
+        }),
+    );
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    // 请求参数断言：假常量清零后唯一真数据源（册级总则 G4）
+    expect(vi.mocked(listOrgs)).toHaveBeenCalledWith({ type: 'WARD' });
+    // 加载骨架（卡墙 240px CLS 锁档）+ 病区选择器在途禁用 + 病区面零出网
+    expect(wrapper.find('.ward-wall-sk').exists()).toBe(true);
+    const wardSelect = wrapper
+      .findAllComponents({ name: 'ElSelect' })
+      .find((select) => select.classes().includes('ward-board-ward'));
+    expect(wardSelect?.props('disabled')).toBe(true);
+    expect(vi.mocked(wardPatients.list)).not.toHaveBeenCalled();
+    // 清单到达：选择器解禁、选项=种子两病区（label=「名称（编码）」）、默认落首项并拉病区面
+    releaseWards();
+    await flushPromises();
+    expect(wrapper.find('.ward-wall-sk').exists()).toBe(false);
+    expect(wardSelect?.props('disabled')).toBe(false);
+    const options = wardSelect?.findAllComponents({ name: 'ElOption' }) ?? [];
+    expect(options.map((option) => option.props('value'))).toEqual(['W01', '1001']);
+    expect(options[0]?.props('label')).toBe('演示病区（W01）');
+    expect(vi.mocked(wardPatients.list)).toHaveBeenCalledWith('W01');
+    wrapper.unmount();
+  });
+
+  it('锚点④病区真数据三态：清单失败给「说问题+给恢复」恢复态，重新加载后主链恢复', async () => {
+    vi.mocked(listOrgs).mockRejectedValueOnce(new Error('网络不可用'));
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.text()).toContain('病区清单加载失败');
+    expect(wrapper.text()).toContain('重新加载');
+    // 恢复前零病区面出网（一览必须锚定真实病区）
+    expect(vi.mocked(wardPatients.list)).not.toHaveBeenCalled();
+    await clickButton(wrapper, '重新加载');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain('病区清单加载失败');
+    expect(vi.mocked(wardPatients.list)).toHaveBeenCalledWith('W01');
+    wrapper.unmount();
+  });
+
+  it('锚点④病区真数据三态：空清单给「暂无可用病区」空态脸且零病区面出网', async () => {
+    vi.mocked(listOrgs).mockResolvedValue([]);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.text()).toContain('暂无可用病区');
+    expect(vi.mocked(wardPatients.list)).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('锚点⑤体征录入成功盖钤印「已录入」（动词结果，is-show 落章形态）', async () => {
+    vi.mocked(wardPatients.list).mockResolvedValue([patientMock()]);
+    vi.mocked(vitalSigns.record).mockResolvedValue({ id: '9101', visitId: 'I20260923000000001' });
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await selectFirstBed(wrapper);
+    await wrapper.find('input[inputmode="decimal"]').setValue('36.5');
+    await clickButton(wrapper, '录入体征');
+    await flushPromises();
+    const stamp = wrapper.find('.fuy-stamp-toast');
+    expect(stamp.exists()).toBe(true);
+    expect(stamp.classes()).toContain('is-show');
+    expect(stamp.text()).toBe('已录入');
+    expect(stamp.attributes('aria-live')).toBe('polite');
+    wrapper.unmount();
+  });
+
+  it('锚点⑦性能：卡墙超 120 卡按床号段分组折叠（组头「01-10 床」石规签行，点击折叠本段）', async () => {
+    const many = Array.from({ length: 121 }, (_, index) => {
+      const bedNo = String(index + 1).padStart(3, '0');
+      return patientMock({ bedNo, visitId: `I2026092300000000${bedNo}` });
+    });
+    vi.mocked(wardPatients.list).mockResolvedValue(many);
+    const wrapper = mount(WardBoardView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.text()).toContain('01-10 床');
+    const heads = wrapper.findAll('.ward-wall-group-head');
+    // 121 床 → 十位段 01-10…111-120 共 12 组 + 121-130 尾段 1 组
+    expect(heads.length).toBe(13);
+    expect(wrapper.findAll('.ward-bed-card')).toHaveLength(121);
+    // 折叠交互：点击首段组头后该段 10 卡收起
+    const firstHead = heads[0];
+    if (!firstHead) {
+      throw new Error('未找到卡墙分组组头');
+    }
+    await firstHead.trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.ward-bed-card')).toHaveLength(111);
     wrapper.unmount();
   });
 });

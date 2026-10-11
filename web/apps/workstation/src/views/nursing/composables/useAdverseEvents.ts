@@ -1,13 +1,19 @@
 /**
- * 护理不良事件 composable（PR-3 Task 14，AdverseEventView 业务面）：分页列表（类别/状态
- * 筛选，usePagedList 三段式范式）+ 上报表单（类别/分级/等级/病区/时点/经过必填显式校验
- * 前置零出网，匿名开关透传——非惩罚通道口径）+ 处理/RCA 关闭/退回三操作（操作人留痕
- * 锚点=会话 userId 经 getOperatorId 注入，弹窗文案同步提示留痕人）。
+ * 护理不良事件 composable（PR-3 Task 14 + 暖纸卷宗换脸切片 甲-3，AdverseEventView 业务面）：
+ * 分页列表（类别/状态筛选，usePagedList 三段式范式）+ 上报表单（类别/分级/等级/病区/时点/
+ * 经过必填显式校验前置零出网，匿名开关透传——非惩罚通道口径）+ 处理/RCA 关闭/退回三操作
+ * （操作人留痕锚点=会话 userId 经 getOperatorId 注入）+ 今日概览统计带（getAdverseEventStats
+ * 无参当日三字段 + 待处理计数探针，单次出网手动刷新）+ 上报表单病区下拉真数据（listOrgs
+ * WARD 档，假常量 WARD_OPTIONS 清零）+ 钤印成功反馈族（已上报/已处理/已关闭/已退回，匿名
+ * 口径不带操作人——留痕归后端）。
  */
-import { ref } from 'vue';
+import { computed, onScopeDispose, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { adverseEvents } from '@/api/nursing';
-import type { AdverseEventVO } from '@/api/nursing';
+import { adverseEvents, getAdverseEventStats } from '@/api/nursing';
+import type { AdverseEventStatsVO, AdverseEventVO } from '@/api/nursing';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
+import { useAsyncTask } from '@/composables/useAsyncTask';
 import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 
@@ -24,12 +30,12 @@ export interface AdverseEventFormModel {
   isAnonymous: boolean;
 }
 
-/** 上报表单初始态（病区缺省 W01 演示病区——冻结 REST 面无病区清单端点口径） */
+/** 上报表单初始态（病区缺省空串——假常量 WARD_OPTIONS 清零后由用户显式选择，不锚定演示病区） */
 const EMPTY_FORM: AdverseEventFormModel = {
   category: '',
   severityClass: '',
   severityGrade: '',
-  wardId: 'W01',
+  wardId: '',
   occurredAt: '',
   eventSummary: '',
   handlingNote: '',
@@ -42,6 +48,9 @@ export interface UseAdverseEventsOptions {
   /** 操作人 userId 取值器（处理/关闭/退回留痕锚点）；来源：auth store 会话用户 */
   getOperatorId: () => string;
 }
+
+/** 钤印收场时长（契约 ⑧.5：≤1200ms 后落定；仅翻转内部 refs，无外部副作用） */
+const STAMP_DURATION_MS = 1200;
 
 /** 初始化不良事件面（每组件实例独立状态，仅 setup 同步调用） */
 export function useAdverseEvents(options: UseAdverseEventsOptions) {
@@ -113,7 +122,7 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
     }
     reporting.value = true;
     try {
-      const created = await adverseEvents.report({
+      await adverseEvents.report({
         category: form.category,
         severityClass: form.severityClass,
         severityGrade: form.severityGrade,
@@ -128,9 +137,12 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         visitId: form.visitId.trim() === '' ? undefined : form.visitId.trim(),
         isAnonymous: form.isAnonymous,
       });
-      void ElMessage.success(`已上报：${created.eventNo ?? ''}（非惩罚通道，感谢主动报告）`);
+      // 成功反馈=钤印「已上报」（G2：钤印只承成功；文案不带单号与操作人——匿名事件不露身份，
+      // 留痕归后端，事件号回显随列表重拉承载）
+      showStamp('已上报');
       reportVisible.value = false;
       await search();
+      void refreshPending();
     } catch (error) {
       surfaceBizError(error);
     } finally {
@@ -175,8 +187,9 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         handlerId: operatorId,
         handlingNote: value.trim() === '' ? undefined : value.trim(),
       });
-      void ElMessage.success(`已处理：${row.eventNo ?? ''}`);
+      showStamp('已处理');
       await fetch();
+      void refreshPending();
     } catch (error) {
       surfaceBizError(error);
     }
@@ -203,8 +216,9 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         closedBy: operatorId,
         rcaNote: value.trim() === '' ? undefined : value.trim(),
       });
-      void ElMessage.success(`已关闭：${row.eventNo ?? ''}`);
+      showStamp('已关闭');
       await fetch();
+      void refreshPending();
     } catch (error) {
       surfaceBizError(error);
     }
@@ -231,12 +245,88 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
         reason: value.trim(),
         returnerId: operatorId,
       });
-      void ElMessage.success(`已退回：${row.eventNo ?? ''}`);
+      showStamp('已退回');
       await fetch();
+      void refreshPending();
     } catch (error) {
       surfaceBizError(error);
     }
   }
+
+  /* ==================== 钤印成功反馈（契约 ⑧.5，≤1200ms 收场） ==================== */
+  /** 钤印文案（空串=无钤印在展）；seq 每盖一次递增，view 层以 :key 重挂重放落章动画 */
+  const stampText = ref('');
+  const stampVisible = ref(false);
+  const stampSeq = ref(0);
+  let stampTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 盖钤印（只承成功确认；失败与业务拒绝归 message 批注条/拦截器，钤印永不承失败） */
+  function showStamp(text: string): void {
+    stampText.value = text;
+    stampSeq.value += 1;
+    stampVisible.value = true;
+    if (stampTimer !== null) {
+      clearTimeout(stampTimer);
+    }
+    // 收场定时器仅翻转内部展示 refs（零 DOM/出网副作用），卸载经 scope dispose 清理
+    stampTimer = setTimeout(() => {
+      stampVisible.value = false;
+      stampTimer = null;
+    }, STAMP_DURATION_MS);
+  }
+
+  function clearStampTimer(): void {
+    if (stampTimer !== null) {
+      clearTimeout(stampTimer);
+      stampTimer = null;
+    }
+  }
+
+  // 组件卸载（或所在 effectScope 销毁）时清理在途收场定时器；裸调用（单测直呼）静默跳过
+  onScopeDispose(clearStampTimer, true);
+
+  /* ==================== 今日概览统计带（甲-3：管理层扫读面，单次出网手动刷新） ==================== */
+  /** 统计视图三态（stats=null 且 error=null 即骨架态）；三字段消费面见视图统计带 */
+  const stats = ref<AdverseEventStatsVO | null>(null);
+  const statsLoad = useAsyncTask(async () => {
+    // 无参出网：date 缺省由后端承载当日（北京钟面窗口），前端不做当日推导
+    stats.value = await getAdverseEventStats();
+  });
+  const statsLoading = statsLoad.loading;
+  const statsError = statsLoad.error;
+  /** 统计带读取（首拉与手动刷新共用入口） */
+  function refreshStats(): Promise<void> {
+    return statsLoad.run().then(() => undefined);
+  }
+
+  /** 待处理计数探针（REPORTED 过滤 size=1 取 total——统计端点无状态维度，门牌胶囊与
+   * 统计带第三格同源真值；失败静默以 — 占位，弹错归响应拦截器） */
+  const pendingTotal = ref<string | null>(null);
+  const pendingLoad = useAsyncTask(async () => {
+    const page = await adverseEvents.list({ status: 'REPORTED', page: 0, size: 1 });
+    // 生成物 total 为可选字段：缺省落 null（胶囊以 — 占位），不落 undefined 混型
+    pendingTotal.value = page.total ?? null;
+  });
+  const pendingLoading = pendingLoad.loading;
+  /** 待处理计数重取（首拉与写后联动共用入口） */
+  function refreshPending(): Promise<void> {
+    return pendingLoad.run().then(() => undefined);
+  }
+
+  /* ==================== 上报表单病区下拉（listOrgs WARD 档，假常量清零） ==================== */
+  const wardOptions = ref<OrgVO[]>([]);
+  const wardLoad = useAsyncTask(async () => {
+    wardOptions.value = await listOrgs({ type: 'WARD' });
+  });
+  const wardLoading = wardLoad.loading;
+  const wardError = wardLoad.error;
+  /** 病区清单加载（弹窗首开前预取，失败可经错误行重试——说问题给恢复） */
+  function loadWards(): Promise<void> {
+    return wardLoad.run().then(() => undefined);
+  }
+
+  /** 病区下拉禁用态：清单在途或空清单（失败同形）皆不可选——出网值必须锚定真实病区编码 */
+  const wardDisabled = computed(() => wardLoading.value || wardOptions.value.length === 0);
 
   return {
     // 分页列表
@@ -260,5 +350,23 @@ export function useAdverseEvents(options: UseAdverseEventsOptions) {
     onHandle,
     onClose,
     onReturn,
+    // 钤印成功反馈
+    stampText,
+    stampVisible,
+    stampSeq,
+    // 今日概览统计带
+    stats,
+    statsLoading,
+    statsError,
+    refreshStats,
+    pendingTotal,
+    pendingLoading,
+    refreshPending,
+    // 病区下拉真数据
+    wardOptions,
+    wardLoading,
+    wardError,
+    wardDisabled,
+    loadWards,
   };
 }
