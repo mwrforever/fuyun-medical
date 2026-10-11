@@ -104,12 +104,6 @@ export const BED_STATUS_LABELS: Record<string, string> = {
   MAINTENANCE: '维修中',
 };
 
-/** 病区选项（冻结 REST 面无病区清单端点，P1 以演示病区种子 W01 前端常量承载，
- * 与 nursing 域同源；P2 对齐 M01 组织机构病区后换接口源） */
-export const WARD_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'W01', label: 'W01 演示病区' },
-];
-
 /** 医嘱类型九值词表（V904 medical_order.order_type 列注释同源；开立下拉与列表类型列共用） */
 export const ORDER_TYPE_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
   { code: 'DRUG', label: '药品' },
@@ -144,18 +138,6 @@ export const ORDER_STATUS_LABELS: Record<string, string> = {
 /** 用药类医嘱类型集合（审核链口径：DRUG 与 DISCHARGE_MED 停留 CREATED 待药师审，
  * 与后端 OrderType.isMedication 同源；保存成功后按此提示「待药师审」） */
 export const MEDICATION_ORDER_TYPES: ReadonlySet<string> = new Set(['DRUG', 'DISCHARGE_MED']);
-
-/** 用药频次词表（V904 order_frequency 七种子 qd/bid/tid/qid/qn/prn/st 同源；冻结 REST 面
- * 无频次字典 GET 端点，前端常量承载——WARD_OPTIONS 同款先例，字典端点就位后换接口源） */
-export const ORDER_FREQUENCY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'qd', label: 'qd 每日一次' },
-  { code: 'bid', label: 'bid 每日两次' },
-  { code: 'tid', label: 'tid 每日三次' },
-  { code: 'qid', label: 'qid 每日四次' },
-  { code: 'qn', label: 'qn 每晚一次' },
-  { code: 'prn', label: 'prn 必要时（嘱托）' },
-  { code: 'st', label: 'st 立即' },
-];
 
 /** 离院方式词表（后端 DischargeWay 六值病案首页代码：数字字符存储） */
 export const DISCHARGE_WAY_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
