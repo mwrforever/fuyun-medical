@@ -1,9 +1,17 @@
 <script setup lang="ts">
-// 药品字典页（FU-M06-01/02）：检索条（keyword/基药/对照态）→ 启用面药品表格 →
-// 建档/变更对话框（DrugSaveRequest）→ 医保对照对话框（nhsaCode/catalogVersion/payType）；
-// 未对照药品渲染「不可医保结算」标记，对照成功后 insuredSettleable 翻转标记消失。
-// 弹错归响应拦截器（web A.3-2）；失败驻留旧结果。
-import { onMounted, reactive, ref } from 'vue';
+// 药品字典页（FU-M06-01/02 · 暖纸卷宗换脸重排，逐页蓝图 P10）：检索条（keyword/基药/对照态）
+// → 启用面药品表格 → 建档/变更对话框（DrugSaveRequest）→ 医保对照对话框（nhsaCode/
+// catalogVersion/payType）；未对照药品渲染「不可医保结算」标记，对照成功后 insuredSettleable
+// 翻转标记消失。弹错归响应拦截器（web A.3-2）；失败驻留旧结果。
+// 构图（蓝图 P10「换脸不换业务」）：门牌页首（衬线标题 + 签认人·时刻批注行，原 el-card #header
+// 页面名升格）→ 筛选卡（.fuy-filter，检索次钮留控件序列、药品建档墨实底主钮右挂 .fuy-filter-
+// actions 分主次）→ 主表卡（.fuy-card + .fuy-dense 密排，列序按扫读频率重排：通用名首列、
+// 药码次之）；建档/变更与医保对照两弹窗挂 .fuy-dialog + .fuy-form，显式 popper 挂
+// fuy-snap-popper；空态走 .fuy-empty 脸（契约 ⑥ 禁纸箱插画）。
+// 数据契约零变动：searchDrugs/createDrug/updateDrug/mapInsurance 出网与医保映射逻辑原样；
+// 检索经 usePagedList 分页化收口（EX-49 范式迁移，pageSize 50——searchDrugs 契约既有可选参，
+// 替换「不传 page/size 后端兜底」的全量渲染隐患，行为与迁移前一致：失败弹错归拦截器、驻留旧结果）。
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
 // ElMessage/ElMessageBox 在模板外使用，按需样式手动引入（与 billing 三页同款口径）
@@ -11,7 +19,8 @@ import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { createDrug, mapInsurance, searchDrugs, updateDrug } from '@/api/pharmacy';
 import type { DrugVO } from '@/api/pharmacy';
-import { useAsyncTask } from '@/composables/useAsyncTask';
+import { usePagedList } from '@/composables/usePagedList';
+import { useAuthStore } from '@/stores/auth';
 
 /** 检索关键词（名称/拼音/医保码模糊） */
 const keyword = ref('');
@@ -20,24 +29,51 @@ const essential = ref<boolean | undefined>(undefined);
 /** 医保对照过滤（undefined=不过滤） */
 const insuranceMapped = ref<boolean | undefined>(undefined);
 
-/** 药品行集（检索结果，仅启用面） */
-const rows = ref<DrugVO[]>([]);
+// 门牌批注行「谁」：会话身份单源（与顶栏用户区同源消费，空值 — 占位零伪数据）
+const auth = useAuthStore();
 
-/** 加载药品检索（默认启用面，建档/变更/对照成功后重刷；后端 0 基缺省分页兜底，本页
- * 不传 page/size）：loading 骨架经 useAsyncTask 收拢（EX-42 范式迁移，行为与迁移前
- * 一致——失败弹错归响应拦截器、驻留旧结果）。 */
-const { loading, run: loadDrugs } = useAsyncTask(async () => {
-  const page = await searchDrugs({
+/** 签认人批注：会话显示名真值；空会话以 — 占位（防御场景，路由守卫默认拒绝未登录） */
+const signerName = computed(() => auth.user?.displayName ?? '—');
+
+/**
+ * 当日批注行时刻标签（YYYY-MM-DD 周X）：与首页门牌同语法的病历页眉日期批注，
+ * 纯本地时钟零出网。
+ */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
+
+/**
+ * 药品分页检索（EX-49 范式迁移）：页码/行集/总数/加载态经 usePagedList 收拢（默认启用面，
+ * 建档/变更/对照成功后重刷），筛选三参归本页持有经快照工厂实时取值合并出网（keyword trim
+ * 归一与迁移前逐字一致；后端 0 基缺省分页兜底不再消费——本页显式 50/页出网）。
+ */
+const { rows, total, loading, currentPage, pageSize, search, goToPage, fetch } = usePagedList({
+  params: () => ({
     keyword: keyword.value.trim() === '' ? undefined : keyword.value.trim(),
     essential: essential.value,
     insuranceMapped: insuranceMapped.value,
-  });
-  rows.value = page.content;
+  }),
+  fetcher: (query) => searchDrugs({ ...query }),
+  pageSize: 50,
 });
 
-/** 检索按钮：同 loadDrugs（空关键词=全启用面检索，后端分页兜底）。 */
+/** 检索按钮/回车：换条件回第一页重查（空关键词=全启用面检索）。 */
 async function handleSearch(): Promise<void> {
-  await loadDrugs();
+  await search();
+}
+
+/**
+ * 翻页：分页组件回传 1 基页码，usePagedList 内部转契约 0 基出网。
+ *
+ * @param page 目标页码（1 基）
+ */
+async function handlePageChange(page: number): Promise<void> {
+  await goToPage(page);
 }
 
 /** 建档/变更弹窗状态（editId 空=建档，非空=变更该行） */
@@ -176,7 +212,8 @@ async function submitSave(): Promise<void> {
       void ElMessage.success('药品档案已变更');
     }
     saveVisible.value = false;
-    await loadDrugs();
+    // 成功重刷当前页（usePagedList fetch：页码态保持，行集/总数收拢同出口）
+    await fetch();
   } catch {
     // 失败弹错归响应拦截器；弹窗驻留防录入丢失
   } finally {
@@ -246,7 +283,7 @@ async function submitMapping(): Promise<void> {
     await mapInsurance(mappingDrugId.value, { ...mappingForm });
     void ElMessage.success('医保对照完成');
     mappingVisible.value = false;
-    await loadDrugs();
+    await fetch();
   } catch {
     // 失败弹错归响应拦截器；弹窗驻留防录入丢失
   } finally {
@@ -254,26 +291,46 @@ async function submitMapping(): Promise<void> {
   }
 }
 
-onMounted(loadDrugs);
+onMounted(fetch);
 </script>
 
 <template>
-  <!-- 检索卡进场 rise（§6.1）：单卡页 stagger 承载（动画属性仅 opacity+transform） -->
-  <div class="fuy-page fuy-stagger">
-    <!-- fuy-dense 挂外层卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为
-         后代选择器 .fuy-dense .el-table，挂表格自身不构成后代关系、零生效（批次 2 R1 教训）；
-         表格 size="small" 移除——fuy-dense 唯一密度通道（§9.9-2） -->
-    <el-card class="fuy-dense">
-      <template #header>药品字典</template>
-      <div class="fuy-toolbar">
+  <!-- 门牌页首不入级联（批次内 P08 同款，契约 ⑦.4 stagger 挂页内区块不挂根）；蓝图 P10.4
+       「stagger 单卡」=本页唯一级联档为主表卡，门牌与筛选卡静态进场 -->
+  <section class="fuy-page">
+    <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 签认人·时刻批注行 + 2px 墨规收底（脸样式归全局
+         .fuy-page-head 族，本页零私有标题样式）；原 el-card #header「药品字典」升格于此 -->
+    <header class="fuy-page-head">
+      <div class="fuy-page-head-main">
+        <h1 class="fuy-page-title">药品字典</h1>
+      </div>
+      <p class="fuy-page-note">
+        签认人 {{ signerName }} · <time>{{ todayLabel }}</time>
+      </p>
+    </header>
+
+    <!-- 筛选卡（契约 ⑧.3）：检索动作与建档主钮分主次——检索次钮留筛选控件序列，药品建档
+         墨实底主钮（EP primary 墨实底经换血自动承继）右挂 .fuy-filter-actions；fuy-filter
+         承载 flex 布局、fuy-card-body 承载卡内边距，同类并存各司其职 -->
+    <section class="fuy-card">
+      <div class="fuy-card-body fuy-filter">
+        <label for="drug-dict-keyword">关键词</label>
         <el-input
+          id="drug-dict-keyword"
           v-model="keyword"
           placeholder="名称/拼音/医保码"
           class="drug-dict-input"
           clearable
           @keyup.enter="handleSearch"
         />
-        <el-select v-model="essential" placeholder="基药" class="drug-dict-select" clearable>
+        <!-- 显式 popper 统一挂 fuy-snap-popper（契约 ⑤#5/⑦.5 硬 snap） -->
+        <el-select
+          v-model="essential"
+          placeholder="基药"
+          class="drug-dict-select"
+          clearable
+          popper-class="fuy-snap-popper"
+        >
           <el-option label="基药" :value="true" />
           <el-option label="非基药" :value="false" />
         </el-select>
@@ -282,6 +339,7 @@ onMounted(loadDrugs);
           placeholder="医保对照"
           class="drug-dict-select"
           clearable
+          popper-class="fuy-snap-popper"
         >
           <el-option label="已对照" :value="true" />
           <el-option label="未对照" :value="false" />
@@ -289,60 +347,106 @@ onMounted(loadDrugs);
         <el-button :loading="loading" @click="handleSearch">检索</el-button>
         <!-- 药品建档（PR-4F #22，PHARMACIST 绑定）v-perm 直挂——无码 DOM 移除（D-34）；
              建档/变更弹窗提交按钮随入口同码免挂接（入口隐藏即弹窗不可达） -->
-        <el-button v-perm="'pharmacy:drug:btn:maintain'" type="primary" @click="openCreate"
-          >药品建档</el-button
-        >
+        <div class="fuy-filter-actions">
+          <el-button v-perm="'pharmacy:drug:btn:maintain'" type="primary" @click="openCreate"
+            >药品建档</el-button
+          >
+        </div>
       </div>
+    </section>
 
-      <el-table v-loading="loading" :data="rows" class="drug-dict-table">
-        <el-table-column prop="drugCode" label="药码" min-width="100" />
-        <el-table-column prop="genericName" label="通用名" min-width="140" />
-        <el-table-column prop="specification" label="规格" min-width="120" />
-        <el-table-column prop="manufacturer" label="厂家" min-width="140" />
-        <el-table-column prop="unit" label="单位" width="70" />
-        <el-table-column prop="nhsaCode" label="医保编码" min-width="130">
-          <template #default="{ row }">{{ row.nhsaCode || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="医保状态" width="120">
-          <template #default="{ row }">
-            <!-- 医保对照态可视面：warning/success 文字色经 .fuy-tag-aa 修正至 4.5:1（§4.3） -->
-            <el-tag v-if="!row.insuredSettleable" type="warning" class="fuy-tag-aa"
-              >不可医保结算</el-tag
-            >
-            <el-tag v-else type="success" class="fuy-tag-aa">可医保结算</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <!-- 变更（PR-4F #22）与建档同码 v-perm 直挂；医保对照（PR-4F #23）ADMIN 专属码
-                 直挂——ADMIN 会话经权限全表导出含码可见，PHARMACIST 等业务角色无码隐藏 -->
-            <el-button
-              v-perm="'pharmacy:drug:btn:maintain'"
-              link
-              type="primary"
-              @click="openEdit(row)"
-              >变更</el-button
-            >
-            <el-button
-              v-perm="'pharmacy:drug:btn:insurance-mapping'"
-              link
-              type="primary"
-              @click="openMapping(row)"
-              >医保对照</el-button
-            >
-          </template>
-        </el-table-column>
-        <!-- 检索空结果业务口径提示（挂载即检索，初始与查无结果同语义，无需 searched 门控） -->
-        <template #empty>
-          <el-empty :image-size="72" description="未检索到匹配药品" />
-        </template>
-      </el-table>
-    </el-card>
+    <!-- 主表卡（契约 ⑧.2 卷宗卡 + ⑧.4 密排表）：蓝图 P10.4 stagger 单卡——唯一级联档；
+         fuy-dense 挂卡容器（§9.4 通用落点「表格容器挂 fuy-dense」）：密度规则为后代选择器
+         .fuy-dense .el-table，挂表格自身不构成后代关系、零生效（批次 2 R1 教训）；表格
+         size="small" 移除——fuy-dense 唯一密度通道（§9.9-2）；分页右挂经全局
+         .fuy-page .el-pagination 规则（契约 ⑤#7）自动承继，激活页墨底纸字随 primary 换血自动 -->
+    <div class="fuy-stagger">
+      <section class="fuy-card fuy-dense" :style="{ '--fuy-stagger-index': 0 }">
+        <div class="fuy-card-body">
+          <el-table v-loading="loading" :data="rows" class="drug-dict-table">
+            <!-- 列序按扫读频率重排（蓝图 P10.2）：通用名首列、药码次之（重排前药码居首）；
+                 药码=药品主号列挂 .fuy-num 等宽（⑧.4/域级一致性，td 经 class-name 落类，
+                 scoped 哈希不进入 EP 内部渲染，必须全局类承载） -->
+            <el-table-column prop="genericName" label="通用名" min-width="140" />
+            <el-table-column prop="drugCode" label="药码" min-width="100" class-name="fuy-num" />
+            <el-table-column prop="specification" label="规格" min-width="120" />
+            <el-table-column prop="manufacturer" label="厂家" min-width="140" />
+            <el-table-column prop="unit" label="单位" width="70" />
+            <!-- 医保编码=国家医保药品编码（药码族号码列），与药码列同挂 .fuy-num 等宽
+                 （域级一致性「药品/单据主号一律 .fuy-num」）；空值 — 占位既有 -->
+            <el-table-column prop="nhsaCode" label="医保编码" min-width="130" class-name="fuy-num">
+              <template #default="{ row }">{{ row.nhsaCode || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="医保状态" width="120">
+              <template #default="{ row }">
+                <!-- 医保对照态可视面：warning/success 文字色经 .fuy-tag-aa 修正至 4.5:1（§4.3） -->
+                <el-tag v-if="!row.insuredSettleable" type="warning" class="fuy-tag-aa"
+                  >不可医保结算</el-tag
+                >
+                <el-tag v-else type="success" class="fuy-tag-aa">可医保结算</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <!-- 变更（PR-4F #22）与建档同码 v-perm 直挂；医保对照（PR-4F #23）ADMIN 专属码
+                     直挂——ADMIN 会话经权限全表导出含码可见，PHARMACIST 等业务角色无码隐藏 -->
+                <el-button
+                  v-perm="'pharmacy:drug:btn:maintain'"
+                  link
+                  type="primary"
+                  @click="openEdit(row)"
+                  >变更</el-button
+                >
+                <el-button
+                  v-perm="'pharmacy:drug:btn:insurance-mapping'"
+                  link
+                  type="primary"
+                  @click="openMapping(row)"
+                  >医保对照</el-button
+                >
+              </template>
+            </el-table-column>
+            <!-- 检索空结果业务口径提示（挂载即检索，初始与查无结果同语义，无需 searched 门控）：
+                 空态走 .fuy-empty 脸（契约 ⑥ 禁纸箱插画，主句合「暂无〈业务客体〉」语法+说明给下一步） -->
+            <template #empty>
+              <div class="fuy-empty" role="status">
+                <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                <p class="fuy-empty-title">暂无匹配药品</p>
+                <p class="fuy-empty-hint">未检索到匹配药品，可调整关键词或筛选条件后重新检索。</p>
+              </div>
+            </template>
+          </el-table>
+          <!-- usePagedList 分页化收口（蓝图 P10.6）：total>0 门控既有口径 -->
+          <el-pagination
+            v-if="total > 0"
+            background
+            layout="total, prev, pager, next"
+            :current-page="currentPage"
+            :page-size="pageSize"
+            :total="total"
+            class="drug-dict-pagination"
+            @current-change="handlePageChange"
+          />
+        </div>
+      </section>
+    </div>
 
     <!-- 建档/变更弹窗（editId 空=建档）；11 字段两分节（§9.4-⑦）：基础档案 + 管控属性；
-         label-width 96px 系 §4.4 统一口径 -->
-    <el-dialog v-model="saveVisible" :title="editId === '' ? '药品建档' : '药品变更'" width="520px">
-      <el-form ref="saveFormRef" :model="saveForm" :rules="saveRules" label-width="96px">
+         label-width 96px 系 §4.4 统一口径；挂 .fuy-dialog 弹层脸（卡面底+radius 14+shadow-lg+
+         衬线标题，契约 ⑤#9）+ .fuy-form 表单脸（label 疏排/聚焦墨环/错误显影全局承载） -->
+    <el-dialog
+      v-model="saveVisible"
+      :title="editId === '' ? '药品建档' : '药品变更'"
+      width="520px"
+      class="fuy-dialog"
+    >
+      <el-form
+        ref="saveFormRef"
+        :model="saveForm"
+        :rules="saveRules"
+        label-width="96px"
+        class="fuy-form"
+      >
         <h4 class="fuy-section-title">基础档案</h4>
         <el-form-item label="药码" prop="drugCode">
           <el-input v-model="saveForm.drugCode" placeholder="院内药品编码" />
@@ -387,9 +491,15 @@ onMounted(loadDrugs);
       </template>
     </el-dialog>
 
-    <!-- 医保对照弹窗（三字段；对照后 insuredSettleable 翻转） -->
-    <el-dialog v-model="mappingVisible" title="医保编码对照" width="420px">
-      <el-form ref="mappingFormRef" :model="mappingForm" :rules="mappingRules" label-width="96px">
+    <!-- 医保对照弹窗（三字段；对照后 insuredSettleable 翻转）；同挂 .fuy-dialog + .fuy-form -->
+    <el-dialog v-model="mappingVisible" title="医保编码对照" width="420px" class="fuy-dialog">
+      <el-form
+        ref="mappingFormRef"
+        :model="mappingForm"
+        :rules="mappingRules"
+        label-width="96px"
+        class="fuy-form"
+      >
         <el-form-item label="医保编码" prop="nhsaCode">
           <el-input v-model="mappingForm.nhsaCode" placeholder="国家医保药品编码" />
         </el-form-item>
@@ -407,12 +517,12 @@ onMounted(loadDrugs);
         >
       </template>
     </el-dialog>
-  </div>
+  </section>
 </template>
 
 <style scoped>
-/* 视图级样式隔离（web A.1-2）：工具条已收编 .fuy-toolbar（§9.2.2），卡宽随 .fuy-page
-   全宽（列表 1080 上限撤销），本块只留 input/select 宽度与表格区 CLS 锁定 */
+/* 视图级样式隔离（web A.1-2）：门牌页首/筛选脸/卷宗卡/空态脸/分页右挂样式全部由
+   element-plus.css 全局挂类承载，本块只留 input/select 宽度与表格区 CLS 锁定 */
 .drug-dict-input {
   max-width: 220px;
 }
@@ -421,8 +531,14 @@ onMounted(loadDrugs);
   max-width: 130px;
 }
 
-/* 检索表容器 min-height：加载/空态切换零塌陷（§7.1 CLS 锁定，批次 2 检索页同款） */
+/* 主表容器 min-height：加载/空态切换零塌陷（§7.1 CLS 锁定，批次 2 检索页同款） */
 .drug-dict-table {
   min-height: 240px;
+}
+
+/* 分页与表格的纵向间距；justify-content:flex-end 归全局 .fuy-page .el-pagination 规则
+   （契约 ⑤#7），不再重复声明 */
+.drug-dict-pagination {
+  margin-top: var(--fuy-space-3);
 }
 </style>

@@ -1,14 +1,23 @@
-// 药房住院摆药页单测（/pharmacy/inpatient-dispense，PR-3 Task 16）：路由权限点 meta 登记
-// 断言（路由=权限点清单）、五列看板渲染锚点（列名/行卡计划号/患者号面/给药时点/类型标签/
-// PIVAS 排批）、五步按钮状态机（CREATED→摆药开始/PICKING→药师核对/PICKED→出库交接/
-// CHECKED 配送半步与签收分位/DELIVERED→退药）、deliver 不迁状态钉死（重拉后以服务端回包
-// 为准）、行内动作在途互斥守卫、贴签弹窗数据面、医嘱检索审方状态与生成计划前置、病区
-// 签收弹窗零手输（W-72：签收人=会话身份展示回显，receivedBy 携会话 userId 出网、服务端
-// 一律以令牌身份落值；会话缺身份零出网拦截）、退药弹窗多行化（W-66：打开拉 returnable
-// 可退明细读面、逐行数量正则（小数位≤3，评审 C-F1——DECIMAL(12,3) 精度对齐）+可退净量
-// 双验 D-8、缺行零出网前置拦截、换行旧回包丢弃
-// EX-45 同族）。api mock 承载零出网（vi.mock 整模块替身），不打真实网络；断言业务结果
-// 不绑定实现细节。
+// 药房住院摆药页单测（/pharmacy/inpatient-dispense，PR-3 Task 16；暖纸卷宗 P14 结构断言重写页）：
+// 本页为逐页蓝图钦定的两处结构性断言重写页之一（工具条 8 元素解散 → 门牌页首 + 左生成卡 +
+// 右五列看板双区），走回归红线出口四边界（逐次批准/严格度不降/原子同 PR/CHANGELOG 留痕）——
+// 既有业务断言全量保留、严格度不降，仅结构锚随新构图重写并新增：
+// ①门牌页首锚点（衬线标题「住院摆药台」/在办计数胶囊=前两列合计/签认人·当前病区·时刻批注行，
+// 五步注记收批注行尾）；②左生成卡+右看板双区结构锚（生成卡 sticky 挂类，收编病区/医嘱号/
+// 检索审方/审方回显/生成计划五件，工具条断言随解散删除）；③WARD 假常量清零（nursing.
+// WARD_OPTIONS → listOrgs({type:'WARD'}) 真数据三态：加载禁用+看板骨架不出网/就绪取首项/
+// 空清单「请选择病区」指引/失败批注行+重试，sessionStorage 会话记忆回填优先于首项——V1123
+// 种子 W01/1001 双病区同源）；④三弹窗（签收/贴签/退药）挂 .fuy-dialog 弹层脸；⑤空看板
+// .fuy-empty 空态脸（el-empty 纸箱插画零渲染）。
+// 业务断言（冻结保留）：路由权限点 meta 登记（路由=权限点清单）、五列看板渲染锚点（列名/
+// 行卡计划号/患者号面/给药时点/类型标签/PIVAS 排批）、五步按钮状态机（CREATED→摆药开始/
+// PICKING→药师核对/PICKED→出库交接/CHECKED 配送半步与签收分位/DELIVERED→退药）、deliver
+// 不迁状态钉死（重拉后以服务端回包为准）、行内动作在途互斥守卫、贴签弹窗数据面、医嘱检索
+// 审方状态与生成计划前置、病区签收弹窗零手输（W-72：签收人=会话身份展示回显，receivedBy 携
+// 会话 userId 出网、服务端一律以令牌身份落值；会话缺身份零出网拦截）、退药弹窗多行化（W-66：
+// 打开拉 returnable 可退明细读面、逐行数量正则（小数位≤3，评审 C-F1——DECIMAL(12,3) 精度
+// 对齐）+可退净量双验 D-8、缺行零出网前置拦截、换行旧回包丢弃 EX-45 同族）、PR-4F 双码位
+// 权限态。api mock 承载零出网（vi.mock 整模块替身），不打真实网络；断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -17,6 +26,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage } from 'element-plus';
 import { createDispenseReturn, dispensePlans, reviewTasks } from '@/api/pharmacy';
 import type { DispensePlanReturnableVO, DispensePlanVO, ReviewTaskVO } from '@/api/pharmacy';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
 import { permDirective } from '@/directives/perm';
 import { router } from '@/router';
 import InpatientDispenseView from './InpatientDispenseView.vue';
@@ -35,20 +46,8 @@ vi.mock('@/api/pharmacy', () => ({
     { status: 'DELIVERED', label: '病区已签收' },
   ],
   DISPENSE_PLAN_TYPE_LABELS: { SINGLE_DOSE: '单剂量', PIVAS: 'PIVAS', WHOLE: '整包' },
-  searchDrugs: vi.fn(),
-  createDrug: vi.fn(),
-  updateDrug: vi.fn(),
-  mapInsurance: vi.fn(),
-  createPrescription: vi.fn(),
-  listPrescriptions: vi.fn(),
-  cancelPrescription: vi.fn(),
-  listDispenses: vi.fn(),
-  pickDispense: vi.fn(),
-  verifyDispense: vi.fn(),
-  issueDispense: vi.fn(),
   createDispenseReturn: vi.fn(),
-  listMedicationOccupancy: vi.fn(),
-  reviewTasks: { list: vi.fn(), approve: vi.fn(), reject: vi.fn() },
+  reviewTasks: { list: vi.fn() },
   dispensePlans: {
     list: vi.fn(),
     generate: vi.fn(),
@@ -62,8 +61,10 @@ vi.mock('@/api/pharmacy', () => ({
   },
 }));
 
-vi.mock('@/api/nursing', () => ({
-  WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
+// WARD 假常量清零（蓝图 P14.5）：病区清单消费 listOrgs({type:'WARD'}) 真端点，
+// nursing.WARD_OPTIONS 不再是本页依赖（常量留给 nursing 域既有消费方，本页只断自身消费）
+vi.mock('@/api/system', () => ({
+  listOrgs: vi.fn(),
 }));
 
 // 仅替身 ElMessage（提示断言用），其余导出原样保留供组件解析
@@ -123,6 +124,14 @@ function reviewMock(partial: Partial<ReviewTaskVO> = {}): ReviewTaskVO {
 /** 空摆药计划分页出参（page/size/total 由后端 long→string 全局口径） */
 function emptyPlans() {
   return { content: [], page: '0', size: '200', total: '0' };
+}
+
+/** 病区清单 mock（V1123 种子 WARD 码集同源：W01/1001 双病区，出网值仍为 string code） */
+function wardMocks(): OrgVO[] {
+  return [
+    { id: '1123000000000000001', orgCode: 'W01', orgName: '演示病区', orgType: 'WARD' },
+    { id: '1123000000000000002', orgCode: '1001', orgName: '演示病区', orgType: 'WARD' },
+  ];
 }
 
 /**
@@ -220,16 +229,133 @@ describe('药房住院摆药页', () => {
       total: '0',
     });
     vi.mocked(createDispenseReturn).mockReset();
+    vi.mocked(listOrgs).mockReset();
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.success).mockClear();
     // 只读面兜底空：防未 stub 的 resolve 断链
     vi.mocked(dispensePlans.list).mockResolvedValue(emptyPlans());
+    // 病区清单默认回 V1123 种子码集（W01/1001，sort 升序）；三态用例按需覆写
+    vi.mocked(listOrgs).mockResolvedValue(wardMocks());
   });
 
   it('路由登记权限点 pharmacy:dispense:inpatient（路由=权限点清单审计形态）', () => {
     expect(router.resolve('/pharmacy/inpatient-dispense').meta.permission).toBe(
       'pharmacy:dispense:inpatient',
     );
+  });
+
+  it('门牌页首：衬线标题「住院摆药台」/在办计数胶囊（前两列合计）/签认人·当前病区·时刻批注行（五步注记收尾）', async () => {
+    vi.mocked(dispensePlans.list).mockResolvedValue({
+      content: [
+        planMock({ planNo: 'DP1', status: 'CREATED' }),
+        planMock({ planNo: 'DP2', status: 'CREATED' }),
+        planMock({ planNo: 'DP3', status: 'PICKING' }),
+        planMock({ planNo: 'DP4', status: 'DELIVERED' }),
+      ],
+      page: '0',
+      size: '200',
+      total: '4',
+    });
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    // 门牌页首锚（契约 ⑧.1）：标题=住院摆药台（旧卡头 h2「药房住院摆药台」升格门牌）
+    expect(wrapper.find('.fuy-page-head').exists()).toBe(true);
+    expect(wrapper.find('.fuy-page-title').text()).toBe('住院摆药台');
+    // 状态位=在办计数胶囊：前两列（待摆药+摆药中）合计 3，DELIVERED 不计入；
+    // amber 变体与 P11 队列/P13 待审两枚计数胶囊同语义档（待办=amber，域内计数胶囊统一）
+    const pill = wrapper.find('.fuy-status-pill');
+    expect(pill.exists()).toBe(true);
+    expect(pill.classes()).toContain('fuy-status-pill--amber');
+    expect(pill.text()).toContain('在办');
+    expect(pill.text()).toContain('3');
+    // 批注行=签认人 · 当前病区 · 时刻，五步注记收批注行尾（旧工具条注记行迁入门牌）
+    const note = wrapper.find('.fuy-page-note').text();
+    expect(note).toContain('签认人 王药师');
+    expect(note).toContain('当前病区');
+    expect(note).toContain('摆药五步');
+    expect(note).toContain('病区签收');
+    // 刷新钮挂状态位旁（工具条解散不删业务动作——看板重拉入口保留）
+    expect(wrapper.findAll('button').some((b) => b.text() === '刷新')).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('左生成卡+右看板双区结构：生成卡 sticky 收编病区/医嘱号/检索审方/审方回显/生成计划五件（工具条解散锚）', async () => {
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    // 双区锚（蓝图 P14.2/P14.3）：主工作区 grid 双区，左生成卡 sticky 挂类 + 右看板并列
+    const workarea = wrapper.find('.plan-workarea');
+    expect(workarea.exists()).toBe(true);
+    const generateCard = workarea.find('.plan-generate-card');
+    expect(generateCard.exists()).toBe(true);
+    // 生成卡收编五件：病区下拉/医嘱号输入/检索审方钮/生成计划主钮（审方回显位空态不渲染）
+    expect(generateCard.find('.plan-ward').exists()).toBe(true);
+    expect(generateCard.find('input[placeholder="住院医嘱号"]').exists()).toBe(true);
+    expect(generateCard.text()).toContain('检索审方');
+    expect(generateCard.findAll('button').some((b) => b.text() === '生成摆药计划')).toBe(true);
+    // 右看板：五状态列在位（列结构零改动）
+    const board = workarea.find('.plan-board');
+    expect(board.exists()).toBe(true);
+    expect(board.findAll('.plan-column')).toHaveLength(5);
+    // 旧工具条 8 元素解散：.plan-toolbar 不复存在（结构断言现代化，旧断言随本次改动删除）
+    expect(wrapper.find('.plan-toolbar').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('病区真数据·加载态：清单在途期间下拉禁用且看板骨架不出网（病区必选口径）', async () => {
+    vi.mocked(listOrgs).mockImplementation(() => new Promise<OrgVO[]>(() => {}));
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(vi.mocked(listOrgs)).toHaveBeenCalledWith({ type: 'WARD' });
+    // 禁用态断言循 P04 诊区下拉先例（组件 props 承载，EP 禁用类名不落 el-select 根）
+    expect(wrapper.findComponent({ name: 'ElSelect' }).props('disabled')).toBe(true);
+    // 清单未到达前看板不出网（病区必选——wardId 未定不发起 dispensePlans.list）
+    expect(dispensePlans.list).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('病区真数据·就绪态：清单到达后取首项回填并携病区出网拉看板（选项=V1123 种子码集）', async () => {
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(vi.mocked(listOrgs)).toHaveBeenCalledWith({ type: 'WARD' });
+    // 会话无记忆：取清单首项 W01（sort 升序）回填，看板携病区码出网
+    expect(dispensePlans.list).toHaveBeenCalledWith(expect.objectContaining({ wardId: 'W01' }));
+    const optionValues = wrapper
+      .findAllComponents({ name: 'ElOption' })
+      .map((option) => option.props('value'));
+    expect(optionValues).toEqual(['W01', '1001']);
+    wrapper.unmount();
+  });
+
+  it('病区会话记忆回填：记忆病区 1001 优先于清单首项，看板携记忆病区出网', async () => {
+    sessionStorage.setItem('pharmacy.dispense.wardId', '1001');
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(dispensePlans.list).toHaveBeenCalledWith(expect.objectContaining({ wardId: '1001' }));
+    wrapper.unmount();
+  });
+
+  it('病区真数据·空清单态：清单为空时下拉禁用且看板出「请选择病区」指引零出网', async () => {
+    vi.mocked(listOrgs).mockResolvedValue([]);
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.findComponent({ name: 'ElSelect' }).props('disabled')).toBe(true);
+    expect(wrapper.text()).toContain('请选择病区');
+    expect(dispensePlans.list).not.toHaveBeenCalled();
+    wrapper.unmount();
+  });
+
+  it('病区真数据·失败态：失败批注行给重试入口，重试成功后携病区出网拉看板（页内零弹错归拦截器）', async () => {
+    vi.mocked(listOrgs).mockRejectedValueOnce(new Error('orgs network down'));
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    expect(wrapper.text()).toContain('病区清单加载失败');
+    expect(dispensePlans.list).not.toHaveBeenCalled();
+    // 重试成功：清单到达取首项回填，看板携病区码出网
+    vi.mocked(listOrgs).mockResolvedValue(wardMocks());
+    await clickButton(wrapper, '重试');
+    await flushPromises();
+    expect(dispensePlans.list).toHaveBeenCalledWith(expect.objectContaining({ wardId: 'W01' }));
+    wrapper.unmount();
   });
 
   it('五列看板渲染锚点：列名/行卡计划号/患者号面/给药时点/类型标签/PIVAS 排批', async () => {
@@ -671,10 +797,114 @@ describe('药房住院摆药页', () => {
     wrapper.unmount();
   });
 
-  it('空看板渲染空态（暂无摆药计划）', async () => {
+  it('三弹窗挂 .fuy-dialog 弹层脸：签收/贴签/退药齐挂（契约 ⑧.5/⑤#9）', async () => {
+    vi.mocked(dispensePlans.list).mockResolvedValue({
+      content: [
+        planMock({ planNo: 'DP5', status: 'CHECKED', issuedAt: '2026-10-03T09:00:00' }),
+        planMock({
+          planNo: 'DP6',
+          status: 'DELIVERED',
+          planType: 'PIVAS',
+          pivasBatchNo: 'DPB20261002001',
+        }),
+        planMock({ planNo: 'DP7', status: 'DELIVERED' }),
+      ],
+      page: '0',
+      size: '200',
+      total: '3',
+    });
+    vi.mocked(dispensePlans.label).mockResolvedValue({ planNo: 'DP6' });
+    vi.mocked(dispensePlans.returnable).mockResolvedValue(returnableMock({ planNo: 'DP6' }));
     const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
     await flushPromises();
+    // 依次打开签收/贴签/退药三弹窗，各自以 .fuy-dialog 脸渲染（卡面底+radius 14+shadow-lg+
+    // 衬线标题走全局脸；页面级零钤印——钤印为弹层内提交成功专属，本页三弹窗不涉及）
+    await clickButton(wrapper, '病区签收');
+    await clickButton(wrapper, '贴签');
+    await clickButton(wrapper, '退药');
+    await flushPromises();
+    expect(wrapper.findAll('.fuy-dialog')).toHaveLength(3);
+    for (const dialog of wrapper.findAll('.fuy-dialog')) {
+      expect(dialog.classes()).toContain('el-dialog');
+    }
+    wrapper.unmount();
+  });
+
+  it('弹窗脸一致（六弹窗族横向律）：明细表走 fuy-dense 唯一密度通道（EP size 双轨退役）+ 号码/数字列 fuy-num + footer 默认尺寸', async () => {
+    vi.mocked(dispensePlans.list).mockResolvedValue({
+      content: [
+        planMock({
+          planNo: 'DP6',
+          status: 'DELIVERED',
+          planType: 'PIVAS',
+          pivasBatchNo: 'DPB20261002001',
+        }),
+      ],
+      page: '0',
+      size: '200',
+      total: '1',
+    });
+    vi.mocked(dispensePlans.label).mockResolvedValue({
+      planNo: 'DP6',
+      m04OrderNo: 'MO2026100200001',
+      patientId: '1932000000000000001',
+      patientName: '王*明',
+      visitId: 'I2026092300001',
+      wardId: 'W01',
+      pivasBatchNo: 'DPB20261002001',
+      planTime: '2026-10-03T08:00:00',
+      pickedBy: '1001',
+      verifiedBy: '1002',
+      items: [
+        {
+          itemCode: 'X001',
+          itemName: '0.9% 氯化钠注射液',
+          dosage: '250',
+          unit: 'ml',
+          route: '静脉滴注',
+          quantity: '1',
+        },
+      ],
+    });
+    vi.mocked(dispensePlans.returnable).mockResolvedValue(returnableMock({ planNo: 'DP6' }));
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    await clickButton(wrapper, '贴签');
+    await clickButton(wrapper, '退药');
+    await flushPromises();
+
+    // 密度唯一通道（§9.9-2 双轨清零）：弹窗内全部 el-table 不再挂 EP size=small，
+    // 密度经 fuy-dense 挂弹窗内容容器承载（与页内表格容器同律）
+    const dialogTables = wrapper.findAll('.fuy-dialog .el-table');
+    expect(dialogTables.length).toBeGreaterThanOrEqual(2);
+    for (const table of wrapper.findAllComponents({ name: 'ElTable' })) {
+      expect(table.props('size')).not.toBe('small');
+    }
+    expect(wrapper.find('.fuy-dialog .fuy-dense .el-table').exists()).toBe(true);
+
+    // 号码/数字列等宽全覆盖（域级一致性）：退药明细表的编码/批号与已发/已退/可退数字列
+    const returnCells = wrapper.findAll('.fuy-dialog .plan-return-items .el-table__row td');
+    const codeCell = returnCells.find((c) => c.text() === 'X001');
+    const batchCell = returnCells.find((c) => c.text() === 'B20260901');
+    const issuedCell = returnCells.find((c) => c.text() === '3');
+    expect(codeCell?.classes()).toContain('fuy-num');
+    expect(batchCell?.classes()).toContain('fuy-num');
+    expect(issuedCell?.classes()).toContain('fuy-num');
+
+    // footer 双钮默认尺寸档（与 P07/P10 弹窗 footer 同律，size=small 退役）
+    const returnDialog = wrapper.findAll('.fuy-dialog').find((d) => d.text().includes('可退'));
+    const submitButton = returnDialog?.findAll('button').find((b) => b.text() === '提交退药');
+    expect(submitButton?.classes()).not.toContain('el-button--small');
+    wrapper.unmount();
+  });
+
+  it('空看板渲染 .fuy-empty 空态脸（暂无摆药计划+下一步指引，零纸箱插画）', async () => {
+    const wrapper = mount(InpatientDispenseView, { global: { plugins: [pinia] } });
+    await flushPromises();
+    // 空态脸锚（总则 8/⑫.4-④）：主句合「暂无」语法 + 说明给下一步；el-empty 默认插画零渲染
+    expect(wrapper.find('.plan-board .fuy-empty').exists()).toBe(true);
     expect(wrapper.text()).toContain('暂无摆药计划');
+    expect(wrapper.find('.el-empty').exists()).toBe(false);
     wrapper.unmount();
   });
 
