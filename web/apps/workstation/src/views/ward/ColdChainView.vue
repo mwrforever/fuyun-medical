@@ -594,7 +594,7 @@ onMounted(() => {
           <!-- 第一段：巡检/处置记录（.fuy-dense 挂本段祖先层——全局密排段为后代选择器
                .fuy-dense .el-table，只挂 el-table 自身不命中，祖先层承载才生效） -->
           <section class="cold-seg cold-seg-records fuy-dense">
-            <h3 class="cold-seg-title">巡检/处置记录（共 {{ recordRows.length }} 条）</h3>
+            <h3 class="fuy-section-title">巡检/处置记录（共 {{ recordRows.length }} 条）</h3>
             <el-table :data="recordRows" class="fuy-dense">
               <el-table-column label="记录号" min-width="120">
                 <template #default="{ row }">
@@ -645,7 +645,7 @@ onMounted(() => {
           <!-- 第二段：登记记录（巡检/告警处置双人复核/偏差；ALARM_HANDLE 时 alarmRef+
                secondOperator 双字段显隐既有） -->
           <section class="cold-seg cold-seg-register">
-            <h3 class="cold-seg-title">登记记录</h3>
+            <h3 class="fuy-section-title">登记记录</h3>
             <div class="fuy-form">
               <div class="cold-field-grid">
                 <div class="cold-field">
@@ -728,7 +728,7 @@ onMounted(() => {
           <!-- 第三段：温度曲线（iot series + SVG 轻量渲染，不引 echarts；发丝网格与温度刻度
                承体温单 chart-grid 语法，单点/空点退化态保留） -->
           <section class="cold-seg cold-seg-curve">
-            <h3 class="cold-seg-title">温度曲线（最近 24 小时）</h3>
+            <h3 class="fuy-section-title">温度曲线（最近 24 小时）</h3>
             <div class="cold-curve-bar">
               <input
                 v-model="curveMetricCode"
@@ -892,20 +892,12 @@ onMounted(() => {
   min-height: 320px;
 }
 
-/* 抽屉三段（卷宗阅读面纵向序） */
+/* 抽屉三段（卷宗阅读面纵向序）；段标统一挂全局类 .fuy-section-title（D-30 段标口径
+   统一：契约 §④.1 段标属黑体默认继承面，14px/600 浓墨档由 element-plus.css 全局承载，
+   局部衬线段标声明已删） */
 .cold-seg {
   display: flex;
   flex-direction: column;
-}
-
-/* 抽屉段标（卷宗阅读面小节标）：衬线承段标档（琢段律字体三分——抽屉段标归衬线面，
-   与卡头 .fuy-card-title 衬线同族），14px/600 浓墨 */
-.cold-seg-title {
-  margin: 0 0 var(--fuy-space-2);
-  font-family: var(--fuy-font-family-serif);
-  font-size: var(--fuy-font-size-md);
-  font-weight: 600;
-  color: var(--fuy-color-text-emphasis);
 }
 
 /* 「签」字分隔上下呼吸位（卡内文书分界） */

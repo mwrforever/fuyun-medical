@@ -291,17 +291,30 @@ button:is(.el-button):focus-visible {
   transition: background-color var(--fuy-motion-fast) var(--fuy-ease-standard);
 }
 
-/* 选中态：亮纸白药丸 + 墨字（墨脊书脊上的「胸牌」，形状即选中通道） */
+/* 选中态：金洗纸药丸 + 浓墨字（D-29① 2026-10-12 材质向金洗纸收拢——与收起态组弹层
+   选中及全站页级选中（卡墙/患者行选中金洗底）语义单一化；金洗=金线装订同源，防
+   「朱=危急」误读。只换材质不换形：药丸形态/圆角/尺寸维持，未选中态零变化；字/图标
+   取浓墨保金洗底对比（双通道纪律），图标经 currentColor 随承；悬停底色规则特异性
+   (0,2,0) 低于本规则 (0,3,0)，选中项悬停不脱金洗语义） */
 .fuy-menu .el-menu-item.is-active {
-  background: var(--fuy-surface-card);
+  background: var(--fuy-palette-brand-100);
   color: var(--fuy-color-text-emphasis);
   font-weight: 600;
 }
 
-/* 导轨上键盘焦点环改最亮纸白（--fuy-surface-input，表单域最亮纸面 token）：即墨环在
-   墨脊底上不可见，焦点永远可见是底线 */
-.fuy-menu .el-menu-item:focus-visible {
-  outline-color: var(--fuy-surface-input);
+/* 导轨上键盘焦点环＝最亮纸白环（--fuy-surface-input，表单域最亮纸面 token）：即墨环在
+   墨脊底上不可见，焦点永远可见是底线。W-105 焦点环死规则收口（2026-10-12，button
+   focus-visible 属性级定向收口同款先例，见本文件 button:is(.el-button) 段）：EP el-menu.css
+   以 .el-menu-item:hover,.el-menu-item:focus{outline:none} 简写（0,2,0）压死 tokens.css
+   全局 :focus-visible 环（0,1,0），原先此处仅写 outline-color 单属性——style 仍 none，
+   环恒不渲染（#ffffff 时代即死规则）；须写完整 outline 简写恢复 outline-style，
+   .fuy-menu 挂类组合 (0,3,0) 恒胜 EP (0,2,0)。组头 .el-sub-menu__title 同被 EP
+   .el-sub-menu__title:focus{outline:none} 压制，一并简写收口（原先仅组件 scoped 单属性
+   死规则）；负 offset 环内收于药丸/组头内，不出导轨裁切边 */
+.fuy-menu .el-menu-item:focus-visible,
+.fuy-menu .el-sub-menu__title:focus-visible {
+  outline: 2px solid var(--fuy-surface-input);
+  outline-offset: -2px;
 }
 
 /* 收起态顶层项图标严格居中（收起态缩略形态，现渲染 el-icon+#title tooltip 全名）：EP 折叠项
@@ -313,12 +326,26 @@ button:is(.el-button):focus-visible {
   text-align: center; /* 兜底非 flex 形态（EP 版本差异防回归），与 justify-content 双保险 */
 }
 
-/* 侧栏品牌头：高 56px 与顶栏同高对齐（墨脊书脊与亮纸白顶条的横向接缝齐平） */
+/* 侧栏品牌头：高 56px 与顶栏同高对齐（墨脊书脊与亮纸白顶条的横向接缝齐平）。
+   D-29② 2026-10-12 对齐轴并入菜单文本轴：展开态品牌字标文字与菜单项文字共一条左轴
+   （同轨单一水平轴）——padding-left 54px = 菜单项文字起点 60px（导轨左缘 + 药丸 8px
+   收边 + EP 2.14.5 菜单项 padding-left 20px + 图标盒宽 24px + 图标右距 8px）减品牌
+   chip 自身 6px 左内距；几何经真机 getBoundingClientRect 首字符包围盒实测校准
+   （EP 2.14.5 锁版下稳定）。收起态见 .fuy-menu-head.is-fold 居中规则 */
 .fuy-menu-head {
   height: 56px;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
+  padding-left: 54px;
+}
+
+/* 收起态品牌头（64px 图标轨）：展开态左对齐轴在窄轨内不可行（46px 内距仅余 18px，
+   印块贴右失衡），统一收起态居中规则——「富」印块居中于 64px 轨，与收起态菜单图标
+   严格居中（.fuy-menu.el-menu--collapse 居中收编）同一几何语法 */
+.fuy-menu-head.is-fold {
   justify-content: center;
+  padding-left: 0;
 }
 
 /* 品牌字标本体＝墨脊上的亮纸白字标：纸白底墨字，展开态「富云」疏排（样稿字标 letter-spacing
@@ -398,6 +425,16 @@ button:is(.el-button):focus-visible {
   background: var(--fuy-palette-brand-100);
   color: var(--fuy-color-text-emphasis);
   font-weight: 600;
+}
+
+/* 弹层叶项键盘焦点环（W-105 同源收口，2026-10-12）：侧栏键盘导航（AppSidebar roving
+   tabindex）使收起态组弹层叶项可聚焦后，EP .el-menu-item:focus{outline:none}（0,2,0）
+   在此同样压死全局 :focus-visible 环——弹层长在亮纸卡面上（非墨脊），环色回归全站即墨
+   --fuy-color-brand（tokens.css :focus-visible 同值），负 offset 环内收于 34px 密排项内；
+   (0,4,0) 恒胜 EP (0,2,0)，非裸改 .el-*（.fuy-tree-popper 挂类通道） */
+.fuy-tree-popper .el-menu--popup .el-menu-item:focus-visible {
+  outline: 2px solid var(--fuy-color-brand);
+  outline-offset: -2px;
 }
 
 /* 检索/操作工具条：收编 6 页同构的 *-bar scoped 块（患者检索/划价/退费/一日清单/药品字典/退药受理） */

@@ -414,8 +414,9 @@ async function onConfirm(): Promise<void> {
                 <!-- 「签」字分界（蓝图乙-5.3：文书分界语义替代 h4 平铺，三段各自成文） -->
                 <div class="fuy-sign-divider" aria-hidden="true"></div>
 
-                <!-- 段二：医嘱追踪清单 -->
-                <p class="discharge-section-label">医嘱追踪清单</p>
+                <!-- 段二：医嘱追踪清单（段标统一挂全局类 .fuy-section-title——D-30 段标口径
+                     统一：契约 §④.1 段标属黑体默认继承面，14px/600 浓墨档） -->
+                <p class="fuy-section-title">医嘱追踪清单</p>
                 <el-table
                   v-if="(clearance.trackedOrders ?? []).length > 0"
                   :data="clearance.trackedOrders"
@@ -588,18 +589,11 @@ async function onConfirm(): Promise<void> {
   margin-bottom: var(--fuy-space-3);
 }
 
-/* 「签」分界与上下段间距（蓝图乙-5.3：.fuy-sign-divider 三段文书分界） */
+/* 「签」分界与上下段间距（蓝图乙-5.3：.fuy-sign-divider 三段文书分界）；段二分区标题已
+   统一挂全局类 .fuy-section-title（D-30 段标口径统一：14px/600 浓墨黑体档归
+   element-plus.css 全局承载，原 12px 灰墨局部段标声明已删） */
 .discharge-panel-body .fuy-sign-divider {
   margin: var(--fuy-space-3) 0;
-}
-
-/* 段标（蓝图乙-5.3）：12px 灰墨 0.02em 疏排（h4 平铺降段级文书标） */
-.discharge-section-label {
-  margin: 0 0 var(--fuy-space-2);
-  font-size: var(--fuy-font-size-xs);
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--fuy-color-text-secondary);
 }
 
 .discharge-empty-line {

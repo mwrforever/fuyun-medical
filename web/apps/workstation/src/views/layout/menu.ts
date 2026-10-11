@@ -12,7 +12,9 @@
  */
 
 /** 侧栏菜单项元数据：index=路由路径（兼作 el-menu index）、label=全称、
- * icon=项图标名（值域=批次 2 册 1 契约 §1.2 表 34 枚 @element-plus/icons-vue 名，
+ * icon=项图标名（值域=批次 2 册 1 契约 §1.2 表 34 枚 @element-plus/icons-vue 名；
+ * 2026-10-12 D-29 九枚局部取代：圆形笔画图标在墨脊上呈「小圆点」观感，逐枚换非圆形
+ * 笔画主导图标，取代出处与映射见 CHANGELOG 2026-10-12 D-29 条目）、
  * 组件解析在消费方 AppSidebar 的注册表）、group=分组名（空串=顶层项不入组） */
 export interface SidebarMenuItem {
   index: string;
@@ -21,7 +23,8 @@ export interface SidebarMenuItem {
   group: string;
 }
 
-/** 菜单分组结构：分组名 + 组图标名（值域=契约 §1.1 表 9 枚）+ 组内菜单项（顺序沿菜单常量首次出现序） */
+/** 菜单分组结构：分组名 + 组图标名（值域=契约 §1.1 表 9 枚，2026-10-12 D-29 患者管理组
+ * User→FolderOpened 一枚局部取代）+ 组内菜单项（顺序沿菜单常量首次出现序） */
 export interface MenuGroup {
   name: string;
   icon: string;
@@ -32,9 +35,11 @@ export interface MenuGroup {
  * 分组图标登记表（契约 §1.1 唯一权威，组图标与项图标不重名——扫读双通道不混淆）：
  * 分组名 → 图标名。新增分组必须在此登记组图标，否则侧栏该组父节点无图标渲染
  * （值域完整性由 menu.spec 对照契约全量断言守护）。
+ * 2026-10-12 D-29：患者管理组 User→FolderOpened（打开的病案夹=患者档案群，
+ * 人形圆头轮廓在墨脊上呈小圆点观感，换取零圆弧的卷宗夹形态）。
  */
 export const GROUP_ICONS: Record<string, string> = {
-  患者管理: 'User',
+  患者管理: 'FolderOpened',
   门诊服务: 'FirstAidKit',
   收费管理: 'Wallet',
   药房管理: 'Box',
@@ -52,31 +57,31 @@ export const GROUP_ICONS: Record<string, string> = {
 export const MENU_ITEMS: SidebarMenuItem[] = [
   // 顶层恒显项（group 空串不入组）：首页为门户起点，唯一允许的实底图标（与药丸选中同语法）
   { index: '/', label: '首页', icon: 'HomeFilled', group: '' },
-  // 患者管理组：建档即新建病案文书 / 检索放大镜通用零歧义
+  // 患者管理组：建档即新建病案文书 / 检索筛选漏斗（D-29：放大镜圆形轮廓换非圆漏斗）
   { index: '/patient/create', label: '患者建档', icon: 'DocumentAdd', group: '患者管理' },
-  { index: '/patients', label: '患者检索', icon: 'Search', group: '患者管理' },
-  // 门诊服务组：号票=挂号凭证 / 罗盘=分诊导向 / 处方笔=医生站核心动作
+  { index: '/patients', label: '患者检索', icon: 'Filter', group: '患者管理' },
+  // 门诊服务组：号票=挂号凭证 / 路标牌=分诊导向（D-29：罗盘双圆环换零圆弧路标） / 处方笔=医生站核心动作
   {
     index: '/outpatient/registration-charge',
     label: '挂号收费',
     icon: 'Tickets',
     group: '门诊服务',
   },
-  { index: '/outpatient/triage-board', label: '分诊台', icon: 'Compass', group: '门诊服务' },
+  { index: '/outpatient/triage-board', label: '分诊台', icon: 'Guide', group: '门诊服务' },
   {
     index: '/outpatient/doctor-station',
     label: '门诊医生站',
     icon: 'EditPen',
     group: '门诊服务',
   },
-  // 收费管理组：标价签=划价 / 折让=资金返还 / 清单列表=日结直白形态
+  // 收费管理组：标价签=划价 / 钤印=退费审批盖章（D-29：圆角吊牌换印章剪影，「确认是钤印」同源） / 清单列表=日结直白形态
   {
     index: '/billing/pricing-settle',
     label: '划价结算',
     icon: 'PriceTag',
     group: '收费管理',
   },
-  { index: '/billing/refunds', label: '退费审批', icon: 'Discount', group: '收费管理' },
+  { index: '/billing/refunds', label: '退费审批', icon: 'Stamp', group: '收费管理' },
   { index: '/billing/daily-list', label: '一日清单', icon: 'List', group: '收费管理' },
   // 药房管理组：翻阅=典藏查阅 / 售出=发药交付 / 取回药盒=退药画面
   { index: '/pharmacy/drug-dict', label: '药品字典', icon: 'Reading', group: '药房管理' },
@@ -131,15 +136,15 @@ export const MENU_ITEMS: SidebarMenuItem[] = [
     icon: 'ShoppingTrolley',
     group: '药房管理',
   },
-  // IoT 管理组（M14 管理台四项 + M16 命令/联动/质量三页）：规格文档族 / 仪表盘盘点 / 连接绑定 / 闹钟告警 / 纸飞机下行 / 链环联动 / 趋势图统计
+  // IoT 管理组（M14 管理台四项 + M16 命令/联动/质量三页）：规格文档族 / 台账本=设备清单（D-29：仪表盘圆环换零圆弧账本） / 回形针=绑定夹附（D-29：链环节点圆点观感换纵向长条） / 旗标=告警标记（D-29：闹钟圆盘换零弧旗形） / 纸飞机下行 / 魔法棒=联动自动化（D-29：链环换星芒棒形） / 趋势图统计
   { index: '/iot/products', label: '产品与物模型', icon: 'Files', group: 'IoT 管理' },
-  { index: '/iot/devices', label: '设备管理', icon: 'Odometer', group: 'IoT 管理' },
-  { index: '/iot/bindings', label: '设备绑定', icon: 'Connection', group: 'IoT 管理' },
-  { index: '/iot/alarm-rules', label: '告警规则', icon: 'AlarmClock', group: 'IoT 管理' },
+  { index: '/iot/devices', label: '设备管理', icon: 'Management', group: 'IoT 管理' },
+  { index: '/iot/bindings', label: '设备绑定', icon: 'Paperclip', group: 'IoT 管理' },
+  { index: '/iot/alarm-rules', label: '告警规则', icon: 'Flag', group: 'IoT 管理' },
   { index: '/iot/commands', label: '命令中心', icon: 'Promotion', group: 'IoT 管理' },
-  { index: '/iot/linkage-rules', label: '联动规则', icon: 'Link', group: 'IoT 管理' },
+  { index: '/iot/linkage-rules', label: '联动规则', icon: 'MagicStick', group: 'IoT 管理' },
   { index: '/iot/quality', label: '质量看板', icon: 'TrendCharts', group: 'IoT 管理' },
-  // 病区视图组（M16 三页）：倾注=输液滴注 / 服务耳机=呼叫受理 / 冷藏设备=温控直白具象
+  // 病区视图组（M16 三页）：倾注=输液滴注 / 听筒=接听呼叫（D-29：耳麦穹顶圆弧换斜置听筒） / 冷藏设备=温控直白具象
   {
     index: '/ward/infusion-board',
     label: '输液看板',
@@ -149,7 +154,7 @@ export const MENU_ITEMS: SidebarMenuItem[] = [
   {
     index: '/ward/call-workbench',
     label: '呼叫工作台',
-    icon: 'Service',
+    icon: 'Phone',
     group: '病区视图',
   },
   { index: '/ward/cold-chain', label: '冷链台账', icon: 'Refrigerator', group: '病区视图' },

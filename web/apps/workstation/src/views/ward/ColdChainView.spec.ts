@@ -329,6 +329,17 @@ describe('冷链台账页', () => {
     expect(drawerBody.find('.cold-seg-records .fuy-dense').exists()).toBe(true);
     expect(drawerBody.find('.cold-seg-register .fuy-form').exists()).toBe(true);
     expect(drawerBody.find('.cold-seg-curve svg').exists()).toBe(false);
+    // D-30 段标口径统一（契约 §④.1 字体三分矩阵：段标属黑体默认继承面，衬线允许面不含
+    // 段标）：抽屉三段段标统一挂全局类 .fuy-section-title（14px/600 浓墨黑体档），
+    // 旧局部衬线段标类 .cold-seg-title 清零（死代码零容忍的反向断言）；
+    // 标题≠段标——抽屉标题 16px 衬线档不在本口径内
+    const segTitles = drawerBody.findAll('.fuy-section-title');
+    expect(segTitles.map((node) => node.text())).toEqual([
+      '巡检/处置记录（共 1 条）',
+      '登记记录',
+      '温度曲线（最近 24 小时）',
+    ]);
+    expect(wrapper.find('.cold-seg-title').exists()).toBe(false);
   });
 
   it('档案详情出网 detail+records 渲染记录列表（记录类型词表与双人字段可见）', async () => {

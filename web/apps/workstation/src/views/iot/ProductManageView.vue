@@ -750,7 +750,8 @@ onMounted(() => {
   min-height: 240px;
 }
 
-/* 上架五步步序注记（文书页眉语法）：衬线档（字体三分：步序注记随签标题/页眉注记归衬线栈）
+/* 上架五步步序注记（文书页眉语法）：黑体默认面（丙-1 收口，2026-10-12——原衬线档违
+   契约 §④.1 批注行族归黑体，衬线允许面清单无步序注记类，删声明随全局默认继承）
    12px 灰墨单行置卡头下方发丝上——序号 .fuy-num + 箭头字符，纯文字序号行非交互 stepper；
    窄屏横向滚动不折行（页眉单行语义） */
 .product-steps {
@@ -760,7 +761,6 @@ onMounted(() => {
   margin: 0;
   padding: var(--fuy-space-2) var(--fuy-space-4);
   border-bottom: var(--fuy-border-hairline);
-  font-family: var(--fuy-font-family-serif);
   font-size: var(--fuy-font-size-xs);
   color: var(--fuy-color-text-secondary);
   white-space: nowrap;

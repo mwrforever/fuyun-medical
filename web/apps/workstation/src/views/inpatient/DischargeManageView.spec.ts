@@ -335,6 +335,13 @@ describe('出院管理', () => {
     // 挂账审批引导（BLOCKED 走 M13 收费面，凭 billing.arrears.approved 转 READY）
     expect(wrapper.find('.discharge-blocked-guide').exists()).toBe(true);
     expect(text).toContain('挂账审批');
+    // D-30 段标口径统一（契约 §④.1 字体三分矩阵：段标属黑体默认继承面）：清理预审面板
+    // 分区标题「医嘱追踪清单」升全局类 .fuy-section-title（14px/600 浓墨黑体档），
+    // 旧 12px 灰墨标签类 .discharge-section-label 清零（死代码零容忍的反向断言）
+    const sectionTitles = wrapper.findAll('.fuy-section-title');
+    expect(sectionTitles).toHaveLength(1);
+    expect(sectionTitles[0].text()).toBe('医嘱追踪清单');
+    expect(wrapper.find('.discharge-section-label').exists()).toBe(false);
     // 清理三清单计数渲染（长期停止 2/计划作废 3）
     expect(text).toContain('2');
     expect(discharge.clearance).toHaveBeenCalledWith('DC20260925001');

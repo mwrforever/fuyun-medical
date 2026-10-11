@@ -381,7 +381,7 @@
 ### ⑪.6 壳层改动清单
 
 - **MainLayout.vue**：`<RouterView />` 换 ⑦.4 过渡包裹（唯一必改）；aside/header/content 样式零改动（token 换血自动承继）。
-- **AppSidebar.vue**：零必改。微调（可选，随基础册一并）：品牌字标衬线化经 element-plus.css `.fuy-menu-brand` 承载（组件文件不动）。
+- **AppSidebar.vue**：零必改。微调（可选，随基础册一并）：品牌字标衬线化经 element-plus.css `.fuy-menu-brand` 承载（组件文件不动）。（2026-10-12 解冻注记：用户指令「前端遗留项直接修正」对 D-29 三项设计层修正（选中材质金洗收拢/品牌头对齐轴/九枚圆形笔画图标替换）与 W-105 可访问性修正（焦点环收口+roving tabindex 键盘导航）解冻施工，裁决与留痕见 CHANGELOG 同日两条目。）
 - **AppHeader.vue**：零必改。微调（可选）：站点名 `.app-header-title` 增 `font-family: var(--fuy-font-family-serif)`（文本锚点「富云医护工作站」禁改名不变，仅字体）。
 - **menu.ts / 路由 / store**：零改动。
 
