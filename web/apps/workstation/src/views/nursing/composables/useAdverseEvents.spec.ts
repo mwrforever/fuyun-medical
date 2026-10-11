@@ -1,9 +1,16 @@
-// 不良事件 composable 单测（PR-3 Task 14）：分页列表筛选参数透传、上报必填校验零出网、
-// 上报成功关窗重拉、处理/退回操作操作人留痕（getOperatorId 注入）与退回原因必填。
+// 不良事件 composable 单测（PR-3 Task 14 + 暖纸卷宗换脸切片 甲-3）：既有业务断言全量保留
+// （分页筛选参数透传、上报必填校验零出网、上报成功关窗重拉、+08:00 钉面、patientId 死字段、
+// 处理/退回操作人留痕与原因必填），新增锚点：今日概览统计带三字段读取（getAdverseEventStats
+// 无参当日 + 三态）、待处理计数探针（REPORTED 过滤 size=1 取 total）、上报表单病区下拉
+// listOrgs({type:'WARD'}) 三态接线（假常量 WARD_OPTIONS 清零，缺省病区空串）、钤印成功反馈族
+// （已上报/已处理/已关闭/已退回——匿名口径不带操作人）。
 // api mock 承载，不打真实网络。
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { adverseEvents } from '@/api/nursing';
+import { adverseEvents, getAdverseEventStats } from '@/api/nursing';
+import type { AdverseEventStatsVO } from '@/api/nursing';
+import { listOrgs } from '@/api/system';
+import type { OrgVO } from '@/api/system';
 import { useAdverseEvents } from './useAdverseEvents';
 
 vi.mock('@/api/nursing', () => ({
@@ -14,10 +21,15 @@ vi.mock('@/api/nursing', () => ({
     close: vi.fn(),
     return: vi.fn(),
   },
-  WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
+  getAdverseEventStats: vi.fn(),
   ADVERSE_CATEGORY_OPTIONS: [{ code: 'FALL', label: '跌倒坠床' }],
   SEVERITY_CLASS_OPTIONS: [{ code: 'II', label: 'II 级（重）' }],
   SEVERITY_GRADE_OPTIONS: [{ code: 'A', label: 'A' }],
+}));
+
+// 病区清单读端点替身（暖纸切片真数据面，G4 假常量清零）：默认回 V1123 种子镜像病区
+vi.mock('@/api/system', () => ({
+  listOrgs: vi.fn(),
 }));
 
 // 仅替身弹层件（提示与确认断言用），其余导出原样保留
@@ -34,6 +46,22 @@ vi.mock('element-plus', async (importOriginal) => {
   };
 });
 
+/** 病区种子（V1123__seed_sys_org 镜像：WARD 演示病区 ACTIVE） */
+const WARD_SEED: OrgVO[] = [
+  { id: '1123000000000000001', orgCode: 'W01', orgName: '演示病区', orgType: 'WARD', sort: 1 },
+];
+
+/** 统计种子（后端 AdverseEventStatsVO 生成物形态：计数 string 承载） */
+function statsMock(partial: Partial<AdverseEventStatsVO> = {}): AdverseEventStatsVO {
+  return {
+    date: '2026-10-11',
+    total: '12',
+    deadlineTotal: '5',
+    deadlineMetCount: '4',
+    ...partial,
+  };
+}
+
 describe('useAdverseEvents', () => {
   beforeEach(() => {
     vi.mocked(adverseEvents.list).mockReset().mockResolvedValue({ content: [], total: '0' });
@@ -41,6 +69,8 @@ describe('useAdverseEvents', () => {
     vi.mocked(adverseEvents.handle).mockReset().mockResolvedValue({ eventNo: 'AE2026100100001' });
     vi.mocked(adverseEvents.close).mockReset().mockResolvedValue({ eventNo: 'AE2026100100001' });
     vi.mocked(adverseEvents.return).mockReset().mockResolvedValue({ eventNo: 'AE2026100100001' });
+    vi.mocked(getAdverseEventStats).mockReset().mockResolvedValue(statsMock());
+    vi.mocked(listOrgs).mockReset().mockResolvedValue(WARD_SEED);
     vi.mocked(ElMessage.warning).mockClear();
     vi.mocked(ElMessage.success).mockClear();
     vi.mocked(ElMessageBox.prompt).mockClear();
@@ -100,8 +130,12 @@ describe('useAdverseEvents', () => {
     expect(payload?.isAnonymous).toBe(true);
     expect(payload?.eventSummary).toBe('病房走廊跌倒');
     expect(state.reportVisible.value).toBe(false);
-    // 上报成功后回第一页重拉（本用例无初拉，恰一次）
-    expect(adverseEvents.list).toHaveBeenCalledTimes(1);
+    // 上报成功后回第一页重拉（本用例无初拉，页面清单 size=20 恰一次；同 mock 的待处理
+    // 探针调用 size=1 不计入——甲-3 新增探针与页面清单共用 adverseEvents.list 出入口）
+    const pageListCalls = vi
+      .mocked(adverseEvents.list)
+      .mock.calls.filter((call) => call[0]?.size !== 1);
+    expect(pageListCalls).toHaveLength(1);
   });
 
   it('上报出网时点钉面：occurredAt 按 +08:00 北京钟面解析转精确 ISO 绝对时刻（datetime-local 本地串直拼后端 OffsetDateTime 必 400）', async () => {
@@ -150,7 +184,11 @@ describe('useAdverseEvents', () => {
       handlerId: 'u1',
       handlingNote: '处置记录',
     });
-    expect(adverseEvents.list).toHaveBeenCalledTimes(1);
+    // 成功后重拉页面清单（size=20 恰一次；同 mock 的待处理探针 size=1 调用不计入）
+    const pageListCalls = vi
+      .mocked(adverseEvents.list)
+      .mock.calls.filter((call) => call[0]?.size !== 1);
+    expect(pageListCalls).toHaveLength(1);
   });
 
   it('退回操作：原因必填留痕出网；会话无操作人身份显式拦截零出网', async () => {
@@ -167,5 +205,111 @@ describe('useAdverseEvents', () => {
       '会话缺少操作人身份，无法执行该操作（请重新登录后再试）',
     );
     expect(adverseEvents.return).toHaveBeenCalledTimes(1);
+  });
+
+  it('今日概览统计带：getAdverseEventStats 无参出网（后端缺省=当日），三字段原样落态', async () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    expect(state.stats.value).toBe(null);
+    await state.refreshStats();
+    expect(getAdverseEventStats).toHaveBeenCalledTimes(1);
+    expect(getAdverseEventStats).toHaveBeenCalledWith();
+    // 三字段映射（甲-3 锚点①）：total=总报数 / deadlineMetCount=按时上报数 / deadlineTotal=时限分母
+    expect(state.stats.value?.total).toBe('12');
+    expect(state.stats.value?.deadlineMetCount).toBe('4');
+    expect(state.stats.value?.deadlineTotal).toBe('5');
+    expect(state.statsError.value).toBe(null);
+  });
+
+  it('今日概览统计带错误态：失败落 statsError 且 stats 保持 null，重试成功恢复三字段', async () => {
+    vi.mocked(getAdverseEventStats).mockRejectedValueOnce(new Error('network down'));
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    await state.refreshStats();
+    expect(state.statsError.value).not.toBe(null);
+    expect(state.stats.value).toBe(null);
+    // 重试（手动刷新取数口径）：成功后错误清零、三字段恢复
+    await state.refreshStats();
+    expect(state.statsError.value).toBe(null);
+    expect(state.stats.value?.total).toBe('12');
+    expect(getAdverseEventStats).toHaveBeenCalledTimes(2);
+  });
+
+  it('待处理计数探针：REPORTED 过滤 size=1 出网取 total（门牌胶囊与统计带第三格同源）', async () => {
+    vi.mocked(adverseEvents.list).mockResolvedValue({ content: [], total: '3' });
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    expect(state.pendingTotal.value).toBe(null);
+    await state.refreshPending();
+    expect(adverseEvents.list).toHaveBeenCalledWith({ status: 'REPORTED', page: 0, size: 1 });
+    expect(state.pendingTotal.value).toBe('3');
+  });
+
+  it('待处理计数探针失败：pendingTotal 保持 null 不上抛（胶囊以 — 占位，弹错归拦截器）', async () => {
+    vi.mocked(adverseEvents.list).mockRejectedValueOnce(new Error('network down'));
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    await expect(state.refreshPending()).resolves.toBeUndefined();
+    expect(state.pendingTotal.value).toBe(null);
+  });
+
+  it('处理成功后待处理探针联动重取（REPORTED→HANDLING 待处理数变化）', async () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    await state.onHandle({ eventNo: 'AE2026100100001', status: 'REPORTED' });
+    expect(adverseEvents.list).toHaveBeenCalledWith({ status: 'REPORTED', page: 0, size: 1 });
+  });
+
+  it("上报表单病区下拉：listOrgs({type:'WARD'}) 真数据接线，选项落 wardOptions", async () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    expect(state.wardOptions.value).toEqual([]);
+    await state.loadWards();
+    expect(listOrgs).toHaveBeenCalledWith({ type: 'WARD' });
+    expect(state.wardOptions.value).toEqual(WARD_SEED);
+    expect(state.wardError.value).toBe(null);
+  });
+
+  it('上报表单病区下拉失败态：wardError 落位、选项清空，重试成功恢复（说问题给恢复）', async () => {
+    vi.mocked(listOrgs).mockRejectedValueOnce(new Error('network down'));
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    await state.loadWards();
+    expect(state.wardError.value).not.toBe(null);
+    expect(state.wardOptions.value).toEqual([]);
+    await state.loadWards();
+    expect(state.wardError.value).toBe(null);
+    expect(state.wardOptions.value).toEqual(WARD_SEED);
+  });
+
+  it('假常量清零配套：上报表单初始病区为空串（用户显式选择，缺省不再锚定 W01 演示病区）', () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    state.openReport();
+    expect(state.reportForm.value.wardId).toBe('');
+  });
+
+  it('钤印成功反馈族：上报/处理/关闭/退回各盖对应钤印，文案=动词结果且不带操作人（匿名口径）', async () => {
+    const state = useAdverseEvents({ getOperatorId: () => 'u1' });
+    // 上报：完整必填面 → 钤印「已上报」（不带单号/操作人，事件号回显随列表重拉承载）
+    state.openReport();
+    state.reportForm.value = {
+      category: 'FALL',
+      severityClass: 'II',
+      severityGrade: 'B',
+      wardId: 'W01',
+      occurredAt: '2026-10-01T08:00',
+      eventSummary: '病房走廊跌倒',
+      handlingNote: '',
+      visitId: '',
+      isAnonymous: true,
+    };
+    await state.onReport();
+    expect(state.stampText.value).toBe('已上报');
+    expect(state.stampVisible.value).toBe(true);
+    expect(state.stampText.value).not.toContain('u1');
+    // 处理 → 「已处理」
+    await state.onHandle({ eventNo: 'AE2026100100001', status: 'REPORTED' });
+    expect(state.stampText.value).toBe('已处理');
+    // 关闭 → 「已关闭」
+    await state.onClose({ eventNo: 'AE2026100100001', status: 'HANDLING' });
+    expect(state.stampText.value).toBe('已关闭');
+    // 退回 → 「已退回」
+    await state.onReturn({ eventNo: 'AE2026100100001', status: 'REPORTED' });
+    expect(state.stampText.value).toBe('已退回');
+    // 序号递增：同文案连续盖章仍重放落章动画（view 层 :key 重挂锚）
+    expect(state.stampSeq.value).toBeGreaterThanOrEqual(4);
   });
 });

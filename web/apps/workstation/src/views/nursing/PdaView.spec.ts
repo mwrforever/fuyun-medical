@@ -8,7 +8,16 @@
 // 原文保留重试）、给药 start→finish 按状态切换、输液设备码携 start 与拔针量 0~5000 校验、
 // 双授权表单主授权人=当前登录人展示回显/副授权人必填且不得与登录人相同（W-72）、换单竞态
 // 过期回包丢弃（EX-45/FE-A1-04 同族纪律）。
+// 暖纸卷宗换肤（逐页蓝图 甲-4，换肤不换骨架）：交互骨架（七段卡流/48px 触控/Enter 即提交/
+// 幂等键）零改动，spec 增四锚——①「不挂 .fuy-page」移动自持例外正向断言（防顺手补挂，
+// 门牌/页脚/钤印语法零出现）；②换肤取色（页底 surface-page/段卡 surface-card/封面条
+// shell-bg 衬线纸字，gray-50 与裸白底源码级清零）+ 右挂当班护士批注（空值 — 占位）；
+// ③48px 触控基线类在位（幂等键轮换业务断言由既有 D-22 用例承载）；⑤成功反馈=message
+// 批注条类断言（customClass fuy-message；钤印零出现的反向断言归①——移动面全程 message
+// 不引入钤印浮层，浮层遮挡扫码动线）。
 // api mock 承载，不打真实网络。
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { flushPromises, mount } from '@vue/test-utils';
 import type { VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -34,7 +43,6 @@ vi.mock('@/api/nursing', () => ({
     { code: 'NORMAL', label: '普通护理' },
   ],
   SPECIAL_EVENT_OPTIONS: [],
-  WARD_OPTIONS: [{ code: 'W01', label: 'W01 演示病区' }],
   SHIFT_OPTIONS: [{ code: 'DAY', label: '白班' }],
   EXECUTION_STATUS_LABELS: {
     CREATED: '待签收',
@@ -290,9 +298,10 @@ describe('PDA 移动护理页', () => {
       .find((b) => b.text() === '提交体征')
       ?.trigger('click');
     await flushPromises();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
-      '卡号识别无法录入体征，请改用腕带扫描（I 开头 14 位）后重试',
-    );
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '卡号识别无法录入体征，请改用腕带扫描（I 开头 14 位）后重试',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(vitalSigns.record)).not.toHaveBeenCalled();
     // 巡视打卡：同口径判空拦截，零出网
     await wrapper
@@ -300,9 +309,10 @@ describe('PDA 移动护理页', () => {
       .find((b) => b.text() === '巡视打卡')
       ?.trigger('click');
     await flushPromises();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
-      '卡号识别无法巡视打卡，请改用腕带扫描（I 开头 14 位）后重试',
-    );
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '卡号识别无法巡视打卡，请改用腕带扫描（I 开头 14 位）后重试',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(pda.patrol)).not.toHaveBeenCalled();
     // 拦截后按钮仍处初始态（未进入在途/已完成形态）
     expect(wrapper.text()).toContain('巡视打卡');
@@ -352,7 +362,10 @@ describe('PDA 移动护理页', () => {
     await submitButton()?.trigger('click');
     await flushPromises();
     // 失败：错误提示透出且表单保留（重试数据不丢）
-    expect(vi.mocked(ElMessage.error)).toHaveBeenCalledWith('网络超时');
+    expect(vi.mocked(ElMessage.error)).toHaveBeenCalledWith({
+      message: '网络超时',
+      customClass: 'fuy-message',
+    });
     expect((wrapper.find('input[placeholder="36.5"]').element as HTMLInputElement).value).toBe(
       '36.5',
     );
@@ -446,7 +459,10 @@ describe('PDA 移动护理页', () => {
     await wristbandInput.trigger('keyup.enter');
     await flushPromises();
     expect(vi.mocked(executions.check)).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalledWith('核对通过：EX2026100200011');
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalledWith({
+      message: '核对通过：EX2026100200011',
+      customClass: 'fuy-message',
+    });
     expect((wristbandInput.element as HTMLInputElement).value).toBe('');
     expect(wrapper.find('.pda-override').exists()).toBe(false);
     wrapper.unmount();
@@ -575,9 +591,10 @@ describe('PDA 移动护理页', () => {
       .find((b) => b.text() === '拔针完成')
       ?.trigger('click');
     await flushPromises();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
-      '实际输注量应为 0–5000 的整数（ml），请重新输入',
-    );
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '实际输注量应为 0–5000 的整数（ml），请重新输入',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(pda.needleOut)).not.toHaveBeenCalled();
     // 非数字形态：同口径拦截
     await volumeInput.setValue('abc');
@@ -593,9 +610,10 @@ describe('PDA 移动护理页', () => {
     await rescanInput.setValue('123');
     await rescanInput.trigger('keyup.enter');
     await flushPromises();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
-      '腕带号应为 I 开头共 14 位（I+13 位数字），请重新扫描',
-    );
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '腕带号应为 I 开头共 14 位（I+13 位数字），请重新扫描',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(pda.needleOut)).not.toHaveBeenCalled();
     // 合法组合（回车提交路径）：实际输注量数字键盘值 + 腕带复扫码随载荷出网
     await volumeInput.setValue('250');
@@ -640,20 +658,27 @@ describe('PDA 移动护理页', () => {
     // 副授权人必填：留空提交拦截零出网（主授权人=会话身份无录入面）
     await wrapper.find('input[placeholder="放行原因"]').setValue('腕带破损无法扫码');
     await submitOverride();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('副授权人工号不能为空');
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '副授权人工号不能为空',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(pda.overrideCheck)).not.toHaveBeenCalled();
     // 两人不同：副授权人=登录人工号提交拦截零出网（前端比对会话工号）
     await wrapper.find('input[placeholder="副授权人工号"]').setValue('u1');
     await submitOverride();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith(
-      '破码放行双授权两人不得相同（主授权人=当前登录人）',
-    );
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '破码放行双授权两人不得相同（主授权人=当前登录人）',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(pda.overrideCheck)).not.toHaveBeenCalled();
     // 原因必填：缺原因拦截零出网
     await wrapper.find('input[placeholder="副授权人工号"]').setValue('1002');
     await wrapper.find('input[placeholder="放行原因"]').setValue('');
     await submitOverride();
-    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith('放行原因不能为空');
+    expect(vi.mocked(ElMessage.warning)).toHaveBeenCalledWith({
+      message: '放行原因不能为空',
+      customClass: 'fuy-message',
+    });
     expect(vi.mocked(pda.overrideCheck)).not.toHaveBeenCalled();
     // 合法载荷：执行单号+主授权人（会话 userId 兼容保留）+副授权人+原因一次出网，表单收起
     await wrapper.find('input[placeholder="放行原因"]').setValue('腕带破损无法扫码');
@@ -704,7 +729,10 @@ describe('PDA 移动护理页', () => {
     releaseA(executionRowMock({ executionNo: 'EX2026100200051', status: 'CHECKED' }));
     await flushPromises();
     // 过期成功回包：A 单动作提示照常（确已落库），但 B 单扫码原文不被清空
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalledWith('核对通过：EX2026100200051');
+    expect(vi.mocked(ElMessage.success)).toHaveBeenCalledWith({
+      message: '核对通过：EX2026100200051',
+      customClass: 'fuy-message',
+    });
     expect((wristbandInput.element as HTMLInputElement).value).toBe('I2026092300052');
     // B 单提交 FAIL 在途换回 A 单：过期 FAIL 回包不得弹 A 单名下破码表单
     await wristbandInput.trigger('keyup.enter');
@@ -741,6 +769,83 @@ describe('PDA 移动护理页', () => {
     const buttonTexts = wrapper.findAll('button').map((b) => b.text());
     expect(buttonTexts).toContain('提交体征');
     expect(buttonTexts).toContain('巡视打卡');
+    wrapper.unmount();
+  });
+
+  /* ==================== 暖纸卷宗换肤锚点（逐页蓝图 甲-4，换肤不换骨架） ==================== */
+
+  it('暖纸锚点①：移动自持例外——根类 pda-page 保持且不挂 .fuy-page（门牌/页脚/钤印零出现）', async () => {
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    const wrapper = mountView();
+    await identify(wrapper);
+    // 根类 pda-page 保持（例外断言，附一-8：防建段 agent「顺手补挂」.fuy-page）
+    const root = wrapper.find('.pda-page');
+    expect(root.exists()).toBe(true);
+    expect(root.classes()).not.toContain('fuy-page');
+    // 页框/门牌/页脚语法均不适用移动自持基线（无 .fuy-page 根即无页级语法）
+    expect(wrapper.find('.fuy-page-head').exists()).toBe(false);
+    expect(wrapper.find('.fuy-page-foot').exists()).toBe(false);
+    // 钤印零出现（锚点⑤反向断言）：移动面成功反馈=message 批注条，钤印是桌面弹层语法
+    expect(wrapper.find('.fuy-stamp-toast').exists()).toBe(false);
+    // 源码级反向断言：钤印类不得以任何形态（DOM 或代码）进入本页
+    const source = readFileSync(join(import.meta.dirname, 'PdaView.vue'), 'utf-8');
+    expect(source).not.toContain('fuy-stamp-toast');
+    wrapper.unmount();
+  });
+
+  it('暖纸锚点②：卷宗封面条——衬线标题「富云移动护理」+右挂当班护士批注（空值 — 占位）', () => {
+    const wrapper = mountView();
+    // 封面条双元素：纸字衬线标题 + 右挂当前护士名（批注语义，auth 会话身份）
+    expect(wrapper.find('.pda-header-title').text()).toBe('富云移动护理');
+    expect(wrapper.find('.pda-header-nurse').text()).toBe('当班 李护士');
+    // 七段卡标题全部升 .fuy-card-title 衬线 16px 档（段标题升档锚点）
+    expect(wrapper.findAll('.fuy-card-title')).toHaveLength(7);
+    wrapper.unmount();
+    // 空会话身份（displayName 缺失）：批注空值以 — 占位（G6 禁伪数据）
+    pinia = createPinia();
+    setActivePinia(pinia);
+    sessionStorage.setItem(
+      'fy:workstation:auth',
+      JSON.stringify({ token: 't', refreshToken: 'r', user: { userId: 'u1' } }),
+    );
+    const bare = mountView();
+    expect(bare.find('.pda-header-nurse').text()).toBe('当班 —');
+    bare.unmount();
+  });
+
+  it('暖纸锚点②换肤取色（源码级）：页底 surface-page/段卡 surface-card，gray-50 与裸白底清零', () => {
+    const source = readFileSync(join(import.meta.dirname, 'PdaView.vue'), 'utf-8');
+    // 页底=工作面暖纸（换肤主锚）：旧灰底 --fuy-palette-gray-50 禁残留
+    expect(source).toContain('background: var(--fuy-surface-page)');
+    expect(source).not.toContain('--fuy-palette-gray-50');
+    // 段卡=卡面亮纸 + radius-card（甲-4 段卡材质锚）
+    expect(source).toContain('background: var(--fuy-surface-card)');
+    expect(source).toContain('border-radius: var(--fuy-radius-card)');
+    // 封面条=浓墨封皮底 + 纸字衬线（shell 封皮语义族）
+    expect(source).toContain('background: var(--fuy-shell-bg)');
+    expect(source).toContain('font-family: var(--fuy-font-family-serif)');
+    // 面装裱裸白底清零：输入/清单行卡/破码面板走 surface-input（最亮纸白）等语义别名；
+    // 实底钮反白字 color: #fff 为既有实底文字非面装裱，不在禁列
+    expect(source).toContain('background: var(--fuy-surface-input)');
+    expect(source).not.toContain('background: #fff');
+  });
+
+  it('暖纸锚点③：48px 触控基线类全段在位，源码锚 min-height/height/字号走 PDA token', async () => {
+    execListRows = [executionRowMock({ executionNo: 'EX2026100200071', status: 'SIGNED' })];
+    vi.mocked(pda.patientSummary).mockResolvedValue(summaryMock());
+    const wrapper = mountView();
+    // 识别输入与查询按钮挂触控基线类（48px 冻结基线的类载体）
+    expect(wrapper.find('input.pda-input').exists()).toBe(true);
+    expect(wrapper.find('button.pda-button').exists()).toBe(true);
+    await identify(wrapper);
+    // 清单行卡触控类（行卡即触控目标）+ 字段/字段标签类在位
+    expect(wrapper.findAll('.pda-exec-item').length).toBe(1);
+    expect(wrapper.find('.pda-field-label').exists()).toBe(true);
+    // 源码锚：触控尺寸与字号基线走 PDA token（--fuy-pda-touch 48px / --fuy-pda-font-base 16px）
+    const source = readFileSync(join(import.meta.dirname, 'PdaView.vue'), 'utf-8');
+    expect(source).toContain('height: var(--fuy-pda-touch)');
+    expect(source).toContain('min-height: var(--fuy-pda-touch)');
+    expect(source).toContain('font-size: var(--fuy-pda-font-base)');
     wrapper.unmount();
   });
 });
