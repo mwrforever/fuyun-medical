@@ -297,11 +297,7 @@ onMounted(() => {
               <span class="binding-card-note">共 {{ rows.length }} 条</span>
             </header>
             <div v-loading="listLoading" class="fuy-card-body binding-list-body">
-              <el-table
-                v-if="rows.length > 0"
-                :data="rows"
-                class="fuy-dense binding-table"
-              >
+              <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense binding-table">
                 <el-table-column label="设备 ID" min-width="110">
                   <template #default="{ row }">
                     <span class="fuy-num">{{ row.deviceId }}</span>

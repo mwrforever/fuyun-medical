@@ -462,11 +462,7 @@ onMounted(() => {
                 />
               </el-tabs>
               <div v-loading="queueLoading" class="admission-queue-table-wrap">
-                <el-table
-                  v-if="queueRows.length > 0"
-                  :data="queueRows"
-                  class="fuy-dense"
-                >
+                <el-table v-if="queueRows.length > 0" :data="queueRows" class="fuy-dense">
                   <el-table-column label="住院证号" min-width="130">
                     <template #default="{ row }">
                       <span class="fuy-num">{{ row.admissionNo }}</span>
