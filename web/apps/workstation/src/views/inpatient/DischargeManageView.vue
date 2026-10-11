@@ -1,24 +1,45 @@
 <script setup lang="ts">
-// 出院管理页（/inpatient/discharge，M04 FU-M04-07 前端面）：四态 tab 申请列表
-// （REQUESTED 预审中/READY 待离院确认/BLOCKED 挂账审批中/COMPLETED 已离院）+ 申请发起
-// 弹窗（预出院时间/离院方式病案首页词表）+ 清理与预审结果面板（ClearanceVO 渲染：清理
-// 三清单计数+追踪清单+欠费额[分→元全站唯一件换算]+结算标记+挂账凭证）+ 挂账审批引导
-// （BLOCKED 提示走 M13 收费面既有页，凭 billing.arrears.approved 自动转 READY）+ 离院
-// 确认（双条件=预审 READY 且结算完成，与后端 GC19 前置同语义；不满禁用按钮+原因提示）。
+// 出院管理页（/inpatient/discharge，M04 FU-M04-07 前端面 · 暖纸卷宗换脸重排 乙-5，
+// 「换脸不换业务」：申请事务/双条件放行/BLOCKED 分叉/取消链/+08:00 钉面解析零变动）：
+// 门牌页首（衬线标题 + 状态位「发起出院申请」墨实底钮 + 事务编排批注行）→ 四态签申请列表卡
+// （REQUESTED 预审中/READY 待离院确认/BLOCKED 挂账审批中/COMPLETED 已离院，.fuy-tabs 卷宗签
+// 替换 radio-button 组，签线朱砂为装饰走线）+ 申请发起弹窗（预出院时间/离院方式病案首页
+// 词表，挂 .fuy-dialog）+ 清理与预审结果卡（.fuy-sign-divider 三段=清理三清单计数 → 医嘱
+// 追踪清单 → 欠费额[分→元全站唯一件换算、>0 印泥朱状态语义]+结算标记+挂账凭证；挂账审批
+// 引导 BLOCKED 走 M13 收费面既有页，凭 billing.arrears.approved 自动转 READY）+ 离院确认
+// （双条件=预审 READY 且结算完成，与后端 GC19 前置同语义；不满禁用按钮+原因提示）。
+// 成功反馈=钤印（「已提交/已离院」，契约 ⑧.5 v-if 挂载制）；BLOCKED 等业务拒绝=ElMessage
+// 警示条非钤印（预审未通过不是成功态）。
 // 说明：冻结 REST 面无出院申请列表 GET 端点，列表由本会话发起的申请单承载（后端补列表
 // 端点后可平滑切换，PR 描述登记）。
 // 全部写操作自带在途守卫（入口早退先于一切 await）；失败弹错归响应拦截器（AxiosError 防双弹）。
-import { computed, onMounted, ref } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 // ElMessage/ElMessageBox 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import 'element-plus/es/components/message-box/style/css';
 import { discharge, DISCHARGE_STATUS_LABELS, DISCHARGE_WAY_OPTIONS } from '@/api/inpatient';
 import type { ClearanceVO, DischargeRequestVO } from '@/api/inpatient';
+import { useAuthStore } from '@/stores/auth';
 import { useAsyncTask } from '@/composables/useAsyncTask';
 import { fenToYuanDisplay } from '@/utils/money';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
+
+const auth = useAuthStore();
+
+/* ---------- 门牌批注行：签认人（会话身份）· 时刻（本地时钟零出网，甲-3 先例同构） ---------- */
+/** 签认人批注：会话显示名真值；空会话以 — 占位（防御场景，路由守卫默认拒绝未登录） */
+const signerName = computed(() => auth.user?.displayName ?? '—');
+
+/** 当日批注行时刻标签（YYYY-MM-DD 周X）：病历页眉日期批注语法，纯本地时钟零出网 */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
 
 /** 四态 tab 词表（后端 DischargeRequestStatus 主链四态；CANCELLED 行在创建来源态内自然消隐） */
 const STATUS_TABS: ReadonlyArray<{ code: string; label: string }> = [
@@ -27,6 +48,37 @@ const STATUS_TABS: ReadonlyArray<{ code: string; label: string }> = [
   { code: 'BLOCKED', label: '挂账审批中' },
   { code: 'COMPLETED', label: '已离院' },
 ];
+
+/* ==================== 钤印确认反馈（契约 ⑧.5） ==================== */
+/** 钤印文案（动词结果「已提交/已离院」；失败/业务拒绝走 ElMessage 警示条不盖钤印） */
+const stampText = ref('');
+/** 钤印可见态（v-if 挂载制：常驻形态会被 .fuy-stagger > * 的 fuy-rise both 误伤为常显空朱块） */
+const stampVisible = ref(false);
+/** 钤印重挂序号：递增强制重挂节点重放 fuy-stamp-in 落章动画 */
+const stampSeq = ref(0);
+let stampTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 盖钤印并 ≤1200ms 收场（动画收尾后 v-if 卸载，弹层不驻留遮挡工作面） */
+function showStamp(text: string): void {
+  stampText.value = text;
+  stampSeq.value += 1;
+  stampVisible.value = true;
+  if (stampTimer !== null) {
+    clearTimeout(stampTimer);
+  }
+  stampTimer = setTimeout(() => {
+    stampVisible.value = false;
+    stampTimer = null;
+  }, 1200);
+}
+
+onUnmounted(() => {
+  // 收场定时器仅翻转内部展示 ref（零 DOM/出网副作用），卸载清理防迟触发
+  if (stampTimer !== null) {
+    clearTimeout(stampTimer);
+    stampTimer = null;
+  }
+});
 
 /* ==================== 申请列表（会话内承载） ==================== */
 /** 本会话发起的申请单（无列表 GET 端点，详见文件头说明） */
@@ -93,11 +145,13 @@ async function onCreate(): Promise<void> {
     statusFilter.value = saved.status ?? 'REQUESTED';
     createVisible.value = false;
     if (saved.status === 'BLOCKED') {
+      // BLOCKED=业务拒绝实态（预审未通过不是成功态）：ElMessage 警示条，不盖钤印
       void ElMessage.warning(
         `出院申请 ${saved.requestNo ?? ''} 已提交：预审未通过（欠费挂账审批中）`,
       );
     } else {
-      void ElMessage.success(`出院申请 ${saved.requestNo ?? ''} 已提交`);
+      // 成功=钤印「已提交」（蓝图乙-5.4：文案=动词结果，≤1200ms 收场）
+      showStamp('已提交');
     }
   } catch (error) {
     surfaceBizError(error);
@@ -162,6 +216,14 @@ const arrearsDisplay = computed(() => {
   return fenToYuanDisplay(raw);
 });
 
+/** 欠费额>0 判定（仅作展示语义开关——>0 印泥朱/0 中性；符号比对非金额运算，
+ * 分→元换算仍归 utils/money 全站唯一件） */
+const arrearsPositive = computed(() => {
+  const raw = clearance.value?.arrearsAmount;
+  // 正整数字符串形态收窄后 BigInt 符号比对（'0'/'00'/负值/非整串均归中性态）
+  return raw !== undefined && raw !== null && /^\d+$/.test(String(raw)) && BigInt(raw) > 0n;
+});
+
 /** 预审 BLOCKED（挂账审批引导可见性） */
 const isBlocked = computed(() => clearance.value?.status === 'BLOCKED');
 
@@ -202,7 +264,8 @@ async function onConfirm(): Promise<void> {
   try {
     const saved = await discharge.confirm(panelRequest.value.requestNo ?? '', {});
     panelRequest.value.status = saved.status;
-    void ElMessage.success(`离院确认完成：${saved.requestNo ?? ''}（床位转终末消毒）`);
+    // 成功=钤印「已离院」（蓝图乙-5.4 钤印族）；随后重拉预审结果刷新面板实态
+    showStamp('已离院');
     await loadClearance(panelRequest.value);
   } catch (error) {
     // 双条件后端兜底 IP-1017：detail 原文透出
@@ -211,269 +274,334 @@ async function onConfirm(): Promise<void> {
     confirming.value = false;
   }
 }
-
-onMounted(() => {
-  // 会话列表无初载出网（无列表端点）；页面挂载即空态
-});
 </script>
 
 <template>
-  <div class="fuy-page discharge-manage fuy-stagger">
-    <!-- 页头：标题 + 发起申请 -->
-    <header class="discharge-toolbar fuy-toolbar" :style="{ '--fuy-stagger-index': 0 }">
-      <h2 class="discharge-title">出院管理</h2>
-      <span class="discharge-hint">在途清理 + 费用预审单事务编排 · 双条件离院放行</span>
-      <!-- 发起出院申请（PR-4F #16）：医生管理码 v-perm 直挂——弹窗提交随本入口同码
-           不可达（入口隐藏则弹窗打不开），免重复挂接 -->
-      <el-button
-        v-perm="'inpatient:discharge:btn:manage'"
-        type="primary"
-        class="discharge-create-btn"
-        :disabled="creating"
-        @click="openCreate"
-        >发起出院申请</el-button
-      >
-    </header>
+  <!-- 页内级联容器 discharge-flow（契约 ⑦.4：页面根节点不挂 .fuy-stagger，stagger 挂页内
+       区块；护士站 ae-flow 同构）：三段级联序 页首 0 / 两栏主区 1 / 页脚 2 -->
+  <div class="fuy-page discharge-manage">
+    <div class="fuy-stagger discharge-flow">
+      <!-- 门牌页首（蓝图乙-5.2/契约 ⑧.1）：衬线标题 + 英文小注（装饰层）+ 状态位（发起出院
+         申请墨实底钮）+ 事务编排批注行（原 hint 升批注——「谁·时刻」齐备）+ 2px 墨规收底 -->
+      <header class="fuy-page-head" :style="{ '--fuy-stagger-index': 0 }">
+        <div class="fuy-page-head-main">
+          <h1 class="fuy-page-title">出院管理</h1>
+          <span class="fuy-page-en" aria-hidden="true">DISCHARGE</span>
+        </div>
+        <div class="fuy-page-status">
+          <!-- 发起出院申请（PR-4F #16）：医生管理码 v-perm 直挂——弹窗提交随本入口同码
+               不可达（入口隐藏则弹窗打不开），免重复挂接 -->
+          <el-button
+            v-perm="'inpatient:discharge:btn:manage'"
+            type="primary"
+            :disabled="creating"
+            @click="openCreate"
+            >发起出院申请</el-button
+          >
+        </div>
+        <p class="fuy-page-note">
+          在途清理 + 费用预审单事务编排 · 双条件离院放行 · 签认人 {{ signerName }} ·
+          <time>{{ todayLabel }}</time>
+        </p>
+      </header>
 
-    <el-row :gutter="16" class="fuy-stagger" :style="{ '--fuy-stagger-index': 1 }">
-      <!-- 左：四态 tab 申请列表 -->
-      <el-col :md="24" :lg="14">
-        <el-card>
-          <template #header>
-            <el-radio-group v-model="statusFilter" size="small">
-              <el-radio-button v-for="tab in STATUS_TABS" :key="tab.code" :label="tab.code">{{
-                tab.label
-              }}</el-radio-button>
-            </el-radio-group>
-          </template>
-          <div>
-            <el-table
-              v-if="filteredRequests.length > 0"
-              :data="filteredRequests"
-              class="fuy-dense"
-              size="small"
-            >
-              <el-table-column label="申请单号" min-width="120">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.requestNo }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="就诊号" min-width="120">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.visitId }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="离院方式" width="110">
-                <template #default="{ row }">
-                  {{ dischargeWayLabel(row.dischargeWay) }}
-                </template>
-              </el-table-column>
-              <el-table-column label="预出院时间" width="110">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ formatTime(row.expectDischargeAt) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }">
-                  <el-tag size="small" class="fuy-tag-aa">{{ statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="150" class-name="fuy-ops-8">
-                <template #default="{ row }">
-                  <el-button link type="primary" size="small" @click="loadClearance(row)"
-                    >清理预审</el-button
-                  >
-                  <!-- 取消申请（PR-4F #16）：管理码 v-perm 直挂（GET 清理预审只读不挂）——
-                       与 REQUESTED 状态数据态 v-if 正交（状态不符不渲染，无码 DOM 移除） -->
-                  <el-button
-                    v-if="row.status === 'REQUESTED'"
-                    v-perm="'inpatient:discharge:btn:manage'"
-                    link
-                    type="danger"
-                    size="small"
-                    :disabled="cancelling"
-                    @click="onCancel(row)"
-                    >取消</el-button
-                  >
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-else :image-size="72" description="暂无出院申请" />
-          </div>
-        </el-card>
-      </el-col>
-
-      <!-- 右：清理与预审结果面板 -->
-      <el-col :md="24" :lg="10">
-        <el-card>
-          <template #header>
-            <span
-              >清理与预审结果{{
-                panelRequest === null ? '' : `（${panelRequest.requestNo ?? ''}）`
-              }}</span
-            >
-          </template>
-          <div v-loading="clearanceLoading">
-            <template v-if="clearance">
-              <!-- 清理三清单计数 -->
-              <el-descriptions :column="3" border size="small" class="discharge-desc">
-                <el-descriptions-item label="长期医嘱停止">
-                  <span class="fuy-num">{{ clearance.stoppedLongCount ?? 0 }}</span>
-                </el-descriptions-item>
-                <el-descriptions-item label="作废计划数">
-                  <span class="fuy-num">{{ clearance.cancelledPlanCount ?? 0 }}</span>
-                </el-descriptions-item>
-                <el-descriptions-item label="预审状态">
-                  {{ statusLabel(clearance.status) }}
-                </el-descriptions-item>
-              </el-descriptions>
-
-              <!-- 追踪清单 -->
-              <h4 class="discharge-panel-sub">医嘱追踪清单</h4>
+      <el-row :gutter="16" :style="{ '--fuy-stagger-index': 1 }">
+        <!-- 左：四态签申请列表卡（蓝图乙-5.2：卷宗签 .fuy-tabs 替换 radio-button 组） -->
+        <el-col :md="24" :lg="14">
+          <section class="fuy-card fuy-dense discharge-list-card">
+            <header class="fuy-card-head">
+              <h2 class="fuy-card-title">出院申请单</h2>
+              <span class="discharge-card-note">本会话发起的申请单</span>
+            </header>
+            <div class="fuy-card-body">
+              <!-- 卷宗签语法（契约 ⑤#8）：激活签顶部 2px 朱砂签线 + 浓墨 600 由 .fuy-tabs
+                   承载；签作纯过滤器（会话列表单表复用，签=状态筛选非内容分区） -->
+              <el-tabs v-model="statusFilter" class="fuy-tabs">
+                <el-tab-pane
+                  v-for="tab in STATUS_TABS"
+                  :key="tab.code"
+                  :name="tab.code"
+                  :label="tab.label"
+                />
+              </el-tabs>
               <el-table
-                v-if="(clearance.trackedOrders ?? []).length > 0"
-                :data="clearance.trackedOrders"
+                v-if="filteredRequests.length > 0"
+                :data="filteredRequests"
                 class="fuy-dense"
                 size="small"
               >
-                <el-table-column label="医嘱号" min-width="130">
+                <el-table-column label="申请单号" min-width="120">
                   <template #default="{ row }">
-                    <span class="fuy-num">{{ row.orderNo }}</span>
+                    <span class="fuy-num">{{ row.requestNo }}</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="分类" width="70">
+                <el-table-column label="就诊号" min-width="120">
                   <template #default="{ row }">
-                    {{ row.orderClass === 'LONG' ? '长期' : '临时' }}
+                    <span class="fuy-num">{{ row.visitId }}</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="状态" width="90">
+                <el-table-column label="离院方式" width="110">
                   <template #default="{ row }">
-                    {{ row.status }}
+                    {{ dischargeWayLabel(row.dischargeWay) }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="预出院时间" width="110">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ formatTime(row.expectDischargeAt) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="100">
+                  <template #default="{ row }">
+                    <el-tag size="small" class="fuy-tag-aa">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="150" class-name="fuy-ops-8">
+                  <template #default="{ row }">
+                    <el-button link type="primary" size="small" @click="loadClearance(row)"
+                      >清理预审</el-button
+                    >
+                    <!-- 取消申请（PR-4F #16）：管理码 v-perm 直挂（GET 清理预审只读不挂）——
+                         与 REQUESTED 状态数据态 v-if 正交（状态不符不渲染，无码 DOM 移除） -->
+                    <el-button
+                      v-if="row.status === 'REQUESTED'"
+                      v-perm="'inpatient:discharge:btn:manage'"
+                      link
+                      type="danger"
+                      size="small"
+                      :disabled="cancelling"
+                      @click="onCancel(row)"
+                      >取消</el-button
+                    >
                   </template>
                 </el-table-column>
               </el-table>
-              <p v-else class="discharge-empty-line">追踪清单为空（在途医嘱已全部终态）</p>
-
-              <!-- 欠费额与结算标记 -->
-              <el-descriptions :column="2" border size="small" class="discharge-desc">
-                <el-descriptions-item label="欠费额（元）">
-                  <span class="fuy-num discharge-arrears">{{ arrearsDisplay ?? '0.00' }}</span>
-                </el-descriptions-item>
-                <el-descriptions-item label="结算完成">
-                  <span class="fuy-num">{{
-                    clearance.settlementCompletedAt
-                      ? formatTime(clearance.settlementCompletedAt)
-                      : '未完成'
-                  }}</span>
-                </el-descriptions-item>
-                <el-descriptions-item label="挂账凭证">
-                  <span class="fuy-num">{{ clearance.approvalNo ?? '—' }}</span>
-                </el-descriptions-item>
-                <el-descriptions-item label="申请状态">
-                  {{ statusLabel(clearance.status) }}
-                </el-descriptions-item>
-              </el-descriptions>
-
-              <!-- 挂账审批引导（BLOCKED：走 M13 收费面既有页，凭事件自动转 READY） -->
-              <p v-if="isBlocked" class="discharge-blocked-guide">
-                预审未通过（欠费 {{ arrearsDisplay ?? '0.00' }} 元）：须走计费域「欠费挂账审批」
-                （收费面既有页）提交审批，审批通过凭 billing.arrears.approved 自动转「待离院确认」。
-              </p>
-
-              <!-- 离院确认（双条件不满禁用 + 原因提示） -->
-              <div class="discharge-confirm-row">
-                <span
-                  v-if="!canConfirm && panelRequest !== null"
-                  class="discharge-confirm-reason"
-                  >{{ confirmBlockReason }}</span
-                >
-                <!-- 离院确认（PR-4F #16）：管理码 v-perm 直挂——与双条件 canConfirm 数据态
-                     :disabled 正交叠加（权限决定在不在 DOM，欠费/结算未结决定可不可点） -->
-                <el-button
-                  v-perm="'inpatient:discharge:btn:manage'"
-                  type="danger"
-                  plain
-                  :loading="confirming"
-                  :disabled="confirming || !canConfirm"
-                  @click="onConfirm"
-                  >确认离院</el-button
-                >
+              <!-- 空态脸（契约 ⑥）：主句=暂无〈业务客体〉+ 说明给下一步 + 会话承载降级口径 -->
+              <div v-else class="fuy-empty" role="status">
+                <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                <p class="fuy-empty-title">暂无出院申请</p>
+                <p class="fuy-empty-hint">
+                  点击「发起出院申请」提交后，本会话内提交的申请单在此查看（冻结 REST 面无列表 GET
+                  端点，列表由本会话发起的申请单承载）。
+                </p>
               </div>
-            </template>
-            <el-empty v-else :image-size="64" description="从左侧申请单点击「清理预审」查看结果" />
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
+            </div>
+          </section>
+        </el-col>
 
-    <!-- 申请发起弹窗 -->
-    <el-dialog v-model="createVisible" title="发起出院申请" width="420px">
-      <label class="discharge-field-label">在院就诊号</label>
-      <input
-        v-model="createForm.visitId"
-        class="discharge-input fuy-num"
-        placeholder="I 型 14 位就诊号"
-        aria-label="在院就诊号"
-      />
-      <label class="discharge-field-label">预出院时间（必填）</label>
-      <input
-        v-model="createForm.expectDischargeAt"
-        type="datetime-local"
-        class="discharge-input fuy-num"
-        aria-label="预出院时间"
-      />
-      <label class="discharge-field-label">离院方式（病案首页词表）</label>
-      <select v-model="createForm.dischargeWay" class="discharge-input" aria-label="离院方式">
-        <option v-for="item in DISCHARGE_WAY_OPTIONS" :key="item.code" :value="item.code">
-          {{ item.label }}
-        </option>
-      </select>
-      <template #footer>
-        <el-button size="small" @click="createVisible = false">取消</el-button>
-        <el-button
-          type="primary"
-          size="small"
-          :loading="creating"
-          :disabled="creating"
-          @click="onCreate"
-          >提交申请</el-button
-        >
-      </template>
-    </el-dialog>
+        <!-- 右：清理与预审结果卡（蓝图乙-5.2 三段：清理三清单 → 医嘱追踪清单 → 欠费与结算） -->
+        <el-col :md="24" :lg="10">
+          <section class="fuy-card discharge-panel-card">
+            <header class="fuy-card-head">
+              <h2 class="fuy-card-title">清理与预审结果</h2>
+              <span v-if="panelRequest !== null" class="discharge-card-note"
+                >申请单 <span class="fuy-num">{{ panelRequest.requestNo }}</span></span
+              >
+            </header>
+            <div v-loading="clearanceLoading" class="fuy-card-body discharge-panel-body">
+              <template v-if="clearance">
+                <!-- 段一：清理三清单计数 -->
+                <el-descriptions :column="3" border size="small" class="discharge-desc">
+                  <el-descriptions-item label="长期医嘱停止">
+                    <span class="fuy-num">{{ clearance.stoppedLongCount ?? 0 }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="作废计划数">
+                    <span class="fuy-num">{{ clearance.cancelledPlanCount ?? 0 }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="预审状态">
+                    {{ statusLabel(clearance.status) }}
+                  </el-descriptions-item>
+                </el-descriptions>
+
+                <!-- 「签」字分界（蓝图乙-5.3：文书分界语义替代 h4 平铺，三段各自成文） -->
+                <div class="fuy-sign-divider" aria-hidden="true"></div>
+
+                <!-- 段二：医嘱追踪清单 -->
+                <p class="discharge-section-label">医嘱追踪清单</p>
+                <el-table
+                  v-if="(clearance.trackedOrders ?? []).length > 0"
+                  :data="clearance.trackedOrders"
+                  class="fuy-dense"
+                  size="small"
+                >
+                  <el-table-column label="医嘱号" min-width="130">
+                    <template #default="{ row }">
+                      <span class="fuy-num">{{ row.orderNo }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="分类" width="70">
+                    <template #default="{ row }">
+                      {{ row.orderClass === 'LONG' ? '长期' : '临时' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="90">
+                    <template #default="{ row }">
+                      {{ row.status }}
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <p v-else class="discharge-empty-line">追踪清单为空（在途医嘱已全部终态）</p>
+
+                <div class="fuy-sign-divider" aria-hidden="true"></div>
+
+                <!-- 段三：欠费与结算 + 挂账引导 + 确认离院行 -->
+                <el-descriptions :column="2" border size="small" class="discharge-desc">
+                  <el-descriptions-item label="欠费额">
+                    <span class="fuy-num" :class="{ 'discharge-arrears': arrearsPositive }"
+                      >{{ arrearsDisplay ?? '0.00'
+                      }}<span class="discharge-arrears-unit">元</span></span
+                    >
+                  </el-descriptions-item>
+                  <el-descriptions-item label="结算完成">
+                    <span class="fuy-num">{{
+                      clearance.settlementCompletedAt
+                        ? formatTime(clearance.settlementCompletedAt)
+                        : '未完成'
+                    }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="挂账凭证">
+                    <span class="fuy-num">{{ clearance.approvalNo ?? '—' }}</span>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="申请状态">
+                    {{ statusLabel(clearance.status) }}
+                  </el-descriptions-item>
+                </el-descriptions>
+
+                <!-- 挂账审批引导（BLOCKED：走 M13 收费面既有页，凭事件自动转 READY；
+                     警示洗底经 A-5 已批 EP light-9 语义通道） -->
+                <p v-if="isBlocked" class="discharge-blocked-guide">
+                  预审未通过（欠费 {{ arrearsDisplay ?? '0.00' }} 元）：须走计费域「欠费挂账审批」
+                  （收费面既有页）提交审批，审批通过凭 billing.arrears.approved
+                  自动转「待离院确认」。
+                </p>
+
+                <!-- 离院确认（双条件不满禁用 + 原因提示，文案逐字冻结） -->
+                <div class="discharge-confirm-row">
+                  <span
+                    v-if="!canConfirm && panelRequest !== null"
+                    class="discharge-confirm-reason"
+                    >{{ confirmBlockReason }}</span
+                  >
+                  <!-- 离院确认（PR-4F #16）：管理码 v-perm 直挂——与双条件 canConfirm 数据态
+                       :disabled 正交叠加（权限决定在不在 DOM，欠费/结算未结决定可不可点） -->
+                  <el-button
+                    v-perm="'inpatient:discharge:btn:manage'"
+                    type="danger"
+                    plain
+                    :loading="confirming"
+                    :disabled="confirming || !canConfirm"
+                    @click="onConfirm"
+                    >确认离院</el-button
+                  >
+                </div>
+              </template>
+              <!-- 面板未锚定空态脸：主句=暂无〈客体〉+ 说明给下一步（替代原 el-empty 兜底） -->
+              <div v-else class="fuy-empty" role="status">
+                <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                <p class="fuy-empty-title">暂无清理预审结果</p>
+                <p class="fuy-empty-hint">从左侧申请单点击「清理预审」查看结果。</p>
+              </div>
+            </div>
+          </section>
+        </el-col>
+      </el-row>
+
+      <!-- 申请发起弹窗（G2：挂 .fuy-dialog 衬线标题 + 头部发丝；表单容器挂 .fuy-form，
+           原生 input/select 保留 jsdom 可测口径与 aria 标注） -->
+      <el-dialog v-model="createVisible" title="发起出院申请" width="420px" class="fuy-dialog">
+        <div class="fuy-form discharge-form">
+          <label class="discharge-field-label">在院就诊号</label>
+          <input
+            v-model="createForm.visitId"
+            class="discharge-input fuy-num"
+            placeholder="I 型 14 位就诊号"
+            aria-label="在院就诊号"
+          />
+          <label class="discharge-field-label">预出院时间（必填）</label>
+          <input
+            v-model="createForm.expectDischargeAt"
+            type="datetime-local"
+            class="discharge-input fuy-num"
+            aria-label="预出院时间"
+          />
+          <label class="discharge-field-label">离院方式（病案首页词表）</label>
+          <select v-model="createForm.dischargeWay" class="discharge-input" aria-label="离院方式">
+            <option v-for="item in DISCHARGE_WAY_OPTIONS" :key="item.code" :value="item.code">
+              {{ item.label }}
+            </option>
+          </select>
+        </div>
+        <template #footer>
+          <el-button size="small" @click="createVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="creating"
+            :disabled="creating"
+            @click="onCreate"
+            >提交申请</el-button
+          >
+        </template>
+      </el-dialog>
+
+      <!-- 钤印确认浮层（契约 ⑧.5）：只承成功确认——「已提交/已离院」；BLOCKED 等业务拒绝走
+           ElMessage 警示条不盖钤印；v-if 挂载制=护士站先例同构，挂载即 is-show（stamp-in
+           特异性压过 rise），seq 递增重挂重放落章动画，≤1200ms 收场 -->
+      <div v-if="stampVisible" :key="stampSeq" class="fuy-stamp-toast is-show" aria-live="polite">
+        {{ stampText }}
+      </div>
+
+      <!-- 页脚批注（契约 ⑧.8）：会话列表降级口径逐字保留（数据语义，禁放操作钮） -->
+      <footer class="fuy-page-foot" :style="{ '--fuy-stagger-index': 2 }">
+        列表由本会话发起的申请单承载（冻结 REST 面无出院申请列表 GET
+        端点，后端补列表端点后可平滑切换）· 清理与预审结果随「清理预审」查询刷新
+      </footer>
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* 出院管理布局：左申请列表右预审面板，token 取色禁自创色值 */
-.discharge-toolbar {
+/* 页内级联容器（契约 ⑦.4）：页面根不挂 .fuy-stagger 后根级 flex gap 失效，纵排与区块间距
+   由本层同值承接（.fuy-page 同构 flex+gap，护士站 ae-flow 同构），保证视觉零漂移 */
+.discharge-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fuy-space-3);
+}
+
+/* 门牌状态位：发起申请墨实底钮右挂（蓝图乙-5.2；甲-3 状态位同位语法） */
+.fuy-page-status {
+  display: flex;
   align-items: center;
+  gap: var(--fuy-space-2);
 }
 
-.discharge-title {
-  margin: 0;
-  font-size: var(--fuy-font-size-xl);
-  font-weight: 600;
-  color: var(--fuy-color-text-emphasis);
-}
-
-.discharge-hint {
+/* 卡头副注：会话列表降级口径/面板锚定申请单（12px 灰墨，G1 卡头副注归位） */
+.discharge-card-note {
   font-size: var(--fuy-font-size-xs);
-  color: var(--fuy-color-text-secondary);
+  color: var(--fuy-color-info-text);
 }
 
-.discharge-create-btn {
-  margin-left: auto;
+/* 预审面板主体 min-height 锁 CLS（蓝图乙-5.6：骨架 280px） */
+.discharge-panel-body {
+  min-height: 280px;
 }
 
 .discharge-desc {
   margin-bottom: var(--fuy-space-3);
 }
 
-.discharge-panel-sub {
+/* 「签」分界与上下段间距（蓝图乙-5.3：.fuy-sign-divider 三段文书分界） */
+.discharge-panel-body .fuy-sign-divider {
+  margin: var(--fuy-space-3) 0;
+}
+
+/* 段标（蓝图乙-5.3）：12px 灰墨 0.02em 疏排（h4 平铺降段级文书标） */
+.discharge-section-label {
   margin: 0 0 var(--fuy-space-2);
-  font-size: var(--fuy-font-size-sm);
-  font-weight: 600;
-  color: var(--fuy-color-text-emphasis);
+  font-size: var(--fuy-font-size-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--fuy-color-text-secondary);
 }
 
 .discharge-empty-line {
@@ -482,24 +610,30 @@ onMounted(() => {
   color: var(--fuy-color-text-secondary);
 }
 
-/* 欠费额（金额强调色） */
+/* 欠费额>0：印泥朱状态语义（蓝图乙-5.3——状态朱只承危急/欠费状态语，不作装饰）；
+   0/空为中性纸墨。「元」单位随值同色弱字重（数字主体 tabular 强调） */
 .discharge-arrears {
   font-weight: 700;
   color: var(--fuy-color-danger-text);
 }
 
-/* 挂账审批引导（BLOCKED：warning 系弱底提示条） */
+.discharge-arrears-unit {
+  margin-left: 2px;
+  font-weight: 400;
+}
+
+/* 挂账审批引导（BLOCKED：warning 语义左缘 + 洗底经 A-5 已批 EP light-9 语义通道，零新色值） */
 .discharge-blocked-guide {
   margin: var(--fuy-space-3) 0;
   padding: var(--fuy-space-2) var(--fuy-space-3);
   border-radius: var(--fuy-radius-md);
-  background: var(--fuy-palette-brand-50);
+  background: var(--el-color-warning-light-9);
   border-left: 3px solid var(--fuy-color-warning-text);
   font-size: var(--fuy-font-size-xs);
   color: var(--fuy-color-text-emphasis);
 }
 
-/* 离院确认行：原因提示居左，按钮居右 */
+/* 离院确认行：原因提示居左（印泥朱），按钮居右 */
 .discharge-confirm-row {
   display: flex;
   align-items: center;
@@ -521,15 +655,17 @@ onMounted(() => {
   color: var(--fuy-color-text-secondary);
 }
 
+/* 弹窗表单基元：围合取值直取 --fuy-* 语义通道（契约 ⑤#2 输入围合=最亮纸白底+石规描边，
+   弹窗卡面亮纸底上输入域亮起一档；石规与 EP border 映射同源，五页表单基元同形） */
 .discharge-input {
   width: 100%;
   box-sizing: border-box;
   margin-bottom: var(--fuy-space-3);
   padding: 5px var(--fuy-space-2);
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--fuy-color-rule-stone);
   border-radius: var(--fuy-radius-md);
   font-size: var(--fuy-font-size-sm);
   color: var(--fuy-color-text-emphasis);
-  background: var(--el-bg-color);
+  background: var(--fuy-surface-input);
 }
 </style>
