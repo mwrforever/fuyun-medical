@@ -257,7 +257,8 @@ button:is(.el-button):focus-visible {
   gap: var(--fuy-space-3);
 }
 
-/* 菜单收编类（蓝黑墨书脊导轨形态，2026-10-08「纸质病案」世界换血重写；消费方仅 AppSidebar）。
+/* 菜单收编类（暖纸卷宗棕墨书脊导轨形态，2026-10-08「纸质病案」世界初写、2026-10-10
+   「暖纸卷宗」换血承继，书脊语义=棕墨卷宗封皮；消费方仅 AppSidebar）。
    三枚职责：.fuy-menu 承载菜单项高/字号/悬停/选中态变量与后代覆盖（挂 el-menu）；
    .fuy-menu-head 承载导轨品牌头布局；.fuy-menu-brand 承载品牌字标本体（展开「富云」/
    折叠「富」共用）。后代选择器均带 .fuy-menu 前缀挂类（.fuy-dense 同款先例），特异性恒压
@@ -274,7 +275,8 @@ button:is(.el-button):focus-visible {
   /* 菜单项字号经 EP 变量通道覆盖：EP 在 .el-menu-item 直接声明 font-size，容器级
      font-size 继承打不过直接声明，写容器级属死覆盖 */
   --el-menu-item-font-size: var(--fuy-font-size-md);
-  /* 右边框经 EP 变量通道置透明：导轨分隔线由 aside 边框（深青发丝缝）承载，若写
+  /* 右边框经 EP 变量通道置透明：导轨分隔线由 aside 边框（发丝缝取 --fuy-shell-hairline，
+     A-1 墨加深档）承载，若写
      border-right: none 则与 EP 懒加载注入的 .el-menu { border-right: ... } 同特异性
      平局且 EP 必然后注入，EP 胜出会致 1px 右边框回归、与 aside 边框双线 */
   --el-menu-border-color: transparent;
@@ -296,9 +298,10 @@ button:is(.el-button):focus-visible {
   font-weight: 600;
 }
 
-/* 导轨上键盘焦点环改白色：即墨环在墨脊底上不可见，焦点永远可见是底线 */
+/* 导轨上键盘焦点环改最亮纸白（--fuy-surface-input，表单域最亮纸面 token）：即墨环在
+   墨脊底上不可见，焦点永远可见是底线 */
 .fuy-menu .el-menu-item:focus-visible {
-  outline-color: #ffffff;
+  outline-color: var(--fuy-surface-input);
 }
 
 /* 收起态顶层项图标严格居中（收起态缩略形态，现渲染 el-icon+#title tooltip 全名）：EP 折叠项
@@ -358,7 +361,8 @@ button:is(.el-button):focus-visible {
 }
 
 /* 收起态组弹层（EP 内建 popover）落纸墨世界（样稿 .tree-list 收起态同构）：176px 最小宽
-   + 6px 内边距；底色/圆角/阴影走 EP 已映射值（卡面亮纸白 #fdfcf8 + 4px + 唯一阴影） */
+   + 6px 内边距；底色/圆角/阴影走 EP 已映射值（卡面亮纸 --fuy-surface-card（#f8f4e9）
+   + 4px + 唯一阴影） */
 .fuy-tree-popper .el-menu--popup {
   min-width: 176px;
   padding: var(--fuy-space-1) var(--fuy-space-1);
@@ -387,8 +391,9 @@ button:is(.el-button):focus-visible {
   line-height: 34px;
 }
 
-/* 弹层选中叶项：墨洗纸底 + 墨字 600（墨洗防「朱=危急」语义误读；药丸反白是墨脊上的
-   语法，纸面上选中用墨洗底，样稿 #e9e7de 同值） */
+/* 弹层选中叶项：金洗纸底 + 墨字 600（金洗防「朱=危急」语义误读——金线装订同源，与
+   旧墨洗同理；药丸反白是墨脊上的语法，纸面上选中用金洗底，现行取 --fuy-palette-brand-100
+   选中金洗纸档，旧样稿 #e9e7de 值已随暖纸换血退场） */
 .fuy-tree-popper .el-menu--popup .el-menu-item.is-active {
   background: var(--fuy-palette-brand-100);
   color: var(--fuy-color-text-emphasis);
