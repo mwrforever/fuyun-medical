@@ -476,7 +476,7 @@ onMounted(() => {
               </div>
             </header>
             <div v-loading="listLoading" class="fuy-card-body linkage-list-body">
-              <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense" size="small">
+              <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense">
                 <el-table-column label="规则名称" min-width="150">
                   <template #default="{ row }">{{ row.ruleName }}</template>
                 </el-table-column>
@@ -573,7 +573,6 @@ onMounted(() => {
                 v-if="logRows.length > 0"
                 :data="logRows"
                 class="fuy-dense linkage-log-table"
-                size="small"
                 :row-class-name="logRowClass"
               >
                 <el-table-column label="联动号" min-width="120">

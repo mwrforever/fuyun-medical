@@ -369,7 +369,7 @@ onMounted(() => {
               </div>
             </header>
             <div v-loading="logLoading" class="fuy-card-body command-log-body">
-              <el-table v-if="logRows.length > 0" :data="logRows" class="fuy-dense" size="small">
+              <el-table v-if="logRows.length > 0" :data="logRows" class="fuy-dense">
                 <el-table-column label="命令号" min-width="130">
                   <template #default="{ row }">
                     <span class="fuy-num">{{ row.commandNo }}</span>

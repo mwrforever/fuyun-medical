@@ -328,7 +328,6 @@ async function onConfirm(): Promise<void> {
                 v-if="filteredRequests.length > 0"
                 :data="filteredRequests"
                 class="fuy-dense"
-                size="small"
               >
                 <el-table-column label="申请单号" min-width="120">
                   <template #default="{ row }">
@@ -421,7 +420,6 @@ async function onConfirm(): Promise<void> {
                   v-if="(clearance.trackedOrders ?? []).length > 0"
                   :data="clearance.trackedOrders"
                   class="fuy-dense"
-                  size="small"
                 >
                   <el-table-column label="医嘱号" min-width="130">
                     <template #default="{ row }">

@@ -434,7 +434,7 @@ onMounted(() => {
               >
             </header>
             <div v-loading="listLoading" class="fuy-card-body">
-              <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense" size="small">
+              <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense">
                 <el-table-column label="产品 ID" min-width="140">
                   <template #default="{ row }">
                     <span class="fuy-num">{{ row.productId }}</span>

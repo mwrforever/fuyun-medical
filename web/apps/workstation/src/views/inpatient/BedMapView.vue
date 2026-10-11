@@ -749,7 +749,7 @@ onMounted(() => {
   min-height: 120px;
 }
 
-/* 床位纸面卡（G3 裁决：整卡实底白字→纸面卡=卡面亮纸+发丝描边；禁投影） */
+/* 床位纸面卡（G3 裁决：整卡实底白字→纸面卡=卡面亮纸+发丝描边+radius-card，与丁-1 床卡同形态；禁投影） */
 .bed-card {
   position: relative;
   display: flex;
@@ -758,7 +758,7 @@ onMounted(() => {
   min-height: 120px;
   padding: var(--fuy-space-3);
   border: 1px solid var(--fuy-border-hairline);
-  border-radius: var(--fuy-radius-lg);
+  border-radius: var(--fuy-radius-card);
   background: var(--fuy-surface-card);
   color: var(--fuy-color-text-emphasis);
 }
@@ -771,7 +771,7 @@ onMounted(() => {
   top: 0;
   bottom: 0;
   width: 4px;
-  border-radius: var(--fuy-radius-lg) 0 0 var(--fuy-radius-lg);
+  border-radius: var(--fuy-radius-card) 0 0 var(--fuy-radius-card);
   background: var(--fuy-color-bed-disinfecting); /* 无态兜底=中性灰墨 */
 }
 

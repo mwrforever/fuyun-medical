@@ -553,7 +553,7 @@ onMounted(() => {
               >
             </header>
             <div v-loading="rulesLoading" class="fuy-card-body">
-              <el-table v-if="rules.length > 0" :data="rules" class="fuy-dense" size="small">
+              <el-table v-if="rules.length > 0" :data="rules" class="fuy-dense">
                 <el-table-column label="规则名称" min-width="140">
                   <template #default="{ row }">
                     {{ row.ruleName }}
@@ -800,7 +800,7 @@ onMounted(() => {
           </div>
         </header>
         <div v-loading="alarmsLoading" class="fuy-card-body">
-          <el-table v-if="alarmRows.length > 0" :data="alarmRows" class="fuy-dense" size="small">
+          <el-table v-if="alarmRows.length > 0" :data="alarmRows" class="fuy-dense">
             <el-table-column label="告警号" min-width="150">
               <template #default="{ row }">
                 <span class="fuy-num">{{ row.alarmNo }}</span>
@@ -930,7 +930,6 @@ onMounted(() => {
             v-if="(simulateResult.triggers?.length ?? 0) > 0"
             :data="simulateResult.triggers"
             class="fuy-dense"
-            size="small"
           >
             <el-table-column label="设备" min-width="100">
               <template #default="{ row }">
