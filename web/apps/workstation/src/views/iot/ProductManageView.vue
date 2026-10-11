@@ -1,26 +1,48 @@
 <script setup lang="ts">
-// 产品与物模型管理页（/iot/products，M14 FU-M14-02 前端面）：产品列表（物模型同步状态
-// 三态徽标/同步物模型行操作）+ 产品上架表单 + 术语映射编辑弹窗（物模型属性→MDC 指标编码
-// 跨品牌归一，指标字典选项预载）+ 命令安全等级登记弹窗（安全级/治疗级标注——FU-M14-09
-// 白名单数据源，治疗级默认禁用）。上架五步流程（建产品→定义物模型→映射术语→标注命令
-// 等级→设备注册）的前端承载面。
-// 全部写操作自带在途守卫（入口早退先于一切 await）+ 结构必填显式校验零出网（禁裸 parse）；
-// 失败弹错归响应拦截器（AxiosError 防双弹），业务拒绝对象由 surfaceBizError 兜底展示 detail 原文。
-import { onMounted, ref } from 'vue';
+// 产品与物模型管理页（/iot/products，M14 FU-M14-02 前端面，暖纸卷宗重排=丙-1 蓝图）：
+// 门牌页首（衬线标题 + IoTDA 产品镜像批注行）+ 左产品列表卷宗卡（同步状态三态徽标）+
+// 右产品上架卡（卡头「上架五步」静态步序注记——文书页眉语法非交互 stepper）+ 术语映射
+// 编辑弹窗（物模型属性→MDC 指标编码跨品牌归一，指标字典选项预载）+ 命令安全等级登记
+// 弹窗（安全级/治疗级标注——FU-M14-09 白名单数据源，治疗级默认禁用）。上架五步流程
+// （建产品→定义物模型→映射术语→标注命令等级→设备注册）经步序注记承载。
+// 换脸不换业务：全部写操作自带在途守卫（入口早退先于一切 await）+ 结构必填显式校验零出网
+// （禁裸 parse）；失败弹错归响应拦截器（AxiosError 防双弹），业务拒绝对象由 surfaceBizError
+// 兜底展示 detail 原文；成功反馈=钤印（已上架/已触发同步/已保存，G2 基线——钤印永不承失败）。
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 // ElMessage 在组件模板外使用，按需样式手动引入（存量页面同款口径）
 import 'element-plus/es/components/message/style/css';
 import { metrics, PRODUCT_SYNC_STATUS_LABELS, products, SAFETY_LEVEL_LABELS } from '@/api/iot';
 import type { CommandItem, MappingItem, MetricDictVO, ProductVO } from '@/api/iot';
+import { useAuthStore } from '@/stores/auth';
 import { usePagedList } from '@/composables/usePagedList';
 import { surfaceBizError } from '@/utils/bizError';
 import { formatTime } from '@/utils/timeFormat';
 
+const auth = useAuthStore();
+
+/* ==================== 门牌页首批注行（「谁 · 时刻」） ==================== */
+
+/** 管理员批注：会话显示名真值；空会话以 — 占位（防御场景，路由守卫默认拒绝未登录） */
+const operatorName = computed(() => auth.user?.displayName ?? '—');
+
+/** 批注行时刻标签（YYYY-MM-DD 周X）：病历页眉日期批注语法，纯本地时钟零出网 */
+const todayLabel = computed(() => {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const weekday = '日一二三四五六'[now.getDay()];
+  return `${now.getFullYear()}-${month}-${day} 周${weekday}`;
+});
+
 /* ==================== 产品列表 ==================== */
+
+/** 页脚数据时点（页脚批注「数据时点」真值；成功分支回填，失败驻留旧时点——G8 只叙事实） */
+const loadedAt = ref<string | null>(null);
 
 /** 加载产品列表（IoTDA 本地镜像，按返回序直出）：页码/行集/加载态经 usePagedList 收拢
  * （EX-49 范式迁移，固定首页 size 50 直出，行为与迁移前一致——失败弹错归响应拦截器；
- * 驻留旧清单） */
+ * 驻留旧清单；成功分支回填页脚数据时点） */
 const {
   rows,
   loading: listLoading,
@@ -29,7 +51,13 @@ const {
   params: () => ({}),
   fetcher: ({ page, size }) => products.list({ page, size }),
   pageSize: 50,
+  onSuccess: () => {
+    loadedAt.value = new Date().toISOString();
+  },
 });
+
+/** 页脚数据时点展示串（未完成过任何一次成功加载以 — 占位，零伪数据） */
+const loadedAtLabel = computed(() => (loadedAt.value === null ? '—' : formatTime(loadedAt.value)));
 
 /** 同步状态中文词表反查（状态列徽标） */
 function syncStatusLabel(code: string | undefined): string {
@@ -44,7 +72,8 @@ function syncStatusClass(code: string | undefined): string {
 /* ==================== 同步物模型 ==================== */
 const syncingId = ref('');
 
-/** 同步物模型（触发 IoTDA 拉取物模型对齐镜像；失配恢复后徽标随刷新更新） */
+/** 同步物模型（触发 IoTDA 拉取物模型对齐镜像；失配恢复后徽标随刷新更新）；
+ * 成功反馈=钤印「已触发同步」（丙-1 蓝图第 4 节逐字） */
 async function onSyncModel(row: ProductVO): Promise<void> {
   if (syncingId.value !== '') {
     return;
@@ -52,7 +81,7 @@ async function onSyncModel(row: ProductVO): Promise<void> {
   syncingId.value = row.productId ?? '';
   try {
     await products.syncModel(row.productId ?? '');
-    void ElMessage.success(`物模型同步已触发：${row.productName ?? ''}`);
+    showStamp('已触发同步');
     await loadList();
   } catch (error) {
     surfaceBizError(error);
@@ -73,7 +102,8 @@ const createForm = ref({
   description: '',
 });
 
-/** 产品上架：结构必填显式校验（名称/设备类型/协议/数据格式，零出网）→ 出网 → 清表单刷新。 */
+/** 产品上架：结构必填显式校验（名称/设备类型/协议/数据格式，零出网）→ 出网 → 清表单刷新；
+ * 成功反馈=钤印「已上架」（域丙钤印族首项，上架动线第 1 步收束） */
 async function onCreate(): Promise<void> {
   if (creating.value) {
     return;
@@ -113,7 +143,7 @@ async function onCreate(): Promise<void> {
           : createForm.value.description.trim(),
       modelDefinitionJson: undefined,
     });
-    void ElMessage.success('产品已上架，进入产品列表');
+    showStamp('已上架');
     createForm.value = {
       productName: '',
       deviceType: '',
@@ -203,17 +233,18 @@ async function openMapping(row: ProductVO): Promise<void> {
   }
 }
 
-/** 新增一条映射行 */
+/** 新增一条映射行（弹窗内草稿纯本地态，零出网） */
 function addMappingRow(): void {
   mappingRows.value.push(blankMappingRow());
 }
 
-/** 删除指定映射行 */
+/** 删除指定映射行（弹窗内草稿纯本地态，零出网） */
 function removeMappingRow(index: number): void {
   mappingRows.value.splice(index, 1);
 }
 
-/** 保存映射（PUT 整组替换）：逐行结构必填显式校验零出网 → 出网 → 关窗。 */
+/** 保存映射（PUT 整组替换）：逐行结构必填显式校验零出网 → 出网 → 关窗；
+ * 成功反馈=钤印「已保存」（丙-1 蓝图第 4 节逐字）。 */
 async function onSaveMappings(): Promise<void> {
   if (mappingSaving.value) {
     return;
@@ -237,7 +268,7 @@ async function onSaveMappings(): Promise<void> {
         item.mismatchStrategy === '' ? undefined : (item.mismatchStrategy as 'RAW_PASSTHROUGH'),
     }));
     await products.updateMappings(mappingTarget.value?.productId ?? '', { mappings });
-    void ElMessage.success(`术语映射已保存：${mappingTarget.value?.productName ?? ''}`);
+    showStamp('已保存');
     mappingVisible.value = false;
   } catch (error) {
     surfaceBizError(error);
@@ -295,17 +326,18 @@ async function openCommand(row: ProductVO): Promise<void> {
   }
 }
 
-/** 新增一条命令行 */
+/** 新增一条命令行（弹窗内草稿纯本地态，零出网） */
 function addCommandRow(): void {
   commandRows.value.push(blankCommandRow());
 }
 
-/** 删除指定命令行 */
+/** 删除指定命令行（弹窗内草稿纯本地态，零出网） */
 function removeCommandRow(index: number): void {
   commandRows.value.splice(index, 1);
 }
 
-/** 保存命令登记（PUT 整组替换）：逐行命令名显式校验零出网 → 出网 → 关窗。 */
+/** 保存命令登记（PUT 整组替换）：逐行命令名显式校验零出网 → 出网 → 关窗；
+ * 成功反馈=钤印「已保存」（丙-1 蓝图第 4 节逐字）。 */
 async function onSaveCommands(): Promise<void> {
   if (commandSaving.value) {
     return;
@@ -325,7 +357,7 @@ async function onSaveCommands(): Promise<void> {
       allowed: item.allowed,
     }));
     await products.updateCommands(commandTarget.value?.productId ?? '', { commands });
-    void ElMessage.success(`命令登记已保存：${commandTarget.value?.productName ?? ''}`);
+    showStamp('已保存');
     commandVisible.value = false;
   } catch (error) {
     surfaceBizError(error);
@@ -334,302 +366,420 @@ async function onSaveCommands(): Promise<void> {
   }
 }
 
+/* ==================== 钤印成功反馈（契约 ⑧.5，≤1200ms 收场） ==================== */
+/** 钤印文案（空串=无钤印在展）；seq 每盖一次递增，模板以 :key 重挂重放落章动画；
+ * v-if 挂载制=入院登记台先例同构：常驻形态会被 .fuy-stagger > * 的 fuy-rise both 误伤为
+ * 常显空朱块，挂载即 is-show（stamp-in 特异性压过 rise）根治 */
+const stampText = ref('');
+const stampVisible = ref(false);
+const stampSeq = ref(0);
+let stampTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 盖钤印（只承成功确认——已上架/已触发同步/已保存；失败与业务拒绝归 message 批注条/
+ * 拦截器，钤印永不承失败） */
+function showStamp(text: string): void {
+  stampText.value = text;
+  stampSeq.value += 1;
+  stampVisible.value = true;
+  if (stampTimer !== null) {
+    clearTimeout(stampTimer);
+  }
+  stampTimer = setTimeout(() => {
+    stampVisible.value = false;
+    stampTimer = null;
+  }, 1200);
+}
+
+onBeforeUnmount(() => {
+  if (stampTimer !== null) {
+    clearTimeout(stampTimer);
+  }
+});
+
 onMounted(() => {
   void loadList();
 });
 </script>
 
 <template>
-  <div class="fuy-page product-manage fuy-stagger">
-    <!-- 页头：标题 + 流程提示 + 刷新 -->
-    <header class="product-toolbar fuy-toolbar" :style="{ '--fuy-stagger-index': 0 }">
-      <h2 class="product-title">产品与物模型</h2>
-      <span class="product-hint"
-        >IoTDA 产品镜像 · 上架五步：建产品→物模型→映射术语→标注命令→注册</span
-      >
-      <el-button :loading="listLoading" @click="loadList">刷新</el-button>
-    </header>
+  <div class="fuy-page product-manage">
+    <!-- 页内级联容器（契约 ⑦.4）：页面根节点禁挂 .fuy-stagger——stagger 挂本层区块
+         （admission-flow 同构形态），本层承接 flex+gap 承担纵排与区块间距；
+         级联序：门牌 0 / 两栏 1 / 页脚 2 -->
+    <div class="fuy-stagger product-flow">
+      <!-- ① 门牌页首（契约 ⑧.1）：衬线标题 + 英文小注（装饰层）+ 状态位（刷新钮）+
+           「IoTDA 产品镜像 · 谁 · 时刻」批注行 + 2px 墨规收底（脸归全局族） -->
+      <header class="fuy-page-head" :style="{ '--fuy-stagger-index': 0 }">
+        <div class="fuy-page-head-main">
+          <h1 class="fuy-page-title">产品与物模型</h1>
+          <span class="fuy-page-en" aria-hidden="true">PRODUCT &amp; MODEL</span>
+        </div>
+        <div class="fuy-page-status">
+          <el-button :loading="listLoading" @click="loadList">刷新</el-button>
+        </div>
+        <p class="fuy-page-note">
+          IoTDA 产品镜像 · 签认人 {{ operatorName }} · <time>{{ todayLabel }}</time>
+        </p>
+      </header>
 
-    <el-row :gutter="16" class="fuy-stagger" :style="{ '--fuy-stagger-index': 1 }">
-      <!-- 左栏：产品列表 -->
-      <el-col :md="24" :lg="15">
-        <el-card>
-          <template #header>
-            <span>产品列表（共 {{ rows.length }} 条）</span>
-          </template>
-          <div v-loading="listLoading">
-            <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense" size="small">
-              <el-table-column label="产品 ID" min-width="140">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.productId }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="产品名称" min-width="130">
-                <template #default="{ row }">
-                  {{ row.productName }}
-                </template>
-              </el-table-column>
-              <el-table-column label="设备类型" min-width="100">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.deviceType }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="协议" width="80">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ row.protocolType }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="物模型同步" width="100">
-                <template #default="{ row }">
-                  <el-tag size="small" class="fuy-tag-aa" :class="syncStatusClass(row.syncStatus)">
-                    {{ syncStatusLabel(row.syncStatus) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="上架" width="100">
-                <template #default="{ row }">
-                  <span class="fuy-num">{{ formatTime(row.createdAt) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="200" class-name="fuy-ops-8">
-                <template #default="{ row }">
-                  <!-- 模型同步（PR-4F #37「模型同步」出网把守位，IOT_ADMIN 绑定）v-perm
-                       直挂——无码 DOM 移除（D-34）；「术语映射」「命令登记」为弹窗入口按
-                       盘点口径不挂码（弹窗 footer 出网按钮单独把守）；同步在途 :loading
-                       数据态与权限判定两层正交 -->
-                  <el-button
-                    v-perm="'iot:product:btn:manage'"
-                    link
-                    type="primary"
-                    size="small"
-                    :loading="syncingId === row.productId"
-                    @click="onSyncModel(row)"
-                    >同步</el-button
-                  >
-                  <el-button link type="primary" size="small" @click="openMapping(row)"
-                    >术语映射</el-button
-                  >
-                  <el-button link type="primary" size="small" @click="openCommand(row)"
-                    >命令登记</el-button
-                  >
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-else :image-size="72" description="暂无产品，先从右侧上架" />
-          </div>
-        </el-card>
-      </el-col>
-
-      <!-- 右栏：产品上架表单 -->
-      <el-col :md="24" :lg="9">
-        <el-card>
-          <template #header>产品上架</template>
-          <el-form label-position="top" size="small">
-            <label class="product-field-label">产品名称（必填）</label>
-            <input
-              v-model="createForm.productName"
-              class="product-input"
-              placeholder="如：多参数监护仪"
-              aria-label="产品名称"
-            />
-            <div class="product-field-grid">
-              <div class="product-field">
-                <label class="product-field-label">设备类型（必填）</label>
-                <input
-                  v-model="createForm.deviceType"
-                  class="product-input"
-                  placeholder="如：Monitor"
-                  aria-label="设备类型"
-                />
-              </div>
-              <div class="product-field">
-                <label class="product-field-label">协议类型（必填）</label>
-                <input
-                  v-model="createForm.protocolType"
-                  class="product-input"
-                  placeholder="如：MQTT"
-                  aria-label="协议类型"
-                />
+      <!-- ② 两栏 lg 15/9（既有）：左产品列表卷宗卡 / 右产品上架卡 -->
+      <el-row :gutter="16" :style="{ '--fuy-stagger-index': 1 }">
+        <!-- 左栏：产品列表卡（.fuy-dense 密排挂卡容器构成后代关系；50/页 usePagedList） -->
+        <el-col :md="24" :lg="15">
+          <section class="fuy-card fuy-dense product-list-card">
+            <header class="fuy-card-head">
+              <h2 class="fuy-card-title">产品列表</h2>
+              <span class="product-list-total"
+                >共 <span class="fuy-num">{{ rows.length }}</span> 条</span
+              >
+            </header>
+            <div v-loading="listLoading" class="fuy-card-body">
+              <el-table v-if="rows.length > 0" :data="rows" class="fuy-dense" size="small">
+                <el-table-column label="产品 ID" min-width="140">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ row.productId }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="产品名称" min-width="130">
+                  <template #default="{ row }">
+                    {{ row.productName }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="设备类型" min-width="100">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ row.deviceType }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="协议" width="80">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ row.protocolType }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="物模型同步" width="100">
+                  <template #default="{ row }">
+                    <el-tag
+                      size="small"
+                      class="fuy-tag-aa"
+                      :class="syncStatusClass(row.syncStatus)"
+                    >
+                      {{ syncStatusLabel(row.syncStatus) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="上架" width="100">
+                  <template #default="{ row }">
+                    <span class="fuy-num">{{ formatTime(row.createdAt) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="200" class-name="fuy-ops-8">
+                  <template #default="{ row }">
+                    <!-- 模型同步（PR-4F #37「模型同步」出网把守位，IOT_ADMIN 绑定）v-perm
+                         直挂——无码 DOM 移除（D-34）；「术语映射」「命令登记」为弹窗入口按
+                         盘点口径不挂码（弹窗 footer 出网按钮单独把守）；同步在途 :loading
+                         数据态与权限判定两层正交 -->
+                    <el-button
+                      v-perm="'iot:product:btn:manage'"
+                      link
+                      type="primary"
+                      size="small"
+                      :loading="syncingId === row.productId"
+                      @click="onSyncModel(row)"
+                      >同步</el-button
+                    >
+                    <el-button link type="primary" size="small" @click="openMapping(row)"
+                      >术语映射</el-button
+                    >
+                    <el-button link type="primary" size="small" @click="openCommand(row)"
+                      >命令登记</el-button
+                    >
+                  </template>
+                </el-table-column>
+              </el-table>
+              <!-- 空态脸（G6/契约 ⑥）：主句「暂无产品」+ 说明给下一步；默认纸箱插画在
+                   .fuy-page 子树由全局段压制，本页走自绘空态脸零插画 -->
+              <div v-else class="fuy-empty" role="status">
+                <span class="fuy-empty-mark" aria-hidden="true">空</span>
+                <p class="fuy-empty-title">暂无产品</p>
+                <p class="fuy-empty-hint">
+                  先在右侧上架卡完成第 1 步建产品，上架后产品将出现在本列表。
+                </p>
               </div>
             </div>
-            <label class="product-field-label">数据格式（必填）</label>
-            <input
-              v-model="createForm.dataFormat"
-              class="product-input"
-              placeholder="如：JSON"
-              aria-label="数据格式"
-            />
-            <div class="product-field-grid">
-              <div class="product-field">
-                <label class="product-field-label">厂商名称</label>
+          </section>
+        </el-col>
+
+        <!-- 右栏：产品上架卡（卡头加「上架五步」静态步序注记——PM 重排裁决：流程引导用
+             文书页眉语法不用控件，新人按步序动线走通上架链） -->
+        <el-col :md="24" :lg="9">
+          <section class="fuy-card product-create-card">
+            <header class="fuy-card-head">
+              <h2 class="fuy-card-title">产品上架</h2>
+            </header>
+            <!-- 上架五步步序注记：12px 灰墨单行（序号 .fuy-num + 箭头字符），置卡头下方
+                 发丝上——纯文字序号行非交互 stepper，五步文案逐字冻结 -->
+            <p class="product-steps">
+              <span class="fuy-num">1</span> 建产品 <span aria-hidden="true">→</span>
+              <span class="fuy-num">2</span> 物模型 <span aria-hidden="true">→</span>
+              <span class="fuy-num">3</span> 映射术语 <span aria-hidden="true">→</span>
+              <span class="fuy-num">4</span> 标注命令 <span aria-hidden="true">→</span>
+              <span class="fuy-num">5</span> 注册设备
+            </p>
+            <div class="fuy-card-body">
+              <el-form label-position="top" size="small">
+                <label class="product-field-label">产品名称（必填）</label>
                 <input
-                  v-model="createForm.manufacturerName"
+                  v-model="createForm.productName"
                   class="product-input"
-                  aria-label="厂商名称"
+                  placeholder="如：多参数监护仪"
+                  aria-label="产品名称"
                 />
-              </div>
-              <div class="product-field">
-                <label class="product-field-label">所属行业</label>
-                <input v-model="createForm.industry" class="product-input" aria-label="所属行业" />
-              </div>
+                <div class="product-field-grid">
+                  <div class="product-field">
+                    <label class="product-field-label">设备类型（必填）</label>
+                    <input
+                      v-model="createForm.deviceType"
+                      class="product-input"
+                      placeholder="如：Monitor"
+                      aria-label="设备类型"
+                    />
+                  </div>
+                  <div class="product-field">
+                    <label class="product-field-label">协议类型（必填）</label>
+                    <input
+                      v-model="createForm.protocolType"
+                      class="product-input"
+                      placeholder="如：MQTT"
+                      aria-label="协议类型"
+                    />
+                  </div>
+                </div>
+                <label class="product-field-label">数据格式（必填）</label>
+                <input
+                  v-model="createForm.dataFormat"
+                  class="product-input"
+                  placeholder="如：JSON"
+                  aria-label="数据格式"
+                />
+                <div class="product-field-grid">
+                  <div class="product-field">
+                    <label class="product-field-label">厂商名称</label>
+                    <input
+                      v-model="createForm.manufacturerName"
+                      class="product-input"
+                      aria-label="厂商名称"
+                    />
+                  </div>
+                  <div class="product-field">
+                    <label class="product-field-label">所属行业</label>
+                    <input
+                      v-model="createForm.industry"
+                      class="product-input"
+                      aria-label="所属行业"
+                    />
+                  </div>
+                </div>
+                <label class="product-field-label">产品描述</label>
+                <textarea
+                  v-model="createForm.description"
+                  class="product-input product-textarea"
+                  rows="2"
+                  aria-label="产品描述"
+                ></textarea>
+                <!-- 上架产品（PR-4F #37「新建」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+                     DOM 移除（D-34）；右栏上架表单常驻（非弹窗），创建 POST 以本按钮为唯一
+                     出口，无码会话表单可填不可出网；:loading/:disabled 在途数据态与权限判定
+                     两层正交 -->
+                <el-button
+                  v-perm="'iot:product:btn:manage'"
+                  type="primary"
+                  class="product-submit"
+                  :loading="creating"
+                  :disabled="creating"
+                  @click="onCreate"
+                  >上架产品</el-button
+                >
+              </el-form>
             </div>
-            <label class="product-field-label">产品描述</label>
-            <textarea
-              v-model="createForm.description"
-              class="product-input product-textarea"
-              rows="2"
-              aria-label="产品描述"
-            ></textarea>
-            <!-- 上架产品（PR-4F #37「新建」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
-                 DOM 移除（D-34）；右栏上架表单常驻（非弹窗），创建 POST 以本按钮为唯一
-                 出口，无码会话表单可填不可出网；:loading/:disabled 在途数据态与权限判定
-                 两层正交 -->
-            <el-button
-              v-perm="'iot:product:btn:manage'"
-              type="primary"
-              class="product-submit"
-              :loading="creating"
-              :disabled="creating"
-              @click="onCreate"
-              >上架产品</el-button
-            >
-          </el-form>
-        </el-card>
-      </el-col>
-    </el-row>
+          </section>
+        </el-col>
+      </el-row>
 
-    <!-- 术语映射编辑弹窗（PUT 整组替换语义） -->
-    <el-dialog v-model="mappingVisible" title="术语映射编辑" width="640px">
-      <p class="product-dialog-target">
-        产品 {{ mappingTarget?.productName ?? '' }}
-        <span class="fuy-num">{{ mappingTarget?.productId ?? '' }}</span>
-        —— 物模型属性映射 MDC 指标编码（跨品牌归一）
-      </p>
-      <div v-for="(item, index) in mappingRows" :key="item.rowKey" class="product-mapping-row">
-        <input
-          v-model="item.propertyName"
-          class="product-input product-mapping-prop"
-          placeholder="物模型属性名（如 heartRate）"
-          :aria-label="index === 0 ? '物模型属性名' : `物模型属性名 ${index + 1}`"
-        />
-        <select
-          v-model="item.metricCode"
-          class="product-input product-mapping-code"
-          :aria-label="index === 0 ? 'MDC 指标编码' : `MDC 指标编码 ${index + 1}`"
-        >
-          <option value="">请选择指标编码</option>
-          <option v-for="m in metricOptions" :key="m.metricCode" :value="m.metricCode ?? ''">
-            {{ m.metricCode }} {{ m.metricName }}
-          </option>
-        </select>
-        <select v-model="item.mismatchStrategy" class="product-input product-mapping-strategy">
-          <option value="">默认策略</option>
-          <option value="RAW_PASSTHROUGH">失配原样透传</option>
-        </select>
-        <el-button link type="danger" size="small" @click="removeMappingRow(index)">删除</el-button>
-      </div>
-      <el-button size="small" @click="addMappingRow">增行</el-button>
-      <template #footer>
-        <el-button size="small" @click="mappingVisible = false">取消</el-button>
-        <!-- 保存映射（PR-4F #37「指标映射」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
-             DOM 移除（D-34），PUT 整组替换以本按钮为唯一出口：入口「术语映射」按盘点口径
-             不挂码，无码会话仅可开窗查看不可出网；行内删除/增行为草稿纯本地态不挂码；
-             :loading/:disabled 在途数据态与权限判定两层正交 -->
-        <el-button
-          v-perm="'iot:product:btn:manage'"
-          type="primary"
-          size="small"
-          :loading="mappingSaving"
-          :disabled="mappingSaving"
-          @click="onSaveMappings"
-          >保存映射</el-button
-        >
-      </template>
-    </el-dialog>
-
-    <!-- 命令安全等级登记弹窗（FU-M14-09 白名单数据源） -->
-    <el-dialog v-model="commandVisible" title="命令安全等级登记" width="640px">
-      <p class="product-dialog-target">
-        产品 {{ commandTarget?.productName ?? '' }}
-        <span class="fuy-num">{{ commandTarget?.productId ?? '' }}</span>
-        —— 安全级默认放行，治疗级默认禁用（豁免需系统参数开启并审计）
-      </p>
-      <div v-for="(item, index) in commandRows" :key="item.rowKey" class="product-mapping-row">
-        <input
-          v-model="item.commandName"
-          class="product-input product-mapping-prop"
-          placeholder="命令名称（如 setAlarmLimit）"
-          :aria-label="index === 0 ? '命令名称' : `命令名称 ${index + 1}`"
-        />
-        <select
-          v-model="item.safetyLevel"
-          class="product-input product-mapping-code"
-          :aria-label="index === 0 ? '命令安全等级' : `命令安全等级 ${index + 1}`"
-        >
-          <option v-for="(label, code) in SAFETY_LEVEL_LABELS" :key="code" :value="code">
-            {{ label }}
-          </option>
-        </select>
-        <label class="product-allowed-label">
+      <!-- ③ 术语映射编辑弹窗（PUT 整组替换语义；挂 .fuy-dialog=衬线标题+头部发丝全局脸，
+           行编辑行高与 .fuy-form 密度对齐） -->
+      <el-dialog v-model="mappingVisible" title="术语映射编辑" width="640px" class="fuy-dialog">
+        <p class="product-dialog-target">
+          产品 {{ mappingTarget?.productName ?? '' }}
+          <span class="fuy-num">{{ mappingTarget?.productId ?? '' }}</span>
+          —— 物模型属性映射 MDC 指标编码（跨品牌归一）
+        </p>
+        <div v-for="(item, index) in mappingRows" :key="item.rowKey" class="product-mapping-row">
           <input
-            v-model="item.allowed"
-            type="checkbox"
-            :aria-label="index === 0 ? '白名单放行' : `白名单放行 ${index + 1}`"
+            v-model="item.propertyName"
+            class="product-input product-mapping-prop"
+            placeholder="物模型属性名（如 heartRate）"
+            :aria-label="index === 0 ? '物模型属性名' : `物模型属性名 ${index + 1}`"
           />
-          白名单放行
-        </label>
-        <el-button link type="danger" size="small" @click="removeCommandRow(index)">删除</el-button>
+          <select
+            v-model="item.metricCode"
+            class="product-input product-mapping-code"
+            :aria-label="index === 0 ? 'MDC 指标编码' : `MDC 指标编码 ${index + 1}`"
+          >
+            <option value="">请选择指标编码</option>
+            <option v-for="m in metricOptions" :key="m.metricCode" :value="m.metricCode ?? ''">
+              {{ m.metricCode }} {{ m.metricName }}
+            </option>
+          </select>
+          <select v-model="item.mismatchStrategy" class="product-input product-mapping-strategy">
+            <option value="">默认策略</option>
+            <option value="RAW_PASSTHROUGH">失配原样透传</option>
+          </select>
+          <el-button link type="danger" size="small" @click="removeMappingRow(index)"
+            >删除</el-button
+          >
+        </div>
+        <el-button size="small" @click="addMappingRow">增行</el-button>
+        <template #footer>
+          <el-button size="small" @click="mappingVisible = false">取消</el-button>
+          <!-- 保存映射（PR-4F #37「指标映射」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+               DOM 移除（D-34），PUT 整组替换以本按钮为唯一出口：入口「术语映射」按盘点口径
+               不挂码，无码会话仅可开窗查看不可出网；行内删除/增行为草稿纯本地态不挂码；
+               :loading/:disabled 在途数据态与权限判定两层正交 -->
+          <el-button
+            v-perm="'iot:product:btn:manage'"
+            type="primary"
+            size="small"
+            :loading="mappingSaving"
+            :disabled="mappingSaving"
+            @click="onSaveMappings"
+            >保存映射</el-button
+          >
+        </template>
+      </el-dialog>
+
+      <!-- 命令安全等级登记弹窗（FU-M14-09 白名单数据源；挂 .fuy-dialog 同上） -->
+      <el-dialog v-model="commandVisible" title="命令安全等级登记" width="640px" class="fuy-dialog">
+        <p class="product-dialog-target">
+          产品 {{ commandTarget?.productName ?? '' }}
+          <span class="fuy-num">{{ commandTarget?.productId ?? '' }}</span>
+          —— 安全级默认放行，治疗级默认禁用（豁免需系统参数开启并审计）
+        </p>
+        <div v-for="(item, index) in commandRows" :key="item.rowKey" class="product-mapping-row">
+          <input
+            v-model="item.commandName"
+            class="product-input product-mapping-prop"
+            placeholder="命令名称（如 setAlarmLimit）"
+            :aria-label="index === 0 ? '命令名称' : `命令名称 ${index + 1}`"
+          />
+          <select
+            v-model="item.safetyLevel"
+            class="product-input product-mapping-code"
+            :aria-label="index === 0 ? '命令安全等级' : `命令安全等级 ${index + 1}`"
+          >
+            <option v-for="(label, code) in SAFETY_LEVEL_LABELS" :key="code" :value="code">
+              {{ label }}
+            </option>
+          </select>
+          <label class="product-allowed-label">
+            <input
+              v-model="item.allowed"
+              type="checkbox"
+              :aria-label="index === 0 ? '白名单放行' : `白名单放行 ${index + 1}`"
+            />
+            白名单放行
+          </label>
+          <el-button link type="danger" size="small" @click="removeCommandRow(index)"
+            >删除</el-button
+          >
+        </div>
+        <el-button size="small" @click="addCommandRow">增行</el-button>
+        <template #footer>
+          <el-button size="small" @click="commandVisible = false">取消</el-button>
+          <!-- 保存命令（PR-4F #37「命令模板」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
+               DOM 移除（D-34），白名单 PUT 以本按钮为唯一出口：入口「命令登记」按盘点口径
+               不挂码，无码会话仅可开窗查看不可出网；行内删除/增行为草稿纯本地态不挂码；
+               :loading/:disabled 在途数据态与权限判定两层正交 -->
+          <el-button
+            v-perm="'iot:product:btn:manage'"
+            type="primary"
+            size="small"
+            :loading="commandSaving"
+            :disabled="commandSaving"
+            @click="onSaveCommands"
+            >保存命令</el-button
+          >
+        </template>
+      </el-dialog>
+
+      <!-- ④ 页脚批注（G1 纵向序收尾，契约 ⑧.8）：数据时点=最近一次成功加载时点 +
+           手动刷新取数语义（禁放操作钮） -->
+      <footer class="fuy-page-foot" :style="{ '--fuy-stagger-index': 2 }">
+        数据时点 {{ loadedAtLabel }} · 手动刷新取数
+      </footer>
+
+      <!-- 钤印确认反馈（契约 ⑧.5：只承成功确认——已上架/已触发同步/已保存；v-if 挂载制=
+           入院登记台先例同构——防 stagger 误伤常驻泄漏，seq 递增重挂重放落章动画，
+           ≤1200ms 收场） -->
+      <div v-if="stampVisible" :key="stampSeq" class="fuy-stamp-toast is-show" aria-live="polite">
+        {{ stampText }}
       </div>
-      <el-button size="small" @click="addCommandRow">增行</el-button>
-      <template #footer>
-        <el-button size="small" @click="commandVisible = false">取消</el-button>
-        <!-- 保存命令（PR-4F #37「命令模板」出网把守位，IOT_ADMIN 绑定）v-perm 直挂——无码
-             DOM 移除（D-34），白名单 PUT 以本按钮为唯一出口：入口「命令登记」按盘点口径
-             不挂码，无码会话仅可开窗查看不可出网；行内删除/增行为草稿纯本地态不挂码；
-             :loading/:disabled 在途数据态与权限判定两层正交 -->
-        <el-button
-          v-perm="'iot:product:btn:manage'"
-          type="primary"
-          size="small"
-          :loading="commandSaving"
-          :disabled="commandSaving"
-          @click="onSaveCommands"
-          >保存命令</el-button
-        >
-      </template>
-    </el-dialog>
+    </div>
   </div>
 </template>
 
 <style scoped>
-/* 产品管理两栏布局：左列表右上架表单，token 取色禁自创色值 */
-.product-toolbar {
+/* 页内级联容器（契约 ⑦.4：页面根节点不挂 .fuy-stagger，stagger 挂页内区块——admission-flow
+   同构形态）：本层成为 .fuy-page 唯一子级后根级 flex gap 失效，纵排与区块间距
+   （门牌 0 / 两栏 1 / 页脚 2 三段级联序）由本层同值承接（.fuy-page 同构 flex+gap），
+   保证视觉零漂移 */
+.product-flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--fuy-space-3);
+}
+
+/* 列表卡头计数（卷宗卡卡头右挂工具位，12px 灰墨档——七页卡头副注统一 12px 档） */
+.product-list-total {
+  color: var(--fuy-color-text-secondary);
+  font-size: var(--fuy-font-size-xs);
+}
+
+/* 列表卡体 CLS 锁（蓝图 丙-1.6：骨架 min-height 240px——admission-queue-body 同构口径）：
+   加载/空态切换零塌陷 */
+.product-list-card .fuy-card-body {
+  box-sizing: border-box;
+  min-height: 240px;
+}
+
+/* 上架五步步序注记（文书页眉语法）：衬线档（字体三分：步序注记随签标题/页眉注记归衬线栈）
+   12px 灰墨单行置卡头下方发丝上——序号 .fuy-num + 箭头字符，纯文字序号行非交互 stepper；
+   窄屏横向滚动不折行（页眉单行语义） */
+.product-steps {
+  display: flex;
   align-items: center;
-}
-
-.product-title {
+  gap: var(--fuy-space-1);
   margin: 0;
-  font-size: var(--fuy-font-size-xl);
-  font-weight: 600;
-  color: var(--fuy-color-text-emphasis);
-}
-
-.product-hint {
+  padding: var(--fuy-space-2) var(--fuy-space-4);
+  border-bottom: var(--fuy-border-hairline);
+  font-family: var(--fuy-font-family-serif);
   font-size: var(--fuy-font-size-xs);
   color: var(--fuy-color-text-secondary);
+  white-space: nowrap;
+  overflow-x: auto;
 }
 
-/* 表单基元：native input/select 与 EP 密度口径对齐（存量页面同款） */
+/* 表单基元：native input/select 与 EP 密度口径对齐（存量页面同款）；行高与 .fuy-form
+   密度对齐（13px 正文档 + 5px 垂直内距），弹窗行编辑共消费。围合取值直取 --fuy-* 语义
+   通道（契约 ⑤#2 输入围合=最亮纸白底+石规描边——住院域琢段统一口径，与卡面拉开一档） */
 .product-input {
   width: 100%;
   box-sizing: border-box;
   margin-bottom: var(--fuy-space-3);
   padding: 5px var(--fuy-space-2);
-  border: 1px solid var(--el-border-color);
+  border: 1px solid var(--fuy-color-rule-stone);
   border-radius: var(--fuy-radius-md);
   font-size: var(--fuy-font-size-sm);
   color: var(--fuy-color-text-emphasis);
-  background: var(--el-bg-color);
+  background: var(--fuy-surface-input);
 }
 
 .product-textarea {
@@ -660,11 +810,17 @@ onMounted(() => {
   color: var(--fuy-color-text-secondary);
 }
 
-/* 弹窗映射/命令行：三列布局（属性名/编码/策略）与删除按钮 */
+/* 弹窗映射/命令行：三列布局（属性名/编码/策略）与删除按钮；行距由行容器承载
+   （行内控件底距归零防叠加）——640px 内行距松一档，行高与 .fuy-form 密度对齐 */
 .product-mapping-row {
   display: flex;
   align-items: center;
   gap: var(--fuy-space-2);
+  margin-bottom: var(--fuy-space-3);
+}
+
+.product-mapping-row .product-input {
+  margin-bottom: 0;
 }
 
 .product-mapping-prop {
@@ -683,7 +839,6 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: var(--fuy-space-1);
-  margin-bottom: var(--fuy-space-3);
   font-size: var(--fuy-font-size-sm);
   color: var(--fuy-color-text-emphasis);
   white-space: nowrap;

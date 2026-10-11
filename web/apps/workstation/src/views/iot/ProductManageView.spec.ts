@@ -1,8 +1,12 @@
-// 产品与物模型管理页单测（/iot/products，M14 FU-M14-02 前端面）：产品列表加载与物模型
-// 同步状态三态徽标渲染（fuy-sync-tag--{status} 状态类契约机器判据）、上架表单必填缺项
-// 零出网显式校验、上架提交出网携表单字段并刷新列表、同步物模型行操作出网、术语映射
-// 编辑弹窗（指标字典加载/缺项零出网/提交 PUT 携映射行）、命令安全等级登记 PUT 出网、
-// EX-45/FE-A1-07/08 映射与命令行 v-for 稳定 key（删中间行后剩余行 DOM 节点保位不串值）。
+// 产品与物模型管理页单测（/iot/products，M14 FU-M14-02 前端面）：暖纸卷宗重排锚点（门牌
+// 页首三锚/上架五步步序注记/卷宗卡结构/空态脸/钤印族/两弹窗 fuy-dialog 挂类）+ 既有业务
+// 行为全数保留——产品列表加载与物模型同步状态三态徽标渲染（fuy-sync-tag--{status} 状态类
+// 契约机器判据）、上架表单必填缺项零出网显式校验、上架提交出网携表单字段并刷新列表、同步
+// 物模型行操作出网、术语映射编辑弹窗（指标字典加载/缺项零出网/提交 PUT 携映射行）、命令
+// 安全等级登记 PUT 出网、BUG-17/18 整组替换回显、EX-45/FE-A1-07/08 映射与命令行 v-for
+// 稳定 key（删中间行后剩余行 DOM 节点保位不串值）、PR-4F v-perm 出网把守位。
+// 成功反馈断言按暖纸 G2 基线重写（成功=钤印 .fuy-stamp-toast 动词结果，原 ElMessage.success
+// 断言随钤印族换脸同批重写留痕——失败/校验仍走 message 批注条，钤印永不承失败）。
 // api mock 承载零出网（vi.mock('@/api/iot') 整模块替身），不打真实网络；
 // 断言业务结果不绑定实现细节。
 import { flushPromises, mount } from '@vue/test-utils';
@@ -38,7 +42,7 @@ vi.mock('@/api/iot', () => ({
   metrics: { list: vi.fn(), create: vi.fn() },
 }));
 
-// 仅替身 ElMessage（提示断言用），其余导出原样保留供组件解析
+// 仅替身 ElMessage（校验/失败提示断言用；成功反馈归钤印），其余导出原样保留供组件解析
 vi.mock('element-plus', async (importOriginal) => {
   const mod = await importOriginal<typeof import('element-plus')>();
   return {
@@ -84,6 +88,11 @@ function threeStateProducts(): ProductVO[] {
 /** 空产品分页出参（page/size/total 由后端 long→string 全局口径） */
 function emptyPage() {
   return { content: [], page: '0', size: '20', total: '0' };
+}
+
+/** 三态清单分页出参 */
+function threeStatePage() {
+  return { content: threeStateProducts(), page: '0', size: '20', total: '3' };
 }
 
 /** 按文本定位表格行（行内按钮操作载体） */
@@ -147,13 +156,101 @@ describe('产品与物模型管理页', () => {
     vi.mocked(metrics.list).mockResolvedValue([]);
   });
 
+  it('门牌页首与页级骨架锚点：根挂 fuy-page 零 stagger、衬线标题+英文小注+批注行+页脚批注', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    // 页级骨架（契约 ⑦.4/G1）：根挂 .fuy-page 禁挂 .fuy-stagger——stagger 挂页内
+    // product-flow 区块（admission-flow 同构形态），防双重进场节奏
+    const root = wrapper.find('.fuy-page');
+    expect(root.exists()).toBe(true);
+    expect(root.classes()).toContain('product-manage');
+    expect(root.classes()).not.toContain('fuy-stagger');
+    expect(wrapper.find('.product-flow').classes()).toContain('fuy-stagger');
+    // 门牌页首三锚（契约 ⑧.1）：衬线标题 + 英文小注（装饰层）+「IoTDA 产品镜像 · 谁 · 时刻」批注行
+    expect(wrapper.find('.fuy-page-title').text()).toBe('产品与物模型');
+    expect(wrapper.find('.fuy-page-en').text()).toBe('PRODUCT & MODEL');
+    const note = wrapper.find('.fuy-page-note').text();
+    expect(note).toContain('IoTDA 产品镜像');
+    // 「谁」=会话显示名（空值 — 占位口径由组件 computed 承载，种子会话为陆物联）
+    expect(note).toContain('陆物联');
+    // 页脚批注（G1 纵向序收尾）：数据时点 + 手动刷新取数语义，禁放操作钮
+    expect(wrapper.find('.fuy-page-foot').text()).toContain('数据时点');
+    expect(wrapper.find('.fuy-page-foot').text()).toContain('手动刷新取数');
+  });
+
+  it('上架卡头步序注记：五步文案序号 .fuy-num 单行锚点（文书页眉语法，非交互 stepper）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    const steps = wrapper.find('.product-steps');
+    expect(steps.exists()).toBe(true);
+    // PM 重排裁决五步文案锚点：1 建产品 → 2 物模型 → 3 映射术语 → 4 标注命令 → 5 注册设备
+    const text = steps.text();
+    for (const segment of [
+      '1',
+      '建产品',
+      '2',
+      '物模型',
+      '3',
+      '映射术语',
+      '4',
+      '标注命令',
+      '5',
+      '注册设备',
+    ]) {
+      expect(text).toContain(segment);
+    }
+    expect(text).toContain('→');
+    expect(steps.findAll('.fuy-num')).toHaveLength(5);
+    // 步序注记置上架卡卡头下方（卡头下、卡体上——文书页眉语法）
+    const createCard = wrapper
+      .findAll('.fuy-card')
+      .find((card) => card.text().includes('产品上架'));
+    expect(createCard).toBeDefined();
+    expect(createCard?.find('.fuy-card-head').exists()).toBe(true);
+    expect(createCard?.find('.product-steps').exists()).toBe(true);
+  });
+
+  it('卷宗卡结构与空态脸锚点：左右两卡挂 fuy-card，空列表走 fuy-empty 零默认插画', async () => {
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    const titles = wrapper.findAll('.fuy-card-title').map((t) => t.text());
+    expect(titles).toContain('产品列表');
+    expect(titles).toContain('产品上架');
+    // 空态脸（G6/契约 ⑥）：主句「暂无产品」+ 书法「空」装饰层 + 说明给下一步
+    const empty = wrapper.find('.fuy-empty');
+    expect(empty.exists()).toBe(true);
+    expect(empty.find('.fuy-empty-mark').text()).toBe('空');
+    expect(empty.find('.fuy-empty-title').text()).toBe('暂无产品');
+    expect(empty.find('.fuy-empty-hint').text().length).toBeGreaterThan(0);
+    // 默认纸箱插画在 fuy-page 子树全站压制（契约 ⑥ 挂类前缀组合由全局段承载，此处验零渲染兜底）
+    expect(wrapper.find('.fuy-empty img').exists()).toBe(false);
+  });
+
+  it('两行编辑弹窗挂类锚点：术语映射与命令登记弹窗挂 fuy-dialog（行高与 fuy-form 对齐）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    await clickButton(wrapper, '术语映射');
+    await flushPromises();
+    // 术语映射编辑弹窗挂 .fuy-dialog（G2：衬线标题 + 头部发丝由全局段承载）
+    const mappingDialog = wrapper
+      .findAll('.fuy-dialog')
+      .find((d) => d.text().includes('术语映射编辑'));
+    expect(mappingDialog).toBeDefined();
+    await clickButton(wrapper, '取消');
+    await flushPromises();
+    await clickButton(wrapper, '命令登记');
+    await flushPromises();
+    const commandDialog = wrapper
+      .findAll('.fuy-dialog')
+      .find((d) => d.text().includes('命令安全等级登记'));
+    expect(commandDialog).toBeDefined();
+  });
+
   it('产品列表加载渲染并透出物模型同步状态三态徽标（状态类机器判据）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     const wrapper = mount(ProductManageView);
     await flushPromises();
     const text = wrapper.text();
@@ -179,7 +276,7 @@ describe('产品与物模型管理页', () => {
     expect(products.create).not.toHaveBeenCalled();
   });
 
-  it('上架提交出网携表单字段并刷新产品列表', async () => {
+  it('上架提交出网携表单字段并刷新产品列表（成功反馈=钤印「已上架」）', async () => {
     vi.mocked(products.create).mockResolvedValue(productMock({ productName: '输液泵' }));
     const wrapper = mount(ProductManageView);
     await flushPromises();
@@ -199,18 +296,18 @@ describe('产品与物模型管理页', () => {
       description: undefined,
       modelDefinitionJson: undefined,
     });
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    // 成功反馈=钤印（G2 基线，域丙钤印族「已上架」；原 ElMessage.success('产品已上架…')
+    // 断言随钤印换脸同批重写留痕——v-if 挂载制 + is-show 静态类）
+    const stamp = wrapper.find('.fuy-stamp-toast');
+    expect(stamp.exists()).toBe(true);
+    expect(stamp.classes()).toContain('is-show');
+    expect(stamp.text()).toBe('已上架');
     // 列表重载（list 第二次调用）
     expect(products.list).toHaveBeenCalledTimes(2);
   });
 
-  it('同步物模型行操作出网并刷新列表（syncModel 携产品 ID）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+  it('同步物模型行操作出网并刷新列表（syncModel 携产品 ID，成功反馈=钤印「已触发同步」）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(products.syncModel).mockResolvedValue(productMock({ syncStatus: 'SYNCED' }));
     const wrapper = mount(ProductManageView);
     await flushPromises();
@@ -219,18 +316,25 @@ describe('产品与物模型管理页', () => {
     await row?.find('button').trigger('click');
     await flushPromises();
     expect(products.syncModel).toHaveBeenCalledWith('prod-3');
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    // 成功反馈=钤印「已触发同步」（丙-1 蓝图第 4 节逐字；原 ElMessage.success 断言随钤印
+    // 换脸同批重写留痕）
+    const stamp = wrapper.find('.fuy-stamp-toast');
+    expect(stamp.exists()).toBe(true);
+    expect(stamp.classes()).toContain('is-show');
+    expect(stamp.text()).toBe('已触发同步');
     // 列表重载（list 第二次调用）
     expect(products.list).toHaveBeenCalledTimes(2);
   });
 
-  it('术语映射弹窗：指标字典加载、映射行缺项零出网校验、补全后提交 PUT 携映射行', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+  it('钤印挂载制反向断言：无成功动作时零钤印 DOM（v-if 挂载制，防常驻空朱块泄漏）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    expect(wrapper.find('.fuy-stamp-toast').exists()).toBe(false);
+  });
+
+  it('术语映射弹窗：指标字典加载、映射行缺项零出网校验、补全后提交 PUT 携映射行（保存=钤印「已保存」）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(metrics.list).mockResolvedValue([
       {
         metricCode: 'MDC_ECG_HEART_RATE',
@@ -261,16 +365,15 @@ describe('产品与物模型管理页', () => {
     expect(products.updateMappings).toHaveBeenCalledWith('prod-1', {
       mappings: [{ propertyName: 'heartRate', metricCode: 'MDC_ECG_HEART_RATE' }],
     });
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    // 成功反馈=钤印「已保存」（丙-1 蓝图第 4 节逐字；原 ElMessage.success 断言随钤印
+    // 换脸同批重写留痕）
+    const stamp = wrapper.find('.fuy-stamp-toast');
+    expect(stamp.exists()).toBe(true);
+    expect(stamp.text()).toBe('已保存');
   });
 
   it('术语映射弹窗回显：已配置两条再打开回显两行，直接保存 PUT 携全集不再清空（BUG-17）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(products.listMappings).mockResolvedValue([
       {
         id: '1',
@@ -320,16 +423,12 @@ describe('产品与物模型管理页', () => {
         },
       ],
     });
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    // 成功反馈=钤印「已保存」（G2 基线；原 ElMessage.success 断言随钤印换脸同批重写留痕）
+    expect(wrapper.find('.fuy-stamp-toast').text()).toBe('已保存');
   });
 
-  it('命令安全等级登记提交 PUT 携命令行（safetyLevel/allowed 出网）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+  it('命令安全等级登记提交 PUT 携命令行（safetyLevel/allowed 出网，保存=钤印「已保存」）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(products.updateCommands).mockResolvedValue([]);
     const wrapper = mount(ProductManageView);
     await flushPromises();
@@ -347,16 +446,15 @@ describe('产品与物模型管理页', () => {
     expect(products.updateCommands).toHaveBeenCalledWith('prod-1', {
       commands: [{ commandName: 'setAlarmLimit', safetyLevel: 'SAFETY', allowed: true }],
     });
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    // 成功反馈=钤印「已保存」（丙-1 蓝图第 4 节逐字；原 ElMessage.success 断言随钤印
+    // 换脸同批重写留痕）
+    const stamp = wrapper.find('.fuy-stamp-toast');
+    expect(stamp.exists()).toBe(true);
+    expect(stamp.text()).toBe('已保存');
   });
 
   it('命令登记弹窗回显：已配置两条再打开回显两行，直接保存 PUT 携全集不再清空（BUG-18）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(products.listCommands).mockResolvedValue([
       {
         id: '1',
@@ -415,16 +513,25 @@ describe('产品与物模型管理页', () => {
         },
       ],
     });
-    expect(vi.mocked(ElMessage.success)).toHaveBeenCalled();
+    // 成功反馈=钤印「已保存」（G2 基线；原 ElMessage.success 断言随钤印换脸同批重写留痕）
+    expect(wrapper.find('.fuy-stamp-toast').text()).toBe('已保存');
+  });
+
+  it('「治疗级默认禁用」口径文案逐字冻结：命令登记弹窗批注句保留（FU-M14-09 白名单数据源）', async () => {
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
+    const wrapper = mount(ProductManageView);
+    await flushPromises();
+    await clickButton(wrapper, '命令登记');
+    await flushPromises();
+    // 白名单口径文案逐字冻结（丙-1 蓝图第 4 节冻结面）
+    const dialog = wrapper
+      .findAll('.fuy-dialog')
+      .find((d) => d.text().includes('命令安全等级登记'));
+    expect(dialog?.text()).toContain('安全级默认放行，治疗级默认禁用（豁免需系统参数开启并审计）');
   });
 
   it('术语映射行删除中间行后剩余行输入节点保位不串值（稳定 key，EX-45/FE-A1-07）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(products.listMappings).mockResolvedValue([
       {
         id: '1',
@@ -468,12 +575,7 @@ describe('产品与物模型管理页', () => {
   });
 
   it('命令登记行删除中间行后剩余行输入节点保位不串值（稳定 key，EX-45/FE-A1-08）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     vi.mocked(products.listCommands).mockResolvedValue([
       {
         id: '1',
@@ -525,12 +627,7 @@ describe('产品与物模型管理页', () => {
   }
 
   it('PR-4F 权限态：会话无 iot:product:btn:manage 时上架/同步与映射/命令保存口全隐藏（D-34）', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     // 覆写 beforeEach 含码种子为无码会话（auth store 于挂载时自 sessionStorage 恢复）
     sessionStorage.setItem(
       'fy:workstation:auth',
@@ -557,12 +654,7 @@ describe('产品与物模型管理页', () => {
   });
 
   it('PR-4F 权限态：会话含 iot:product:btn:manage 时上架/同步与映射/命令保存口可见', async () => {
-    vi.mocked(products.list).mockResolvedValue({
-      content: threeStateProducts(),
-      page: '0',
-      size: '20',
-      total: '3',
-    });
+    vi.mocked(products.list).mockResolvedValue(threeStatePage());
     const wrapper = mountView();
     await flushPromises();
     const buttonTexts = wrapper.findAll('button').map((b) => b.text());
