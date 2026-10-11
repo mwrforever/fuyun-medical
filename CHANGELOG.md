@@ -2,6 +2,10 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-11 · IoT 域批次断言现代化留痕（回归红线出口四边界）
+
+- **D-21 断言现代化申报（逐次批准，主控 2026-10-11；批准出处=本条+PR#88 描述）**：①七页成功反馈断言随 G2 钤印换约重写（`ElMessage.success` 断言→钤印文本/挂载制类锚+ElMessage.success 零调用反向断言，原文案与触发时机逐字保留，覆盖上架/同步/映射/命令保存/注册/绑定/受理解绑/保存规则/确认/关闭/下发/已保存/已重试/已重放/已放弃族）；②`LinkageRuleView.spec.ts` 草稿守卫断言由 stringContaining 弱匹配升格为消息/标题/按钮三段整串精确匹配（严格度只增）；③源码级反向断言（ward.ts 常量清零）首版 `not.toContain` 误伤注释收窄为 import 语句级正则（按锚点原义精确化）；④`AlarmRuleView.spec.ts` 关闭弹窗 DOM 移除断言降级为业务收场断言（EP leave 过渡 jsdom 不终结，契约 ⑪.9-2 降级注记同口径，留痕）；⑤IOT_WARD_OPTIONS mock 死种子随 G4 退役（listOrgs 三态断言替代）；⑥`AlarmRuleView.spec.ts` mockResolvedValue 按真实契约 Promise<void> 修正为 undefined 实参（类型层修正非断言放宽）。断言修订+实现变更+回归锚同 PR 原子交付；本条即 CHANGELOG 留痕。
+
 ## 2026-10-11 · 住院域批次断言现代化留痕（回归红线出口四边界）
 
 - **D-21 断言现代化申报（逐次批准，主控 2026-10-11；批准出处=本条+PR#87 描述）**：①`BedMapView.spec.ts` 五态「白字实底」断言按蓝图 G3 钦定删除，升为双通道两锚（`fuy-bed-card--{state}` 规线类+状态徽标文字逐态成对，另增图例同源与空态反向断言）——原断言冻结的恰为本次降饱和重排的涂色实现细节，严格度不降（单锚升双锚逐态成对）；②`TransferWorklistView.spec.ts` 成功反馈断言随 G2 钤印换约重写（文案「已转抄 N 条」与触发时机保留，新增 stamp 类与 ElMessage.success 反向断言）；③`DischargeManageView.spec.ts` PR-4F 无码断言按 D-34 元素级语义由「全文 not.toContain」收窄至按钮级（新空态脸引导文案与之冲突，按钮本体 DOM 移除断言不变，严格度不降）；④五页 spec 的 WARD_OPTIONS/ORDER_FREQUENCY_OPTIONS 假常量 mock 死种子随 G4 清零退役（listOrgs/listDictItems 三态断言替代）。断言修订+实现变更+回归锚同 PR 原子交付；本条即 CHANGELOG 留痕。

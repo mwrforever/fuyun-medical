@@ -60,6 +60,8 @@ export type AbandonConsumeErrorRequest = components['schemas']['AbandonConsumeEr
 /** 遥测曲线查询（冷链温度曲线轻量渲染消费；scope=device/patient/ward 三维度路由） */
 export type TelemetrySeriesRequest = components['schemas']['TelemetrySeriesRequest'];
 export type TelemetryPoint = components['schemas']['TelemetryPoint'];
+/** IoT 概览汇总（设备管理页门牌健康面消费 deviceTotal/onlineCount/offlineCount/activeAlarmCount 四计数） */
+export type DashboardSummaryVO = components['schemas']['DashboardSummaryVO'];
 
 /** 产品分页出参（common PageResult 单泛型生成物：content/page/size/total） */
 export type ProductPage = components['schemas']['PageResultProductVO'];
@@ -193,11 +195,17 @@ export const SAFETY_LEVEL_LABELS: Record<string, string> = {
   TREATMENT: '治疗级',
 };
 
-/** 病区选项（冻结 REST 面无病区清单端点，P1 以演示病区种子 W01 前端常量承载，
- * 与 inpatient/nursing 域同源；P2 对齐 M01 组织机构病区后换接口源） */
-export const IOT_WARD_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: 'W01', label: 'W01 演示病区' },
-];
+/**
+ * IoT 概览汇总（暖纸重设计切片：丙-2 设备管理页门牌概览胶囊组取用，后端既有未消费端点，
+ * 零后端改动只读）。纯计数聚合零个人身份面，供设备管理员开场健康面消费
+ * deviceTotal / onlineCount / offlineCount / activeAlarmCount 四字段（字段名以生成物实读为准）。
+ *
+ * @return 概览汇总视图（各计数 string 承载，可选字段缺省时由消费方以 — 占位）
+ */
+export async function getIotDashboardSummary(): Promise<DashboardSummaryVO> {
+  const resp = await http.get<DashboardSummaryVO>('/v1/iot/dashboard/summary');
+  return resp.data;
+}
 
 /** 产品资源组：分页 / 上架 / 物模型同步 / 术语映射替换与回显 / 命令安全等级替换与回显。 */
 export const products = {
