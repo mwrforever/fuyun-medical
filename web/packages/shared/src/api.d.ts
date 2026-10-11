@@ -3392,6 +3392,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 组织机构清单（按类型，启用态，sort 升序）
+         * @description 前端病区/科室下拉真数据源；type=WARD|DEPT，非法值 SYS-1031/400
+         */
+        get: operations["listOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/dicts/{typeCode}": {
         parameters: {
             query?: never;
@@ -5158,22 +5178,6 @@ export interface components {
             orgId?: string;
             roles?: string[];
             permissions?: string[];
-        };
-        OrgVO: {
-            /** @example 0 */
-            id?: string;
-            orgCode?: string;
-            orgName?: string;
-            /** @enum {string} */
-            orgType?: "CAMPUS" | "DEPT" | "WARD" | "TEAM";
-            /** @enum {string} */
-            orgAttr?: "CLINICAL" | "MEDTECH" | "ADMIN";
-            /** @example 0 */
-            parentId?: string;
-            /** Format: int32 */
-            sort?: number;
-            /** @enum {string} */
-            status?: "ACTIVE" | "DISABLED";
         };
         LoginRequest: {
             loginName: string;
@@ -7069,6 +7073,22 @@ export interface components {
         PermissionPointVO: {
             permCode?: string;
             permName?: string;
+        };
+        OrgVO: {
+            /** @example 0 */
+            id?: string;
+            orgCode?: string;
+            orgName?: string;
+            /** @enum {string} */
+            orgType?: "CAMPUS" | "DEPT" | "WARD" | "TEAM";
+            /** @enum {string} */
+            orgAttr?: "CLINICAL" | "MEDTECH" | "ADMIN";
+            /** @example 0 */
+            parentId?: string;
+            /** Format: int32 */
+            sort?: number;
+            /** @enum {string} */
+            status?: "ACTIVE" | "DISABLED";
         };
         PageResultReviewTaskVO: {
             content?: components["schemas"]["ReviewTaskVO"][];
@@ -14080,6 +14100,28 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["PermissionGroupVO"][];
+                };
+            };
+        };
+    };
+    listOrgs: {
+        parameters: {
+            query: {
+                type: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OrgVO"][];
                 };
             };
         };
