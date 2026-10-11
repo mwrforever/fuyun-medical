@@ -1,6 +1,7 @@
 /**
  * 病区视图域 API（M16 前端面，一域一文件）：病区呼叫（分页/新建/应答/处理/完成/转接/取消）+
- * 冷链台账（档案分页/新建/详情/记录查询/巡检与告警处置登记）+ 输液看板（病区快照）。路径前缀 /v1/ward/**（baseURL 已含 /api）；雪花 id 与 long 后端经
+ * 冷链台账（档案分页/新建/详情/记录查询/巡检与告警处置登记）+ 输液看板（病区快照 + 设备
+ * 24h 历史读函数——暖纸卷宗丁-1 趋势抽屉取用，G7 未消费端点收编）。路径前缀 /v1/ward/**（baseURL 已含 /api）；雪花 id 与 long 后端经
  * Jackson 全局以字符串输出（backend A.3-8），前端类型一律 string 承载（web A.3-6）。
  * REST 面为后端 Task 12/13 冻结契约（生成物唯一来源）；函数按资源分组导出（spec mock 面）。
  */
@@ -19,6 +20,10 @@ export type RegisterColdChainRecordRequest =
   components['schemas']['RegisterColdChainRecordRequest'];
 export type InfusionBoardVO = components['schemas']['InfusionBoardVO'];
 export type InfusionBoardDeviceVO = components['schemas']['InfusionBoardDeviceVO'];
+/** 契约类型别名（生成物唯一来源，A.3-3）：输液设备 24h 历史视图（余量/滴速双序列 + 数据说明） */
+export type InfusionHistoryVO = components['schemas']['InfusionHistoryVO'];
+/** 契约类型别名（生成物唯一来源，A.3-3）：遥测聚合点（时段桶 min/max/avg/first/last 聚合值） */
+export type TelemetryPoint = components['schemas']['TelemetryPoint'];
 
 /** 呼叫分页出参（common PageResult 单泛型生成物：content/page/size/total） */
 export type WardCallPage = components['schemas']['PageResultWardCallVO'];
@@ -85,12 +90,6 @@ export const INFUSION_ALERT_LABELS: Record<string, string> = {
   ORANGE: '橙档告急',
   RED: '红档危急',
 };
-
-/** 病区选项（冻结 REST 面无病区清单端点，P2 以演示病区种子前端常量承载；病区标识为纯数字
- * 字符串——后端 Long 经 Jackson 字符串化，与 WS 主题 /topic/iot/telemetry、alarm 病区段同源） */
-export const WARD_OPTIONS: ReadonlyArray<{ code: string; label: string }> = [
-  { code: '1001', label: '1001 演示病区' },
-];
 
 /** 病区呼叫资源组：分页 / 新建 / 应答 / 处理 / 完成 / 转接 / 取消（动作端点状态机流转
  * 单点归后端把守，前端按返回态刷新列表）。 */
@@ -182,3 +181,17 @@ export const infusionBoard = {
     return resp.data;
   },
 };
+
+/**
+ * 输液设备 24h 历史读函数（暖纸卷宗丁-1 趋势抽屉消费面——pages-2 册级总则 G7 钦定的三枚
+ * 未消费读端点之一，InfusionHistoryVO 生成物在案；只读、零后端、不改任何写语义。把「还剩
+ * 多久输完」从护士心算变为可读曲线，属看板本职的呈现增强）。
+ *
+ * @param deviceId 设备标识（路径参数，非空；来源：床卡快照 InfusionBoardDeviceVO.deviceId）
+ * @return 历史视图（remainSeries/dropSeries 各为 24h 聚合点列，升序由后端承载；双序列可
+ *         各自为空=该指标近 24h 无归档点，由视图层退化态承载）；失败经拦截器统一弹错
+ */
+export async function getInfusionHistory(deviceId: string): Promise<InfusionHistoryVO> {
+  const resp = await http.get<InfusionHistoryVO>(`/v1/ward/infusion-history/${deviceId}`);
+  return resp.data;
+}

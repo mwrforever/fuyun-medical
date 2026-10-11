@@ -2,6 +2,16 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-11 · 病区域批次断言现代化留痕（回归红线出口四边界）
+
+- **D-21 断言现代化申报（逐次批准，主控 2026-10-11；批准出处=本条+PR#89 描述）**：①丁-3 `ColdChainView.spec.ts` 冷链曲线单点退化态断言随蓝图锚点③重写（「单点短横刻记无网格基准」形态断言，替代旧网格基准断言——原断言冻结的恰为本次 ±3px 刻记退化态重排的绘制实现细节，严格度不降）；②丁-3 成功反馈断言随 G2 钤印换约重写（`ElMessage.success` 断言→钤印「已登记」文本/挂载锚+ElMessage.success 零调用反向断言，文案与触发时机逐字保留）；③丁-1 `InfusionBoardView.spec.ts` metricText null 真实后端态修复配套——null（JSON null）与 undefined（缺字段）双覆盖 fixture+`not.toContain('null')` 全页红线判据新增（修复 TDD 红绿闭环同 PR）；④丁-3 列表卡 `.fuy-card.fuy-dense` 密排结构断言随 720 弹窗→640 抽屉三段换约重写（旧 `.fuy-archive-overdue` 类断言升为 overdueTag 文本+规线 token 双锚）。断言修订+实现变更+回归锚同 PR 原子交付；本条即 CHANGELOG 留痕。
+
+## 2026-10-11 · 侧边栏修复批次（用户三诉求诊断修复 · 工程缺陷与 token 纪律 · 冻结面设计项分流登记）
+
+- **触发（2026-10-11 用户指令「侧边栏设计必须要优化：位置偏移感+与主题不协调+菜单原点多余」）**：诊断 agent 真机勘察三根因——①偏移感=全工程未重置 body UA 默认 8px margin（白缝贴深色书脊+页面顶出 8px 滚动）；②「原点」=收起态 EP tooltip trigger 内边距未清零致激活药丸退化为白色无语义块（svg 右移出药丸 9px；展开态菜单经四路排查无独立圆点元素）；③主题不协调=token 值经换血已合规，残留为旧世界注释口径（蓝黑墨书脊/深青发丝缝/字面 hex 引用）与两处焦点环字面 #ffffff。
+- **修复（5 文件，TDD，独立验段 PASS）**：index.css 补 `body{margin:0}` 全局 reset；AppSidebar.vue scoped 增补收起态 trigger 清零+图标 margin 归零（挂类+:deep() 通道，非裸改 .el-*）；焦点环 #ffffff→var(--fuy-surface-input) 同值 token 化两处；旧世界注释口径治理 6 处（纯注释零声明值改动）。AppSidebar.spec 新增收起态结构守护断言（trigger 在位/svg 内嵌/收编规则源码锚定）。
+- **冻结面分流**：契约 ⑪.6「AppSidebar 零必改」设计层三项（选中态材质双语法/品牌头对齐轴/圆形笔画图标观感）未动，登记 TASK.md D-29 待裁决；既有可访问性缺陷（菜单焦点环死规则+键盘不可达）登记 W-105；前端全量套件高负载 flaky（stash 实证与本批无关）登记 W-106。
+
 ## 2026-10-11 · IoT 域批次断言现代化留痕（回归红线出口四边界）
 
 - **D-21 断言现代化申报（逐次批准，主控 2026-10-11；批准出处=本条+PR#88 描述）**：①七页成功反馈断言随 G2 钤印换约重写（`ElMessage.success` 断言→钤印文本/挂载制类锚+ElMessage.success 零调用反向断言，原文案与触发时机逐字保留，覆盖上架/同步/映射/命令保存/注册/绑定/受理解绑/保存规则/确认/关闭/下发/已保存/已重试/已重放/已放弃族）；②`LinkageRuleView.spec.ts` 草稿守卫断言由 stringContaining 弱匹配升格为消息/标题/按钮三段整串精确匹配（严格度只增）；③源码级反向断言（ward.ts 常量清零）首版 `not.toContain` 误伤注释收窄为 import 语句级正则（按锚点原义精确化）；④`AlarmRuleView.spec.ts` 关闭弹窗 DOM 移除断言降级为业务收场断言（EP leave 过渡 jsdom 不终结，契约 ⑪.9-2 降级注记同口径，留痕）；⑤IOT_WARD_OPTIONS mock 死种子随 G4 退役（listOrgs 三态断言替代）；⑥`AlarmRuleView.spec.ts` mockResolvedValue 按真实契约 Promise<void> 修正为 undefined 实参（类型层修正非断言放宽）。断言修订+实现变更+回归锚同 PR 原子交付；本条即 CHANGELOG 留痕。
