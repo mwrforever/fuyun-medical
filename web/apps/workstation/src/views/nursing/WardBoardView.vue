@@ -1194,7 +1194,6 @@ onMounted(() => {
                   v-if="taskList.length > 0"
                   :data="taskList"
                   class="fuy-dense"
-                  size="small"
                   :row-class-name="taskRowClass"
                 >
                   <el-table-column label="任务号" min-width="110">

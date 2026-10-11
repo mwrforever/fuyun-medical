@@ -675,7 +675,6 @@ onMounted(() => {
                   v-if="orderRows.length > 0"
                   :data="orderRows"
                   class="fuy-dense"
-                  size="small"
                   :row-class-name="
                     ({ row }: { row: MedicalOrderVO }) =>
                       selectedOrder?.orderNo === row.orderNo ? 'is-current-row' : ''

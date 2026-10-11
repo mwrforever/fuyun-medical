@@ -301,7 +301,6 @@ onMounted(() => {
                 v-if="rows.length > 0"
                 :data="rows"
                 class="fuy-dense binding-table"
-                size="small"
               >
                 <el-table-column label="设备 ID" min-width="110">
                   <template #default="{ row }">

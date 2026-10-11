@@ -369,7 +369,6 @@ onMounted(() => {
                   v-if="rows.length > 0"
                   :data="rows"
                   class="fuy-dense"
-                  size="small"
                   :row-class-name="rowClass"
                 >
                   <el-table-column label="勾选" width="48">

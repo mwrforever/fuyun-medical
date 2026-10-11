@@ -466,7 +466,6 @@ onMounted(() => {
                   v-if="queueRows.length > 0"
                   :data="queueRows"
                   class="fuy-dense"
-                  size="small"
                 >
                   <el-table-column label="住院证号" min-width="130">
                     <template #default="{ row }">
