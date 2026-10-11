@@ -7,3 +7,12 @@
 @import './tokens.css';
 @import './element-plus.css';
 @import './motion.css';
+
+/* ===== 全局 reset（仅此一条规则，共享入口 CSS 不承载其他 reset 职责）=====
+   三段壳层（侧栏棕墨书脊 / 顶栏 / 工作面）必须满幅贴边：UA 默认 body 8px 外边距会在
+   壳层四周露出 8px 白缝、并把页面顶出 8px 垂直滚动，形成假性「布局偏移」
+   （2026-10-11 实测：body 未清零时 elementFromPoint(2,400) 命中裸 HTML 而非侧栏
+   aside），故在壳层布局之前清零 UA 边距 */
+body {
+  margin: 0;
+}

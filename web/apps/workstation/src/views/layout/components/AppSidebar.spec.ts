@@ -4,6 +4,8 @@
 // 关闭 + popper 挂类）、路由高亮药丸选中延续、收起态图标条形态。会话以直接注入 state 的
 // 方式承载（假令牌资产，非真实凭证）。
 // 注：全文件共享单一 Pinia——与挂载组件必须读写同一会话 store，逐用例换实例会割裂会话语义。
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
@@ -206,6 +208,36 @@ describe('侧栏树形菜单', () => {
     ).toHaveLength(9);
     const rootItem = wrapper.findAll('.el-menu-item')[0];
     expect(rootItem?.text()).toBe('');
+    wrapper.unmount();
+  });
+
+  it('收起态激活项白块回归守护：EP tooltip trigger 结构前提在位（图标随 trigger 渲染）且收起态居中收编规则落位于 scoped 段', async () => {
+    injectSession(allMenuPermissions());
+    // 预落首页：激活顶层项（首页）使收起态药丸选中语法生效
+    await router.push('/');
+    const wrapper = mount(AppSidebar, {
+      global: { plugins: [pinia, router] },
+      props: { collapsed: true },
+    });
+
+    // 断言①DOM 结构前提（EP 收起态结构守护）：顶层激活项内层 EP 内建 tooltip trigger
+    // （div.el-menu-tooltip__trigger，绝对定位铺满项体承载图标）在位——居中修复即清零其
+    // EP 自带 0 20px 内边距；trigger 缺位=EP 结构漂移致规则落空，激活药丸退化为白色
+    // 无语义块（2026-10-11 白块形态实测前提：svg 48..64 vs 药丸 16..47，图标整体移出药丸）
+    const activeTrigger = wrapper.find('.el-menu-item.is-active .el-menu-tooltip__trigger');
+    expect(activeTrigger.exists()).toBe(true);
+    // 断言②图标随 trigger 内容渲染：图标在 trigger 内=居中规则的作用对象在位
+    expect(activeTrigger.find('.el-icon svg').exists()).toBe(true);
+
+    // 断言③样式源守护：vitest 测试环境桩化组件样式不真实加载（vitest.config deps.inline
+    // css:false 口径），CSS 效果无法在 jsdom 断言，收编规则只能在源码层锚定
+    // （menuPermissionMatrix.spec readFileSync 跨层守护先例同款）——清零 trigger 内边距
+    // 与收起态图标右距两组规则必须在 AppSidebar scoped 段在位，缺任一=图标移出药丸
+    // 白块回归；通道必须是 .fuy-menu 挂类 + :deep() 组合（非裸改 .el-*）
+    const source = readFileSync(resolve(import.meta.dirname, './AppSidebar.vue'), 'utf-8');
+    expect(source).toContain('.fuy-menu.el-menu--collapse :deep(.el-menu-tooltip__trigger)');
+    expect(source).toContain('.fuy-menu.el-menu--collapse :deep(.el-menu-item .el-icon)');
+    expect(source).toContain('.fuy-menu.el-menu--collapse :deep(.el-sub-menu__title .el-icon)');
     wrapper.unmount();
   });
 

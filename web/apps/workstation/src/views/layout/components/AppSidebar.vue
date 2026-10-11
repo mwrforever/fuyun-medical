@@ -102,7 +102,8 @@ export const MENU_ICON_REGISTRY: Record<string, Component> = {
 </script>
 
 <script setup lang="ts">
-// 侧边菜单（「纸质病案」墨脊书脊导轨 · 树形形态，批次 2 册 1 契约 §3）：品牌头 +
+// 侧边菜单（「暖纸卷宗」棕墨书脊导轨 · 树形形态，批次 2 册 1 契约 §3，2026-10-10 暖纸
+// 换血承继原「纸质病案」口径）：品牌头 +
 // 树形图标菜单。分组=el-sub-menu 可折叠父节点（组图标+组名+展开箭头，默认全展开——
 // 上班扫读第一优先，折叠是用户主动行为）；页项=el-menu-item 叶节点（项图标+全称，
 // 40px 高亮纸白药丸选中语法延续）；收起态=el-menu :collapse 图标条（64px，组图标悬浮
@@ -372,10 +373,11 @@ const activeIndex = computed<string>(() => {
   margin-bottom: var(--fuy-space-2);
 }
 
-/* 导轨上键盘焦点环改白色：即墨环在墨脊底上不可见，焦点永远可见是底线 */
+/* 导轨上键盘焦点环改最亮纸白（--fuy-surface-input，表单域最亮纸面 token）：即墨环在
+   墨脊底上不可见，焦点永远可见是底线 */
 .fuy-menu :deep(.el-menu-item:focus-visible),
 .fuy-menu :deep(.el-sub-menu__title:focus-visible) {
-  outline-color: #ffffff;
+  outline-color: var(--fuy-surface-input);
 }
 
 /* 收起态（64px 图标条）：组头图标严格居中（与 element-plus.css 顶层项居中规则同语法，
@@ -390,6 +392,20 @@ const activeIndex = computed<string>(() => {
 .fuy-menu.el-menu--collapse :deep(.el-menu-item.is-active) {
   margin-right: var(--fuy-space-4);
   margin-left: var(--fuy-space-4);
+}
+
+/* 收起态：EP 顶层项内层 tooltip trigger 自带 0 20px 内边距（绝对定位铺满项体，
+   EP el-menu.css .el-menu-item .el-menu-tooltip__trigger 实证），不清零则图标右移出
+   选中药丸 9px（实测 svg 48..64 vs 药丸 16..47），药丸退化为无语义白块；组件级
+   .el-icon 8px 右距同特异性后注入压过 EP 收起态 margin:0，图标整体左偏 4px——
+   一并归零恢复图标严格居中于药丸（挂类+:deep() 通道，非裸改 .el-*） */
+.fuy-menu.el-menu--collapse :deep(.el-menu-tooltip__trigger) {
+  padding: 0;
+  justify-content: center;
+}
+.fuy-menu.el-menu--collapse :deep(.el-menu-item .el-icon),
+.fuy-menu.el-menu--collapse :deep(.el-sub-menu__title .el-icon) {
+  margin-right: 0;
 }
 
 /* 收起态图标条悬停放大（图标条上图标即全部可供性，hover 放大 1.1 提供除底色外的第二
