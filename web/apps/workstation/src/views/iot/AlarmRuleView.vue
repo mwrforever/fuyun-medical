@@ -631,9 +631,10 @@ onMounted(() => {
             </header>
             <div class="fuy-card-body">
               <el-form label-position="top" size="small" class="fuy-form">
-                <!-- 上段：触发口径（名称/类型/设备 + 三口径分叉字段，既有 v-if 保留） -->
+                <!-- 上段：触发口径（名称/类型/设备 + 三口径分叉字段，既有 v-if 保留）；段标统一
+                     挂全局类 .fuy-section-title（D-30 段标口径统一：契约 §④.1 黑体默认面） -->
                 <div class="rule-form-section">
-                  <p class="rule-section-label">触发口径</p>
+                  <p class="fuy-section-title">触发口径</p>
                   <label class="rule-field-label">规则名称（必填）</label>
                   <input
                     v-model="ruleForm.ruleName"
@@ -737,9 +738,9 @@ onMounted(() => {
                 </div>
                 <!-- 「签」字分界（蓝图丙-4.2：触发口径/通知口径两分区文书分界，替代单列长滚） -->
                 <div class="fuy-sign-divider rule-sign-divider" aria-hidden="true"></div>
-                <!-- 下段：通知口径（等级/升级时限/启用开关 + 保存） -->
+                <!-- 下段：通知口径（等级/升级时限/启用开关 + 保存）；段标同上统一全局类 -->
                 <div class="rule-form-section">
-                  <p class="rule-section-label">通知口径</p>
+                  <p class="fuy-section-title">通知口径</p>
                   <div class="rule-field-grid">
                     <div class="rule-field">
                       <label class="rule-field-label">告警等级</label>
@@ -1064,15 +1065,9 @@ onMounted(() => {
   min-height: 200px;
 }
 
-/* 表单两分区段标（蓝图丙-4.2：触发口径/通知口径两分区文书段标）：12px 灰墨 600 */
-.rule-section-label {
-  margin: 0 0 var(--fuy-space-2);
-  font-size: var(--fuy-font-size-xs);
-  font-weight: 600;
-  color: var(--fuy-color-text-secondary);
-}
-
-/* 「签」分界与两分区呼吸间距（卡内文书分界，禁石规下沉） */
+/* 「签」分界与两分区呼吸间距（卡内文书分界，禁石规下沉）；两分区段标已统一挂全局类
+   .fuy-section-title（D-30 段标口径统一：14px/600 浓墨黑体档归 element-plus.css 全局
+   承载，原 12px 灰墨局部段标声明已删） */
 .rule-sign-divider {
   margin: var(--fuy-space-3) 0;
 }

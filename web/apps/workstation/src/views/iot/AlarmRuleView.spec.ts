@@ -322,6 +322,12 @@ describe('告警规则页', () => {
     const form = wrapper.find('.rule-form-card form');
     // 恰一道「签」分界（PM 重排裁决：触发口径/通知口径两分区，唯一文书分界）
     expect(form.findAll('.fuy-sign-divider')).toHaveLength(1);
+    // D-30 段标口径统一（契约 §④.1 字体三分矩阵：段标属黑体默认继承面）：两分区段标
+    // 升全局类 .fuy-section-title（14px/600 浓墨黑体档），旧 12px 灰墨段标类
+    // .rule-section-label 清零（死代码零容忍的反向断言）
+    const sectionTitles = form.findAll('.fuy-section-title');
+    expect(sectionTitles.map((node) => node.text())).toEqual(['触发口径', '通知口径']);
+    expect(form.find('.rule-section-label').exists()).toBe(false);
     const { upper, lower } = splitRuleFormBySignDivider(wrapper);
     // 上段（触发口径）：名称/类型/设备 + THRESHOLD 三口径分叉字段（既有 v-if 保留）
     expect(upper).toContain('触发口径');
