@@ -1,8 +1,9 @@
 // 树形图标菜单模型单测（批次 2 册 1 契约 §3/§1）：groupMenuItems（分组聚合/组图标登记）
 // 与 MENU_ITEMS（项图标值域）三类场景全覆盖——正常（全量分组/图标映射）、边界（顶层项
-// 不入组/组内非空/纯函数无副作用）、契约守护（34 项+9 组图标逐项对照 §1 表、组图标与
-// 项图标不重名、菜单 index 命中真实路由防点击落 404）。聚合用例零挂载零 Pinia；末组
-// 「路由表同步守护」仅消费路由表做 resolve 存在性断言（不挂载组件）。
+// 不入组/组内非空/纯函数无副作用）、契约守护（34 项+9 组图标逐项对照 §1 表（含
+// 2026-10-12 D-29 九枚取代后值域）、组图标与项图标不重名、菜单 index 命中真实路由防
+// 点击落 404）。聚合用例零挂载零 Pinia；末组「路由表同步守护」仅消费路由表做 resolve
+// 存在性断言（不挂载组件）。
 import { describe, expect, it } from 'vitest';
 import { router } from '@/router';
 import { GROUP_ICONS, MENU_ITEMS, groupMenuItems, type SidebarMenuItem } from './menu';
@@ -12,9 +13,11 @@ function labelsOf(items: SidebarMenuItem[]): string[] {
   return items.map((item) => item.label);
 }
 
-/** 契约 §1.1 分组图标唯一权威表（9 组；断言锚点=契约原文，防实现漂移） */
+/** 契约 §1.1 分组图标唯一权威表（9 组；断言锚点=契约原文，防实现漂移；
+ * 2026-10-12 D-29 患者管理组 User→FolderOpened 一枚取代同步——取代出处=
+ * CHANGELOG 2026-10-12 D-29 条目，断言现代化留痕） */
 const CONTRACT_GROUP_ICONS: Record<string, string> = {
-  患者管理: 'User',
+  患者管理: 'FolderOpened',
   门诊服务: 'FirstAidKit',
   收费管理: 'Wallet',
   药房管理: 'Box',
@@ -25,16 +28,19 @@ const CONTRACT_GROUP_ICONS: Record<string, string> = {
   系统: 'Setting',
 };
 
-/** 契约 §1.2 页项图标唯一权威表（34 项，路由 → 图标名） */
+/** 契约 §1.2 页项图标唯一权威表（34 项，路由 → 图标名；2026-10-12 D-29 八枚取代同步
+ * （Search→Filter/Compass→Guide/Discount→Stamp/Odometer→Management/Connection→
+ * Paperclip/AlarmClock→Flag/Link→MagicStick/Service→Phone），取代出处=
+ * CHANGELOG 2026-10-12 D-29 条目，断言现代化留痕） */
 const CONTRACT_ITEM_ICONS: Record<string, string> = {
   '/': 'HomeFilled',
   '/patient/create': 'DocumentAdd',
-  '/patients': 'Search',
+  '/patients': 'Filter',
   '/outpatient/registration-charge': 'Tickets',
-  '/outpatient/triage-board': 'Compass',
+  '/outpatient/triage-board': 'Guide',
   '/outpatient/doctor-station': 'EditPen',
   '/billing/pricing-settle': 'PriceTag',
-  '/billing/refunds': 'Discount',
+  '/billing/refunds': 'Stamp',
   '/billing/daily-list': 'List',
   '/pharmacy/drug-dict': 'Reading',
   '/pharmacy/dispense-workbench': 'Sell',
@@ -51,14 +57,14 @@ const CONTRACT_ITEM_ICONS: Record<string, string> = {
   '/pharmacy/review': 'DocumentChecked',
   '/pharmacy/inpatient-dispense': 'ShoppingTrolley',
   '/iot/products': 'Files',
-  '/iot/devices': 'Odometer',
-  '/iot/bindings': 'Connection',
-  '/iot/alarm-rules': 'AlarmClock',
+  '/iot/devices': 'Management',
+  '/iot/bindings': 'Paperclip',
+  '/iot/alarm-rules': 'Flag',
   '/iot/commands': 'Promotion',
-  '/iot/linkage-rules': 'Link',
+  '/iot/linkage-rules': 'MagicStick',
   '/iot/quality': 'TrendCharts',
   '/ward/infusion-board': 'Pouring',
-  '/ward/call-workbench': 'Service',
+  '/ward/call-workbench': 'Phone',
   '/ward/cold-chain': 'Refrigerator',
   '/system/permissions': 'Key',
 };

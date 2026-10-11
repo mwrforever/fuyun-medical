@@ -1,12 +1,13 @@
 // 侧栏树形菜单单测（批次 2 册 1 契约 §3）：权限过滤（BUG-14 守卫骨架 + PR-4D 空集语义，
 // 路由 meta 单一事实源经真实路由表反查）、树形渲染（分组父节点/页项叶节点/组内全滤整组
 // 剔除）、图标注册表对照契约 §1 全 43 枚、默认全展开与瞬切铁律锚点（collapseTransition
-// 关闭 + popper 挂类）、路由高亮药丸选中延续、收起态图标条形态。会话以直接注入 state 的
-// 方式承载（假令牌资产，非真实凭证）。
+// 关闭 + popper 挂类）、路由高亮药丸选中延续、收起态图标条形态、键盘可达（W-105②
+// roving tabindex：Tab 入口唯一/方向键走序列/Enter 导航与组开合/折叠组叶项退出序列）。
+// 会话以直接注入 state 的方式承载（假令牌资产，非真实凭证）。
 // 注：全文件共享单一 Pinia——与挂载组件必须读写同一会话 store，逐用例换实例会割裂会话语义。
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Pinia } from 'pinia';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -15,10 +16,11 @@ import { MENU_ITEMS } from '@/views/layout/menu';
 import { useAuthStore } from '@/stores/auth';
 import AppSidebar, { MENU_ICON_REGISTRY } from './AppSidebar.vue';
 
-/** 契约 §1 图标全集（9 组 + 34 项 = 43 枚，断言锚点=契约原文） */
+/** 契约 §1 图标全集（9 组 + 34 项 = 43 枚，断言锚点=契约原文；2026-10-12 D-29 九枚
+ * 圆形笔画图标取代后值域——取代出处=CHANGELOG 同日 D-29 条目，断言现代化留痕） */
 const CONTRACT_ALL_ICONS = [
   // §1.1 分组图标
-  'User',
+  'FolderOpened',
   'FirstAidKit',
   'Wallet',
   'Box',
@@ -30,12 +32,12 @@ const CONTRACT_ALL_ICONS = [
   // §1.2 页项图标
   'HomeFilled',
   'DocumentAdd',
-  'Search',
+  'Filter',
   'Tickets',
-  'Compass',
+  'Guide',
   'EditPen',
   'PriceTag',
-  'Discount',
+  'Stamp',
   'List',
   'Reading',
   'Sell',
@@ -52,14 +54,14 @@ const CONTRACT_ALL_ICONS = [
   'DocumentChecked',
   'ShoppingTrolley',
   'Files',
-  'Odometer',
-  'Connection',
-  'AlarmClock',
+  'Management',
+  'Paperclip',
+  'Flag',
   'Promotion',
-  'Link',
+  'MagicStick',
   'TrendCharts',
   'Pouring',
-  'Service',
+  'Phone',
   'Refrigerator',
   'Key',
 ];
@@ -259,6 +261,166 @@ describe('侧栏树形菜单', () => {
     expect(groupLis[8]?.attributes('style')).toMatch(/--fuy-stagger-index:\s*10\b/);
     const firstLeafOfFirstGroup = groupLis[0]?.find('.el-menu-item');
     expect(firstLeafOfFirstGroup?.attributes('style')).toMatch(/--fuy-stagger-index:\s*0\b/);
+    wrapper.unmount();
+  });
+
+  // ===== 键盘可达（W-105②，2026-10-12）：roving tabindex 方案的业务行为断言 =====
+
+  /**
+   * 取 DOMWrapper 的真实 HTMLElement（VTU 按选择器推断 element 为 Element，focus 断言
+   * 与按键派发需要 HTMLElement）。
+   *
+   * @param node 测试包装节点（菜单项/组头）
+   * @return 同一 DOM 的 HTMLElement 视图
+   */
+  function htmlOf(node: { element: Element }): HTMLElement {
+    return node.element as HTMLElement;
+  }
+
+  /**
+   * 向 document 派发真实 keydown（键盘导航监听挂 document 级——收起态组弹层 teleported
+   * 至 body 组件根触达不了，实现统一单监听）。
+   *
+   * @param key 键名（KeyboardEvent.key，如 ArrowDown/Enter/Home）
+   * @param target 按键目标元素（菜单项或组头 DOM）
+   */
+  function pressKey(key: string, target: Element): void {
+    target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  }
+
+  it('键盘可达：挂载即施加 roving tabindex——路由激活叶项为唯一 Tab 入口（组头与其余项 -1）', async () => {
+    injectSession(['patient:archive:search']);
+    await router.push('/patients');
+    // attachTo 文档内：jsdom 仅对文档内元素设置 document.activeElement（焦点断言前提）
+    const wrapper = mount(AppSidebar, {
+      attachTo: document.body,
+      global: { plugins: [pinia, router] },
+    });
+    await flushPromises();
+
+    // 断言业务结果：Tab 恰能进入侧栏一次（序列内唯一 tabindex=0 项=当前业务位），
+    // 组头与未激活项均 -1——修复前全部项 -1 且容器无 tabindex，Tab 无法进侧栏
+    const tabEntries = wrapper
+      .findAll('.el-menu-item, .el-sub-menu__title')
+      .filter((node) => node.attributes('tabindex') === '0');
+    expect(tabEntries).toHaveLength(1);
+    expect(tabEntries[0]?.text()).toContain('患者检索');
+    expect(
+      wrapper.findAll('.el-sub-menu__title').every((node) => node.attributes('tabindex') === '-1'),
+    ).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('键盘可达：ArrowDown/ArrowUp 在可见序列内逐项移动焦点并同步 roving（展开组叶项在序列内）', async () => {
+    injectSession(['patient:archive:search']);
+    await router.push('/patients');
+    // attachTo 文档内：jsdom 仅对文档内元素设置 document.activeElement（焦点断言前提）
+    const wrapper = mount(AppSidebar, {
+      attachTo: document.body,
+      global: { plugins: [pinia, router] },
+    });
+    await flushPromises();
+
+    // 序列（DOM 序）：首页 → 患者管理组头 → 患者检索（默认全展开，组内叶项可见入序列）
+    const homeItem = wrapper.findAll('.el-menu-item')[0];
+    const groupTitle = wrapper.findAll('.el-sub-menu__title')[0];
+    const leaf = wrapper.findAll('.el-menu--inline .el-menu-item')[0];
+
+    // 自激活叶项向上走：组头 ← 叶项；焦点与 roving（tabindex=0）随动同一项
+    htmlOf(leaf).focus();
+    pressKey('ArrowUp', htmlOf(leaf));
+    expect(document.activeElement).toBe(groupTitle.element);
+    expect(groupTitle.attributes('tabindex')).toBe('0');
+    expect(leaf.attributes('tabindex')).toBe('-1');
+
+    // 组头继续向上回到首项；再向下穿组头入叶项（方向键可走全序列）
+    pressKey('ArrowUp', htmlOf(groupTitle));
+    expect(document.activeElement).toBe(homeItem.element);
+    pressKey('ArrowDown', htmlOf(homeItem));
+    expect(document.activeElement).toBe(groupTitle.element);
+    pressKey('ArrowDown', htmlOf(groupTitle));
+    expect(document.activeElement).toBe(leaf.element);
+    wrapper.unmount();
+  });
+
+  it('键盘可达：Enter 激活叶项触发真实路由导航（URL 变更）', async () => {
+    injectSession(['patient:archive:search']);
+    await router.push('/');
+    // attachTo 文档内：jsdom 仅对文档内元素设置 document.activeElement（焦点断言前提）
+    const wrapper = mount(AppSidebar, {
+      attachTo: document.body,
+      global: { plugins: [pinia, router] },
+    });
+    await flushPromises();
+
+    const leaf = wrapper.findAll('.el-menu-item').find((node) => node.text() === '患者检索')!;
+    htmlOf(leaf).focus();
+    pressKey('Enter', htmlOf(leaf));
+    await flushPromises();
+
+    // 断言业务结果：键盘激活与鼠标点击同效——EP onClick 链路承接路由跳转
+    expect(router.currentRoute.value.path).toBe('/patients');
+    wrapper.unmount();
+  });
+
+  it('键盘可达：Enter 在展开态组头切换组开合，折叠后其叶项退出焦点序列（ArrowDown 跳过）', async () => {
+    injectSession(['patient:archive:search']);
+    await router.push('/patients');
+    // attachTo 文档内：jsdom 仅对文档内元素设置 document.activeElement（焦点断言前提）
+    const wrapper = mount(AppSidebar, {
+      attachTo: document.body,
+      global: { plugins: [pinia, router] },
+    });
+    await flushPromises();
+
+    const groupLi = wrapper.findAll('.el-sub-menu')[0];
+    const groupTitle = wrapper.findAll('.el-sub-menu__title')[0];
+    const homeItem = wrapper.findAll('.el-menu-item')[0];
+    expect(groupLi.classes()).toContain('is-opened');
+
+    // 组头 Enter=切换组开合（EP onClick 承载）；收起后叶项隐藏
+    htmlOf(groupTitle).focus();
+    pressKey('Enter', htmlOf(groupTitle));
+    await flushPromises();
+    expect(groupLi.classes()).not.toContain('is-opened');
+
+    // 折叠组的叶项不可见不入序列：组头上 ArrowDown 越过叶项环绕回首项
+    pressKey('ArrowDown', htmlOf(groupTitle));
+    expect(document.activeElement).toBe(homeItem.element);
+    wrapper.unmount();
+  });
+
+  it('键盘可达：Home/End 跳序列首尾；Ctrl 修饰组合不拦截（浏览器快捷键让路）', async () => {
+    injectSession(['patient:archive:search']);
+    await router.push('/patients');
+    // attachTo 文档内：jsdom 仅对文档内元素设置 document.activeElement（焦点断言前提）
+    const wrapper = mount(AppSidebar, {
+      attachTo: document.body,
+      global: { plugins: [pinia, router] },
+    });
+    await flushPromises();
+
+    const nodes = wrapper.findAll('.el-menu-item, .el-sub-menu__title');
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    const leaf = wrapper.findAll('.el-menu--inline .el-menu-item')[0];
+
+    htmlOf(leaf).focus();
+    pressKey('End', htmlOf(leaf));
+    expect(document.activeElement).toBe(last.element);
+    pressKey('Home', htmlOf(last));
+    expect(document.activeElement).toBe(first.element);
+
+    // 带 Ctrl 的方向键不属侧栏职责：焦点原位不动（修饰组合让路浏览器快捷键）
+    htmlOf(first).dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        bubbles: true,
+        cancelable: true,
+        ctrlKey: true,
+      }),
+    );
+    expect(document.activeElement).toBe(first.element);
     wrapper.unmount();
   });
 });
