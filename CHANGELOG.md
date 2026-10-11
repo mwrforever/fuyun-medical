@@ -2,6 +2,18 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-12 · 前端遗留项修正批（D-30 段标口径 / D-31 ElMessageBox 中文化+样式注入 / W-105 侧栏可访问性）
+
+- **裁决（2026-10-12 用户指令「这些前端的遗留项直接修正」）**：TASK.md 四登记项一次收口（D-29 见前条），本条留痕三项：
+- **D-30 段标字体口径全站统一（黑体档）**：依据=世界契约 §④.1 字体三分矩阵段标落黑体默认继承面（衬线允许面清单无段标）。丁-3 ColdChain 衬线段标 3 处+丙-4 AlarmRule 12px 灰墨段标 2 处+乙-5 DischargeManage 12px/500 段标 1 处统一挂 `.fuy-section-title`（14px/600 浓墨黑体），局部段标样式声明删除（死代码零容忍）；连带丙-1 ProductManage `.product-steps` 步序注记衬线违 §④.1（批注行族归黑体）一并收口；三页 spec 段标精确匹配新锚+旧类零存在反向断言（严格度只增）。
+- **D-31 ElMessageBox 英文钮（根因=函数式弹层挂 App 子树外不吃 ElConfigProvider）**：main.ts 增 `provideGlobalConfig({ locale: zhCn }, app, true)` 全局通道（App.vue 页内 ElConfigProvider 保留双保险，F-2 记录不动）；dayjs locale 经源码实证无消费面不引入。连带收口**函数式组件样式零注入**（按需引入下 9 文件 ElMessageBox 手动 import 不触发 unplugin resolver 样式联动，弹窗裸布局不居中）——main.ts 收口补 message-box 样式注入（ElMessage 既有 api/http.ts 全局注入+ElLoading 走 directives 联动，均不重复引入；视图级 32+14 处散装 style import 成冗余双保险，零行为差，登记 W-110 随触碰收拢）；真机验收按钮「取消/确定」中文+420px 定宽居中+暖墨阴影+遮罩在位（遮罩为 EP 默认黑纱，契约 ⑪.3 墨纱值偏差属既有映射面如实记录）；main.spec.ts 新增装配链 locale 断言。
+- **W-105 侧栏键盘不可达+焦点环死规则**：焦点环=三处完整 outline 简写收口（element-plus.css `.fuy-menu` 焦点段补 `.el-sub-menu__title` 并档+AppSidebar scoped 同款+新增弹层叶项墨环）——EP `outline:none` (0,2,0) 压死单属性 outline-color 的死规则，0,3,0+ 简写恒胜（button focus-visible 定向收口先例同款）；键盘可达=AppSidebar roving tabindex（document 级 keydown+focusin 随动+MutationObserver 守护组开合/路由激活/折叠切换重算；ArrowUp/Down/Home/End 序列移动、Enter/Space 激活、收起态组头经 ElMenu.open() 开弹层聚焦首项、Escape 返焦）；AppSidebar.spec +5 键盘导航用例；真机走查 Tab 一次进侧栏→方向键逐项→Enter 导航全通（修复前 Tab 25 次不进侧栏）。
+- 断言现代化四边界留痕：D-30 三页段标锚新增、menu.spec/AppSidebar.spec 图标全集锚随 D-29 原位重写（严格度不降，原子同 PR，批准出处=本条+PR#92 描述）。
+
+## 2026-10-12 · D-29 侧边栏设计冻结面三项解冻（用户指令直接修正 · 契约 ⑪.6 与批次 2 册 1 契约 §1 图标清单局部取代）
+
+- **裁决（2026-10-12 用户指令「这些前端的遗留项直接修正」）**：契约 ⑪.6「AppSidebar 零必改」对下列三项设计层修正解冻；批次 2 册 1 契约 §1.2 图标清单（34 枚 @element-plus/icons-vue 名）对其中第③项替换的九枚局部取代。方向裁定：①**选中态材质向金洗纸语义收拢**——展开态导轨选中=亮纸白药丸（--fuy-surface-card「胸牌」语法）→金洗纸 `--fuy-palette-brand-100`，与收起态组弹层选中及全站页级选中语义（卡墙/患者行选中金洗底）单一化；②**品牌头对齐轴并入菜单文本轴**——品牌 chip 居中（中心 ≈x127）改左对齐菜单文本起点（28px 轴系），同轨单一水平轴并与菜单药丸族共轴；③**圆形笔画图标九枚替换**（患者检索 Search/分诊台 Compass 等九枚圆形笔画图标在墨脊上形成「小圆点」观感）→替换为 @element-plus/icons-vue 2.3.2 同源非圆形笔画观感图标，菜单语义保持，逐枚映射随实现 PR 留痕（menu.ts 值域注释同步注记取代出处）。实现与验收随 2026-10-12 遗留项修正批交付。
+
 ## 2026-10-11 · 系统域批次断言现代化留痕（回归红线出口四边界）
 
 - **D-21 断言现代化申报（逐次批准，主控 2026-10-11；批准出处=本条+PR#90 描述）**：`RolePermissionMatrixView.spec.ts` 5→7 用例随蓝图戊-1 换脸重排重写——①裸页收编新增锚点（`.fuy-page` 根挂载=全站唯一裸页收编的机器证据+页根禁挂 `.fuy-stagger` 反向断言，契约 ⑦.4）；②门牌页首三锚（衬线标题/英文小注 PERMISSION MATRIX/批注行=原 desc 一句升批注且文案逐字保留）+「已选 x/y」墨底徽标计数断言（蓝图戊-1.2①）；③双层签 `.fuy-tabs` 挂类+DISABLED 角色签灰徽标；ADMIN 只读注记 el-alert→金洗底批注条（含 el-alert 结构反向断言）；首屏失败兜底 el-empty→`.fuy-empty` 错误态变体「说问题+给恢复」（蓝图戊-1.3/1.4 形态断言替代旧 el-result 式兜底断言）；④保存成功反馈由 ElMessage 单通道断言按钤印+message 双通道重写（钤印「已保存」挂载锚+F4③ message 文案由旧 `toContain('重新登录生效')` 收紧为整句 `toContain('各实例 403 矩阵已重载，相关用户需重新登录生效')`，严格度只增）；⑤清单外码原样带回、ADMIN 禁停、DISABLED 二次确认（踢出后果文案新增「在线会话立即登出」正向锚）既有断言全数保留零放宽；system 四函数接线断言语义零变动。断言修订+实现变更+回归锚同 PR 原子交付；本条即 CHANGELOG 留痕。
