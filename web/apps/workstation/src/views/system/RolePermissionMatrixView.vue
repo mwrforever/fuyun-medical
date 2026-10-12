@@ -302,8 +302,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <!-- 裸页收编（蓝图戊-1）：根挂 .fuy-page 纵向单列（页根禁挂 .fuy-stagger，契约 ⑦.4） -->
   <div class="fuy-page perm-matrix" v-loading="loading">
+    <!-- 裸页收编（蓝图戊-1）：根挂 .fuy-page 纵向单列（页根禁挂 .fuy-stagger，契约 ⑦.4） -->
     <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 英文小注（装饰层）+「已选 x/y」墨底徽标状态位 +
          批注行（原 desc 一句升批注，「谁·时刻」齐备，原文案锚点逐字保留）+ 2px 墨规收底 -->
     <header class="fuy-page-head">

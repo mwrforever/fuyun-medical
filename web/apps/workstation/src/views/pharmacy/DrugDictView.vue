@@ -295,9 +295,9 @@ onMounted(fetch);
 </script>
 
 <template>
-  <!-- 门牌页首不入级联（批次内 P08 同款，契约 ⑦.4 stagger 挂页内区块不挂根）；蓝图 P10.4
-       「stagger 单卡」=本页唯一级联档为主表卡，门牌与筛选卡静态进场 -->
   <section class="fuy-page">
+    <!-- 门牌页首不入级联（批次内 P08 同款，契约 ⑦.4 stagger 挂页内区块不挂根）；蓝图 P10.4
+         「stagger 单卡」=本页唯一级联档为主表卡，门牌与筛选卡静态进场 -->
     <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 签认人·时刻批注行 + 2px 墨规收底（脸样式归全局
          .fuy-page-head 族，本页零私有标题样式）；原 el-card #header「药品字典」升格于此 -->
     <header class="fuy-page-head">

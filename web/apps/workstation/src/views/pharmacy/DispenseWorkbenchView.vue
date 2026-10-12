@@ -241,11 +241,11 @@ onMounted(loadQueue);
 </script>
 
 <template>
-  <!-- 双卡进场 stagger（§6.1）挂 el-row 而非根 div：.fuy-stagger > * 只匹配直接子元素，
-       挂根 div 时唯一子元素是 el-row，级联退化为整行同播且 el-col 上的 index 变量零消费；
-       挂 el-row 后两个 el-col 即直接子元素——右列 inline index 1 = 40ms delay，级联真实生效
-       （质量门 R1 F-1 修复；与批次 3 双卡页 stagger 直接命中卡元素同语义） -->
   <div class="fuy-page">
+    <!-- 双卡进场 stagger（§6.1）挂 el-row 而非根 div：.fuy-stagger > * 只匹配直接子元素，
+         挂根 div 时唯一子元素是 el-row，级联退化为整行同播且 el-col 上的 index 变量零消费；
+         挂 el-row 后两个 el-col 即直接子元素——右列 inline index 1 = 40ms delay，级联真实生效
+         （质量门 R1 F-1 修复；与批次 3 双卡页 stagger 直接命中卡元素同语义） -->
     <!-- 门牌页首（契约 ⑧.1/蓝图 P11.2）：衬线标题 + 队列计数胶囊（待发+调剂中合计，amber
          待办语义）+ 签认人·时刻批注行；2px 墨规收底走全局 .fuy-page-head 脸，本页零私有标题样式 -->
     <header class="fuy-page-head">

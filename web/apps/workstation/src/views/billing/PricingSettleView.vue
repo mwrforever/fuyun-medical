@@ -349,10 +349,10 @@ async function handleSettle(): Promise<void> {
 </script>
 
 <template>
-  <!-- 暖纸卷宗 P07 重排：页面纵向序=门牌页首 → 筛选卡 → 主从工作区（契约 ⑧/总则 6）。
-       页根禁挂 .fuy-stagger（契约 ⑦.4：路由进场过渡归 MainLayout，防双重进场节奏）——
-       琢段移交的页根 stagger 迁页内主从两列（蓝图 P07.4 stagger 两档：划价卡 0 / 待收卡 1） -->
   <div class="fuy-page">
+    <!-- 暖纸卷宗 P07 重排：页面纵向序=门牌页首 → 筛选卡 → 主从工作区（契约 ⑧/总则 6）。
+         页根禁挂 .fuy-stagger（契约 ⑦.4：路由进场过渡归 MainLayout，防双重进场节奏）——
+         琢段移交的页根 stagger 迁页内主从两列（蓝图 P07.4 stagger 两档：划价卡 0 / 待收卡 1） -->
     <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 签认人·时刻批注行 + 2px 墨规收底（脸样式归全局
          .fuy-page-head 族，本页零私有标题样式）；原 el-card #header「划价结算」升格于此 -->
     <header class="fuy-page-head">

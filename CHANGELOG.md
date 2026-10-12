@@ -2,6 +2,16 @@
 
 > 记录规则（根 AGENTS.md §7）：**先记再改**——任何宪法 / 规范 / 机制文件的修订，先在本文件登记（日期、范围、理由、裁决），再改正文。追加式保留全部历史。
 
+## 2026-10-12 · 生产化UI改造册0补遗：nursing 当班绑定补 1001 病区（P-GBL-02 止血配套数据修复）
+
+- **P-GBL-02 配套**：e2e 终验（T0-15）暴露止血副作用——W01 从全站病区下拉消失后 nursing/inpatient 域默认病区落 1001，admin/doctordemo 当班绑定集（V1114 种子={W01}）被 NS-1028 fail-closed 拒（/nursing/ward、/nursing/execution、/inpatient/station 三页 403）。新增 V1125 迁移为两演示账号新增 ward_id='1001' ACTIVE 授权行（保留 W01 行不动，绑定表部分唯一索引允许），三页恢复 200（1001 空态由视图空态承载）。W01↔纯数字码冲突全量根治仍归 TASK.md D-32 待决策。
+
+## 2026-10-12 · 生产化UI改造册0：白屏 P0 修复批（P-GBL-01/02/03 · 立项依据 00-总纲.md §5.2）
+
+- **P-GBL-01 白屏修复+护栏**：12 触发页（research/00 §3 清单）模板顶层批注注释内移根元素内首行（批注逐字保留，dev 编译恢复单元素根，消除 Fragment 根 × out-in Transition 的 afterLeave 死锁）；新增 `views/template-root-guard.spec.ts` 全量护栏（vue/compiler-sfc parse 断言 src/views 非 layout 全部 .vue 单元素根 + 12 触发页覆盖面自保护）——总纲 §7.2-3「模板单元素根护栏」自此机器化强制。
+- **P-GBL-02 W01 止血**：`api/system.ts` listOrgs WARD 档过滤非纯数字 orgCode（对齐 useIotStomp WARD_ID_PATTERN 契约；DEPT 档只滤空 code 不过滤 DEPT-INT 系合法形态）+ 过滤命中 warn 留痕；数据侧 W01 标识空间冲突登记 TASK.md D-32 待决策（迁移禁改红线 A.4.1-3）。research §7「误导性文案纠正」修正落定：过滤即纠正，文案字符串不动（改则破既有 spec 文本锚违断言回归红线）。
+- **P-GBL-03 全局兜底**：新增 `utils/errorHandler.ts` + main.ts 装配 `app.config.errorHandler`（logger.error 全量留痕 + 3s 冷却窗 ElMessage 去抖 + AxiosError 防双弹；traceId 请求级不可得以 info+堆栈替代）。边界：errorHandler 救不了白屏（零异常静默死锁），白屏防回归靠护栏。
+
 ## 2026-10-12 · 前端遗留项修正批（D-30 段标口径 / D-31 ElMessageBox 中文化+样式注入 / W-105 侧栏可访问性）
 
 - **裁决（2026-10-12 用户指令「这些前端的遗留项直接修正」）**：TASK.md 四登记项一次收口（D-29 见前条），本条留痕三项：

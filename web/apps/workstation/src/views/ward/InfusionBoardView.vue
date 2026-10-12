@@ -512,8 +512,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 契约 ⑦.4：页面根节点禁挂 .fuy-stagger，级联由页内 flow 包裹层承接（flex+gap 同构） -->
   <div class="fuy-page infusion-board">
+    <!-- 契约 ⑦.4：页面根节点禁挂 .fuy-stagger，级联由页内 flow 包裹层承接（flex+gap 同构） -->
     <div class="fuy-stagger infusion-flow">
       <!-- 门牌页首（蓝图丁-1.2/契约 ⑧.1）：衬线标题 + 英文小注（装饰层）+ 状态位（WS 胶囊+
            病区下拉 + 刷新）+ 批注行（刷新机制批注 + 「谁·时刻」）+ 2px 墨规收底 -->

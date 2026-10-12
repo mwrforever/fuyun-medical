@@ -8,6 +8,7 @@ import { createApp } from 'vue';
 import App from './App.vue';
 import { permDirective } from './directives/perm';
 import { router } from './router';
+import { installGlobalErrorHandler } from './utils/errorHandler';
 // 全局设计系统地基（设计 token + EP 主色映射 + 动效），样式入口置于 createApp 之前（§7.4）
 import './styles/index.css';
 // ElMessageBox 函数式弹层样式按需注入（D-31 收尾①，2026-10-12）：函数式组件（ElMessage/
@@ -22,6 +23,9 @@ import 'element-plus/es/components/message-box/style/css';
 
 const app = createApp(App);
 app.use(createPinia()).use(router);
+// 全局兜底 errorHandler（册 0 P-GBL-03）：装配先于 mount——首屏渲染期抛错即有统一出口
+// （logger 全量留痕 + 3s 冷却窗 ElMessage 去抖 + AxiosError 防双弹，详见 utils/errorHandler.ts）
+installGlobalErrorHandler(app);
 // 全局注册 v-perm：视图免逐组件引入即可按元素权限码隐藏无权限 DOM（PR-4F F8 双入口之二）
 app.directive('perm', permDirective);
 // EP locale 应用级全局注入（D-31 修正，2026-10-12）：ElMessage/ElMessageBox/ElNotification

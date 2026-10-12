@@ -256,9 +256,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <!-- 页内级联容器 binding-flow（契约 ⑦.4：页面根节点不挂 .fuy-stagger，stagger 挂页内
-       区块；乙-5 discharge-flow 同构）：三段级联序 页首 0 / 两栏主区 1 / 页脚 2 -->
   <div class="fuy-page binding-manage">
+    <!-- 页内级联容器 binding-flow（契约 ⑦.4：页面根节点不挂 .fuy-stagger，stagger 挂页内
+         区块；乙-5 discharge-flow 同构）：三段级联序 页首 0 / 两栏主区 1 / 页脚 2 -->
     <div class="fuy-stagger binding-flow">
       <!-- 门牌页首（蓝图丙-3.2/契约 ⑧.1）：衬线标题 + 英文小注（装饰层）+ 状态位（状态筛选+
            刷新）+ 批注行（原 hint 升批注——「谁·时刻」齐备）+ 2px 墨规收底 -->

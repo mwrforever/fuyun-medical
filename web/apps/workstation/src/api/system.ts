@@ -6,6 +6,7 @@
  * 已含 /api）；类型一律取 @fuyun/shared 生成物（openapi-typescript 经 gen:api 同源产出，禁手写 paths）。
  */
 import { http } from './http';
+import { warn } from '../utils/logger';
 import type { components } from '@fuyun/shared/api';
 
 /** 契约类型别名（生成物唯一来源，A.3-3）：角色管理视图（roleCode/roleName/status/permCodes） */
@@ -74,18 +75,38 @@ export async function updateRoleStatus(
   return resp.data;
 }
 
+/** 病区编码合法形态：纯数字字符串（与 useIotStomp WARD_ID_PATTERN 同源契约——WS 主题路径段
+ * 纯数字 + 后端 infusion-board/{wardId} @PathVariable Long，非纯数字出网即 throw/400） */
+const WARD_CODE_PATTERN = /^\d+$/;
+
 /**
- * 查询启用状态组织机构清单（病区/科室下拉真数据源，后端按 sort 升序返回）。
- * 消费面：workstation 病区/科室选择器——替代 nursing/inpatient/iot 各 api 模块 WARD_OPTIONS
- * 与门诊视图 DEPT-INT 硬编码选项（暖纸卷宗重设计切片）。
+ * 查询启用状态组织机构清单（全站病区/科室下拉唯一真数据源，后端按 sort 升序返回）。
+ * WARD 档按纯数字契约过滤 orgCode（册 0 P-GBL-02 止血：V1123 种子 W01 形态脏行不回给任何
+ * 下拉消费方——InfusionBoard 等消费点视图层无自过滤，api 封装层单点收口即全站免疫）；
+ * 过滤命中经 logger.warn 留痕（含被滤 orgCode/orgName，防「数据在库里、下拉里消失」排查
+ * 黑洞；机构信息非患者敏感数据可入日志）。DEPT 档仅滤空 orgCode——DEPT-INT 系带连字符是
+ * 合法科室码形态，禁按纯数字误滤（滤光全部诊区即瘫痪门诊三页）。
+ * resp.data 为 null/undefined 时空数组兜底（与 listDictItems 既有兜底口径一致）。
  *
  * @param query 查询参数对象：type=机构类型，WARD=病区 / DEPT=科室
  *              （非法值后端 SYS-1031/400 拒绝，经拦截器统一弹错）
- * @return 启用机构清单（sort 升序；id/parentId 为字符串化雪花 ID）；空清单=无启用机构
+ * @return 过滤后启用机构清单（sort 升序；id/parentId 为字符串化雪花 ID）；空清单=无合法机构
  */
 export async function listOrgs(query: { type: 'WARD' | 'DEPT' }): Promise<OrgVO[]> {
   const resp = await http.get<OrgVO[]>('/v1/system/orgs', { params: query });
-  return resp.data;
+  const rows = resp.data ?? [];
+  // WARD 档单点收口：非纯数字脏行（W01 形态）不漏出，命中即 warn 留痕
+  if (query.type === 'WARD') {
+    return rows.filter((org) => {
+      if (org.orgCode && WARD_CODE_PATTERN.test(org.orgCode)) {
+        return true;
+      }
+      warn('listOrgs 病区码违反纯数字契约已过滤', org.orgCode, org.orgName);
+      return false;
+    });
+  }
+  // DEPT 档只滤空编码，带连字符的合法科室码原样直通
+  return rows.filter((org) => Boolean(org.orgCode));
 }
 
 /**
