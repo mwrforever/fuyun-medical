@@ -148,8 +148,8 @@ async function submitReturn(): Promise<void> {
 </script>
 
 <template>
-  <!-- 暖纸卷宗 P12 重排：页面纵向序=门牌页首 → 检索卡 → 结果卡（契约 ⑧/总则 6） -->
   <div class="fuy-page">
+    <!-- 暖纸卷宗 P12 重排：页面纵向序=门牌页首 → 检索卡 → 结果卡（契约 ⑧/总则 6） -->
     <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 签认人·时刻批注行 + 2px 墨规收底（脸样式归全局
          .fuy-page-head 族，本页零私有标题样式）；原 el-card #header「退药受理」升格于此 -->
     <header class="fuy-page-head">

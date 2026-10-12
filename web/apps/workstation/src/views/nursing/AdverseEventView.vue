@@ -125,9 +125,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <!-- 页内级联容器 ae-flow（契约 ⑦.4：页面根节点不挂 .fuy-stagger，stagger 挂页内区块；
-       护士站 ward-board-flow 同构）：四段级联序 header 0 / 统计带 1 / 清单 2 / 页脚 3 -->
   <div class="fuy-page adverse-event">
+    <!-- 页内级联容器 ae-flow（契约 ⑦.4：页面根节点不挂 .fuy-stagger，stagger 挂页内区块；
+         护士站 ward-board-flow 同构）：四段级联序 header 0 / 统计带 1 / 清单 2 / 页脚 3 -->
     <div class="fuy-stagger ae-flow">
       <!-- 门牌页首（契约 ⑧.1）：衬线标题 + 状态位（待处理琥珀胶囊 + 刷新统计钮） +
          非惩罚口径批注行（原 hint 升批注——「谁·何时」齐备）+ 2px 墨规收底 -->
